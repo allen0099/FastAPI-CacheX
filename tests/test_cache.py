@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi import Response
 from fastapi.testclient import TestClient
+from starlette.responses import JSONResponse
 
 from fastapi_cachex.cache import cache
 
@@ -151,3 +152,97 @@ def test_broken_stale():
     except Exception as e:
         assert "CacheXError" in str(type(e).__name__)
         assert "stale_ttl must be set if stale is used" in str(e)
+
+
+def test_positional_args():
+    @app.get("/positional-args/{arg}")
+    @cache()
+    async def positional_args_endpoint(arg: str, *, name: str = "default"):
+        return Response(
+            content=b'{"message": "This endpoint uses positional args"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/positional-args/test")
+    assert response.status_code == 200
+
+
+def test_sync_endpoint():
+    @app.get("/sync")
+    @cache()
+    def sync_endpoint():
+        return Response(
+            content=b'{"message": "This is a synchronous endpoint"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/sync")
+    assert response.status_code == 200
+
+
+def test_no_cache_with_revalidate():
+    @app.get("/no-cache-revalidate")
+    @cache(no_cache=True, must_revalidate=True)
+    async def no_cache_revalidate_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint should not be cached but must revalidate"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/no-cache-revalidate")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-cache, must-revalidate"
+
+
+def test_must_revalidate_endpoint():
+    @app.get("/must-revalidate")
+    @cache(must_revalidate=True)
+    async def must_revalidate_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint must revalidate"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/must-revalidate")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "must-revalidate"
+
+
+def test_immutable_endpoint():
+    @app.get("/immutable")
+    @cache(immutable=True)
+    async def immutable_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint is immutable"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/immutable")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "immutable"
+
+
+def test_json_response():
+    @app.get("/json-response")
+    @cache()
+    async def json_response_endpoint():
+        return JSONResponse(
+            content={"message": "This is a JSON response"},
+            media_type="application/json",
+        )
+
+    response = client.get("/json-response")
+    assert response.status_code == 200
+
+
+def test_param_var_keyword():
+    @app.get("/param-keyword")
+    @cache()
+    async def param_keyword_endpoint(param: str = "default"):
+        return Response(
+            content=b'{"message": "This endpoint uses param and keyword"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/param-keyword?param=test&keyword=value")
+    assert response.status_code == 200

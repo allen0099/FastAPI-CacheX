@@ -44,72 +44,40 @@ def cache(  # noqa: C901
         # Analyze the original function's signature
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
+
+        # Check if Request is already in the parameters
         has_request = any(
             param.annotation == Request or param.annotation == Optional[Request]
             for param in params
         )
-        request_param_name = (
-            next(
-                (param.name for param in params if param.annotation == Request),
-                None,
-            )
-            if has_request
-            else None
-        )
 
-        # If the Request parameter does not exist, add it
+        # Add Request parameter if it's not present
         if not has_request:
-            # Create a new parameter list, keeping the original parameter order
             new_params = []
-            request_added = False
-            request_param_name = "request"
 
-            for param in params:
-                # If *args or **kwargs are encountered, insert request before them
-                if (
-                    param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
-                    and not request_added
-                ):
-                    new_params.append(
-                        inspect.Parameter(
-                            request_param_name,
-                            inspect.Parameter.KEYWORD_ONLY,
-                            annotation=Request,
-                        )
-                    )
-                    request_added = True
-                new_params.append(param)
+            request_param = inspect.Parameter(
+                "request",
+                inspect.Parameter.KEYWORD_ONLY,
+                annotation=Request,
+            )
+            new_params.append(request_param)
 
-            # If request hasn't been added yet (no *args or **kwargs encountered), append it to the end
-            if not request_added:
-                new_params.append(
-                    inspect.Parameter(
-                        request_param_name,
-                        inspect.Parameter.KEYWORD_ONLY,
-                        annotation=Request,
-                    )
-                )
-
-            # Create a new signature using the new parameter list
-            sig = sig.replace(parameters=new_params)
-            # Update the function's __signature__
+            sig = sig.replace(parameters=[*params, *new_params])
             func.__signature__ = sig
 
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:  # noqa: C901
-            request = (
-                kwargs.pop(request_param_name) if request_param_name in kwargs else None
-            )
+            # Get request from kwargs
+            request = kwargs.pop("request", None) if "request" in kwargs else None
+
+            # Get if-none-match header
             if_none_match = request.headers.get("if-none-match") if request else None
 
-            # Check if there is an existing response
-            existing_response = next(
-                (value for value in kwargs.values() if isinstance(value, Response)),
-                None,
-            )
-
             # Get the response
-            response: Response = existing_response or await func(*args, **kwargs)
+            if inspect.iscoroutinefunction(func):
+                response = await func(*args, **kwargs)
+            else:
+                response = func(*args, **kwargs)
 
             # Generate ETag (hash based on response content)
             if isinstance(response, JSONResponse):
@@ -121,19 +89,23 @@ def cache(  # noqa: C901
                     else str(response).encode()
                 )
 
+            # Calculate ETag
             etag = f'W/"{hashlib.md5(content).hexdigest()}"'  # noqa: S324
-            response.headers["ETag"] = etag
 
-            # If ETag matches, return 304 Not Modified directly
-            if if_none_match and if_none_match == etag:
+            # If ETag matches, return 304 Not Modified
+            if if_none_match == etag:
                 return Response(
-                    status_code=HTTP_304_NOT_MODIFIED, headers={"ETag": etag}
+                    status_code=HTTP_304_NOT_MODIFIED,
+                    headers={"ETag": etag, "Cache-Control": ""},
                 )
+
+            # Add ETag to response headers
+            response.headers["ETag"] = etag
 
             # Handle Cache-Control header
             cache_control = CacheControl()
 
-            # Handle special case: no-store (highest priority, should not be combined with other directives)
+            # Handle special case: no-store (highest priority)
             if no_store:
                 cache_control.add(DirectiveType.NO_STORE)
                 response.headers["Cache-Control"] = str(cache_control)
