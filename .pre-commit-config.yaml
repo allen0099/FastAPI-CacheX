@@ -1,0 +1,60 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+default_install_hook_types:
+  - pre-commit
+  - post-commit
+  - post-merge
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: debug-statements
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [ --unsafe ]
+      - id: check-json
+      - id: check-added-large-files
+        args: [ '--maxkb=1024' ]
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.2
+    hooks:
+      - id: ruff
+        name: Lint with ruff
+        args: [ --fix ]
+      - id: ruff-format
+        name: Format with ruff
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.30.2
+    hooks:
+      - id: typos
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.6.8
+    hooks:
+      - id: pip-compile
+        name: Compile requirements
+        args: [ pyproject.toml, -o, requirements.txt, -U , --universal, -q ]
+        files: ^pyproject\.toml$
+        always_run: true
+      - id: uv-lock
+        name: Update uv lockfile
+        args:
+          - --upgrade
+        always_run: true
+  - repo: local
+    hooks:
+      - id: uv-sync
+        name: Sync uv dependencies from lockfile
+        stages:
+          - post-commit
+          - post-merge
+        language: system
+        entry: uv sync
+        files: ^uv\.lock$
+        always_run: true

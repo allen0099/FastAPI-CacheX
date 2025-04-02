@@ -1,0 +1,153 @@
+from fastapi import FastAPI
+from fastapi import Response
+from fastapi.testclient import TestClient
+
+from fastapi_cachex.cache import cache
+
+app = FastAPI()
+client = TestClient(app)
+
+
+def test_default_cache():
+    @app.get("/default")
+    @cache()
+    async def default_cache_endpoint():
+        return Response(
+            content=b'{"message": "This is a default cache endpoint"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/default")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == ""
+
+
+def test_ttl_endpoint():
+    @app.get("/ttl")
+    @cache(60)
+    async def ttl_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint has a TTL of 60 seconds"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/ttl")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "max-age=60"
+
+
+def test_no_cache_endpoint():
+    @app.get("/no-cache")
+    @cache(no_cache=True)
+    async def no_cache_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint should not be cached"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/no-cache")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-cache"
+
+
+def test_no_store_endpoint():
+    @app.get("/no-store")
+    @cache(no_store=True)
+    async def no_store_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint must not be stored"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/no-store")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_public_private_endpoints():
+    @app.get("/public")
+    @cache(public=True)
+    async def public_endpoint():
+        return Response(
+            content=b'{"message": "This is a public endpoint"}',
+            media_type="application/json",
+        )
+
+    @app.get("/private")
+    @cache(private=True)
+    async def private_endpoint():
+        return Response(
+            content=b'{"message": "This is a private endpoint"}',
+            media_type="application/json",
+        )
+
+    public_response = client.get("/public")
+    assert public_response.status_code == 200
+    assert "public" in public_response.headers["Cache-Control"].lower()
+
+    private_response = client.get("/private")
+    assert private_response.status_code == 200
+    assert "private" in private_response.headers["Cache-Control"].lower()
+
+
+def test_etag_handling():
+    @app.get("/etag")
+    @cache()
+    async def etag_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint supports ETag"}',
+            media_type="application/json",
+        )
+
+    # First request - should get the full response
+    response1 = client.get("/etag")
+    assert response1.status_code == 200
+    assert "ETag" in response1.headers
+
+    # Second request with If-None-Match header
+    etag = response1.headers["ETag"]
+    response2 = client.get("/etag", headers={"If-None-Match": etag})
+    assert response2.status_code == 304  # Not Modified
+
+
+def test_stale_responses():
+    @app.get("/stale-while-revalidate")
+    @cache(stale="revalidate", stale_ttl=30)
+    async def stale_while_revalidate_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint allows stale content while revalidating"}',
+            media_type="application/json",
+        )
+
+    @app.get("/stale-if-error")
+    @cache(stale="error", stale_ttl=60)
+    async def stale_if_error_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint allows stale content on error"}',
+            media_type="application/json",
+        )
+
+    response1 = client.get("/stale-while-revalidate")
+    assert response1.status_code == 200
+    assert "stale-while-revalidate=30" in response1.headers["Cache-Control"]
+
+    response2 = client.get("/stale-if-error")
+    assert response2.status_code == 200
+    assert "stale-if-error=60" in response2.headers["Cache-Control"]
+
+
+def test_broken_stale():
+    @app.get("/stale")
+    @cache(stale="revalidate")
+    async def stale_broken_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint allows stale content"}',
+            media_type="application/json",
+        )
+
+    try:
+        client.get("/stale")
+
+    except Exception as e:
+        assert "CacheXError" in str(type(e).__name__)
+        assert "stale_ttl must be set if stale is used" in str(e)
