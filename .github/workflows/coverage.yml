@@ -1,0 +1,46 @@
+name: Coverage Badge
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install uv
+        uv venv
+        uv pip install -e ".[dev]"
+        uv pip install genbadge[coverage]
+
+    - name: Generate coverage report
+      run: |
+        coverage run -m pytest
+        coverage report
+        coverage xml
+        genbadge coverage -i coverage.xml -o coverage.svg
+
+    - name: Upload coverage badge
+      uses: JamesIves/github-pages-deploy-action@v4
+      with:
+        branch: coverage-badge
+        folder: .
+        target-folder: .
+        clean: false
+        file: coverage.svg
