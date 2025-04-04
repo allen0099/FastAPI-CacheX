@@ -58,3 +58,20 @@ repos:
         entry: uv sync
         files: ^uv\.lock$
         always_run: true
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.9.0
+    hooks:
+      - id: mypy
+        name: Static type checking with mypy
+        additional_dependencies:
+          - types-redis
+          - types-requests
+          - types-PyYAML
+          - pydantic>=2.0.0
+          - pytest>=8.0.0
+          - pytest-asyncio>=0.23.0
+          - fastapi>=0.110.0
+          - starlette>=0.36.0
+          - types-aiofiles
+        args: [--strict]
+        exclude: ^(docs/|scripts/)
