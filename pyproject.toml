@@ -4,7 +4,7 @@ version = "0.1.0" # Initial release version
 description = "A caching library for FastAPI with support for Cache-Control, ETag, and multiple backends."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "Apache License 2.0"
+license = "Apache-2.0"
 homepage = "https://github.com/allen0099/FastAPI-CacheX"
 repository = "https://github.com/allen0099/FastAPI-CacheX"
 documentation = "https://github.com/allen0099/FastAPI-CacheX#readme"
