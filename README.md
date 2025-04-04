@@ -43,16 +43,53 @@ uv pip install fastapi-cachex
 
 ```python
 from fastapi import FastAPI
-from fastapi_cachex import cache
+from fastapi_cachex import cache, BackendProxy
+from fastapi_cachex.backends import MemoryBackend, MemcachedBackend
 
 app = FastAPI()
 
+# Configure your cache backend
+memory_backend = MemoryBackend()  # In-memory cache
+# or
+memcached_backend = MemcachedBackend(servers=["localhost:11211"])  # Memcached
+
+# Set the backend you want to use
+BackendProxy.set_backend(memory_backend)  # or memcached_backend
+
 
 @app.get("/")
-@cache()
+@cache(ttl=60)  # Cache for 60 seconds
 async def read_root():
     return {"Hello": "World"}
 ```
+
+## Backend Configuration
+
+FastAPI-CacheX supports multiple caching backends. You can easily switch between them using the `BackendProxy`.
+
+### In-Memory Cache
+
+```python
+from fastapi_cachex.backends import MemoryBackend
+from fastapi_cachex import BackendProxy
+
+backend = MemoryBackend()
+BackendProxy.set_backend(backend)
+```
+
+### Memcached
+
+```python
+from fastapi_cachex.backends import MemcachedBackend
+from fastapi_cachex import BackendProxy
+
+backend = MemcachedBackend(servers=["localhost:11211"])
+BackendProxy.set_backend(backend)
+```
+
+### Redis (Coming Soon)
+
+Redis support is under development and will be available in future releases.
 
 ## Development Guide
 
