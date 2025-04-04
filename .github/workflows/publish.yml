@@ -20,9 +20,13 @@ jobs:
       with:
         python-version: "${{ matrix.python-version }}"
 
+    - name: Extract version without 'v' prefix
+      id: extract_version
+      run: echo "::set-output name=version::${GITHUB_REF#refs/tags/v}"
+
     - name: Update version in pyproject.toml
       run: |
-        sed -i "s/version = \"0.1.0\"/version = \"${{ github.event.release.tag_name#v }}\"/" pyproject.toml
+        sed -i "s/version = \"0.1.0\"/version = \"${{ steps.extract_version.outputs.version }}\"/" pyproject.toml
 
     - name: Install build tools
       run: |
