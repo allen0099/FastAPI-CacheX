@@ -1,7 +1,7 @@
 from enum import Enum
 
 
-class CacheControlDirective(Enum):
+class DirectiveType(Enum):
     """Enum representing Cache-Control directives."""
 
     MAX_AGE = "max-age"

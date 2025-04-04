@@ -21,6 +21,7 @@ def test_default_cache():
     response = client.get("/default")
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == ""
+    assert "ETag" in response.headers
 
 
 def test_ttl_endpoint():
@@ -246,3 +247,17 @@ def test_param_var_keyword():
 
     response = client.get("/param-keyword?param=test&keyword=value")
     assert response.status_code == 200
+
+
+def test_post_should_not_cache():
+    @app.post("/post")
+    @cache()
+    async def post_endpoint():
+        return Response(
+            content=b'{"message": "This is a POST endpoint"}',
+            media_type="application/json",
+        )
+
+    response = client.post("/post")
+    assert response.status_code == 200
+    assert "cache-control" not in response.headers

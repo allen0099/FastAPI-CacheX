@@ -11,8 +11,12 @@ from fastapi import Response
 from fastapi.responses import JSONResponse
 from starlette.status import HTTP_304_NOT_MODIFIED
 
-from fastapi_cachex.directives import CacheControlDirective as DirectiveType
+from fastapi_cachex.backends import MemoryBackend
+from fastapi_cachex.directives import DirectiveType
+from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.types import ETagContent
 
 
 class CacheControl:
@@ -29,6 +33,14 @@ class CacheControl:
         return ", ".join(self.directives)
 
 
+async def get_response(func: Callable, *args: Any, **kwargs: Any) -> Response:
+    """Get the response from the function."""
+    if inspect.iscoroutinefunction(func):
+        return await func(*args, **kwargs)
+    else:
+        return func(*args, **kwargs)
+
+
 def cache(  # noqa: C901
     ttl: Optional[int] = None,
     stale_ttl: Optional[int] = None,
@@ -41,6 +53,13 @@ def cache(  # noqa: C901
     must_revalidate: bool = False,
 ) -> Callable:
     def decorator(func: Callable) -> Callable:  # noqa: C901
+        try:
+            cache_backend = BackendProxy.get_backend()
+        except BackendNotFoundError:
+            # Fallback to memory backend if no backend is set
+            cache_backend = MemoryBackend()
+            BackendProxy.set_backend(cache_backend)
+
         # Analyze the original function's signature
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
@@ -68,16 +87,33 @@ def cache(  # noqa: C901
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:  # noqa: C901
             # Get request from kwargs
-            request = kwargs.pop("request", None) if "request" in kwargs else None
+            request: Request | None = (
+                kwargs.pop("request", None) if "request" in kwargs else None
+            )
+
+            # Only cache GET requests
+            if request and request.method != "GET":
+                return await get_response(func, *args, **kwargs)
 
             # Get if-none-match header
-            if_none_match = request.headers.get("if-none-match") if request else None
+            if_none_match: str | None = (
+                request.headers.get("if-none-match") if request else None
+            )
+
+            # Generate cache key
+            cache_key = f"{request.url.path}:{request.query_params}"
+
+            # Check if the data is already in the cache
+            cached_data = await cache_backend.get(cache_key)
+
+            if cached_data and if_none_match == cached_data.etag:
+                return Response(
+                    status_code=HTTP_304_NOT_MODIFIED,
+                    headers={"ETag": cached_data.etag},
+                )
 
             # Get the response
-            if inspect.iscoroutinefunction(func):
-                response = await func(*args, **kwargs)
-            else:
-                response = func(*args, **kwargs)
+            response = await get_response(func, *args, **kwargs)
 
             # Generate ETag (hash based on response content)
             if isinstance(response, JSONResponse):
@@ -91,13 +127,6 @@ def cache(  # noqa: C901
 
             # Calculate ETag
             etag = f'W/"{hashlib.md5(content).hexdigest()}"'  # noqa: S324
-
-            # If ETag matches, return 304 Not Modified
-            if if_none_match == etag:
-                return Response(
-                    status_code=HTTP_304_NOT_MODIFIED,
-                    headers={"ETag": etag, "Cache-Control": ""},
-                )
 
             # Add ETag to response headers
             response.headers["ETag"] = etag
@@ -146,6 +175,9 @@ def cache(  # noqa: C901
             # 5. Special flags
             if immutable:
                 cache_control.add(DirectiveType.IMMUTABLE)
+
+            # Store the data in the cache
+            await cache_backend.set(cache_key, ETagContent(etag, content), ttl=ttl)
 
             response.headers["Cache-Control"] = str(cache_control)
             return response
