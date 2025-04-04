@@ -5,10 +5,6 @@ description = "A caching library for FastAPI with support for Cache-Control, ETa
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-homepage = "https://github.com/allen0099/FastAPI-CacheX"
-repository = "https://github.com/allen0099/FastAPI-CacheX"
-documentation = "https://github.com/allen0099/FastAPI-CacheX#readme"
-issues = "https://github.com/allen0099/FastAPI-CacheX/issues"
 authors = [
     { name = "Allen", email = "s96016641@gmail.com" }
 ]
