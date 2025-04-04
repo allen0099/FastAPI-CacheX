@@ -2,7 +2,9 @@ from fastapi import FastAPI
 from fastapi import Response
 from fastapi.testclient import TestClient
 from starlette.requests import Request
+from starlette.responses import HTMLResponse
 from starlette.responses import JSONResponse
+from starlette.responses import PlainTextResponse
 
 from fastapi_cachex.cache import cache
 
@@ -276,3 +278,58 @@ def test_post_should_not_cache():
     response = client.post("/post")
     assert response.status_code == 200
     assert "cache-control" not in response.headers
+
+
+def test_response_class_html():
+    @app.get("/html", response_class=HTMLResponse)
+    @cache(ttl=60)
+    async def html_endpoint():
+        return "<h1>Hello World</h1>"
+
+    response = client.get("/html")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert response.text == "<h1>Hello World</h1>"
+
+
+def test_response_class_plain_text():
+    @app.get("/text", response_class=PlainTextResponse)
+    @cache(ttl=60)
+    async def text_endpoint():
+        return "Hello World"
+
+    response = client.get("/text")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert response.text == "Hello World"
+
+
+def test_response_class_json_with_raw_dict():
+    @app.get("/json-dict", response_class=JSONResponse)
+    @cache(ttl=60)
+    async def json_dict_endpoint():
+        return {"message": "Hello World"}
+
+    response = client.get("/json-dict")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    assert response.json() == {"message": "Hello World"}
+
+
+def test_response_class_with_etag():
+    """Test that different response classes still generate and handle ETags correctly"""
+
+    @app.get("/html-etag", response_class=HTMLResponse)
+    @cache()
+    async def html_etag_endpoint():
+        return "<h1>Hello World</h1>"
+
+    # First request
+    response1 = client.get("/html-etag")
+    assert response1.status_code == 200
+    assert "ETag" in response1.headers
+
+    # Second request with ETag
+    etag = response1.headers["ETag"]
+    response2 = client.get("/html-etag", headers={"If-None-Match": etag})
+    assert response2.status_code == 304  # Not Modified

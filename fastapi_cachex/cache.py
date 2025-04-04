@@ -11,7 +11,6 @@ from typing import Literal
 from typing import Optional
 from typing import TypeVar
 from typing import Union
-from typing import cast
 
 from fastapi import Request
 from fastapi import Response
@@ -47,14 +46,30 @@ class CacheControl:
 
 
 async def get_response(
-    func: AnyCallable[Response], *args: Any, **kwargs: Any
+    __func: AnyCallable[Response], __request: Request, *args: Any, **kwargs: Any
 ) -> Response:
     """Get the response from the function."""
-    if inspect.iscoroutinefunction(func):
-        result = await func(*args, **kwargs)
+    if inspect.iscoroutinefunction(__func):
+        result = await __func(*args, **kwargs)
     else:
-        result = func(*args, **kwargs)
-    return cast("Response", result)
+        result = __func(*args, **kwargs)
+
+    # If already a Response object, return it directly
+    if isinstance(result, Response):
+        return result
+
+    # Get response_class from route if available
+    response_class: type[Response] = JSONResponse  # default fallback
+    route = __request.scope.get("route")
+    if route is not None:
+        response_class = getattr(route, "response_class", JSONResponse)
+
+    # Convert non-Response result to Response using appropriate response_class
+    response = response_class(content=result)
+    # Ensure response has a properly encoded body
+    if not hasattr(response, "body"):
+        response.body = str(response.body).encode() if response.body else b""
+    return response
 
 
 def cache(  # noqa: C901
@@ -113,7 +128,7 @@ def cache(  # noqa: C901
 
             # Only cache GET requests
             if req.method != "GET":
-                return await get_response(func, *args, **kwargs)
+                return await get_response(func, req, *args, **kwargs)
 
             # Generate cache key
             cache_key = f"{req.url.path}:{req.query_params}"
@@ -128,20 +143,10 @@ def cache(  # noqa: C901
                 )
 
             # Get the response
-            response = await get_response(func, *args, **kwargs)
+            response = await get_response(func, req, *args, **kwargs)
 
             # Generate ETag (hash based on response content)
-            if isinstance(response, JSONResponse):
-                content = response.body
-            else:
-                content = (
-                    response.body
-                    if hasattr(response, "body")
-                    else str(response).encode()
-                )
-
-            # Calculate ETag
-            etag = f'W/"{hashlib.md5(content).hexdigest()}"'  # noqa: S324
+            etag = f'W/"{hashlib.md5(response.body).hexdigest()}"'  # noqa: S324
 
             # Add ETag to response headers
             response.headers["ETag"] = etag
@@ -192,7 +197,9 @@ def cache(  # noqa: C901
                 cache_control.add(DirectiveType.IMMUTABLE)
 
             # Store the data in the cache
-            await cache_backend.set(cache_key, ETagContent(etag, content), ttl=ttl)
+            await cache_backend.set(
+                cache_key, ETagContent(etag, response.body), ttl=ttl
+            )
 
             response.headers["Cache-Control"] = str(cache_control)
             return response
