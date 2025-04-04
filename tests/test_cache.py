@@ -280,6 +280,17 @@ def test_post_should_not_cache():
     assert "cache-control" not in response.headers
 
 
+def test_use_default_response_class():
+    @app.get("/")
+    @cache()
+    async def default_response_class_endpoint():
+        return {"message": "This endpoint uses the default response class"}
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+
+
 def test_response_class_html():
     @app.get("/html", response_class=HTMLResponse)
     @cache(ttl=60)
