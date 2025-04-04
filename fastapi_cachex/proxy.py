@@ -1,7 +1,9 @@
+from typing import Optional
+
 from fastapi_cachex.backends import BaseCacheBackend
 from fastapi_cachex.exceptions import BackendNotFoundError
 
-_default_backend: BaseCacheBackend | None = None
+_default_backend: Optional[BaseCacheBackend] = None
 
 
 class BackendProxy:
@@ -17,7 +19,11 @@ class BackendProxy:
         return _default_backend
 
     @staticmethod
-    def set_backend(backend: BaseCacheBackend) -> None:
-        """Set the backend for caching."""
+    def set_backend(backend: Optional[BaseCacheBackend]) -> None:
+        """Set the backend for caching.
+
+        Args:
+            backend: The backend to use for caching, or None to clear the current backend
+        """
         global _default_backend
         _default_backend = backend
