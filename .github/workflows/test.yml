@@ -28,7 +28,8 @@ jobs:
         uv venv
         uv sync
 
-    - name: Run tests with pytest and coverage
+    - name: Activate virtual environment and run tests
       run: |
+        source .venv/bin/activate
         coverage run -m pytest
         coverage report
