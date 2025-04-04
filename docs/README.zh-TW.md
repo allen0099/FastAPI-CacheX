@@ -43,15 +43,53 @@ uv pip install fastapi-cachex
 
 ```python
 from fastapi import FastAPI
-from fastapi_cachex import cache
+from fastapi_cachex import cache, BackendProxy
+from fastapi_cachex.backends import MemoryBackend, MemcachedBackend
 
 app = FastAPI()
 
+# 設定緩存後端
+memory_backend = MemoryBackend()  # 記憶體緩存
+# 或
+memcached_backend = MemcachedBackend(servers=["localhost:11211"])  # Memcached
+
+# 設定要使用的後端
+BackendProxy.set_backend(memory_backend)  # 或 memcached_backend
+
+
 @app.get("/")
-@cache()
+@cache(ttl=60)  # 緩存 60 秒
 async def read_root():
     return {"Hello": "World"}
 ```
+
+## 後端設定
+
+FastAPI-CacheX 支援多種緩存後端。你可以使用 `BackendProxy` 輕鬆切換不同的後端。
+
+### 記憶體緩存
+
+```python
+from fastapi_cachex.backends import MemoryBackend
+from fastapi_cachex import BackendProxy
+
+backend = MemoryBackend()
+BackendProxy.set_backend(backend)
+```
+
+### Memcached
+
+```python
+from fastapi_cachex.backends import MemcachedBackend
+from fastapi_cachex import BackendProxy
+
+backend = MemcachedBackend(servers=["localhost:11211"])
+BackendProxy.set_backend(backend)
+```
+
+### Redis（即將推出）
+
+Redis 支援正在開發中，將在未來版本中提供。
 
 ## 開發指南
 
