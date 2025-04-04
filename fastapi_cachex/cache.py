@@ -65,11 +65,7 @@ async def get_response(
         response_class = getattr(route, "response_class", JSONResponse)
 
     # Convert non-Response result to Response using appropriate response_class
-    response = response_class(content=result)
-    # Ensure response has a properly encoded body
-    if not hasattr(response, "body"):
-        response.body = str(response.body).encode() if response.body else b""
-    return response
+    return response_class(content=result)
 
 
 def cache(  # noqa: C901
