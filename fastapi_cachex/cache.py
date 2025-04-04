@@ -6,6 +6,7 @@ from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
 from inspect import Signature
+from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 from typing import Optional
@@ -14,7 +15,7 @@ from typing import Union
 
 from fastapi import Request
 from fastapi import Response
-from fastapi.responses import JSONResponse
+from fastapi.datastructures import DefaultPlaceholder
 from starlette.status import HTTP_304_NOT_MODIFIED
 
 from fastapi_cachex.backends import MemoryBackend
@@ -24,6 +25,9 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import RequestNotFoundError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import ETagContent
+
+if TYPE_CHECKING:
+    from fastapi.routing import APIRoute
 
 T = TypeVar("T", bound=Response)
 AsyncCallable = Callable[..., Awaitable[T]]
@@ -59,10 +63,15 @@ async def get_response(
         return result
 
     # Get response_class from route if available
-    response_class: type[Response] = JSONResponse  # default fallback
-    route = __request.scope.get("route")
-    if route is not None:
-        response_class = getattr(route, "response_class", JSONResponse)
+    route: APIRoute | None = __request.scope.get("route")
+    if route is None:  # pragma: no cover
+        raise CacheXError("Route not found in request scope")
+
+    if isinstance(route.response_class, DefaultPlaceholder):
+        response_class: type[Response] = route.response_class.value
+
+    else:
+        response_class = route.response_class
 
     # Convert non-Response result to Response using appropriate response_class
     return response_class(content=result)
