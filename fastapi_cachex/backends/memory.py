@@ -15,7 +15,7 @@ class MemoryBackend(BaseCacheBackend):
         self.cache: dict[str, CacheItem] = {}
         self.lock = asyncio.Lock()
         self.cleanup_interval = 60
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._cleanup_task: Optional[asyncio.Task[None]] = None
 
     def start_cleanup(self) -> None:
         """Start the cleanup task if it's not already running."""
@@ -42,7 +42,7 @@ class MemoryBackend(BaseCacheBackend):
         self, key: str, value: ETagContent, ttl: Optional[int] = None
     ) -> None:
         async with self.lock:
-            expiry = time.time() + ttl if ttl is not None else None
+            expiry: Optional[int] = int(time.time() + ttl) if ttl is not None else None
             self.cache[key] = CacheItem(value=value, expiry=expiry)
 
     async def delete(self, key: str) -> None:
