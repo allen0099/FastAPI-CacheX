@@ -13,6 +13,12 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
 
+    services:
+      memcached:
+        image: memcached:1.6-alpine
+        ports:
+          - 11211:11211
+
     steps:
     - uses: actions/checkout@v4
 
@@ -44,4 +50,3 @@ jobs:
         folder: .
         target-folder: .
         clean: false
-        file: coverage.svg
