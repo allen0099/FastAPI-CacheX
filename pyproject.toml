@@ -1,0 +1,105 @@
+[project]
+name = "fastapi-cachex"
+version = "0.1.0" # Initial release version
+description = "A caching library for FastAPI with support for Cache-Control, ETag, and multiple backends."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+    { name = "Allen", email = "s96016641@gmail.com" }
+]
+keywords = ["fastapi", "cache", "etag", "cache-control", "redis", "memcached", "in-memory"]
+dependencies = [
+    "fastapi>=0.115.12",
+    "genbadge[coverage]>=1.1.2",
+    "httpx>=0.28.1",
+]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.8.0",
+    "pre-commit>=4.2.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+    "pytest-cov>=6.1.0",
+    "ruff>=0.11.2",
+    "tox>=4.25.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff.lint]
+ignore = [
+    "A005", # Shadowing built-in name
+    "E501",
+    "ANN401",
+    "B008", # do not perform function calls in argument defaults
+    "B904", # Allow raising exceptions without from e, for HTTPException
+]
+preview = true
+explicit-preview-rules = true
+extend-select = [
+    "A", # flake8-builtins
+    "B", # flake8-bugbear
+    "C", # flake8-comprehensions
+    "E", # pycodestyle errors
+    "F", # pyflakes
+    "I", # isort
+    "UP", # pyupgrade
+    "W", # pycodestyle warnings
+    "G", # flake8-logging-format
+    "N", # pep8-naming
+    "Q", # flake8-quotes
+    "S", # flake8-bandit
+    "ANN", # flake8-annotations
+    "ARG", # flake8-unused-arguments
+    "BLE", # flake8-blind-except
+    "DTZ", # flake8-datetimez
+    "ICN", # flake8-import-conventions
+    "INP", # flake8-no-pep420
+    "LOG", # flake8-logging
+    "PIE", # flake8-pie
+    "PTH", # flake8-use-pathlib
+    "RUF", # Ruff-specific rules
+    "SIM", # flake8-simplify
+    "T20", # flake8-print
+    "TCH", # flake8-type-checking
+    "SLOT", # flake8-slots
+    # Preview rules
+    "PLW1514", # unspecified-encoding
+]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.pyupgrade]
+# Preserve types, even if a file imports `from __future__ import annotations`.
+keep-runtime-typing = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ARG", "ANN", "B011", "BLE"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.coverage.run]
+source = ["fastapi_cachex"]
+omit = ["tests/*"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+    "\\.\\.\\.",
+]
+fail_under = 90
+show_missing = true
