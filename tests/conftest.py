@@ -1,20 +1,11 @@
-import asyncio
-
-import pytest
+import pytest_asyncio
 
 from fastapi_cachex.backends.memory import MemoryBackend
 
-# from fastapi_cachex.proxy import BackendProxy
 
-
-@pytest.fixture(autouse=True, scope="session")
+@pytest_asyncio.fixture(autouse=True)
 async def init_cache():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     backend = MemoryBackend()
-    # BackendProxy.set_backend(backend)
-    task = loop.create_task(backend._cleanup_task())
-    yield
-    await task
-    loop.close()
-    # Teardown code here if needed
+    backend.start_cleanup()  # 開始清理任務
+    yield backend
+    backend.stop_cleanup()  # 停止清理任務

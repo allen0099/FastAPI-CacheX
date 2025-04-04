@@ -15,6 +15,18 @@ class MemoryBackend(BaseCacheBackend):
         self.cache: dict[str, CacheItem] = {}
         self.lock = asyncio.Lock()
         self.cleanup_interval = 60
+        self._cleanup_task: Optional[asyncio.Task] = None
+
+    def start_cleanup(self) -> None:
+        """Start the cleanup task if it's not already running."""
+        if self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(self._cleanup_task_impl())
+
+    def stop_cleanup(self) -> None:
+        """Stop the cleanup task if it's running."""
+        if self._cleanup_task is not None:
+            self._cleanup_task.cancel()
+            self._cleanup_task = None
 
     async def get(self, key: str) -> Optional[ETagContent]:
         async with self.lock:
@@ -41,10 +53,14 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             self.cache.clear()
 
-    async def _cleanup_task(self) -> None:
-        while True:
-            await asyncio.sleep(self.cleanup_interval)
-            await self.cleanup()
+    async def _cleanup_task_impl(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self.cleanup_interval)
+                await self.cleanup()  # pragma: no cover
+        except asyncio.CancelledError:
+            # Handle task cancellation gracefully
+            pass
 
     async def cleanup(self) -> None:
         async with self.lock:

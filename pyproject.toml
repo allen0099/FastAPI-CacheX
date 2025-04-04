@@ -14,6 +14,7 @@ dev = [
     "coverage>=7.8.0",
     "pre-commit>=4.2.0",
     "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
     "pytest-cov>=6.1.0",
     "ruff>=0.11.2",
     "tox>=4.25.0",
@@ -23,6 +24,7 @@ dev = [
 pythonpath = [
   "."
 ]
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff.lint]
 ignore = [
@@ -77,3 +79,21 @@ keep-runtime-typing = true
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[tool.coverage.run]
+source = ["fastapi_cachex"]
+omit = ["tests/*"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+    "\\.\\.\\.",
+]
+fail_under = 90
+show_missing = true
