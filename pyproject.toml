@@ -8,11 +8,31 @@ license = "Apache-2.0"
 authors = [
     { name = "Allen", email = "s96016641@gmail.com" }
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Framework :: FastAPI",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+]
 keywords = ["fastapi", "cache", "etag", "cache-control", "redis", "memcached", "in-memory"]
 dependencies = [
-    "fastapi>=0.115.12",
-    "httpx>=0.28.1",
+    "fastapi",
+    "httpx",
 ]
+
+[project.urls]
+Homepage = "https://github.com/allen0099/FastAPI-CacheX"
+Repository = "https://github.com/allen0099/FastAPI-CacheX.git"
+Issues = "https://github.com/allen0099/FastAPI-CacheX/issues"
 
 [dependency-groups]
 dev = [

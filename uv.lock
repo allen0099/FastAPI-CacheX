@@ -190,8 +190,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", specifier = ">=0.115.12" },
-    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "fastapi" },
+    { name = "httpx" },
 ]
 
 [package.metadata.requires-dev]
