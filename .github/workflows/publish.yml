@@ -8,13 +8,21 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        python-version: [3.10, 3.11, 3.12, 3.13]
+
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.10"
+        python-version: "${{ matrix.python-version }}"
+
+    - name: Update version in pyproject.toml
+      run: |
+        sed -i "s/version = \"0.0.0\"/version = \"${{ github.event.release.tag_name }}\"/" pyproject.toml
 
     - name: Install build tools
       run: |
