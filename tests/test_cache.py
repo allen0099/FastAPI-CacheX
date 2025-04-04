@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi import Response
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from fastapi_cachex.cache import cache
@@ -247,6 +248,20 @@ def test_param_var_keyword():
 
     response = client.get("/param-keyword?param=test&keyword=value")
     assert response.status_code == 200
+
+
+def test_contain_request():
+    @app.get("/contain-request")
+    @cache()
+    async def contain_request_endpoint(request: Request):
+        return Response(
+            content=b'{"message": "This endpoint contains request"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/contain-request")
+    assert response.status_code == 200
+    assert "ETag" in response.headers
 
 
 def test_post_should_not_cache():

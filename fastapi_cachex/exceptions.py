@@ -8,3 +8,7 @@ class CacheError(CacheXError):
 
 class BackendNotFoundError(CacheXError):
     """Exception raised when a cache backend is not found."""
+
+
+class RequestNotFoundError(CacheXError):
+    """Exception raised when a request is not found."""

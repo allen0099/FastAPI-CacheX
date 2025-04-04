@@ -2,6 +2,8 @@ import hashlib
 import inspect
 from collections.abc import Callable
 from functools import wraps
+from inspect import Parameter
+from inspect import Signature
 from typing import Any
 from typing import Literal
 from typing import Optional
@@ -15,6 +17,7 @@ from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.directives import DirectiveType
 from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.exceptions import RequestNotFoundError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import ETagContent
 
@@ -61,44 +64,45 @@ def cache(  # noqa: C901
             BackendProxy.set_backend(cache_backend)
 
         # Analyze the original function's signature
-        sig = inspect.signature(func)
-        params = list(sig.parameters.values())
+        sig: Signature = inspect.signature(func)
+        params: list[Parameter] = list(sig.parameters.values())
 
         # Check if Request is already in the parameters
-        has_request = any(
-            param.annotation == Request or param.annotation == Optional[Request]
-            for param in params
+        found_request: Parameter | None = next(
+            (param for param in params if param.annotation == Request), None
         )
 
         # Add Request parameter if it's not present
-        if not has_request:
-            new_params = []
+        if not found_request:
+            request_name: str = "__cachex_request"
 
             request_param = inspect.Parameter(
-                "request",
+                request_name,
                 inspect.Parameter.KEYWORD_ONLY,
                 annotation=Request,
             )
-            new_params.append(request_param)
 
-            sig = sig.replace(parameters=[*params, *new_params])
-            func.__signature__ = sig
+            sig = sig.replace(parameters=[*params, request_param])
+
+        else:
+            request_name = found_request.name
+
+        func.__signature__ = sig
 
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:  # noqa: C901
-            # Get request from kwargs
-            request: Request | None = (
-                kwargs.pop("request", None) if "request" in kwargs else None
-            )
+            if found_request:
+                request: Request | None = kwargs.get(request_name)
+            else:
+                request: Request | None = kwargs.pop(request_name, None)
+
+            if not request:  # pragma: no cover
+                # Skip coverage for this case, as it should not happen
+                raise RequestNotFoundError()
 
             # Only cache GET requests
-            if request and request.method != "GET":
+            if request.method != "GET":
                 return await get_response(func, *args, **kwargs)
-
-            # Get if-none-match header
-            if_none_match: str | None = (
-                request.headers.get("if-none-match") if request else None
-            )
 
             # Generate cache key
             cache_key = f"{request.url.path}:{request.query_params}"
@@ -106,7 +110,9 @@ def cache(  # noqa: C901
             # Check if the data is already in the cache
             cached_data = await cache_backend.get(cache_key)
 
-            if cached_data and if_none_match == cached_data.etag:
+            if cached_data and cached_data.etag == (
+                request.headers.get("if-none-match")
+            ):
                 return Response(
                     status_code=HTTP_304_NOT_MODIFIED,
                     headers={"ETag": cached_data.etag},
