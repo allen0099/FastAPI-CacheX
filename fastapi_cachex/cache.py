@@ -1,12 +1,17 @@
 import hashlib
 import inspect
+from collections.abc import Awaitable
 from collections.abc import Callable
+from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
 from inspect import Signature
 from typing import Any
 from typing import Literal
 from typing import Optional
+from typing import TypeVar
+from typing import Union
+from typing import cast
 
 from fastapi import Request
 from fastapi import Response
@@ -21,10 +26,15 @@ from fastapi_cachex.exceptions import RequestNotFoundError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import ETagContent
 
+T = TypeVar("T", bound=Response)
+AsyncCallable = Callable[..., Awaitable[T]]
+SyncCallable = Callable[..., T]
+AnyCallable = Union[AsyncCallable[T], SyncCallable[T]]  # noqa: UP007
+
 
 class CacheControl:
     def __init__(self) -> None:
-        self.directives = []
+        self.directives: list[str] = []
 
     def add(self, directive: DirectiveType, value: Optional[int] = None) -> None:
         if value is not None:
@@ -36,12 +46,15 @@ class CacheControl:
         return ", ".join(self.directives)
 
 
-async def get_response(func: Callable, *args: Any, **kwargs: Any) -> Response:
+async def get_response(
+    func: AnyCallable[Response], *args: Any, **kwargs: Any
+) -> Response:
     """Get the response from the function."""
     if inspect.iscoroutinefunction(func):
-        return await func(*args, **kwargs)
+        result = await func(*args, **kwargs)
     else:
-        return func(*args, **kwargs)
+        result = func(*args, **kwargs)
+    return cast("Response", result)
 
 
 def cache(  # noqa: C901
@@ -54,8 +67,8 @@ def cache(  # noqa: C901
     private: bool = False,
     immutable: bool = False,
     must_revalidate: bool = False,
-) -> Callable:
-    def decorator(func: Callable) -> Callable:  # noqa: C901
+) -> Callable[[AnyCallable[Response]], AsyncCallable[Response]]:
+    def decorator(func: AnyCallable[Response]) -> AsyncCallable[Response]:  # noqa: C901
         try:
             cache_backend = BackendProxy.get_backend()
         except BackendNotFoundError:
@@ -87,32 +100,28 @@ def cache(  # noqa: C901
         else:
             request_name = found_request.name
 
-        func.__signature__ = sig
-
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:  # noqa: C901
             if found_request:
-                request: Request | None = kwargs.get(request_name)
+                req: Request | None = kwargs.get(request_name)
             else:
-                request: Request | None = kwargs.pop(request_name, None)
+                req = kwargs.pop(request_name, None)
 
-            if not request:  # pragma: no cover
+            if not req:  # pragma: no cover
                 # Skip coverage for this case, as it should not happen
                 raise RequestNotFoundError()
 
             # Only cache GET requests
-            if request.method != "GET":
+            if req.method != "GET":
                 return await get_response(func, *args, **kwargs)
 
             # Generate cache key
-            cache_key = f"{request.url.path}:{request.query_params}"
+            cache_key = f"{req.url.path}:{req.query_params}"
 
             # Check if the data is already in the cache
             cached_data = await cache_backend.get(cache_key)
 
-            if cached_data and cached_data.etag == (
-                request.headers.get("if-none-match")
-            ):
+            if cached_data and cached_data.etag == req.headers.get("if-none-match"):
                 return Response(
                     status_code=HTTP_304_NOT_MODIFIED,
                     headers={"ETag": cached_data.etag},
@@ -187,6 +196,10 @@ def cache(  # noqa: C901
 
             response.headers["Cache-Control"] = str(cache_control)
             return response
+
+        # Update the wrapper with the new signature
+        update_wrapper(wrapper, func)
+        wrapper.__signature__ = sig  # type: ignore
 
         return wrapper
 
