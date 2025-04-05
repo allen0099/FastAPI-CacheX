@@ -27,6 +27,28 @@ def test_default_cache():
     assert "ETag" in response.headers
 
 
+def test_cache_with_ttl():
+    @app.get("/cache-with-ttl")
+    @cache(ttl=3)
+    async def cache_with_ttl_endpoint():
+        return Response(
+            content=b'{"message": "This endpoint has a TTL of 30 seconds"}',
+            media_type="application/json",
+        )
+
+    response = client.get("/cache-with-ttl")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "max-age=3"
+    assert "ETag" in response.headers
+
+    response2 = client.get(
+        "/cache-with-ttl", headers={"If-None-Match": response.headers["ETag"]}
+    )
+    assert response2.status_code == 304
+    assert response2.headers["Cache-Control"] == "max-age=3"
+    assert response2.headers["ETag"] == response.headers["ETag"]
+
+
 def test_ttl_endpoint():
     @app.get("/ttl")
     @cache(60)
@@ -404,3 +426,77 @@ def test_no_cache_with_changing_data():
     assert response3.status_code == 200
     assert response3.json() == {"message": "This endpoint uses no-cache", "counter": 3}
     assert response3.headers["ETag"] != etag2  # ETag should change again
+
+
+# def test_stale_without_ttl():
+#     """Test that using stale without stale_ttl raises an error."""
+#
+#     @app.get("/stale-without-ttl")
+#     @cache(stale="revalidate")  # Missing stale_ttl
+#     async def stale_without_ttl_endpoint():
+#         return {"message": "This should raise an error"}
+#
+#     with pytest.raises(CacheXError) as exc_info:
+#         client.get("/stale-without-ttl")
+#
+#     assert "stale_ttl must be set if stale is used" in str(exc_info.value)
+#
+#
+# def test_stale_with_ttl():
+#     """Test that using stale with stale_ttl works correctly."""
+#
+#     @app.get("/stale-with-ttl")
+#     @cache(stale="revalidate", stale_ttl=30)
+#     async def stale_with_ttl_endpoint():
+#         return {"message": "This should work fine"}
+#
+#     response = client.get("/stale-with-ttl")
+#     assert response.status_code == 200
+#     assert "stale-while-revalidate=30" in response.headers["Cache-Control"]
+#
+#
+# def test_stale_validation_complete():
+#     """Test all stale validation scenarios including error cases."""
+#
+#     # Test invalid stale value
+#     @app.get("/stale-invalid")
+#     @cache(stale="invalid", stale_ttl=30)  # Invalid stale value
+#     async def stale_invalid_endpoint():
+#         return {"message": "This should work fine"}
+#
+#     response = client.get("/stale-invalid")
+#     assert response.status_code == 200
+#     assert "Cache-Control" in response.headers
+#
+#     # Test with both stale type options
+#     @app.get("/stale-both-types")
+#     @cache(stale="error", stale_ttl=30, ttl=60)
+#     async def stale_both_types_endpoint():
+#         return {"message": "Testing both stale types"}
+#
+#     response = client.get("/stale-both-types")
+#     assert response.status_code == 200
+#     assert "stale-if-error=30" in response.headers["Cache-Control"]
+#     assert "max-age=60" in response.headers["Cache-Control"]
+#
+#
+# def test_stale_edge_cases():
+#     """Test edge cases for stale validation."""
+#
+#     # Test None values
+#     @app.get("/stale-none")
+#     @cache(stale=None, stale_ttl=None)
+#     async def stale_none_endpoint():
+#         return {"message": "Testing stale None values"}
+#
+#     response = client.get("/stale-none")
+#     assert response.status_code == 200
+#
+#     # Test with stale=None but stale_ttl set
+#     @app.get("/stale-none-with-ttl")
+#     @cache(stale=None, stale_ttl=30)
+#     async def stale_none_with_ttl_endpoint():
+#         return {"message": "Testing stale None with TTL"}
+#
+#     response = client.get("/stale-none-with-ttl")
+#     assert response.status_code == 200
