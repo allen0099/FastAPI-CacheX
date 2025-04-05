@@ -344,3 +344,63 @@ def test_response_class_with_etag():
     etag = response1.headers["ETag"]
     response2 = client.get("/html-etag", headers={"If-None-Match": etag})
     assert response2.status_code == 304  # Not Modified
+
+
+def test_no_cache_with_unchanged_data():
+    """Test no-cache behavior when data hasn't changed."""
+    counter = 0
+
+    @app.get("/no-cache-unchanged")
+    @cache(no_cache=True)
+    async def no_cache_unchanged_endpoint():
+        return {"message": "This endpoint uses no-cache", "counter": counter}
+
+    # First request should return 200
+    response1 = client.get("/no-cache-unchanged")
+    assert response1.status_code == 200
+    assert response1.json() == {"message": "This endpoint uses no-cache", "counter": 0}
+    etag1 = response1.headers["ETag"]
+    assert "no-cache" in response1.headers["Cache-Control"].lower()
+
+    # Second request with ETag should return 304 as data hasn't changed
+    response2 = client.get("/no-cache-unchanged", headers={"If-None-Match": etag1})
+    assert response2.status_code == 304
+    assert "ETag" in response2.headers
+    assert response2.headers["ETag"] == etag1
+
+    # Third request without ETag should return 200 but same data
+    response3 = client.get("/no-cache-unchanged")
+    assert response3.status_code == 200
+    assert response3.json() == {"message": "This endpoint uses no-cache", "counter": 0}
+    assert response3.headers["ETag"] == etag1
+
+
+def test_no_cache_with_changing_data():
+    """Test no-cache behavior when data changes between requests."""
+    counter = {"value": 0}
+
+    @app.get("/no-cache-changing")
+    @cache(no_cache=True)
+    async def no_cache_changing_endpoint():
+        counter["value"] += 1
+        return {"message": "This endpoint uses no-cache", "counter": counter["value"]}
+
+    # First request
+    response1 = client.get("/no-cache-changing")
+    assert response1.status_code == 200
+    assert response1.json() == {"message": "This endpoint uses no-cache", "counter": 1}
+    etag1 = response1.headers["ETag"]
+    assert "no-cache" in response1.headers["Cache-Control"].lower()
+
+    # Second request with previous ETag should still return 200 with new data
+    response2 = client.get("/no-cache-changing", headers={"If-None-Match": etag1})
+    assert response2.status_code == 200  # Not 304 because data changed
+    assert response2.json() == {"message": "This endpoint uses no-cache", "counter": 2}
+    etag2 = response2.headers["ETag"]
+    assert etag2 != etag1  # ETags should be different as content changed
+
+    # Third request with latest ETag
+    response3 = client.get("/no-cache-changing", headers={"If-None-Match": etag2})
+    assert response3.status_code == 200
+    assert response3.json() == {"message": "This endpoint uses no-cache", "counter": 3}
+    assert response3.headers["ETag"] != etag2  # ETag should change again
