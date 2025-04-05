@@ -138,3 +138,75 @@ async def test_memory_backend_cleanup(memory_backend: MemoryBackend):
 
     assert retrieved_value1 is None
     assert retrieved_value2 == value2
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_start_cleanup(memory_backend: MemoryBackend):
+    memory_backend.start_cleanup()
+    assert memory_backend._cleanup_task is not None
+    assert not memory_backend._cleanup_task.done()
+    memory_backend.stop_cleanup()  # Clean up after test
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_stop_cleanup(memory_backend: MemoryBackend):
+    memory_backend.start_cleanup()
+    assert memory_backend._cleanup_task is not None
+    memory_backend.stop_cleanup()
+    assert memory_backend._cleanup_task is None
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_double_start_cleanup(memory_backend: MemoryBackend):
+    memory_backend.start_cleanup()
+    original_task = memory_backend._cleanup_task
+    memory_backend.start_cleanup()  # Start again
+    assert memory_backend._cleanup_task is original_task  # Should be the same task
+    memory_backend.stop_cleanup()  # Clean up after test
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_stop_cleanup_when_not_running(
+    memory_backend: MemoryBackend,
+):
+    memory_backend.stop_cleanup()  # Should not raise any error
+    assert memory_backend._cleanup_task is None
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_cleanup_task_impl(memory_backend: MemoryBackend):
+    """Test that the cleanup task actually runs and cleans up expired items."""
+    key1 = "test_key1"
+    value1 = ETagContent(
+        etag="test_etag1",
+        content=b"test_value1",
+    )
+    key2 = "test_key2"
+    value2 = ETagContent(
+        etag="test_etag2",
+        content=b"test_value2",
+    )
+
+    # Set shorter cleanup interval for testing
+    memory_backend.cleanup_interval = 1
+
+    # Set items with different TTLs
+    await memory_backend.set(key1, value1, ttl=1)  # This should expire
+    await memory_backend.set(key2, value2, ttl=60)  # This should remain
+
+    # Start the cleanup task
+    memory_backend.start_cleanup()
+
+    # Wait for cleanup to run at least once
+    await asyncio.sleep(2)
+
+    # Get values after cleanup
+    value1_after = await memory_backend.get(key1)
+    value2_after = await memory_backend.get(key2)
+
+    # Stop the cleanup task
+    memory_backend.stop_cleanup()
+
+    # Assert that expired item was cleaned up
+    assert value1_after is None
+    assert value2_after == value2

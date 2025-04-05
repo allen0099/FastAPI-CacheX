@@ -95,46 +95,10 @@ BackendProxy.set_backend(backend)
 
 Redis support is under development and will be available in future releases.
 
-## Development Guide
+## Documentation
 
-### Running Tests
-
-1. Run unit tests:
-
-```bash
-pytest
-```
-
-2. Run tests with coverage report:
-
-```bash
-pytest --cov=fastapi_cachex
-```
-
-### Using tox
-
-tox ensures the code works across different Python versions (3.10-3.13).
-
-1. Install all Python versions
-2. Run tox:
-
-```bash
-tox
-```
-
-To run for a specific Python version:
-
-```bash
-tox -e py310  # only run for Python 3.10
-```
-
-## Contributing
-
-1. Fork the project
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+- [Development Guide](docs/DEVELOPMENT.md)
+- [Contributing Guidelines](docs/CONTRIBUTING.md)
 
 ## License
 

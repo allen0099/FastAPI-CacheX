@@ -120,6 +120,43 @@ def cache(  # noqa: C901
         else:
             request_name = found_request.name
 
+        async def get_cache_control(cache_control: CacheControl) -> str:  # noqa: C901
+            # Set Cache-Control headers
+            if no_cache:
+                cache_control.add(DirectiveType.NO_CACHE)
+                if must_revalidate:
+                    cache_control.add(DirectiveType.MUST_REVALIDATE)
+            else:
+                # Handle normal cache control cases
+                # 1. Access scope (public/private)
+                if public:
+                    cache_control.add(DirectiveType.PUBLIC)
+                elif private:
+                    cache_control.add(DirectiveType.PRIVATE)
+
+                # 2. Cache time settings
+                if ttl is not None:
+                    cache_control.add(DirectiveType.MAX_AGE, ttl)
+
+                # 3. Validation related
+                if must_revalidate:
+                    cache_control.add(DirectiveType.MUST_REVALIDATE)
+
+                # 4. Stale response handling
+                if stale is not None and stale_ttl is None:
+                    raise CacheXError("stale_ttl must be set if stale is used")
+
+                if stale == "revalidate":
+                    cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
+                elif stale == "error":
+                    cache_control.add(DirectiveType.STALE_IF_ERROR, stale_ttl)
+
+                # 5. Special flags
+                if immutable:
+                    cache_control.add(DirectiveType.IMMUTABLE)
+
+            return str(cache_control)
+
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:  # noqa: C901
             if found_request:
@@ -135,79 +172,72 @@ def cache(  # noqa: C901
             if req.method != "GET":
                 return await get_response(func, req, *args, **kwargs)
 
-            # Generate cache key
+            # Generate cache key and prepare headers
             cache_key = f"{req.url.path}:{req.query_params}"
-
-            # Check if the data is already in the cache
-            cached_data = await cache_backend.get(cache_key)
-
-            if cached_data and cached_data.etag == req.headers.get("if-none-match"):
-                return Response(
-                    status_code=HTTP_304_NOT_MODIFIED,
-                    headers={"ETag": cached_data.etag},
-                )
-
-            # Get the response
-            response = await get_response(func, req, *args, **kwargs)
-
-            # Generate ETag (hash based on response content)
-            etag = f'W/"{hashlib.md5(response.body).hexdigest()}"'  # noqa: S324
-
-            # Add ETag to response headers
-            response.headers["ETag"] = etag
-
-            # Handle Cache-Control header
-            cache_control = CacheControl()
+            client_etag = req.headers.get("if-none-match")
+            cache_control = await get_cache_control(CacheControl())
 
             # Handle special case: no-store (highest priority)
             if no_store:
-                cache_control.add(DirectiveType.NO_STORE)
-                response.headers["Cache-Control"] = str(cache_control)
+                response = await get_response(func, req, *args, **kwargs)
+                cc = CacheControl()
+                cc.add(DirectiveType.NO_STORE)
+                response.headers["Cache-Control"] = str(cc)
                 return response
 
-            # Handle special case: no-cache
-            if no_cache:
-                cache_control.add(DirectiveType.NO_CACHE)
-                if must_revalidate:
-                    cache_control.add(DirectiveType.MUST_REVALIDATE)
-                response.headers["Cache-Control"] = str(cache_control)
-                return response
+            # Check cache and handle ETag validation
+            cached_data = await cache_backend.get(cache_key)
 
-            # Handle normal cache control cases
-            # 1. Access scope (public/private)
-            if public:
-                cache_control.add(DirectiveType.PUBLIC)
-            elif private:
-                cache_control.add(DirectiveType.PRIVATE)
+            current_response = None
+            current_etag = None
 
-            # 2. Cache time settings
-            if ttl is not None:
-                cache_control.add(DirectiveType.MAX_AGE, ttl)
+            if client_etag:
+                if no_cache:
+                    # Get fresh response first if using no-cache
+                    current_response = await get_response(func, req, *args, **kwargs)
+                    current_etag = (
+                        f'W/"{hashlib.md5(current_response.body).hexdigest()}"'  # noqa: S324
+                    )
 
-            # 3. Validation related
-            if must_revalidate:
-                cache_control.add(DirectiveType.MUST_REVALIDATE)
+                    if client_etag == current_etag:
+                        # For no-cache, compare fresh data with client's ETag
+                        return Response(
+                            status_code=HTTP_304_NOT_MODIFIED,
+                            headers={
+                                "ETag": current_etag,
+                                "Cache-Control": cache_control,
+                            },
+                        )
 
-            # 4. Stale response handling
-            if stale is not None and stale_ttl is None:
-                raise CacheXError("stale_ttl must be set if stale is used")
+                # Compare with cached ETag
+                elif (
+                    cached_data and client_etag == cached_data.etag
+                ):  # pragma: no branch
+                    return Response(
+                        status_code=HTTP_304_NOT_MODIFIED,
+                        headers={
+                            "ETag": cached_data.etag,
+                            "Cache-Control": cache_control,
+                        },
+                    )
 
-            if stale == "revalidate":
-                cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
-            elif stale == "error":
-                cache_control.add(DirectiveType.STALE_IF_ERROR, stale_ttl)
+            if not current_response or not current_etag:
+                # Retrieve the current response if not already done
+                current_response = await get_response(func, req, *args, **kwargs)
+                current_etag = f'W/"{hashlib.md5(current_response.body).hexdigest()}"'  # noqa: S324
 
-            # 5. Special flags
-            if immutable:
-                cache_control.add(DirectiveType.IMMUTABLE)
+            # Set ETag header
+            current_response.headers["ETag"] = current_etag
 
-            # Store the data in the cache
-            await cache_backend.set(
-                cache_key, ETagContent(etag, response.body), ttl=ttl
-            )
+            # Update cache if needed
+            if not cached_data or cached_data.etag != current_etag:
+                # Store in cache if data changed
+                await cache_backend.set(
+                    cache_key, ETagContent(current_etag, current_response.body), ttl=ttl
+                )
 
-            response.headers["Cache-Control"] = str(cache_control)
-            return response
+            current_response.headers["Cache-Control"] = cache_control
+            return current_response
 
         # Update the wrapper with the new signature
         update_wrapper(wrapper, func)
