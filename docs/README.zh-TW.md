@@ -95,42 +95,10 @@ BackendProxy.set_backend(backend)
 
 Redis 支援正在開發中，將在未來版本中提供。
 
-## 開發指南
+## 文件
 
-### 運行測試
-
-1. 運行單元測試：
-```bash
-pytest
-```
-
-2. 運行測試並產生覆蓋率報告：
-```bash
-pytest --cov=fastapi_cachex
-```
-
-### 使用 tox 進行測試
-
-tox 用於確保程式碼在不同 Python 版本（3.10-3.13）中都能正常運作。
-
-1. 安裝所有 Python 版本
-2. 運行 tox：
-```bash
-tox
-```
-
-若要運行特定 Python 版本：
-```bash
-tox -e py310  # 僅運行 Python 3.10
-```
-
-## 貢獻指南
-
-1. Fork 專案
-2. 建立你的功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交你的修改 (`git commit -m 'Add some AmazingFeature'`)
-4. Push 到分支 (`git push origin feature/AmazingFeature`)
-5. 開啟一個 Pull Request
+- [開發指南](DEVELOPMENT.md)
+- [貢獻指南](CONTRIBUTING.md)
 
 ## 授權條款
 
