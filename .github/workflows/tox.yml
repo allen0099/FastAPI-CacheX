@@ -3,8 +3,20 @@ name: Tox
 on:
   push:
     branches: [ "master" ]
+    paths:
+      - '**.py'
+      - 'pyproject.toml'
+      - 'tox.ini'
+      - 'requirements.txt'
+      - '.github/workflows/tox.yml'
   pull_request:
     branches: [ "master" ]
+    paths:
+      - '**.py'
+      - 'pyproject.toml'
+      - 'tox.ini'
+      - 'requirements.txt'
+      - '.github/workflows/tox.yml'
 
 jobs:
   tox:
