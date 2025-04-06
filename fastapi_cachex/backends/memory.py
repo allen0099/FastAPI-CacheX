@@ -53,6 +53,40 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             self.cache.clear()
 
+    async def clear_path(self, path: str, include_params: bool = False) -> int:
+        """Clear cached responses for a specific path."""
+        cleared_count = 0
+        async with self.lock:
+            keys_to_delete = []
+            for key in self.cache:
+                cache_path, *params = key.split(":", 1)
+                if cache_path == path and (include_params or not params):
+                    keys_to_delete.append(key)
+                    cleared_count += 1
+
+            for key in keys_to_delete:
+                del self.cache[key]
+
+        return cleared_count
+
+    async def clear_pattern(self, pattern: str) -> int:
+        """Clear cached responses matching a pattern."""
+        import fnmatch
+
+        cleared_count = 0
+        async with self.lock:
+            keys_to_delete = []
+            for key in self.cache:
+                cache_path = key.split(":", 1)[0]  # Get path part only
+                if fnmatch.fnmatch(cache_path, pattern):
+                    keys_to_delete.append(key)
+                    cleared_count += 1
+
+            for key in keys_to_delete:
+                del self.cache[key]
+
+        return cleared_count
+
     async def _cleanup_task_impl(self) -> None:
         try:
             while True:

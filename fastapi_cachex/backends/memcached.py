@@ -1,4 +1,5 @@
 import ast
+import warnings
 from typing import Optional
 
 from fastapi_cachex.backends.base import BaseCacheBackend
@@ -25,7 +26,7 @@ class MemcachedBackend(BaseCacheBackend):
                 "pymemcache is not installed. Please install it with 'pip install pymemcache'"
             )
 
-        self.client = HashClient(servers)
+        self.client = HashClient(servers, connect_timeout=5, timeout=5)
 
     async def get(self, key: str) -> Optional[ETagContent]:
         """Get value from cache.
@@ -72,3 +73,29 @@ class MemcachedBackend(BaseCacheBackend):
     async def clear(self) -> None:
         """Clear all values from cache."""
         self.client.flush_all()
+
+    async def clear_path(self, path: str, include_params: bool = False) -> int:
+        """Clear cached responses for a specific path."""
+        if include_params:
+            warnings.warn(
+                "Memcached backend does not support pattern-based key clearing. "
+                "The include_params option will have no effect.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return 0
+
+        # If we're not including params, we can just try to delete the exact path
+        if self.client.delete(path, noreply=False):
+            return 1
+        return 0
+
+    async def clear_pattern(self, pattern: str) -> int:  # noqa: ARG002
+        """Clear cached responses matching a pattern."""
+        warnings.warn(
+            "Memcached backend does not support pattern matching. "
+            "Pattern-based cache clearing is not available.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return 0

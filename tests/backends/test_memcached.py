@@ -113,3 +113,89 @@ async def test_memcached_clear(memcached_backend: MemcachedBackend):
 
     assert retrieved_value1 is None
     assert retrieved_value2 is None
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_clear_path(memcached_backend: MemcachedBackend):
+    # Set up test data
+    path = "/test"
+    value = ETagContent(etag="test_etag", content=b"test_value")
+
+    # Store data directly at the path
+    await memcached_backend.set(path, value)
+
+    # Test clearing the exact path
+    cleared = await memcached_backend.clear_path(path, include_params=False)
+    assert cleared == 1  # Should clear the exact path match
+
+    # Verify the path is cleared
+    result = await memcached_backend.get(path)
+    assert result is None
+
+    # Test include_params=True (should return 0 as this is not supported)
+    cleared = await memcached_backend.clear_path(path, include_params=True)
+    assert cleared == 0  # Should return 0 as this operation is not supported
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_clear_path_not_match(memcached_backend: MemcachedBackend):
+    # Set up test data
+    path = "/test"
+    value = ETagContent(etag="test_etag", content=b"test_value")
+
+    # Store data directly at the path
+    await memcached_backend.set(path, value)
+
+    # Make sure there is no data at a different path
+    other_path = "/other_path"
+    other_value = await memcached_backend.get(other_path)  # This should return None
+    assert other_value is None
+
+    # Test clearing a non-matching path
+    cleared = await memcached_backend.clear_path(other_path, include_params=False)
+    assert cleared == 0  # Should return 0 as the path does not match
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_clear_pattern(memcached_backend: MemcachedBackend):
+    # Set up test data
+    path = "/users/123"
+    value = ETagContent(etag="test_etag", content=b"test_value")
+
+    # Store some test data
+    await memcached_backend.set(path, value)
+
+    # Test pattern clearing (should always return 0 as not supported)
+    cleared = await memcached_backend.clear_pattern("/users/*")
+    assert cleared == 0  # Should return 0 as pattern matching is not supported
+
+    # Verify the original data still exists (as pattern matching is not supported)
+    result = await memcached_backend.get(path)
+    assert result is not None
+    assert result.etag == value.etag
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_clear_path_warning(memcached_backend: MemcachedBackend):
+    # Test that warning is raised when using include_params=True
+    with pytest.warns(
+        RuntimeWarning,
+        match="Memcached backend does not support pattern-based key clearing",
+    ):
+        cleared = await memcached_backend.clear_path("/test", include_params=True)
+        assert cleared == 0
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_clear_pattern_warning(memcached_backend: MemcachedBackend):
+    # Test that warning is raised when using pattern matching
+    with pytest.warns(
+        RuntimeWarning, match="Memcached backend does not support pattern matching"
+    ):
+        cleared = await memcached_backend.clear_pattern("/users/*")
+        assert cleared == 0
