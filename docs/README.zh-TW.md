@@ -14,20 +14,38 @@
 
 [English](../README.md) | [繁體中文](README.zh-TW.md)
 
-FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能緩存擴充套件，提供完整的 HTTP 緩存功能支援。
+FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件，提供完整的 HTTP 快取功能支援。
 
 ## 功能特點
 
-- 支援多種 HTTP 緩存標頭
-  - `Cache-Control`
-  - `ETag`
-  - `If-None-Match`
-- 支援多種後端緩存系統
-  - Redis
-  - Memcached
-  - 記憶體內緩存
+- 支援多種 HTTP 快取標頭
+    - `Cache-Control`
+    - `ETag`
+    - `If-None-Match`
+- 支援多種後端快取系統
+    - Redis
+    - Memcached
+    - 記憶體內快取
 - 完整實現 Cache-Control 指令
 - 簡單易用的 `@cache` 裝飾器
+
+### Cache-Control 指令
+
+| 指令                       | 支援狀態               | 說明                              |
+|--------------------------|--------------------|---------------------------------|
+| `max-age`                | :white_check_mark: | 指定資源被認為是新鮮的最長時間。                |
+| `s-maxage`               | :x:                | 在共享快取中資源被認為是新鮮的最長時間。            |
+| `no-cache`               | :white_check_mark: | 強制快取在釋放快取副本前向原始伺服器驗證請求。         |
+| `no-store`               | :white_check_mark: | 指示快取不儲存請求或回應的任何部分。              |
+| `no-transform`           | :x:                | 指示快取不要轉換回應內容。                   |
+| `must-revalidate`        | :white_check_mark: | 強制快取在資源過期後向原始伺服器重新驗證。           |
+| `proxy-revalidate`       | :x:                | 類似 `must-revalidate`，但僅適用於共享快取。 |
+| `must-understand`        | :x:                | 表示接收者必須理解該指令，否則應視為錯誤。           |
+| `private`                | :white_check_mark: | 表示回應僅供單一使用者使用，不應被共享快取儲存。        |
+| `public`                 | :white_check_mark: | 表示回應可被任何快取儲存，即使通常是無法快取的。        |
+| `immutable`              | :white_check_mark: | 表示回應內容不會隨時間改變，允許更長時間的快取。        |
+| `stale-while-revalidate` | :white_check_mark: | 表示快取可以在背景重新驗證時提供過期的回應。          |
+| `stale-if-error`         | :white_check_mark: | 表示當原始伺服器無法訪問時，快取可以提供過期的回應。      |
 
 ## 安裝指南
 
@@ -47,31 +65,41 @@ uv pip install fastapi-cachex
 
 ```python
 from fastapi import FastAPI
-from fastapi_cachex import cache, BackendProxy
-from fastapi_cachex.backends import MemoryBackend, MemcachedBackend
+from fastapi_cachex import cache
+from fastapi_cachex import CacheBackend
 
 app = FastAPI()
 
-# 設定緩存後端
-memory_backend = MemoryBackend()  # 記憶體緩存
-# 或
-memcached_backend = MemcachedBackend(servers=["localhost:11211"])  # Memcached
-
-# 設定要使用的後端
-BackendProxy.set_backend(memory_backend)  # 或 memcached_backend
-
 
 @app.get("/")
-@cache(ttl=60)  # 緩存 60 秒
+@cache(ttl=60)  # 快取 60 秒
 async def read_root():
     return {"Hello": "World"}
+
+
+@app.get("/no-cache")
+@cache(no_cache=True)  # 標記此端點為不可快取
+async def non_cache_endpoint():
+    return {"Hello": "World"}
+
+
+@app.get("/no-store")
+@cache(no_store=True)  # 標記此端點為不可儲存
+async def non_store_endpoint():
+    return {"Hello": "World"}
+
+
+@app.get("/clear_cache")
+async def remove_cache(cache: CacheBackend):
+    await cache.clear_path("/path/to/clear")  # 清除特定路徑的快取
+    await cache.clear_pattern("/path/to/clear/*")  # 清除符合特定模式的快取
 ```
 
 ## 後端設定
 
-FastAPI-CacheX 支援多種緩存後端。你可以使用 `BackendProxy` 輕鬆切換不同的後端。
+FastAPI-CacheX 支援多種快取後端。你可以使用 `BackendProxy` 輕鬆切換不同的後端。
 
-### 記憶體緩存
+### 記憶體快取 (預設後端)
 
 ```python
 from fastapi_cachex.backends import MemoryBackend
