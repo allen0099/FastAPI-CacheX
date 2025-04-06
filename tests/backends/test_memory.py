@@ -210,3 +210,50 @@ async def test_memory_backend_cleanup_task_impl(memory_backend: MemoryBackend):
     # Assert that expired item was cleaned up
     assert value1_after is None
     assert value2_after == value2
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_path(memory_backend: MemoryBackend):
+    # Set up test data
+    path = "/test"
+    value1 = ETagContent(etag="test_etag1", content=b"test_value1")
+    value2 = ETagContent(etag="test_etag2", content=b"test_value2")
+    value3 = ETagContent(etag="test_etag3", content=b"test_value3")
+
+    # Store data with different paths and parameters
+    await memory_backend.set(f"{path}:param1=value1", value1)
+    await memory_backend.set(f"{path}:param2=value2", value2)
+    await memory_backend.set("/other", value3)
+
+    # Test clearing without parameters
+    cleared = await memory_backend.clear_path(path, include_params=False)
+    assert cleared == 0  # Should not clear anything as no exact path match exists
+
+    # Test clearing with parameters
+    cleared = await memory_backend.clear_path(path, include_params=True)
+    assert cleared == 2  # Should clear both entries with the test path
+
+    # Verify the other path's data still exists
+    other_value = await memory_backend.get("/other")
+    assert other_value == value3
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
+    # Set up test data
+    value1 = ETagContent(etag="test_etag1", content=b"test_value1")
+    value2 = ETagContent(etag="test_etag2", content=b"test_value2")
+    value3 = ETagContent(etag="test_etag3", content=b"test_value3")
+
+    # Store data with different paths
+    await memory_backend.set("/users/123:param1=value1", value1)
+    await memory_backend.set("/users/456:param2=value2", value2)
+    await memory_backend.set("/posts/789", value3)
+
+    # Test clearing with pattern
+    cleared = await memory_backend.clear_pattern("/users/*")
+    assert cleared == 2  # Should clear both user entries
+
+    # Verify the posts data still exists
+    posts_value = await memory_backend.get("/posts/789")
+    assert posts_value == value3

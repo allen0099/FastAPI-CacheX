@@ -25,3 +25,26 @@ class BaseCacheBackend(ABC):
     @abstractmethod
     async def clear(self) -> None:
         """Clear all cached responses."""
+
+    @abstractmethod
+    async def clear_path(self, path: str, include_params: bool = False) -> int:
+        """Clear cached responses for a specific path.
+
+        Args:
+            path: The path to clear cache for
+            include_params: Whether to clear all parameter variations of the path
+
+        Returns:
+            Number of cache entries cleared
+        """
+
+    @abstractmethod
+    async def clear_pattern(self, pattern: str) -> int:
+        """Clear cached responses matching a pattern.
+
+        Args:
+            pattern: A glob pattern to match cache keys against (e.g., "/users/*")
+
+        Returns:
+            Number of cache entries cleared
+        """
