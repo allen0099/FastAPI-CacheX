@@ -3,27 +3,13 @@
 annotated-types==0.7.0
     # via pydantic
 anyio==4.9.0
-    # via
-    #   httpx
-    #   starlette
-certifi==2025.1.31
-    # via
-    #   httpcore
-    #   httpx
+    # via starlette
 exceptiongroup==1.2.2 ; python_full_version < '3.11'
     # via anyio
 fastapi==0.115.12
     # via fastapi-cachex (pyproject.toml)
-h11==0.14.0
-    # via httpcore
-httpcore==1.0.7
-    # via httpx
-httpx==0.28.1
-    # via fastapi-cachex (pyproject.toml)
 idna==3.10
-    # via
-    #   anyio
-    #   httpx
+    # via anyio
 pydantic==2.11.2
     # via fastapi
 pydantic-core==2.33.1
