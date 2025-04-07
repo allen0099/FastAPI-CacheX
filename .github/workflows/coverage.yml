@@ -29,6 +29,11 @@ jobs:
         ports:
           - 11211:11211
 
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+
     steps:
     - uses: actions/checkout@v4
 
