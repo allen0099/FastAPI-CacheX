@@ -122,9 +122,15 @@ backend = MemcachedBackend(servers=["localhost:11211"])
 BackendProxy.set_backend(backend)
 ```
 
-### Redis (Coming Soon)
+### Redis
 
-Redis support is under development and will be available in future releases.
+```python
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+from fastapi_cachex import BackendProxy
+
+backend = AsyncRedisCacheBackend(host="127.0.1", port=6379, db=0)
+BackendProxy.set_backend(backend)
+```
 
 ## Documentation
 
