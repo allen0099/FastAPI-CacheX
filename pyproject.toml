@@ -25,7 +25,6 @@ classifiers = [
 keywords = ["fastapi", "cache", "etag", "cache-control", "redis", "memcached", "in-memory"]
 dependencies = [
     "fastapi",
-    "httpx",
 ]
 
 [project.urls]
@@ -36,25 +35,31 @@ Issues = "https://github.com/allen0099/FastAPI-CacheX/issues"
 [dependency-groups]
 dev = [
     "coverage>=7.8.0",
+    "httpx>=0.28.1",
     "mypy>=1.15.0",
+    "orjson>=3.10.16",
     "pre-commit>=4.2.0",
     "pymemcache>=4.0.0",
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
     "pytest-cov>=6.1.0",
+    "redis[hiredis]>=5.2.1",
     "ruff>=0.11.2",
     "tox>=4.25.0",
+    "types-orjson>=3.6.2",
+    "types-redis>=4.6.0.20241004",
 ]
 
 [project.optional-dependencies]
 memcache = ["pymemcache"]
+redis = ["redis[hiredis]", "orjson"]
 
 [tool.setuptools]
-package-data = {"fastapi_cachex" = ["py.typed"]}
+package-data = { "fastapi_cachex" = ["py.typed"] }
 
 [tool.pytest.ini_options]
 pythonpath = [
-  "."
+    "."
 ]
 asyncio_default_fixture_loop_scope = "function"
 
