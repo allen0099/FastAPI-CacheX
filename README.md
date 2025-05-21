@@ -24,6 +24,7 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
     - `If-None-Match`
 - Multiple backend cache support
     - Redis
+    - Valkey (A Redis-compatible alternative)
     - Memcached
     - In-memory cache
 - Complete Cache-Control directive implementation
@@ -129,6 +130,19 @@ from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex import BackendProxy
 
 backend = AsyncRedisCacheBackend(host="127.0.1", port=6379, db=0)
+BackendProxy.set_backend(backend)
+```
+
+### Valkey
+
+Valkey is a high-performance data structure server, forked from Redis and developed by the Linux Foundation. It maintains compatibility with the Redis API. You can use it as a drop-in replacement for Redis in many cases.
+
+```python
+from fastapi_cachex.backends import AsyncValkeyCacheBackend
+from fastapi_cachex import BackendProxy
+
+# Configuration is similar to Redis
+backend = AsyncValkeyCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set_backend(backend)
 ```
 
