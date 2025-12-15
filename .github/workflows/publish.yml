@@ -21,7 +21,7 @@ jobs:
 
     - name: Extract version without 'v' prefix
       id: extract_version
-      run: echo "::set-output name=version::${GITHUB_REF#refs/tags/v}"
+      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
     - name: Update version in pyproject.toml
       run: |
