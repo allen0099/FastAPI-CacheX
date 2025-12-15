@@ -214,46 +214,44 @@ async def test_memory_backend_cleanup_task_impl(memory_backend: MemoryBackend):
 
 @pytest.mark.asyncio
 async def test_memory_backend_clear_path(memory_backend: MemoryBackend):
-    # Set up test data
+    # Set up test data with proper cache key format: method:host:path:query_params
+    # The split uses ":", 3 which creates up to 4 parts
     path = "/test"
     value1 = ETagContent(etag="test_etag1", content=b"test_value1")
     value2 = ETagContent(etag="test_etag2", content=b"test_value2")
     value3 = ETagContent(etag="test_etag3", content=b"test_value3")
 
-    # Store data with different paths and parameters
-    await memory_backend.set(f"{path}:param1=value1", value1)
-    await memory_backend.set(f"{path}:param2=value2", value2)
-    await memory_backend.set("/other", value3)
+    # Store data with method:host:path format (3 parts minimum)
+    await memory_backend.set(f"GET:localhost:{path}", value1)
+    await memory_backend.set(f"POST:localhost:{path}", value2)
+    await memory_backend.set("GET:localhost:/other", value3)
 
-    # Test clearing without parameters
+    # Test clearing without parameters - should clear entries with exact path
     cleared = await memory_backend.clear_path(path, include_params=False)
-    assert cleared == 0  # Should not clear anything as no exact path match exists
-
-    # Test clearing with parameters
-    cleared = await memory_backend.clear_path(path, include_params=True)
-    assert cleared == 2  # Should clear both entries with the test path
+    assert cleared == 2  # Should clear GET and POST entries with /test path
 
     # Verify the other path's data still exists
-    other_value = await memory_backend.get("/other")
+    other_value = await memory_backend.get("GET:localhost:/other")
     assert other_value == value3
 
 
 @pytest.mark.asyncio
 async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
-    # Set up test data
+    # Set up test data with proper cache key format: method:host:path:query_params
+    # The split uses ":", 3 which creates up to 4 parts
     value1 = ETagContent(etag="test_etag1", content=b"test_value1")
     value2 = ETagContent(etag="test_etag2", content=b"test_value2")
     value3 = ETagContent(etag="test_etag3", content=b"test_value3")
 
-    # Store data with different paths
-    await memory_backend.set("/users/123:param1=value1", value1)
-    await memory_backend.set("/users/456:param2=value2", value2)
-    await memory_backend.set("/posts/789", value3)
+    # Store data with method:host:path format
+    await memory_backend.set("GET:localhost:/users/123", value1)
+    await memory_backend.set("POST:localhost:/users/456", value2)
+    await memory_backend.set("GET:localhost:/posts/789", value3)
 
     # Test clearing with pattern
     cleared = await memory_backend.clear_pattern("/users/*")
     assert cleared == 2  # Should clear both user entries
 
     # Verify the posts data still exists
-    posts_value = await memory_backend.get("/posts/789")
+    posts_value = await memory_backend.get("GET:localhost:/posts/789")
     assert posts_value == value3

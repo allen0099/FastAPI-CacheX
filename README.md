@@ -99,10 +99,36 @@ async def remove_cache(cache: CacheBackend):
 
 FastAPI-CacheX supports multiple caching backends. You can easily switch between them using the `BackendProxy`.
 
+### Cache Key Format
+
+Cache keys are generated in the following format to avoid collisions:
+
+```
+{method}:{host}:{path}:{query_params}
+```
+
+This ensures that:
+- Different HTTP methods (GET, POST, etc.) don't share cache
+- Different hosts don't share cache (useful for multi-tenant scenarios)
+- Different query parameters get separate cache entries
+- The same endpoint with different parameters can be cached independently
+
+All backends automatically namespace keys with a prefix (e.g., `fastapi_cachex:`) to avoid conflicts with other applications.
+
+### Cache Hit Behavior
+
+When a cached entry is valid (within TTL):
+- **Default behavior**: Returns the cached content with HTTP 200 status code directly without re-executing the endpoint handler
+- **With `If-None-Match` header**: Returns HTTP 304 Not Modified if the ETag matches
+- **With `no-cache` directive**: Forces revalidation with fresh content before deciding on 304
+
+This means **cached hits are extremely fast** - the endpoint handler function is never executed.
+
 ### In-Memory Cache (default)
 
 If you don't specify a backend, FastAPI-CacheX will use the in-memory cache by default.
-This is suitable for development and testing purposes.
+This is suitable for development and testing purposes. The backend automatically runs
+a cleanup task to remove expired entries every 60 seconds.
 
 ```python
 from fastapi_cachex.backends import MemoryBackend
@@ -111,6 +137,9 @@ from fastapi_cachex import BackendProxy
 backend = MemoryBackend()
 BackendProxy.set_backend(backend)
 ```
+
+**Note**: In-memory cache is not suitable for production with multiple processes.
+Each process maintains its own separate cache.
 
 ### Memcached
 
@@ -122,18 +151,64 @@ backend = MemcachedBackend(servers=["localhost:11211"])
 BackendProxy.set_backend(backend)
 ```
 
+**Limitations**:
+- Pattern-based key clearing (`clear_pattern`) is not supported by the Memcached protocol
+- Keys are namespaced with `fastapi_cachex:` prefix to avoid conflicts
+- Consider using Redis backend if you need pattern-based cache clearing
+
 ### Redis
 
 ```python
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex import BackendProxy
 
-backend = AsyncRedisCacheBackend(host="127.0.1", port=6379, db=0)
+backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set_backend(backend)
 ```
 
+**Features**:
+- Fully async implementation
+- Supports pattern-based key clearing
+- Uses SCAN instead of KEYS for safe production use (non-blocking)
+- Namespaced with `fastapi_cachex:` prefix by default
+- Optional custom key prefix for multi-tenant scenarios
+
+**Example with custom prefix**:
+
+```python
+backend = AsyncRedisCacheBackend(
+    host="127.0.0.1",
+    port=6379,
+    key_prefix="myapp:cache:",
+)
+BackendProxy.set_backend(backend)
+```
+
+## Performance Considerations
+
+### Cache Hit Performance
+
+When a cache hit occurs (within TTL), the response is returned directly without executing your endpoint handler. This is extremely fast:
+
+```python
+@app.get("/expensive")
+@cache(ttl=3600)  # Cache for 1 hour
+async def expensive_operation():
+    # This is ONLY executed when cache misses
+    # On cache hits, this function is never called
+    result = perform_expensive_calculation()
+    return result
+```
+
+### Backend Selection
+
+- **MemoryBackend**: Fastest for single-process development; not suitable for production
+- **Memcached**: Good for distributed systems; has limitations on pattern clearing
+- **Redis**: Best for production; fully async, supports all features, non-blocking operations
+
 ## Documentation
 
+- [Cache Flow Explanation](docs/CACHE_FLOW.md)
 - [Development Guide](docs/DEVELOPMENT.md)
 - [Contributing Guidelines](docs/CONTRIBUTING.md)
 
