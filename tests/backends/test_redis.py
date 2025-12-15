@@ -19,7 +19,7 @@ def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
         s.connect((host, port))
         s.close()
         return True
-    except TimeoutError:
+    except (ConnectionRefusedError, OSError, TimeoutError):
         return False
 
 
