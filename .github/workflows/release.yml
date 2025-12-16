@@ -128,8 +128,6 @@ jobs:
       - name: Publish to PyPI
         if: steps.check_commits.outputs.has_new_commits == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          print-hash: true
 
       - name: Summary
         if: always()

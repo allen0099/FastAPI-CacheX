@@ -1,57 +1,125 @@
-name: Manual Publish to PyPI
+name: Manual Patch Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (e.g., 0.2.0, leave empty to use current version)'
+        description: 'Version to publish (e.g., 0.2.1, leave empty to auto-bump patch)'
+        required: false
+        type: string
+      release_notes:
+        description: 'Custom release notes (optional)'
         required: false
         type: string
 
+permissions:
+  contents: write
+  id-token: write  # Required for PyPI trusted publishing
+
 jobs:
-  deploy:
+  patch-release:
     runs-on: ubuntu-latest
-    permissions:
-      # IMPORTANT: this permission is mandatory for trusted publishing
-      id-token: write
-      contents: read
-
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
 
-    - name: Update version if specified
-      if: inputs.version != ''
-      run: |
-        uv version ${{ inputs.version }}
-        echo "Updated version to ${{ inputs.version }}"
+      - name: Get last release tag
+        id: last_tag
+        run: |
+          last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "last_tag=$last_tag" >> $GITHUB_OUTPUT
+          echo "Last tag: $last_tag"
 
-    - name: Get current version
-      id: get_version
-      run: |
-        current_version=$(uv version --short)
-        echo "version=$current_version" >> $GITHUB_OUTPUT
-        echo "Current version: $current_version"
+      - name: Bump version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            # 使用指定的版本
+            uv version ${{ inputs.version }}
+            new_version="${{ inputs.version }}"
+            echo "Using specified version: $new_version"
+          else
+            # 自动 bump patch 版本
+            uv version --bump patch
+            new_version=$(uv version --short)
+            echo "Auto-bumped patch version to: $new_version"
+          fi
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+          echo "Version: $new_version"
 
-    - name: Build package
-      run: uv build
+      - name: Configure git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
 
-    - name: Publish package distributions to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        print-hash: true
+      - name: Commit version bump
+        run: |
+          git add pyproject.toml uv.lock
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
+          git push origin HEAD:main 2>/dev/null || git push origin HEAD:master
 
-    - name: Summary
-      run: |
-        echo "### Manual Publish Summary" >> $GITHUB_STEP_SUMMARY
-        echo "✅ Version: ${{ steps.get_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-        echo "🚀 Successfully published to PyPI" >> $GITHUB_STEP_SUMMARY
+      - name: Create and push tag
+        run: |
+          git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
+          git push origin --tags
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          last_tag="${{ steps.last_tag.outputs.last_tag }}"
+          if [ -z "$last_tag" ]; then
+            changelog=$(git log --pretty=format:"- %s (%h)" --no-merges | head -20)
+          else
+            changelog=$(git log $last_tag..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$changelog" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Build package
+        run: uv build
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.new_version }}
+          name: Release v${{ steps.version.outputs.new_version }}
+          body: |
+            ## 🔧 Patch Release v${{ steps.version.outputs.new_version }}
+
+            ${{ inputs.release_notes != '' && format('**Release Notes:**\n{0}\n\n', inputs.release_notes) || '' }}**📊 Statistics:**
+            - Previous version: ${{ steps.last_tag.outputs.last_tag || 'Initial release' }}
+            - Release type: Patch (bug fixes and minor improvements)
+
+            **📝 Changelog:**
+            ${{ steps.changelog.outputs.changelog }}
+
+            ---
+            *This is a manual patch release*
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Summary
+        run: |
+          echo "### Manual Patch Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Version bumped to: ${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "📦 Previous version: ${{ steps.last_tag.outputs.last_tag || 'None' }}" >> $GITHUB_STEP_SUMMARY
+          echo "🏷️ Release created: v${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 Published to PyPI" >> $GITHUB_STEP_SUMMARY
