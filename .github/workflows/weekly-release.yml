@@ -1,0 +1,111 @@
+name: Weekly Release
+
+on:
+  schedule:
+    # 每周一 00:00 UTC 运行
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Get last release tag
+        id: last_tag
+        run: |
+          last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "last_tag=$last_tag" >> $GITHUB_OUTPUT
+          if [ -z "$last_tag" ]; then
+            echo "last_tag_commit=$(git rev-list --max-parents=0 HEAD)" >> $GITHUB_OUTPUT
+          else
+            echo "last_tag_commit=$(git rev-list -n 1 $last_tag)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for new commits
+        id: check_commits
+        run: |
+          last_tag_commit="${{ steps.last_tag.outputs.last_tag_commit }}"
+          current_commit=$(git rev-parse HEAD)
+
+          if [ "$last_tag_commit" != "$current_commit" ]; then
+            echo "has_new_commits=true" >> $GITHUB_OUTPUT
+            commit_count=$(git rev-list --count $last_tag_commit..HEAD 2>/dev/null || git rev-list --count HEAD)
+            echo "commit_count=$commit_count" >> $GITHUB_OUTPUT
+            echo "Found $commit_count new commits since last release"
+          else
+            echo "has_new_commits=false" >> $GITHUB_OUTPUT
+            echo "No new commits since last release"
+          fi
+
+      - name: Bump minor version
+        if: steps.check_commits.outputs.has_new_commits == 'true'
+        id: version
+        run: |
+          uv version --bump minor
+          new_version=$(uv version --short)
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+          echo "Version bumped to $new_version"
+
+      - name: Configure git
+        if: steps.check_commits.outputs.has_new_commits == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Commit version bump
+        if: steps.check_commits.outputs.has_new_commits == 'true'
+        run: |
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
+
+      - name: Create and push tag
+        if: steps.check_commits.outputs.has_new_commits == 'true'
+        run: |
+          git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
+          git push origin main --tags 2>/dev/null || git push origin master --tags
+
+      - name: Create release
+        if: steps.check_commits.outputs.has_new_commits == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.new_version }}
+          name: Release ${{ steps.version.outputs.new_version }}
+          body: |
+            ## Release Notes
+            - Automated weekly release
+            - New commits since last version: ${{ steps.check_commits.outputs.commit_count }}
+            - Version bumped from minor version
+          draft: false
+          prerelease: false
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Weekly Release Summary" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.check_commits.outputs.has_new_commits }}" == "true" ]; then
+            echo "✅ New commits found: ${{ steps.check_commits.outputs.commit_count }}" >> $GITHUB_STEP_SUMMARY
+            echo "📦 Version bumped to: ${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+            echo "🏷️ Release created: v${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ No new commits since last release" >> $GITHUB_STEP_SUMMARY
+            echo "ℹ️ Current version: $(uv version --short)" >> $GITHUB_STEP_SUMMARY
+          fi
