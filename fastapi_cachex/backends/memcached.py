@@ -8,7 +8,7 @@ try:
     import orjson as json
 
 except ImportError:  # pragma: no cover
-    import json  # type: ignore[no-redef]
+    import json  # type: ignore[no-redef]  # pragma: no cover
 
 # Default Memcached key prefix for fastapi-cachex
 DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
@@ -106,11 +106,12 @@ class MemcachedBackend(BaseCacheBackend):
             }
         )
 
-        # orjson returns bytes, standard json returns str
-        if isinstance(serialized_data, bytes):
-            serialized_bytes = serialized_data
-        else:
-            serialized_bytes = serialized_data.encode("utf-8")
+        # orjson returns bytes, stdlib json returns str
+        serialized_bytes = (
+            serialized_data
+            if isinstance(serialized_data, bytes)
+            else serialized_data.encode("utf-8")
+        )
 
         self.client.set(
             prefixed_key,

@@ -2,18 +2,30 @@
 
 This document contains information for developers who want to contribute to FastAPI-CacheX.
 
+## Environment & Package Management
+
+This project uses UV for package and environment management. Always run commands through UV.
+
+1. Sync development dependencies:
+
+```bash
+uv sync --group dev
+```
+
+2. Run commands via UV (examples below).
+
 ## Running Tests
 
 1. Run unit tests:
 
 ```bash
-pytest
+uv run pytest
 ```
 
 2. Run tests with coverage report:
 
 ```bash
-pytest --cov=fastapi_cachex
+uv run pytest --cov=fastapi_cachex --cov-report=term-missing
 ```
 
 ## Using tox
@@ -24,7 +36,7 @@ tox ensures the code works across different Python versions (3.10-3.13).
 2. Run tox:
 
 ```bash
-tox
+uv run tox
 ```
 
 To run for a specific Python version:
@@ -44,12 +56,12 @@ uv add --dev pre-commit
 
 2. Install the pre-commit hooks:
 ```bash
-pre-commit install
+uv run pre-commit install
 ```
 
 3. Run pre-commit manually on all files:
 ```bash
-pre-commit run --all-files
+uv run pre-commit run --all-files
 ```
 
 The pre-commit hooks will automatically run on `git commit`. If any checks fail, fix the issues and try committing again.
@@ -60,12 +72,12 @@ We use mypy for static type checking to ensure type safety.
 
 1. Run mypy:
 ```bash
-mypy fastapi_cachex
+uv run mypy fastapi_cachex
 ```
 
 2. Run mypy with strict mode:
 ```bash
-mypy fastapi_cachex --strict
+uv run mypy fastapi_cachex --strict
 ```
 
 ### Common mypy Issues
