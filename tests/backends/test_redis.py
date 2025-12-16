@@ -117,7 +117,10 @@ class TestAsyncRedisCacheBackend:
     async def test_set_with_ttl(self, async_redis_backend: AsyncRedisCacheBackend):
         value = ETagContent(etag="test-etag", content=b"test-content")
         await async_redis_backend.set("test-key", value, ttl=100)
-        ttl = await async_redis_backend.client.ttl("test-key")
+        # Use _make_key to get the prefixed key
+        ttl = await async_redis_backend.client.ttl(
+            async_redis_backend._make_key("test-key")
+        )
         assert ttl > 0 and ttl <= 100
 
     @requires_redis
@@ -139,15 +142,18 @@ class TestAsyncRedisCacheBackend:
     @requires_redis
     async def test_clear_path(self, async_redis_backend: AsyncRedisCacheBackend):
         value = ETagContent(etag="test-etag", content=b"test-content")
-        await async_redis_backend.set("/users/1", value)
-        await async_redis_backend.set("/users/2", value)
-        await async_redis_backend.set("/posts/1", value)
+        # Use proper cache key format: method:host:path:query_params
+        # Keys without query params end with empty string after last colon
+        await async_redis_backend.set("GET:localhost:/users/1:", value)
+        await async_redis_backend.set("POST:localhost:/users/1:param=1", value)
+        await async_redis_backend.set("GET:localhost:/posts/1:", value)
 
-        cleared = await async_redis_backend.clear_path("/users/", include_params=True)
+        # Clear all /users/1 entries regardless of method/params
+        cleared = await async_redis_backend.clear_path("/users/1", include_params=True)
         assert cleared == 2
-        assert await async_redis_backend.get("/users/1") is None
-        assert await async_redis_backend.get("/users/2") is None
-        assert await async_redis_backend.get("/posts/1") == value
+        assert await async_redis_backend.get("GET:localhost:/users/1:") is None
+        assert await async_redis_backend.get("POST:localhost:/users/1:param=1") is None
+        assert await async_redis_backend.get("GET:localhost:/posts/1:") == value
 
     @requires_redis
     async def test_clear_pattern(self, async_redis_backend: AsyncRedisCacheBackend):
