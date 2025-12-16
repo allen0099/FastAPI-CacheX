@@ -6,14 +6,12 @@ on:
     paths:
       - '**.py'
       - 'pyproject.toml'
-      - 'requirements.txt'
       - '.github/workflows/coverage.yml'
   pull_request:
     branches: [ "master" ]
     paths:
       - '**.py'
       - 'pyproject.toml'
-      - 'requirements.txt'
       - '.github/workflows/coverage.yml'
 
 permissions:
