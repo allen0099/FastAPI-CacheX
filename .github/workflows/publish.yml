@@ -1,8 +1,12 @@
-name: Publish to PyPI
+name: Manual Publish to PyPI
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.2.0, leave empty to use current version)'
+        required: false
+        type: string
 
 jobs:
   deploy:
@@ -10,9 +14,12 @@ jobs:
     permissions:
       # IMPORTANT: this permission is mandatory for trusted publishing
       id-token: write
+      contents: read
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -22,16 +29,29 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v3
 
-    - name: Extract version without 'v' prefix
-      id: extract_version
-      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-    - name: Update version in pyproject.toml
+    - name: Update version if specified
+      if: inputs.version != ''
       run: |
-        uv version ${{ steps.extract_version.outputs.version }}
+        uv version ${{ inputs.version }}
+        echo "Updated version to ${{ inputs.version }}"
+
+    - name: Get current version
+      id: get_version
+      run: |
+        current_version=$(uv version --short)
+        echo "version=$current_version" >> $GITHUB_OUTPUT
+        echo "Current version: $current_version"
 
     - name: Build package
       run: uv build
 
     - name: Publish package distributions to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        print-hash: true
+
+    - name: Summary
+      run: |
+        echo "### Manual Publish Summary" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Version: ${{ steps.get_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "🚀 Successfully published to PyPI" >> $GITHUB_STEP_SUMMARY
