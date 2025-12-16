@@ -94,6 +94,7 @@ jobs:
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "$changelog" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+          echo "release_date=$(date -u +"%Y-%m-%d")" >> $GITHUB_OUTPUT
 
       - name: Build package
         if: steps.check_commits.outputs.has_new_commits == 'true'
@@ -105,9 +106,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.new_version }}
-          name: Release v${{ steps.version.outputs.new_version }}
+          name: v${{ steps.version.outputs.new_version }}
           body: |
             ## 🚀 Release v${{ steps.version.outputs.new_version }}
+
+            Released on: ${{ steps.release_date.outputs.release_date }}.
 
             **📊 Statistics:**
             - New commits: ${{ steps.check_commits.outputs.commit_count }}
@@ -117,6 +120,8 @@ jobs:
             ${{ steps.changelog.outputs.changelog }}
 
             ---
+            **Full Changelog**: https://github.com/allen0099/FastAPI-CacheX/compare/${{ steps.last_tag.outputs.last_tag }}...v${{ steps.version.outputs.new_version }}
+
             *This is an automated weekly release*
           draft: false
           prerelease: false
