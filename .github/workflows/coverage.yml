@@ -40,21 +40,18 @@ jobs:
       with:
         python-version: "3.10"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install uv
-        uv venv
-        uv sync
-        uv add genbadge[coverage]
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
 
-    - name: Activate virtual environment and generate coverage report
+    - name: Sync dependencies
+      run: uv sync
+
+    - name: Generate coverage report
       run: |
-        source .venv/bin/activate
-        coverage run -m pytest
-        coverage report
-        coverage xml
-        genbadge coverage -i coverage.xml -o coverage.svg
+        uv run coverage run -m pytest
+        uv run coverage report
+        uv run coverage xml
+        uv tool run --from genbadge[coverage] genbadge coverage -i coverage.xml -o coverage.svg
 
     - name: Upload coverage badge
       uses: JamesIves/github-pages-deploy-action@v4
