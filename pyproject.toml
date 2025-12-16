@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
     "Framework :: FastAPI",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -25,7 +26,7 @@ classifiers = [
 keywords = ["fastapi", "cache", "etag", "cache-control", "redis", "memcached", "in-memory"]
 dependencies = [
     "fastapi",
-    "genbadge[coverage]>=1.1.2",
+    "genbadge[coverage]>=1.1.3",
 ]
 
 [project.urls]
@@ -47,6 +48,8 @@ dev = [
     "redis[hiredis]>=5.2.1",
     "ruff>=0.11.2",
     "tox>=4.25.0",
+    "tox-uv>=1.29.0",
+    "ty>=0.0.1a34",
     "types-orjson>=3.6.2",
     "types-redis>=4.6.0.20241004",
 ]
@@ -117,6 +120,11 @@ keep-runtime-typing = true
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[tool.ty.src]
+exclude = [
+    "./.serena/",
+]
 
 [tool.coverage.run]
 source = ["fastapi_cachex"]

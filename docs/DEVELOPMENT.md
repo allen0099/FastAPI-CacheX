@@ -39,7 +39,7 @@ pre-commit helps maintain code quality by running checks before each commit.
 
 1. Install pre-commit:
 ```bash
-pip install pre-commit
+uv add --dev pre-commit
 ```
 
 2. Install the pre-commit hooks:

@@ -99,7 +99,35 @@ async def remove_cache(cache: CacheBackend):
 
 FastAPI-CacheX 支援多種快取後端。你可以使用 `BackendProxy` 輕鬆切換不同的後端。
 
+### 快取金鑰格式
+
+快取金鑰遵循以下格式以避免衝突：
+
+```
+{method}:{host}:{path}:{query_params}
+```
+
+這確保：
+- 不同的 HTTP 方法 (GET、POST 等) 不會共享快取
+- 不同的主機不會共享快取（適合多租戶情境）
+- 不同的查詢參數將獲得各自獨立的快取項目
+- 同一端點配合不同參數可以獨立快取
+
+所有後端會自動為金鑰加上前綴（例如 `fastapi_cachex:`）以避免與其他應用程式衝突。
+
+### 快取命中行為
+
+當快取項目有效（在 TTL 內）時：
+- **預設行為**：直接返回快取內容並使用 HTTP 200 狀態碼，無需重新執行端點處理器
+- **帶有 `If-None-Match` 標頭**：如果 ETag 匹配則返回 HTTP 304 Not Modified
+- **帶有 `no-cache` 指令**：強制重新驗證以確定是否需要返回 304
+
+這意味著**快取命中非常快速** - 端點處理器函數永遠不會被執行。
+
 ### 記憶體快取 (預設後端)
+
+若未指定後端，FastAPI-CacheX 預設使用記憶體快取。
+適合開發和測試。後端會自動執行清理任務，每 60 秒移除過期項目。
 
 ```python
 from fastapi_cachex.backends import MemoryBackend
@@ -108,6 +136,9 @@ from fastapi_cachex import BackendProxy
 backend = MemoryBackend()
 BackendProxy.set_backend(backend)
 ```
+
+**注意**：記憶體快取不適合多處理程式的生產環境。
+每個處理程式維護其自己獨立的快取。
 
 ### Memcached
 
@@ -119,18 +150,64 @@ backend = MemcachedBackend(servers=["localhost:11211"])
 BackendProxy.set_backend(backend)
 ```
 
+**限制**：
+- Memcached 協議不支援基於模式的金鑰清除 (`clear_pattern`)
+- 金鑰使用 `fastapi_cachex:` 前綴以避免衝突
+- 如果需要基於模式的快取清除，請考慮使用 Redis 後端
+
 ### Redis
 
 ```python
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex import BackendProxy
 
-backend = AsyncRedisCacheBackend(host="127.0.1", port=6379, db=0)
+backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set_backend(backend)
 ```
 
+**功能**：
+- 完全非同步實現
+- 支援基於模式的金鑰清除
+- 使用 SCAN 而非 KEYS 以保證生產環境安全（非阻塞）
+- 預設使用 `fastapi_cachex:` 前綴
+- 支援自訂金鑰前綴用於多租戶情境
+
+**自訂前綴範例**：
+
+```python
+backend = AsyncRedisCacheBackend(
+    host="127.0.0.1",
+    port=6379,
+    key_prefix="myapp:cache:",
+)
+BackendProxy.set_backend(backend)
+```
+
+## 效能考量
+
+### 快取命中效能
+
+當快取命中（在 TTL 內）時，回應會直接返回而無需執行端點處理器。這非常快速：
+
+```python
+@app.get("/expensive")
+@cache(ttl=3600)  # 快取 1 小時
+async def expensive_operation():
+    # 只在快取未命中時執行
+    # 快取命中時，此函數不會被呼叫
+    result = perform_expensive_calculation()
+    return result
+```
+
+### 後端選擇
+
+- **MemoryBackend**：單處理程式開發時最快；不適合生產環境
+- **Memcached**：適合分散式系統；模式清除有限制
+- **Redis**：最適合生產環境；完全非同步、支援所有功能、非阻塞操作
+
 ## 文件
 
+- [快取流程說明](CACHE_FLOW.zh-TW.md)
 - [開發指南](DEVELOPMENT.md)
 - [貢獻指南](CONTRIBUTING.md)
 

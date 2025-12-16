@@ -9,7 +9,6 @@ from inspect import Signature
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
-from typing import Optional
 from typing import TypeVar
 from typing import Union
 
@@ -39,7 +38,7 @@ class CacheControl:
     def __init__(self) -> None:
         self.directives: list[str] = []
 
-    def add(self, directive: DirectiveType, value: Optional[int] = None) -> None:
+    def add(self, directive: DirectiveType, value: int | None = None) -> None:
         if value is not None:
             self.directives.append(f"{directive.value}={value}")
         else:
@@ -78,8 +77,8 @@ async def get_response(
 
 
 def cache(  # noqa: C901
-    ttl: Optional[int] = None,
-    stale_ttl: Optional[int] = None,
+    ttl: int | None = None,
+    stale_ttl: int | None = None,
     stale: Literal["error", "revalidate"] | None = None,
     no_cache: bool = False,
     no_store: bool = False,
@@ -172,8 +171,9 @@ def cache(  # noqa: C901
             if req.method != "GET":
                 return await get_response(func, req, *args, **kwargs)
 
-            # Generate cache key and prepare headers
-            cache_key = f"{req.url.path}:{req.query_params}"
+            # Generate cache key: method:host:path:query_params[:vary]
+            # Include host to avoid cross-host cache pollution
+            cache_key = f"{req.method}:{req.headers.get('host', 'unknown')}:{req.url.path}:{req.query_params}"
             client_etag = req.headers.get("if-none-match")
             cache_control = await get_cache_control(CacheControl())
 
@@ -209,10 +209,11 @@ def cache(  # noqa: C901
                             },
                         )
 
-                # Compare with cached ETag
+                # Compare with cached ETag - if match, return 304
                 elif (
                     cached_data and client_etag == cached_data.etag
                 ):  # pragma: no branch
+                    # Cache hit with matching ETag: return 304 Not Modified
                     return Response(
                         status_code=HTTP_304_NOT_MODIFIED,
                         headers={
@@ -220,6 +221,21 @@ def cache(  # noqa: C901
                             "Cache-Control": cache_control,
                         },
                     )
+
+            # If we don't have If-None-Match header, check if we have a valid cached copy
+            # and can serve it directly (cache hit without ETag comparison)
+            if cached_data and not no_cache and ttl is not None:
+                # We have a cached entry and TTL-based caching is enabled
+                # Return the cached content directly with 200 OK without revalidation
+                cache_hit_response = Response(
+                    content=cached_data.content,
+                    status_code=200,
+                    headers={
+                        "ETag": cached_data.etag,
+                        "Cache-Control": cache_control,
+                    },
+                )
+                return cache_hit_response
 
             if not current_response or not current_etag:
                 # Retrieve the current response if not already done

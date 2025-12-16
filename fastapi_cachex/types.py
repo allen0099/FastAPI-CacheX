@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Any
-from typing import Optional
 
 
 @dataclass
@@ -13,7 +12,12 @@ class ETagContent:
 
 @dataclass
 class CacheItem:
-    """Cache item with optional expiry time."""
+    """Cache item with optional expiry time.
+
+    Args:
+        value: The cached ETagContent
+        expiry: Epoch timestamp when this cache item expires (None = never expires)
+    """
 
     value: ETagContent
-    expiry: Optional[int] = None
+    expiry: float | None = None
