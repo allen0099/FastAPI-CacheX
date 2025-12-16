@@ -13,7 +13,7 @@ try:
     import orjson as json
 
 except ImportError:  # pragma: no cover
-    import json  # type: ignore[no-redef]
+    import json  # type: ignore[no-redef]  # pragma: no cover
 
 # Default Redis key prefix for fastapi-cachex
 DEFAULT_REDIS_PREFIX = "fastapi_cachex:"
@@ -94,10 +94,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             }
         )
 
-        # orjson returns bytes, standard json returns str
-        if isinstance(serialized, bytes):
-            return serialized.decode()
-        return serialized
+        # orjson returns bytes, stdlib json returns str
+        return serialized.decode() if isinstance(serialized, bytes) else serialized
 
     def _deserialize(self, value: str | None) -> ETagContent | None:
         """Deserialize JSON string to ETagContent."""

@@ -199,3 +199,83 @@ async def test_memcached_clear_pattern_warning(memcached_backend: MemcachedBacke
     ):
         cleared = await memcached_backend.clear_pattern("/users/*")
         assert cleared == 0
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_set_content_str(monkeypatch) -> None:
+    """Test the ETagContent content str branch in set()."""
+    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    await backend.clear()
+    value = ETagContent(etag="c", content="str-content")
+
+    await backend.set("str-key", value)
+    out = await backend.get("str-key")
+    # Backend converts string content to bytes when deserializing
+    assert out is not None
+    assert out.etag == value.etag
+    assert out.content == b"str-content"
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_set_uses_standard_json_branch(monkeypatch) -> None:
+    """Force standard json to cover non-bytes serialization branch in set()."""
+    # Swap out orjson with stdlib json inside module to return str from dumps
+    import json as std_json
+    import types
+    from typing import cast
+
+    from fastapi_cachex.backends import memcached as memcached_module
+
+    original_json = cast("object", memcached_module.json)  # type: ignore[attr-defined]
+    memcached_module.json = types.SimpleNamespace(  # type: ignore[attr-defined, assignment]
+        dumps=std_json.dumps,
+        loads=std_json.loads,
+        JSONDecodeError=std_json.JSONDecodeError,
+    )
+    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    await backend.clear()
+    try:
+        key = "branch_json_key"
+        value = ETagContent(etag="e", content=b"bytes-content")
+        # When using std json, dumps returns str and code should encode to bytes
+        await backend.set(key, value)
+        got = await backend.get(key)
+        assert got is not None and got == value
+    finally:
+        memcached_module.json = original_json  # type: ignore[attr-defined, assignment]
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_invalid_and_missing_fields(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """Cover get() error handling for invalid JSON and missing fields."""
+    # Write invalid JSON directly into client
+    raw_key = memcached_backend._make_key("invalid-json")
+    memcached_backend.client.set(raw_key, b"not a json", expire=0)
+    res = await memcached_backend.get("invalid-json")
+    assert res is None
+
+    # JSON missing required fields
+    raw_key2 = memcached_backend._make_key("missing-fields")
+    memcached_backend.client.set(raw_key2, b'{"some": "data"}', expire=0)
+    res2 = await memcached_backend.get("missing-fields")
+    assert res2 is None
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_clear_path_exception(
+    monkeypatch, memcached_backend: MemcachedBackend
+) -> None:
+    """Simulate client.delete raising to hit exception branch in clear_path()."""
+
+    def boom(*args, **kwargs) -> None:
+        raise RuntimeError("delete failed")
+
+    monkeypatch.setattr(memcached_backend.client, "delete", boom)
+    cleared = await memcached_backend.clear_path("/nope", include_params=False)
+    assert cleared == 0

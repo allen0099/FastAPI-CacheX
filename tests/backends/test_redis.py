@@ -65,29 +65,28 @@ def test_redis_without_redis_package(monkeypatch):
 
 @requires_redis
 @pytest.mark.asyncio
-async def test_redis_serialization_with_standard_json():
-    """Test serialization with json module."""
-    import json
-    from unittest.mock import MagicMock
+async def test_redis_serialization_with_standard_json() -> None:
+    """Test serialization with stdlib json (ensures str-return path)."""
+    import json as std_json
+    import types
+    from typing import cast
 
-    # Create a mock json module with both dumps and loads
-    mock_json = MagicMock()
-
-    mock_json.dumps = json.dumps
-    mock_json.loads = json.loads
-
-    # Temporarily replace json module
+    # Temporarily replace json module in backend with stdlib json
     from fastapi_cachex.backends import redis
 
-    original_json = redis.json  # type: ignore[attr-defined]
-    redis.json = mock_json  # type: ignore[attr-defined]
+    original_json = cast("object", redis.json)  # type: ignore[attr-defined]
+    redis.json = types.SimpleNamespace(  # type: ignore[attr-defined, assignment]
+        dumps=std_json.dumps,
+        loads=std_json.loads,
+        JSONDecodeError=std_json.JSONDecodeError,
+    )
 
     try:
         backend = AsyncRedisCacheBackend()
         value = ETagContent(etag="test-etag", content=b"test-content")
         serialized = backend._serialize(value)
 
-        # Verify the serialization worked correctly
+        # Verify the serialization worked correctly and str path executed
         assert isinstance(serialized, str)
         assert "test-etag" in serialized
         assert "test-content" in serialized
@@ -97,7 +96,7 @@ async def test_redis_serialization_with_standard_json():
         assert deserialized == value
     finally:
         # Restore original json module
-        redis.json = original_json  # type: ignore[attr-defined]
+        redis.json = original_json  # type: ignore[attr-defined, assignment]
 
 
 @pytest.mark.asyncio
@@ -193,13 +192,17 @@ async def test_redis_deserialize_invalid_json(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
     """Test deserialize with invalid JSON data."""
-    # Set invalid JSON directly using Redis client
-    await async_redis_backend.client.set("invalid-json", "invalid json data")
+    # Set invalid JSON directly using Redis client with prefixed key
+    await async_redis_backend.client.set(
+        f"{async_redis_backend.key_prefix}invalid-json", "invalid json data"
+    )
     result = await async_redis_backend.get("invalid-json")
     assert result is None
 
     # Set JSON without required fields
-    await async_redis_backend.client.set("missing-fields", '{"some": "data"}')
+    await async_redis_backend.client.set(
+        f"{async_redis_backend.key_prefix}missing-fields", '{"some": "data"}'
+    )
     result = await async_redis_backend.get("missing-fields")
     assert result is None
 
@@ -220,3 +223,69 @@ async def test_redis_clear_pattern_no_matches(
     """Test clear_pattern when no keys match the pattern."""
     cleared = await async_redis_backend.clear_pattern("/nonexistent/*")
     assert cleared == 0
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_clear_pattern_with_prefixed_pattern(
+    async_redis_backend: AsyncRedisCacheBackend,
+):
+    """Cover branch where provided pattern already includes key prefix."""
+    value = ETagContent(etag="test-etag", content=b"test-content")
+    await async_redis_backend.set("/api/users/1", value)
+    await async_redis_backend.set("/api/users/2", value)
+
+    prefixed = f"{async_redis_backend.key_prefix}/api/users/*"
+    cleared = await async_redis_backend.clear_pattern(prefixed)
+    assert cleared == 2
+    assert await async_redis_backend.get("/api/users/1") is None
+    assert await async_redis_backend.get("/api/users/2") is None
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_clear_path_exact_without_params(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Cover include_params=False branch: only exact path without params gets removed."""
+    value = ETagContent(etag="test-etag", content=b"test-content")
+    # exact path (no params) has no extra suffix after the path
+    await async_redis_backend.set("GET:localhost:/users/42", value)
+    await async_redis_backend.set("GET:localhost:/users/42:id=42", value)
+
+    cleared = await async_redis_backend.clear_path("/users/42", include_params=False)
+    assert cleared == 1
+    assert await async_redis_backend.get("GET:localhost:/users/42") is None
+    # Param variant should remain
+    assert await async_redis_backend.get("GET:localhost:/users/42:id=42") == value
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_deserialize_non_string_content(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Ensure _deserialize handles non-string JSON content without encoding."""
+    await async_redis_backend.client.set(
+        f"{async_redis_backend.key_prefix}mixed-content",
+        '{"etag":"e","content":[1,2,3]}',
+    )
+    res = await async_redis_backend.get("mixed-content")
+    assert res is not None
+    assert res.etag == "e"
+    assert res.content == [1, 2, 3]
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_set_get_with_str_content(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Cover _serialize branch where content is already str."""
+    value = ETagContent(etag="e", content="hello")
+    await async_redis_backend.set("str-key", value)
+    out = await async_redis_backend.get("str-key")
+    # Backend converts string content to bytes when deserializing
+    assert out is not None
+    assert out.etag == value.etag
+    assert out.content == b"hello"
