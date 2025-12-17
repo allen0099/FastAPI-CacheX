@@ -3,12 +3,12 @@ name: Weekly Release
 on:
   schedule:
     # 每周一 00:00 UTC 运行
-    - cron: '0 0 * * 1'
+    - cron: "0 0 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: write
-  id-token: write  # Required for PyPI trusted publishing
+  id-token: write # Required for PyPI trusted publishing
 
 jobs:
   check-and-release:
@@ -44,10 +44,30 @@ jobs:
           current_commit=$(git rev-parse HEAD)
 
           if [ "$last_tag_commit" != "$current_commit" ]; then
-            echo "has_new_commits=true" >> $GITHUB_OUTPUT
-            commit_count=$(git rev-list --count $last_tag_commit..HEAD 2>/dev/null || git rev-list --count HEAD)
-            echo "commit_count=$commit_count" >> $GITHUB_OUTPUT
-            echo "Found $commit_count new commits since last release"
+            # Check for real commits excluding version bumps
+            # Exclude "chore: bump version" and commits created by GitHub Action
+            if [ -z "$last_tag_commit" ]; then
+              # No tag exists, check all commits
+              real_commits=$(git log --oneline --no-merges \
+                --author-not="GitHub Action <action@github.com>" \
+                --grep="^chore: bump version" --invert-grep)
+            else
+              # Tag exists, check commits since last tag
+              real_commits=$(git log $last_tag_commit..HEAD --oneline --no-merges \
+                --author-not="GitHub Action <action@github.com>" \
+                --grep="^chore: bump version" --invert-grep)
+            fi
+
+            if [ -n "$real_commits" ]; then
+              echo "has_new_commits=true" >> $GITHUB_OUTPUT
+              commit_count=$(echo "$real_commits" | wc -l)
+              echo "commit_count=$commit_count" >> $GITHUB_OUTPUT
+              echo "Found $commit_count real commits since last release (excluding version bumps)"
+              echo "$real_commits"
+            else
+              echo "has_new_commits=false" >> $GITHUB_OUTPUT
+              echo "No real commits since last release (only version bump commits found)"
+            fi
           else
             echo "has_new_commits=false" >> $GITHUB_OUTPUT
             echo "No new commits since last release"
