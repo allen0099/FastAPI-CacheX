@@ -29,30 +29,7 @@ class SessionConfig(BaseModel):
         description="Fraction of TTL that must pass before sliding refresh (0.5 = refresh after half TTL)",
     )
 
-    # Cookie settings
-    cookie_name: str = Field(
-        default="fastapi_session", description="Session cookie name"
-    )
-    cookie_max_age: int | None = Field(
-        default=None,
-        description="Cookie max-age in seconds (None = session cookie)",
-    )
-    cookie_path: str = Field(default="/", description="Cookie path")
-    cookie_domain: str | None = Field(default=None, description="Cookie domain")
-    cookie_secure: bool = Field(
-        default=True,
-        description="Whether cookie should only be sent over HTTPS",
-    )
-    cookie_httponly: bool = Field(
-        default=True,
-        description="Whether cookie should be inaccessible to JavaScript",
-    )
-    cookie_samesite: Literal["lax", "strict", "none"] = Field(
-        default="lax",
-        description="SameSite cookie attribute",
-    )
-
-    # Header settings
+    # Token settings
     header_name: str = Field(
         default="X-Session-Token",
         description="Custom header name for session token",
@@ -61,8 +38,8 @@ class SessionConfig(BaseModel):
         default=True,
         description="Whether to accept Authorization Bearer tokens",
     )
-    token_source_priority: list[Literal["cookie", "header", "bearer"]] = Field(
-        default=["cookie", "header", "bearer"],
+    token_source_priority: list[Literal["header", "bearer"]] = Field(
+        default=["header", "bearer"],
         description="Priority order for token sources",
     )
 
@@ -89,18 +66,4 @@ class SessionConfig(BaseModel):
     backend_key_prefix: str = Field(
         default="session:",
         description="Prefix for session keys in backend storage",
-    )
-
-    # CSRF settings
-    enable_csrf: bool = Field(
-        default=False,
-        description="Whether to enable CSRF protection",
-    )
-    csrf_cookie_name: str = Field(
-        default="fastapi_csrf",
-        description="CSRF token cookie name",
-    )
-    csrf_header_name: str = Field(
-        default="X-CSRF-Token",
-        description="CSRF token header name",
     )

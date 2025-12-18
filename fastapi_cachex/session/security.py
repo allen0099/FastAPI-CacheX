@@ -2,11 +2,8 @@
 
 import hashlib
 import hmac
-import secrets
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from fastapi_cachex.session.models import Session
+from fastapi_cachex.session.models import Session
 
 
 class SecurityManager:
@@ -52,28 +49,7 @@ class SecurityManager:
         # Use constant-time comparison to prevent timing attacks
         return hmac.compare_digest(expected_signature, signature)
 
-    def generate_csrf_token(self) -> str:
-        """Generate a CSRF token.
-
-        Returns:
-            A random CSRF token
-        """
-        return secrets.token_urlsafe(32)
-
-    def verify_csrf_token(self, token: str, expected: str) -> bool:
-        """Verify a CSRF token.
-
-        Args:
-            token: The token to verify
-            expected: The expected token value
-
-        Returns:
-            True if token is valid, False otherwise
-        """
-        # Use constant-time comparison
-        return hmac.compare_digest(token, expected)
-
-    def check_ip_match(self, session: "Session", current_ip: str | None) -> bool:
+    def check_ip_match(self, session: Session, current_ip: str | None) -> bool:
         """Check if session IP matches current request IP.
 
         Args:
@@ -91,7 +67,7 @@ class SecurityManager:
 
     def check_user_agent_match(
         self,
-        session: "Session",
+        session: Session,
         current_user_agent: str | None,
     ) -> bool:
         """Check if session User-Agent matches current request.
