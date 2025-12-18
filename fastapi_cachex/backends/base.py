@@ -2,6 +2,7 @@
 
 from abc import ABC
 from abc import abstractmethod
+from typing import Any
 
 from fastapi_cachex.types import ETagContent
 
@@ -46,4 +47,24 @@ class BaseCacheBackend(ABC):
 
         Returns:
             Number of cache entries cleared
+        """
+
+    @abstractmethod
+    async def get_all_keys(self) -> list[str]:
+        """Get all cache keys in the backend.
+
+        Returns:
+            List of all cache keys currently stored in the backend
+        """
+
+    @abstractmethod
+    async def get_cache_data(self) -> dict[str, tuple[Any, float | None]]:
+        """Get all cache data with expiry information.
+
+        This method is primarily used for cache monitoring and statistics.
+        Returns cache keys mapped to tuples of (value, expiry_time).
+
+        Returns:
+            Dictionary mapping cache keys to (value, expiry) tuples.
+            Expiry is None if the item never expires.
         """

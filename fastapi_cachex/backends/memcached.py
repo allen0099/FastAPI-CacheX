@@ -198,3 +198,42 @@ class MemcachedBackend(BaseCacheBackend):
             stacklevel=2,
         )
         return 0
+
+    async def get_all_keys(self) -> list[str]:
+        """Get all cache keys in the backend.
+
+        Note: Memcached does not support key scanning directly.
+        This returns an empty list as Memcached has no built-in way to enumerate keys.
+        For key enumeration, consider using Redis backend or tracking keys
+        manually in your application.
+
+        Returns:
+            Empty list (Memcached limitation)
+        """
+        warnings.warn(
+            "Memcached backend does not support key enumeration. "
+            "get_all_keys() returns an empty list. "
+            "Consider using Redis backend if you need cache monitoring, "
+            "or track keys manually in your application.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return []
+
+    async def get_cache_data(self) -> dict[str, tuple[ETagContent, float | None]]:
+        """Get all cache data with expiry information.
+
+        Note: Memcached does not support key enumeration or pattern matching.
+        This method returns an empty dictionary.
+
+        Returns:
+            Empty dictionary (Memcached limitation)
+        """
+        warnings.warn(
+            "Memcached backend does not support key enumeration. "
+            "get_cache_data() returns an empty dictionary. "
+            "Consider using Redis backend if you need cache monitoring.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return {}

@@ -107,30 +107,26 @@ def _parse_cache_key(cache_key: str) -> tuple[str, str, str, str]:
     return "", "", "", ""
 
 
-def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsResponse:
+async def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsResponse:
     """Handle the cached hits request.
 
     Args:
         backend: The cache backend instance
 
     Returns:
-        CacheHitsResponse or error dict
+        CacheHitsResponse
     """
-    cache_data = getattr(backend, "cache", {})
+    cache_data = await backend.get_cache_data()
 
     now = time.time()
     cached_hits: list[CacheHitRecord] = []
 
-    for cache_key, cache_item in cache_data.items():
+    for cache_key, (etag_content, expiry) in cache_data.items():
         method, host, path, query_params = _parse_cache_key(cache_key)
         if method:  # Valid cache key
             # Check if cache entry is expired
-            is_expired = cache_item.expiry is not None and cache_item.expiry <= now
-            ttl_remaining = (
-                round(cache_item.expiry - now, 2)
-                if cache_item.expiry is not None
-                else None
-            )
+            is_expired = expiry is not None and expiry <= now
+            ttl_remaining = round(expiry - now, 2) if expiry is not None else None
 
             cached_hits.append(
                 CacheHitRecord(
@@ -139,15 +135,15 @@ def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsResponse:
                     host=host,
                     path=path,
                     query_params=query_params,
-                    etag=cache_item.value.etag,
+                    etag=etag_content.etag,
                     is_expired=is_expired,
                     ttl_remaining=ttl_remaining,
                 )
             )
 
     # Calculate summary statistics
-    valid_hits = [h for h in cached_hits if not h.is_expired]
-    routes_hit = {h.path for h in valid_hits}
+    valid_hits: list[CacheHitRecord] = [h for h in cached_hits if not h.is_expired]
+    routes_hit: set[str] = {h.path for h in valid_hits}
 
     return CacheHitsResponse(
         cached_hits=cached_hits,
@@ -163,35 +159,33 @@ def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsResponse:
     )
 
 
-def _get_cached_records_handler(backend: BaseCacheBackend) -> CachedRecordsResponse:
+async def _get_cached_records_handler(
+    backend: BaseCacheBackend,
+) -> CachedRecordsResponse:
     """Handle the cached records request.
 
     Args:
         backend: The cache backend instance
 
     Returns:
-        CachedRecordsResponse or error dict
+        CachedRecordsResponse
     """
-    cache_data = getattr(backend, "cache", {})
+    cache_data = await backend.get_cache_data()
 
     now = time.time()
     cached_records: list[CachedRecord] = []
 
-    for cache_key, cache_item in cache_data.items():
+    for cache_key, (etag_content, expiry) in cache_data.items():
         method, host, path, query_params = _parse_cache_key(cache_key)
         if method:  # Valid cache key
             # Check if cache entry is expired
-            is_expired = cache_item.expiry is not None and cache_item.expiry <= now
+            is_expired = expiry is not None and expiry <= now
 
             # Get content size
-            content = cache_item.value.content
+            content = etag_content.content
             content_size = len(content) if isinstance(content, (bytes, str)) else 0
 
-            ttl_remaining = (
-                round(cache_item.expiry - now, 2)
-                if cache_item.expiry is not None
-                else None
-            )
+            ttl_remaining = round(expiry - now, 2) if expiry is not None else None
 
             content_preview = (
                 content[:100].decode("utf-8", errors="ignore")
@@ -206,7 +200,7 @@ def _get_cached_records_handler(backend: BaseCacheBackend) -> CachedRecordsRespo
                     host=host,
                     path=path,
                     query_params=query_params,
-                    etag=cache_item.value.etag,
+                    etag=etag_content.etag,
                     content_type=type(content).__name__,
                     content_size=content_size,
                     is_expired=is_expired,
@@ -286,7 +280,7 @@ def add_routes(
                 ),
             )
 
-        return _get_cached_hits_handler(backend)
+        return await _get_cached_hits_handler(backend)
 
     @app.get(f"{prefix}/cached-records", include_in_schema=include_in_schema)
     async def get_cached_records() -> CachedRecordsResponse:
@@ -314,4 +308,4 @@ def add_routes(
                 ),
             )
 
-        return _get_cached_records_handler(backend)
+        return await _get_cached_records_handler(backend)
