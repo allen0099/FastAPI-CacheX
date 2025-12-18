@@ -1,6 +1,7 @@
 ### Custom
 .idea/
 .serena/
+*.exe
 
 ### VisualStudioCode template
 .vscode/*

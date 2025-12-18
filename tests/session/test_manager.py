@@ -227,16 +227,43 @@ async def test_clear_expired_sessions(backend: MemoryBackend) -> None:
     user1 = SessionUser(user_id="1", username="user1")
     user2 = SessionUser(user_id="2", username="user2")
 
-    _session1, _token1 = await manager.create_session(user=user1)
-    _session2, _token2 = await manager.create_session(user=user2)
+    session1, _token1 = await manager.create_session(user=user1)
+    session2, _token2 = await manager.create_session(user=user2)
 
-    # All should be cleared (they expire after 1 second)
-    import asyncio
+    # Manually expire one session
+    session1.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await manager.update_session(session1)
 
-    await asyncio.sleep(1.1)
+    # Keep the other session valid
+    session2.expires_at = datetime.now(timezone.utc) + timedelta(seconds=3600)
+    await manager.update_session(session2)
+
+    # Clear expired sessions
     count = await manager.clear_expired_sessions()
 
-    assert count >= 0  # May be 0 or more depending on timing
+    assert count == 1  # Only one session should be cleared
+
+
+@pytest.mark.asyncio
+async def test_save_session_with_expired_session(
+    backend: MemoryBackend,
+) -> None:
+    """Test saving an expired session and its TTL calculation."""
+    config = SessionConfig(secret_key="a" * 32, session_ttl=3600)
+    manager = SessionManager(backend, config)
+
+    user = SessionUser(user_id="123", username="testuser")
+    session, token = await manager.create_session(user=user)
+
+    # Manually expire the session
+    session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+
+    # Save the expired session
+    await manager._save_session(session)
+
+    # Try to retrieve - should fail with SessionExpiredError
+    with pytest.raises(SessionExpiredError):
+        await manager.get_session(token)
 
 
 @pytest.mark.asyncio
@@ -252,3 +279,52 @@ async def test_update_session(manager: SessionManager) -> None:
     # Retrieve and verify
     retrieved = await manager.get_session(token)
     assert retrieved.data.get("updated_field") == "updated_value"
+
+
+@pytest.mark.asyncio
+async def test_delete_user_sessions(manager: SessionManager) -> None:
+    """Test deleting all sessions for a specific user."""
+    user1 = SessionUser(user_id="user1", username="testuser1")
+    user2 = SessionUser(user_id="user2", username="testuser2")
+
+    # Create multiple sessions for user1
+    _session1, _token1 = await manager.create_session(user=user1)
+    _session2, _token2 = await manager.create_session(user=user1)
+
+    # Create a session for user2
+    session3, token3 = await manager.create_session(user=user2)
+
+    # Delete all sessions for user1
+    count = await manager.delete_user_sessions("user1")
+
+    assert count == 2
+
+    # user2's session should still be accessible
+    retrieved = await manager.get_session(token3)
+    assert retrieved.session_id == session3.session_id
+
+
+@pytest.mark.asyncio
+async def test_invalid_session_signature(
+    backend: MemoryBackend,
+) -> None:
+    """Test that invalid session signature raises SessionSecurityError."""
+    config = SessionConfig(secret_key="a" * 32)
+    manager = SessionManager(backend, config)
+
+    user = SessionUser(user_id="123", username="testuser")
+    _session, token = await manager.create_session(user=user)
+
+    # Tamper with the token signature
+    from fastapi_cachex.session.models import SessionToken
+
+    original_token = SessionToken.from_string(token)
+    tampered_token = SessionToken(
+        session_id=original_token.session_id,
+        signature="invalid_signature_' " + original_token.signature,
+        issued_at=original_token.issued_at,
+    )
+
+    # Try to get session with tampered token
+    with pytest.raises(SessionSecurityError, match="Invalid session signature"):
+        await manager.get_session(tampered_token.to_string())

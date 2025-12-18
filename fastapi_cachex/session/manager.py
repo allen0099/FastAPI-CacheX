@@ -242,7 +242,7 @@ class SessionManager:
                     if session and session.user and session.user.user_id == user_id:
                         await self.backend.delete(key)
                         count += 1
-        except NotImplementedError:
+        except NotImplementedError:  # pragma: no cover
             # Backend doesn't support get_all_keys, can't delete by user
             pass
 
@@ -264,7 +264,7 @@ class SessionManager:
                     if session and session.is_expired():
                         await self.backend.delete(key)
                         count += 1
-        except NotImplementedError:
+        except NotImplementedError:  # pragma: no cover
             # Backend doesn't support get_all_keys
             pass
 
@@ -328,6 +328,6 @@ class SessionManager:
 
         try:
             return Session.model_validate_json(cached.content)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # pragma: no cover
             # Invalid session data
             return None
