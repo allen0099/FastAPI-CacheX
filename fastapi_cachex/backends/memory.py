@@ -1,11 +1,20 @@
+"""In-memory cache backend implementation."""
+
 import asyncio
 import contextlib
+import fnmatch
 import time
 
 from fastapi_cachex.types import CacheItem
 from fastapi_cachex.types import ETagContent
 
 from .base import BaseCacheBackend
+
+# Cache keys are formatted as: method:host:path:query_params
+# Minimum parts required to extract path component
+_MIN_KEY_PARTS = 3
+# Maximum parts to split (method, host, path, query_params)
+_MAX_KEY_PARTS = 3
 
 
 class MemoryBackend(BaseCacheBackend):
@@ -61,10 +70,9 @@ class MemoryBackend(BaseCacheBackend):
             if cached_item:
                 if cached_item.expiry is None or cached_item.expiry > time.time():
                     return cached_item.value
-                else:
-                    # Entry has expired; clean it up
-                    del self.cache[key]
-                    return None
+                # Entry has expired; clean it up
+                del self.cache[key]
+                return None
             return None
 
     async def set(self, key: str, value: ETagContent, ttl: int | None = None) -> None:
@@ -108,10 +116,10 @@ class MemoryBackend(BaseCacheBackend):
             keys_to_delete = []
             for key in self.cache:
                 # Keys are formatted as: method:host:path:query_params
-                parts = key.split(":", 3)
-                if len(parts) >= 3:
+                parts = key.split(":", _MAX_KEY_PARTS)
+                if len(parts) >= _MIN_KEY_PARTS:
                     cache_path = parts[2]
-                    has_params = len(parts) > 3
+                    has_params = len(parts) > _MIN_KEY_PARTS
                     if cache_path == path and (include_params or not has_params):
                         keys_to_delete.append(key)
                         cleared_count += 1
@@ -133,15 +141,13 @@ class MemoryBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        import fnmatch
-
         cleared_count = 0
         async with self.lock:
             keys_to_delete = []
             for key in self.cache:
                 # Extract path component (method:host:path:query_params)
-                parts = key.split(":", 3)
-                if len(parts) >= 3:
+                parts = key.split(":", _MAX_KEY_PARTS)
+                if len(parts) >= _MIN_KEY_PARTS:
                     cache_path = parts[2]
                     if fnmatch.fnmatch(cache_path, pattern):
                         keys_to_delete.append(key)
@@ -162,6 +168,7 @@ class MemoryBackend(BaseCacheBackend):
             pass
 
     async def cleanup(self) -> None:
+        """Remove expired cache entries from memory."""
         async with self.lock:
             now = time.time()
             expired_keys = [

@@ -1,3 +1,5 @@
+"""Memcached cache backend implementation."""
+
 import warnings
 
 from fastapi_cachex.backends.base import BaseCacheBackend
@@ -46,9 +48,8 @@ class MemcachedBackend(BaseCacheBackend):
         try:
             from pymemcache import HashClient
         except ImportError:
-            raise CacheXError(
-                "pymemcache is not installed. Please install it with 'pip install pymemcache'"
-            )
+            msg = "pymemcache is not installed. Please install it with 'pip install pymemcache'"
+            raise CacheXError(msg)
 
         self.client = HashClient(servers, connect_timeout=5, timeout=5)
         self.key_prefix = key_prefix
@@ -103,7 +104,7 @@ class MemcachedBackend(BaseCacheBackend):
             {
                 "etag": value.etag,
                 "content": content,
-            }
+            },
         )
 
         # orjson returns bytes, stdlib json returns str
@@ -171,9 +172,10 @@ class MemcachedBackend(BaseCacheBackend):
         prefixed_key = self._make_key(path)
         try:
             result = self.client.delete(prefixed_key, noreply=False)
-            return 1 if result else 0
         except Exception:  # noqa: BLE001
             return 0
+        else:
+            return 1 if result else 0
 
     async def clear_pattern(self, pattern: str) -> int:  # noqa: ARG002
         """Clear cached responses matching a pattern.

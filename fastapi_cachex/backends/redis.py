@@ -1,3 +1,5 @@
+"""Redis cache backend implementation."""
+
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
@@ -59,9 +61,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         try:
             from redis.asyncio import Redis as AsyncRedis
         except ImportError:
-            raise CacheXError(
-                "redis[hiredis] is not installed. Please install it with 'pip install \"redis[hiredis]\"'"
-            )
+            msg = "redis[hiredis] is not installed. Please install it with 'pip install \"redis[hiredis]\"' "
+            raise CacheXError(msg)
 
         self.client = AsyncRedis(
             host=host,
@@ -91,7 +92,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             {
                 "etag": value.etag,
                 "content": content,
-            }
+            },
         )
 
         # orjson returns bytes, stdlib json returns str
@@ -144,7 +145,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         # Use SCAN to iterate through keys without blocking
         while True:
             cursor, keys = await self.client.scan(
-                cursor, match=pattern, count=batch_size
+                cursor,
+                match=pattern,
+                count=batch_size,
             )
             if keys:
                 keys_to_delete.extend(keys)
@@ -186,7 +189,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         # Use SCAN to iterate through keys without blocking
         while True:
             cursor, keys = await self.client.scan(
-                cursor, match=pattern, count=batch_size
+                cursor,
+                match=pattern,
+                count=batch_size,
             )
             if keys:
                 keys_to_delete.extend(keys)
@@ -228,7 +233,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         # Use SCAN to iterate through keys without blocking
         while True:
             cursor, keys = await self.client.scan(
-                cursor, match=full_pattern, count=batch_size
+                cursor,
+                match=full_pattern,
+                count=batch_size,
             )
             if keys:
                 keys_to_delete.extend(keys)

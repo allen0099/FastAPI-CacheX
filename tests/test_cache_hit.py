@@ -6,6 +6,9 @@ This module tests the actual cache hit performance improvements:
 - Verify TTL-based cache hits return the cached content
 """
 
+import asyncio
+import time
+
 from fastapi import FastAPI
 from fastapi import Response
 from fastapi.testclient import TestClient
@@ -223,13 +226,12 @@ def test_cache_hit_performance():
 
     This is a performance test to ensure cached content is returned directly.
     """
-    import time
 
     @app.get("/expensive-operation")
     @cache(ttl=60)
     async def expensive_operation():
         # Simulate expensive operation
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
         return {"expensive": "data"}
 
     # First request (will execute the expensive operation)

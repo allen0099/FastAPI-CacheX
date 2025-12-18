@@ -1,3 +1,6 @@
+"""Custom exception classes for FastAPI-CacheX."""
+
+
 class CacheXError(Exception):
     """Base class for all exceptions in FastAPI-CacheX."""
 

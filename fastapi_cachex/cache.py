@@ -1,3 +1,5 @@
+"""Core caching functionality and decorators."""
+
 import hashlib
 import inspect
 from collections.abc import Awaitable
@@ -35,21 +37,35 @@ AnyCallable = Union[AsyncCallable[T], SyncCallable[T]]  # noqa: UP007
 
 
 class CacheControl:
+    """Manages Cache-Control header directives."""
+
     def __init__(self) -> None:
+        """Initialize an empty CacheControl instance."""
         self.directives: list[str] = []
 
     def add(self, directive: DirectiveType, value: int | None = None) -> None:
+        """Add a Cache-Control directive.
+
+        Args:
+            directive: The directive type to add
+            value: Optional value for the directive
+        """
         if value is not None:
             self.directives.append(f"{directive.value}={value}")
         else:
             self.directives.append(directive.value)
 
     def __str__(self) -> str:
+        """Return the Cache-Control header value as a string."""
         return ", ".join(self.directives)
 
 
 async def get_response(
-    __func: AnyCallable[Response], __request: Request, *args: Any, **kwargs: Any
+    __func: AnyCallable[Response],
+    __request: Request,
+    /,
+    *args: Any,
+    **kwargs: Any,
 ) -> Response:
     """Get the response from the function."""
     if inspect.iscoroutinefunction(__func):
@@ -64,7 +80,8 @@ async def get_response(
     # Get response_class from route if available
     route: APIRoute | None = __request.scope.get("route")
     if route is None:  # pragma: no cover
-        raise CacheXError("Route not found in request scope")
+        msg = "Route not found in request scope"
+        raise CacheXError(msg)
 
     if isinstance(route.response_class, DefaultPlaceholder):
         response_class: type[Response] = route.response_class.value
@@ -87,6 +104,23 @@ def cache(  # noqa: C901
     immutable: bool = False,
     must_revalidate: bool = False,
 ) -> Callable[[AnyCallable[Response]], AsyncCallable[Response]]:
+    """Cache decorator for FastAPI route handlers.
+
+    Args:
+        ttl: Time-to-live in seconds for cache entries
+        stale_ttl: Additional time-to-live for stale cache entries
+        stale: Stale response handling strategy ('error' or 'revalidate')
+        no_cache: Whether to disable caching
+        no_store: Whether to prevent storing responses
+        public: Whether responses can be cached by shared caches
+        private: Whether responses are for single user only
+        immutable: Whether cached responses never change
+        must_revalidate: Whether to force revalidation when stale
+
+    Returns:
+        Decorator function that wraps route handlers with caching logic
+    """
+
     def decorator(func: AnyCallable[Response]) -> AsyncCallable[Response]:  # noqa: C901
         try:
             cache_backend = BackendProxy.get_backend()
@@ -101,7 +135,8 @@ def cache(  # noqa: C901
 
         # Check if Request is already in the parameters
         found_request: Parameter | None = next(
-            (param for param in params if param.annotation == Request), None
+            (param for param in params if param.annotation == Request),
+            None,
         )
 
         # Add Request parameter if it's not present
@@ -143,7 +178,8 @@ def cache(  # noqa: C901
 
                 # 4. Stale response handling
                 if stale is not None and stale_ttl is None:
-                    raise CacheXError("stale_ttl must be set if stale is used")
+                    msg = "stale_ttl must be set if stale is used"
+                    raise CacheXError(msg)
 
                 if stale == "revalidate":
                     cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
@@ -165,7 +201,7 @@ def cache(  # noqa: C901
 
             if not req:  # pragma: no cover
                 # Skip coverage for this case, as it should not happen
-                raise RequestNotFoundError()
+                raise RequestNotFoundError
 
             # Only cache GET requests
             if req.method != "GET":
@@ -227,7 +263,7 @@ def cache(  # noqa: C901
             if cached_data and not no_cache and ttl is not None:
                 # We have a cached entry and TTL-based caching is enabled
                 # Return the cached content directly with 200 OK without revalidation
-                cache_hit_response = Response(
+                return Response(
                     content=cached_data.content,
                     status_code=200,
                     headers={
@@ -235,7 +271,6 @@ def cache(  # noqa: C901
                         "Cache-Control": cache_control,
                     },
                 )
-                return cache_hit_response
 
             if not current_response or not current_etag:
                 # Retrieve the current response if not already done
@@ -249,7 +284,9 @@ def cache(  # noqa: C901
             if not cached_data or cached_data.etag != current_etag:
                 # Store in cache if data changed
                 await cache_backend.set(
-                    cache_key, ETagContent(current_etag, current_response.body), ttl=ttl
+                    cache_key,
+                    ETagContent(current_etag, current_response.body),
+                    ttl=ttl,
                 )
 
             current_response.headers["Cache-Control"] = cache_control
@@ -257,7 +294,7 @@ def cache(  # noqa: C901
 
         # Update the wrapper with the new signature
         update_wrapper(wrapper, func)
-        wrapper.__signature__ = sig  # type: ignore
+        wrapper.__signature__ = sig  # type: ignore[attr-defined]
 
         return wrapper
 

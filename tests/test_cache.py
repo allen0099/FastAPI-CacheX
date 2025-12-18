@@ -1,3 +1,4 @@
+import pytest
 from fastapi import FastAPI
 from fastapi import Response
 from fastapi.testclient import TestClient
@@ -7,6 +8,7 @@ from starlette.responses import JSONResponse
 from starlette.responses import PlainTextResponse
 
 from fastapi_cachex.cache import cache
+from fastapi_cachex.exceptions import CacheXError
 
 app = FastAPI()
 client = TestClient(app)
@@ -42,7 +44,8 @@ def test_cache_with_ttl():
     assert "ETag" in response.headers
 
     response2 = client.get(
-        "/cache-with-ttl", headers={"If-None-Match": response.headers["ETag"]}
+        "/cache-with-ttl",
+        headers={"If-None-Match": response.headers["ETag"]},
     )
     assert response2.status_code == 304
     assert response2.headers["Cache-Control"] == "max-age=3"
@@ -172,12 +175,8 @@ def test_broken_stale():
             media_type="application/json",
         )
 
-    try:
+    with pytest.raises(CacheXError, match="stale_ttl must be set if stale is used"):
         client.get("/stale")
-
-    except Exception as e:
-        assert "CacheXError" in str(type(e).__name__)
-        assert "stale_ttl must be set if stale is used" in str(e)
 
 
 def test_positional_args():

@@ -1,3 +1,5 @@
+"""Type definitions and type aliases for FastAPI-CacheX."""
+
 from dataclasses import dataclass
 from typing import Any
 
