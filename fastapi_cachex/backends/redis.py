@@ -288,11 +288,13 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         all_keys = await self.get_all_keys()
         cache_data: dict[str, tuple[ETagContent, float | None]] = {}
 
-        for key in all_keys:
-            value = await self.get(key)
+        for prefixed_key in all_keys:
+            # Remove prefix to get the original cache key
+            original_key = prefixed_key.removeprefix(self.key_prefix)
+
+            # Get the value using the original key (get() adds prefix internally)
+            value = await self.get(original_key)
             if value is not None:
-                # Remove key prefix to get the original cache key
-                original_key = key.removeprefix(self.key_prefix)
                 cache_data[original_key] = (value, None)
 
         return cache_data

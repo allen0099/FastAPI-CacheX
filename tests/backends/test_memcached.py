@@ -286,3 +286,55 @@ async def test_memcached_clear_path_exception(
     monkeypatch.setattr(memcached_backend.client, "delete", boom)
     cleared = await memcached_backend.clear_path("/nope", include_params=False)
     assert cleared == 0
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_all_keys_empty(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """Test get_all_keys returns empty list for Memcached (unsupported)."""
+    await memcached_backend.clear()
+    keys = await memcached_backend.get_all_keys()
+    # Memcached doesn't support key enumeration
+    assert keys == []
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_all_keys_warning(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """Test get_all_keys issues warning for Memcached."""
+    with pytest.warns(
+        RuntimeWarning,
+        match="Memcached backend does not support key enumeration",
+    ):
+        keys = await memcached_backend.get_all_keys()
+        assert keys == []
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_cache_data_empty(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """Test get_cache_data returns empty dict for Memcached (unsupported)."""
+    await memcached_backend.clear()
+    cache_data = await memcached_backend.get_cache_data()
+    # Memcached doesn't support key enumeration
+    assert cache_data == {}
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_cache_data_warning(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """Test get_cache_data issues warning for Memcached."""
+    with pytest.warns(
+        RuntimeWarning,
+        match="Memcached backend does not support key enumeration",
+    ):
+        cache_data = await memcached_backend.get_cache_data()
+        assert cache_data == {}

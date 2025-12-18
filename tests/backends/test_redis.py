@@ -294,3 +294,98 @@ async def test_redis_set_get_with_str_content(
     assert out is not None
     assert out.etag == value.etag
     assert out.content == b"hello"
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_all_keys_empty(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Test get_all_keys returns empty list for empty cache."""
+    # Clear all keys first
+    await async_redis_backend.clear()
+    keys = await async_redis_backend.get_all_keys()
+    assert keys == []
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_all_keys_with_entries(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Test get_all_keys returns all prefixed cache keys."""
+    # Clear all keys first
+    await async_redis_backend.clear()
+
+    key1 = "GET:localhost:/users"
+    key2 = "POST:localhost:/users"
+    key3 = "GET:localhost:/posts"
+
+    value = ETagContent(etag="test_etag", content=b"test_value")
+
+    await async_redis_backend.set(key1, value)
+    await async_redis_backend.set(key2, value)
+    await async_redis_backend.set(key3, value)
+
+    keys = await async_redis_backend.get_all_keys()
+
+    # Keys should include the prefix
+    assert len(keys) == 3
+    # Check that prefixed keys exist
+    prefixed_keys = list(keys)
+    assert any(key1 in k for k in prefixed_keys)
+    assert any(key2 in k for k in prefixed_keys)
+    assert any(key3 in k for k in prefixed_keys)
+
+    # Clean up
+    await async_redis_backend.clear()
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_cache_data_empty(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Test get_cache_data returns empty dict for empty cache."""
+    # Clear all keys first
+    await async_redis_backend.clear()
+    cache_data = await async_redis_backend.get_cache_data()
+    assert cache_data == {}
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_cache_data_with_entries(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Test get_cache_data returns all cache data."""
+    # Clear all keys first
+    await async_redis_backend.clear()
+
+    key1 = "GET:localhost:/users"
+    key2 = "POST:localhost:/users"
+    value1 = ETagContent(etag="etag1", content=b"value1")
+    value2 = ETagContent(etag="etag2", content=b"value2")
+
+    await async_redis_backend.set(key1, value1)
+    await async_redis_backend.set(key2, value2)
+
+    cache_data = await async_redis_backend.get_cache_data()
+
+    assert len(cache_data) == 2
+    assert key1 in cache_data
+    assert key2 in cache_data
+
+    # Verify values
+    stored_value1, expiry1 = cache_data[key1]
+    stored_value2, expiry2 = cache_data[key2]
+
+    assert stored_value1 == value1
+    assert stored_value2 == value2
+
+    # Redis backend returns None for expiry (no expiry tracking)
+    assert expiry1 is None
+    assert expiry2 is None
+
+    # Clean up
+    await async_redis_backend.clear()
