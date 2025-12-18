@@ -251,3 +251,50 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                     cleared_count += deleted
 
         return cleared_count
+
+    async def get_all_keys(self) -> list[str]:
+        """Get all cache keys in the backend.
+
+        Returns:
+            List of all cache keys currently stored in the backend
+        """
+        pattern = f"{self.key_prefix}*"
+        cursor = 0
+        batch_size = 100
+        all_keys: list[str] = []
+
+        # Use SCAN to iterate through keys without blocking
+        while True:
+            cursor, keys = await self.client.scan(
+                cursor,
+                match=pattern,
+                count=batch_size,
+            )
+            if keys:
+                all_keys.extend(keys)
+            if cursor == 0:
+                break
+
+        return all_keys
+
+    async def get_cache_data(self) -> dict[str, tuple[ETagContent, float | None]]:
+        """Get all cache data with expiry information.
+
+        Returns:
+            Dictionary mapping cache keys to (ETagContent, expiry) tuples.
+            Note: Redis stores TTL but not absolute expiry time, so this
+            returns None for expiry (no expiry tracking in Redis backend).
+        """
+        all_keys = await self.get_all_keys()
+        cache_data: dict[str, tuple[ETagContent, float | None]] = {}
+
+        for prefixed_key in all_keys:
+            # Remove prefix to get the original cache key
+            original_key = prefixed_key.removeprefix(self.key_prefix)
+
+            # Get the value using the original key (get() adds prefix internally)
+            value = await self.get(original_key)
+            if value is not None:
+                cache_data[original_key] = (value, None)
+
+        return cache_data

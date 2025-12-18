@@ -158,6 +158,24 @@ class MemoryBackend(BaseCacheBackend):
 
         return cleared_count
 
+    async def get_all_keys(self) -> list[str]:
+        """Get all cache keys in the backend.
+
+        Returns:
+            List of all cache keys currently stored in the backend
+        """
+        async with self.lock:
+            return list(self.cache.keys())
+
+    async def get_cache_data(self) -> dict[str, tuple[ETagContent, float | None]]:
+        """Get all cache data with expiry information.
+
+        Returns:
+            Dictionary mapping cache keys to (ETagContent, expiry) tuples
+        """
+        async with self.lock:
+            return {key: (item.value, item.expiry) for key, item in self.cache.items()}
+
     async def _cleanup_task_impl(self) -> None:
         try:
             while True:

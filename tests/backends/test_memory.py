@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 import pytest_asyncio
@@ -255,3 +256,95 @@ async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
     # Verify the posts data still exists
     posts_value = await memory_backend.get("GET:localhost:/posts/789")
     assert posts_value == value3
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_get_all_keys_empty(memory_backend: MemoryBackend):
+    """Test get_all_keys returns empty list for empty cache."""
+    keys = await memory_backend.get_all_keys()
+    assert keys == []
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_get_all_keys_with_entries(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Test get_all_keys returns all cache keys."""
+    key1 = "GET:localhost:/users"
+    key2 = "POST:localhost:/users"
+    key3 = "GET:localhost:/posts"
+
+    value = ETagContent(etag="test_etag", content=b"test_value")
+
+    await memory_backend.set(key1, value)
+    await memory_backend.set(key2, value)
+    await memory_backend.set(key3, value)
+
+    keys = await memory_backend.get_all_keys()
+    assert sorted(keys) == sorted([key1, key2, key3])
+    assert len(keys) == 3
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_get_cache_data_empty(memory_backend: MemoryBackend):
+    """Test get_cache_data returns empty dict for empty cache."""
+    cache_data = await memory_backend.get_cache_data()
+    assert cache_data == {}
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_get_cache_data_with_entries(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Test get_cache_data returns all cache data with expiry."""
+    key1 = "GET:localhost:/users"
+    key2 = "POST:localhost:/users"
+    value1 = ETagContent(etag="etag1", content=b"value1")
+    value2 = ETagContent(etag="etag2", content=b"value2")
+
+    # Set with TTL
+    await memory_backend.set(key1, value1, ttl=3600)
+    # Set without TTL
+    await memory_backend.set(key2, value2)
+
+    cache_data = await memory_backend.get_cache_data()
+
+    assert len(cache_data) == 2
+    assert key1 in cache_data
+    assert key2 in cache_data
+
+    # Verify values
+    stored_value1, expiry1 = cache_data[key1]
+    stored_value2, expiry2 = cache_data[key2]
+
+    assert stored_value1 == value1
+    assert stored_value2 == value2
+
+    # Verify expiry (key1 should have expiry, key2 should not)
+    assert expiry1 is not None
+    assert expiry2 is None
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_get_cache_data_expired_entries(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Test get_cache_data includes expired entries."""
+    key = "GET:localhost:/test"
+    value = ETagContent(etag="test_etag", content=b"test_value")
+
+    # Set with very short TTL
+    await memory_backend.set(key, value, ttl=1)
+
+    # Wait for expiry
+    await asyncio.sleep(1.1)
+
+    cache_data = await memory_backend.get_cache_data()
+
+    # Expired entries should still be in the raw cache data
+    # but get() won't return them
+    assert key in cache_data
+    retrieved_value, expiry = cache_data[key]
+    assert retrieved_value == value
+    assert expiry is not None
+    assert expiry <= time.time()
