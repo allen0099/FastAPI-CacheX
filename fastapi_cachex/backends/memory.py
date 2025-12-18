@@ -5,12 +5,13 @@ import contextlib
 import fnmatch
 import time
 
+from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheItem
 from fastapi_cachex.types import ETagContent
 
 from .base import BaseCacheBackend
 
-# Cache keys are formatted as: method:host:path:query_params
+# Cache keys are formatted as: method|||host|||path|||query_params
 # Minimum parts required to extract path component
 _MIN_KEY_PARTS = 3
 # Maximum parts to split (method, host, path, query_params)
@@ -115,8 +116,8 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             keys_to_delete = []
             for key in self.cache:
-                # Keys are formatted as: method:host:path:query_params
-                parts = key.split(":", _MAX_KEY_PARTS)
+                # Keys are formatted as: method|||host|||path|||query_params
+                parts = key.split(CACHE_KEY_SEPARATOR, _MAX_KEY_PARTS)
                 if len(parts) >= _MIN_KEY_PARTS:
                     cache_path = parts[2]
                     has_params = len(parts) > _MIN_KEY_PARTS
@@ -145,8 +146,8 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             keys_to_delete = []
             for key in self.cache:
-                # Extract path component (method:host:path:query_params)
-                parts = key.split(":", _MAX_KEY_PARTS)
+                # Extract path component (method|||host|||path|||query_params)
+                parts = key.split(CACHE_KEY_SEPARATOR, _MAX_KEY_PARTS)
                 if len(parts) >= _MIN_KEY_PARTS:
                     cache_path = parts[2]
                     if fnmatch.fnmatch(cache_path, pattern):

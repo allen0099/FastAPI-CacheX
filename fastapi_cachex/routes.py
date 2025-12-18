@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from fastapi_cachex.backends import BaseCacheBackend
 from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -93,12 +94,12 @@ def _parse_cache_key(cache_key: str) -> tuple[str, str, str, str]:
     """Parse cache key into components.
 
     Args:
-        cache_key: Cache key in format method:host:path:query_params
+        cache_key: Cache key in format method|||host|||path|||query_params
 
     Returns:
         Tuple of (method, host, path, query_params)
     """
-    key_parts = cache_key.split(":", CACHE_KEY_MAX_PARTS)
+    key_parts = cache_key.split(CACHE_KEY_SEPARATOR, CACHE_KEY_MAX_PARTS)
     if len(key_parts) >= CACHE_KEY_MIN_PARTS:
         method, host, path = key_parts[0], key_parts[1], key_parts[2]
         query_params = key_parts[3] if len(key_parts) > CACHE_KEY_MIN_PARTS else ""

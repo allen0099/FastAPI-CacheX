@@ -25,6 +25,7 @@ from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import RequestNotFoundError
 from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import ETagContent
 
 if TYPE_CHECKING:
@@ -207,9 +208,9 @@ def cache(  # noqa: C901
             if req.method != "GET":
                 return await get_response(func, req, *args, **kwargs)
 
-            # Generate cache key: method:host:path:query_params[:vary]
+            # Generate cache key: method|||host|||path|||query_params[:vary]
             # Include host to avoid cross-host cache pollution
-            cache_key = f"{req.method}:{req.headers.get('host', 'unknown')}:{req.url.path}:{req.query_params}"
+            cache_key = f"{req.method}{CACHE_KEY_SEPARATOR}{req.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}{req.url.path}{CACHE_KEY_SEPARATOR}{req.query_params}"
             client_etag = req.headers.get("if-none-match")
             cache_control = await get_cache_control(CacheControl())
 
