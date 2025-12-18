@@ -130,7 +130,7 @@ jobs:
           body: |
             ## 🚀 Release v${{ steps.version.outputs.new_version }}
 
-            Released on: ${{ steps.release_date.outputs.release_date }}.
+            Released on: ${{ steps.changelog.outputs.release_date }}.
 
             **📊 Statistics:**
             - New commits: ${{ steps.check_commits.outputs.commit_count }}
