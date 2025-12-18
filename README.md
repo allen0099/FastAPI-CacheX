@@ -49,16 +49,8 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 
 ## Installation
 
-### Using pip
-
 ```bash
-pip install fastapi-cachex
-```
-
-### Using uv (recommended)
-
-```bash
-uv pip install fastapi-cachex
+uv add fastapi-cachex
 ```
 
 ## Quick Start
