@@ -14,15 +14,17 @@ def is_memcached_running(host: str = "127.0.0.1", port: int = 11211) -> bool:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.connect((host, port))
-        return True
     except (OSError, ConnectionRefusedError):
         return False
+    else:
+        return True
     finally:
         sock.close()
 
 
 requires_memcached = pytest.mark.skipif(
-    not is_memcached_running(), reason="Memcached server is not running"
+    not is_memcached_running(),
+    reason="Memcached server is not running",
 )
 
 
@@ -37,7 +39,8 @@ def test_memcached_without_pymemcache(monkeypatch):
 
     def mock_import(name, *args, **kwargs):
         if name == "pymemcache":
-            raise ImportError("No module named 'pymemcache'")
+            msg = "No module named 'pymemcache'"
+            raise ImportError(msg)
         return orig_import(name, *args, **kwargs)
 
     monkeypatch.setattr("builtins.__import__", mock_import)
@@ -187,7 +190,7 @@ async def test_memcached_clear_path_warning(memcached_backend: MemcachedBackend)
         match="Memcached backend does not support pattern-based key clearing",
     ):
         cleared = await memcached_backend.clear_path("/test", include_params=True)
-        assert cleared == 0
+    assert cleared == 0
 
 
 @requires_memcached
@@ -195,10 +198,11 @@ async def test_memcached_clear_path_warning(memcached_backend: MemcachedBackend)
 async def test_memcached_clear_pattern_warning(memcached_backend: MemcachedBackend):
     # Test that warning is raised when using pattern matching
     with pytest.warns(
-        RuntimeWarning, match="Memcached backend does not support pattern matching"
+        RuntimeWarning,
+        match="Memcached backend does not support pattern matching",
     ):
         cleared = await memcached_backend.clear_pattern("/users/*")
-        assert cleared == 0
+    assert cleared == 0
 
 
 @requires_memcached
@@ -242,7 +246,8 @@ async def test_memcached_set_uses_standard_json_branch(monkeypatch) -> None:
         # When using std json, dumps returns str and code should encode to bytes
         await backend.set(key, value)
         got = await backend.get(key)
-        assert got is not None and got == value
+        assert got is not None
+        assert got == value
     finally:
         memcached_module.json = original_json  # type: ignore[attr-defined, assignment]
 
@@ -269,12 +274,14 @@ async def test_memcached_get_invalid_and_missing_fields(
 @requires_memcached
 @pytest.mark.asyncio
 async def test_memcached_clear_path_exception(
-    monkeypatch, memcached_backend: MemcachedBackend
+    monkeypatch,
+    memcached_backend: MemcachedBackend,
 ) -> None:
     """Simulate client.delete raising to hit exception branch in clear_path()."""
 
     def boom(*args, **kwargs) -> None:
-        raise RuntimeError("delete failed")
+        msg = "delete failed"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(memcached_backend.client, "delete", boom)
     cleared = await memcached_backend.clear_path("/nope", include_params=False)

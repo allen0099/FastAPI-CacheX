@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import sys
 from collections.abc import AsyncGenerator
@@ -18,13 +19,15 @@ def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
         s.settimeout(1.0)
         s.connect((host, port))
         s.close()
-        return True
     except TimeoutError:
         return False
+    else:
+        return True
 
 
 requires_redis = pytest.mark.skipif(
-    not is_redis_running(), reason="Redis server is not running"
+    not is_redis_running(),
+    reason="Redis server is not running",
 )
 
 
@@ -53,7 +56,8 @@ def test_redis_without_redis_package(monkeypatch):
 
     def mock_import(name, *args, **kwargs):
         if name == "redis":
-            raise ImportError("No module named 'redis'")
+            msg = "No module named 'redis'"
+            raise ImportError(msg)
         return orig_import(name, *args, **kwargs)
 
     monkeypatch.setattr("builtins.__import__", mock_import)
@@ -118,9 +122,10 @@ class TestAsyncRedisCacheBackend:
         await async_redis_backend.set("test-key", value, ttl=100)
         # Use _make_key to get the prefixed key
         ttl = await async_redis_backend.client.ttl(
-            async_redis_backend._make_key("test-key")
+            async_redis_backend._make_key("test-key"),
         )
-        assert ttl > 0 and ttl <= 100
+        assert ttl > 0
+        assert ttl <= 100
 
     @requires_redis
     async def test_delete(self, async_redis_backend: AsyncRedisCacheBackend):
@@ -178,8 +183,6 @@ async def test_redis_ttl(async_redis_backend: AsyncRedisCacheBackend):
     result = await async_redis_backend.get("test-key")
     assert result is not None
 
-    import asyncio
-
     await asyncio.sleep(1.5)  # Wait for TTL to expire
 
     result = await async_redis_backend.get("test-key")
@@ -194,14 +197,16 @@ async def test_redis_deserialize_invalid_json(
     """Test deserialize with invalid JSON data."""
     # Set invalid JSON directly using Redis client with prefixed key
     await async_redis_backend.client.set(
-        f"{async_redis_backend.key_prefix}invalid-json", "invalid json data"
+        f"{async_redis_backend.key_prefix}invalid-json",
+        "invalid json data",
     )
     result = await async_redis_backend.get("invalid-json")
     assert result is None
 
     # Set JSON without required fields
     await async_redis_backend.client.set(
-        f"{async_redis_backend.key_prefix}missing-fields", '{"some": "data"}'
+        f"{async_redis_backend.key_prefix}missing-fields",
+        '{"some": "data"}',
     )
     result = await async_redis_backend.get("missing-fields")
     assert result is None

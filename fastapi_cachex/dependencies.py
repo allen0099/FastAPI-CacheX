@@ -1,3 +1,5 @@
+"""FastAPI dependency injection utilities for cache control."""
+
 from typing import Annotated
 
 from fastapi import Depends

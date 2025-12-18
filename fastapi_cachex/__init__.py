@@ -1,3 +1,5 @@
+"""FastAPI-CacheX: A powerful and flexible caching extension for FastAPI."""
+
 from .cache import cache as cache
 from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_cache_backend as get_cache_backend

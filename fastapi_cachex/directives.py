@@ -1,3 +1,5 @@
+"""Cache-Control directive types and enumerations."""
+
 from enum import Enum
 
 

@@ -1,3 +1,5 @@
+"""Base cache backend interface and abstract implementation."""
+
 from abc import ABC
 from abc import abstractmethod
 

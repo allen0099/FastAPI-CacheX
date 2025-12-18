@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-cachex"
-version = "0.1.0"
+version = "0.2.0"
 description = "A caching library for FastAPI with support for Cache-Control, ETag, and multiple backends."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -73,44 +73,16 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff.lint]
 ignore = [
-    "A005", # Shadowing built-in name
     "E501",
     "ANN401",
+    "COM812", # redundant rule, use formatter to fix
     "B008", # do not perform function calls in argument defaults
     "B904", # Allow raising exceptions without from e, for HTTPException
+    "FBT001", "FBT002", # Boolean arguments are part of Cache-Control API design
 ]
 preview = true
 explicit-preview-rules = true
-extend-select = [
-    "A", # flake8-builtins
-    "B", # flake8-bugbear
-    "C", # flake8-comprehensions
-    "E", # pycodestyle errors
-    "F", # pyflakes
-    "I", # isort
-    "UP", # pyupgrade
-    "W", # pycodestyle warnings
-    "G", # flake8-logging-format
-    "N", # pep8-naming
-    "Q", # flake8-quotes
-    "S", # flake8-bandit
-    "ANN", # flake8-annotations
-    "ARG", # flake8-unused-arguments
-    "BLE", # flake8-blind-except
-    "DTZ", # flake8-datetimez
-    "ICN", # flake8-import-conventions
-    "INP", # flake8-no-pep420
-    "LOG", # flake8-logging
-    "PIE", # flake8-pie
-    "PTH", # flake8-use-pathlib
-    "RUF", # Ruff-specific rules
-    "SIM", # flake8-simplify
-    "T20", # flake8-print
-    "TCH", # flake8-type-checking
-    "SLOT", # flake8-slots
-    # Preview rules
-    "PLW1514", # unspecified-encoding
-]
+extend-select = ['ALL']
 
 [tool.ruff.lint.isort]
 force-single-line = true
@@ -120,7 +92,24 @@ force-single-line = true
 keep-runtime-typing = true
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "ARG", "ANN", "B011", "BLE"]
+"tests/**" = [
+    "D",
+    "S101",
+    "ARG",
+    "ANN",
+    "B011",
+    "BLE",
+    "PLR",
+    "SLF",
+    "PLC0415",  # Import in functions is intentional for test setup
+    "PT031"  # Single statement in pytest.warns is acceptable
+]
+"fastapi_cachex/cache.py" = [
+    "PLR0913", "PLR0915", # Many arguments/statements needed for flexible caching logic
+]
+"fastapi_cachex/backends/memcached.py" = ["PLC0415"]  # Optional dependency
+"fastapi_cachex/backends/redis.py" = ["PLR0913", "PLC0415"]  # Optional dependency, Redis config
+"fastapi_cachex/proxy.py" = ["PLW0603"]  # Global backend management by design
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -129,6 +118,9 @@ docstring-code-format = true
 exclude = [
     "./.serena/",
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.coverage.run]
 source = ["fastapi_cachex"]
