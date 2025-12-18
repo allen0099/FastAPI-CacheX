@@ -6,6 +6,7 @@ from typing import Literal
 
 from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import ETagContent
 
 if TYPE_CHECKING:
@@ -175,11 +176,13 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """
         # Pattern includes the HTTP method, host, and path components
         if include_params:
-            # Clear all variations: *:path:*
-            pattern = f"{self.key_prefix}*:{path}:*"
+            # Clear all variations: *|||path|||*
+            pattern = (
+                f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}{CACHE_KEY_SEPARATOR}*"
+            )
         else:
-            # Clear only exact path (no query params): *:path
-            pattern = f"{self.key_prefix}*:{path}"
+            # Clear only exact path (no query params): *|||path
+            pattern = f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}"
 
         cursor = 0
         batch_size = 100

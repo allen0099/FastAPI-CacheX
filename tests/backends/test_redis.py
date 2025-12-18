@@ -146,18 +146,21 @@ class TestAsyncRedisCacheBackend:
     @requires_redis
     async def test_clear_path(self, async_redis_backend: AsyncRedisCacheBackend):
         value = ETagContent(etag="test-etag", content=b"test-content")
-        # Use proper cache key format: method:host:path:query_params
-        # Keys without query params end with empty string after last colon
-        await async_redis_backend.set("GET:localhost:/users/1:", value)
-        await async_redis_backend.set("POST:localhost:/users/1:param=1", value)
-        await async_redis_backend.set("GET:localhost:/posts/1:", value)
+        # Use proper cache key format: method|||host|||path|||query_params
+        # Keys without query params end with empty string after last separator
+        await async_redis_backend.set("GET|||localhost|||/users/1|||", value)
+        await async_redis_backend.set("POST|||localhost|||/users/1|||param=1", value)
+        await async_redis_backend.set("GET|||localhost|||/posts/1|||", value)
 
         # Clear all /users/1 entries regardless of method/params
         cleared = await async_redis_backend.clear_path("/users/1", include_params=True)
         assert cleared == 2
-        assert await async_redis_backend.get("GET:localhost:/users/1:") is None
-        assert await async_redis_backend.get("POST:localhost:/users/1:param=1") is None
-        assert await async_redis_backend.get("GET:localhost:/posts/1:") == value
+        assert await async_redis_backend.get("GET|||localhost|||/users/1|||") is None
+        assert (
+            await async_redis_backend.get("POST|||localhost|||/users/1|||param=1")
+            is None
+        )
+        assert await async_redis_backend.get("GET|||localhost|||/posts/1|||") == value
 
     @requires_redis
     async def test_clear_pattern(self, async_redis_backend: AsyncRedisCacheBackend):
@@ -255,14 +258,14 @@ async def test_redis_clear_path_exact_without_params(
     """Cover include_params=False branch: only exact path without params gets removed."""
     value = ETagContent(etag="test-etag", content=b"test-content")
     # exact path (no params) has no extra suffix after the path
-    await async_redis_backend.set("GET:localhost:/users/42", value)
-    await async_redis_backend.set("GET:localhost:/users/42:id=42", value)
+    await async_redis_backend.set("GET|||localhost|||/users/42", value)
+    await async_redis_backend.set("GET|||localhost|||/users/42|||id=42", value)
 
     cleared = await async_redis_backend.clear_path("/users/42", include_params=False)
     assert cleared == 1
-    assert await async_redis_backend.get("GET:localhost:/users/42") is None
+    assert await async_redis_backend.get("GET|||localhost|||/users/42") is None
     # Param variant should remain
-    assert await async_redis_backend.get("GET:localhost:/users/42:id=42") == value
+    assert await async_redis_backend.get("GET|||localhost|||/users/42|||id=42") == value
 
 
 @requires_redis
@@ -317,9 +320,9 @@ async def test_redis_get_all_keys_with_entries(
     # Clear all keys first
     await async_redis_backend.clear()
 
-    key1 = "GET:localhost:/users"
-    key2 = "POST:localhost:/users"
-    key3 = "GET:localhost:/posts"
+    key1 = "GET|||localhost|||/users"
+    key2 = "POST|||localhost|||/users"
+    key3 = "GET|||localhost|||/posts"
 
     value = ETagContent(etag="test_etag", content=b"test_value")
 
@@ -362,8 +365,8 @@ async def test_redis_get_cache_data_with_entries(
     # Clear all keys first
     await async_redis_backend.clear()
 
-    key1 = "GET:localhost:/users"
-    key2 = "POST:localhost:/users"
+    key1 = "GET|||localhost|||/users"
+    key2 = "POST|||localhost|||/users"
     value1 = ETagContent(etag="etag1", content=b"value1")
     value2 = ETagContent(etag="etag2", content=b"value2")
 
