@@ -14,10 +14,11 @@
 
 [English](README.md) | [繁體中文](docs/README.zh-TW.md)
 
-A high-performance caching extension for FastAPI, providing comprehensive HTTP caching support.
+A high-performance caching extension for FastAPI, providing comprehensive HTTP caching support and optional session management.
 
 ## Features
 
+### HTTP Caching
 - Support for HTTP caching headers
     - `Cache-Control`
     - `ETag`
@@ -28,6 +29,16 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
     - In-memory cache
 - Complete Cache-Control directive implementation
 - Easy-to-use `@cache` decorator
+
+### Session Management (Optional Extension)
+- Secure session management with HMAC-SHA256 token signing
+- IP address and User-Agent binding (optional security features)
+- Cookie, header, and bearer token support
+- Automatic session renewal (sliding expiration)
+- Flash messages for cross-request communication
+- Multiple backend support (Redis, Memcached, In-Memory)
+- CSRF token generation and validation
+- Complete session lifecycle management (create, validate, refresh, invalidate)
 
 ### Cache-Control Directives
 
@@ -203,6 +214,9 @@ async def expensive_operation():
 - [Cache Flow Explanation](docs/CACHE_FLOW.md)
 - [Development Guide](docs/DEVELOPMENT.md)
 - [Contributing Guidelines](docs/CONTRIBUTING.md)
+- [Session Management Guide](docs/SESSION.md) - Complete guide for session features
+
+
 
 ## License
 

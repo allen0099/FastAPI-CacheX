@@ -14,10 +14,11 @@
 
 [English](../README.md) | [繁體中文](README.zh-TW.md)
 
-FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件，提供完整的 HTTP 快取功能支援。
+FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件，提供完整的 HTTP 快取功能支援和可選的 Session 管理。
 
 ## 功能特點
 
+### HTTP 快取
 - 支援多種 HTTP 快取標頭
     - `Cache-Control`
     - `ETag`
@@ -28,6 +29,16 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
     - 記憶體內快取
 - 完整實現 Cache-Control 指令
 - 簡單易用的 `@cache` 裝飾器
+
+### Session 管理（可選擴充套件）
+- 使用 HMAC-SHA256 權杖簽名的安全 Session 管理
+- IP 地址和 User-Agent 綁定（可選安全功能）
+- Cookie、標頭和 Bearer 權杖支援
+- 自動 Session 更新（滑動過期）
+- 跨請求通訊的 Flash Messages
+- 支援多種後端（Redis、Memcached、記憶體內）
+- CSRF 權杖生成和驗證
+- 完整的 Session 生命週期管理（建立、驗證、更新、失效）
 
 ### Cache-Control 指令
 
@@ -210,6 +221,7 @@ async def expensive_operation():
 - [快取流程說明](CACHE_FLOW.zh-TW.md)
 - [開發指南](DEVELOPMENT.md)
 - [貢獻指南](CONTRIBUTING.md)
+- [Session 管理指南](SESSION.md) - 完整的 Session 功能使用指南
 
 ## 授權條款
 
