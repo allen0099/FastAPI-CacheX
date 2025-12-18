@@ -33,11 +33,10 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 ### Session Management (Optional Extension)
 - Secure session management with HMAC-SHA256 token signing
 - IP address and User-Agent binding (optional security features)
-- Cookie, header, and bearer token support
+- Header and bearer token support (API-first architecture)
 - Automatic session renewal (sliding expiration)
 - Flash messages for cross-request communication
 - Multiple backend support (Redis, Memcached, In-Memory)
-- CSRF token generation and validation
 - Complete session lifecycle management (create, validate, refresh, invalidate)
 
 ### Cache-Control Directives
@@ -215,8 +214,6 @@ async def expensive_operation():
 - [Development Guide](docs/DEVELOPMENT.md)
 - [Contributing Guidelines](docs/CONTRIBUTING.md)
 - [Session Management Guide](docs/SESSION.md) - Complete guide for session features
-
-
 
 ## License
 

@@ -26,6 +26,7 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import RequestNotFoundError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+from fastapi_cachex.types import CacheKeyBuilder
 from fastapi_cachex.types import ETagContent
 
 if TYPE_CHECKING:
@@ -35,6 +36,20 @@ T = TypeVar("T", bound=Response)
 AsyncCallable = Callable[..., Awaitable[T]]
 SyncCallable = Callable[..., T]
 AnyCallable = Union[AsyncCallable[T], SyncCallable[T]]  # noqa: UP007
+
+
+def default_key_builder(request: Request) -> str:
+    """Default cache key builder function.
+
+    Generates cache key in format: method|||host|||path|||query_params
+
+    Args:
+        request: The FastAPI Request object
+
+    Returns:
+        Generated cache key string
+    """
+    return f"{request.method}{CACHE_KEY_SEPARATOR}{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}{request.url.path}{CACHE_KEY_SEPARATOR}{request.query_params}"
 
 
 class CacheControl:
@@ -104,6 +119,7 @@ def cache(  # noqa: C901
     private: bool = False,
     immutable: bool = False,
     must_revalidate: bool = False,
+    cache_key_builder: CacheKeyBuilder | None = None,
 ) -> Callable[[AnyCallable[Response]], AsyncCallable[Response]]:
     """Cache decorator for FastAPI route handlers.
 
@@ -117,6 +133,7 @@ def cache(  # noqa: C901
         private: Whether responses are for single user only
         immutable: Whether cached responses never change
         must_revalidate: Whether to force revalidation when stale
+        cache_key_builder: Custom function to build cache keys. If None, uses default_cache_key_builder
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -208,9 +225,9 @@ def cache(  # noqa: C901
             if req.method != "GET":
                 return await get_response(func, req, *args, **kwargs)
 
-            # Generate cache key: method|||host|||path|||query_params[:vary]
-            # Include host to avoid cross-host cache pollution
-            cache_key = f"{req.method}{CACHE_KEY_SEPARATOR}{req.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}{req.url.path}{CACHE_KEY_SEPARATOR}{req.query_params}"
+            # Generate cache key using custom builder or default
+            key_builder = cache_key_builder or default_key_builder
+            cache_key = key_builder(req)
             client_etag = req.headers.get("if-none-match")
             cache_control = await get_cache_control(CacheControl())
 

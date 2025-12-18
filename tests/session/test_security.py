@@ -43,28 +43,6 @@ def test_verify_signature() -> None:
     assert not manager.verify_signature("different-id", signature)
 
 
-def test_generate_csrf_token() -> None:
-    """Test CSRF token generation."""
-    manager = SecurityManager("a" * 32)
-    token1 = manager.generate_csrf_token()
-    token2 = manager.generate_csrf_token()
-
-    assert token1 != token2
-    assert len(token1) > 20
-
-
-def test_verify_csrf_token() -> None:
-    """Test CSRF token verification."""
-    manager = SecurityManager("a" * 32)
-    token = manager.generate_csrf_token()
-
-    # Valid token
-    assert manager.verify_csrf_token(token, token)
-
-    # Invalid token
-    assert not manager.verify_csrf_token(token, "different")
-
-
 def test_check_ip_match() -> None:
     """Test IP address matching."""
     manager = SecurityManager("a" * 32)

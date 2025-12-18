@@ -47,25 +47,6 @@ def test_middleware_initialization(
     assert middleware.config is config
 
 
-def test_extract_token_from_cookie(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test token extraction from cookie."""
-
-    async def app(scope, receive, send):
-        pass
-
-    middleware = SessionMiddleware(app, manager, config)
-
-    # Create a mock request with cookie
-    request = MagicMock(spec=Request)
-    request.cookies = {config.cookie_name: "test-token"}
-    request.headers = {}
-
-    token = middleware._extract_token(request)
-    assert token == "test-token"  # noqa: S105
-
-
 def test_extract_token_from_header(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -78,7 +59,6 @@ def test_extract_token_from_header(
 
     # Create a mock request with header
     request = MagicMock(spec=Request)
-    request.cookies = {}
     request.headers = {config.header_name: "test-token"}
 
     token = middleware._extract_token(request)
@@ -98,7 +78,6 @@ def test_extract_token_from_bearer(
 
     # Create a mock request with Bearer token
     request = MagicMock(spec=Request)
-    request.cookies = {}
     request.headers = {"authorization": "Bearer test-token"}
 
     token = middleware._extract_token(request)
@@ -115,7 +94,6 @@ def test_extract_token_none(manager: SessionManager, config: SessionConfig) -> N
 
     # Create a mock request with no token
     request = MagicMock(spec=Request)
-    request.cookies = {}
     request.headers = {}
 
     token = middleware._extract_token(request)
@@ -184,54 +162,6 @@ def test_get_client_ip_from_client(
     assert ip == "192.168.1.1"
 
 
-def test_set_session_cookie(
-    manager: SessionManager,
-    config: SessionConfig,
-) -> None:
-    """Test setting session cookie."""
-
-    async def app(scope, receive, send):
-        pass
-
-    middleware = SessionMiddleware(app, manager, config)
-
-    # Create a mock response
-    response = MagicMock(spec=Response)
-
-    middleware._set_session_cookie(response, "test-token")
-
-    # Verify set_cookie was called with correct parameters
-    response.set_cookie.assert_called_once()
-    call_kwargs = response.set_cookie.call_args.kwargs
-    assert call_kwargs["key"] == config.cookie_name
-    assert call_kwargs["value"] == "test-token"
-    assert call_kwargs["secure"] is config.cookie_secure
-    assert call_kwargs["httponly"] is config.cookie_httponly
-
-
-@pytest.mark.asyncio
-async def test_dispatch_with_valid_session(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test dispatch with valid session token."""
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
-
-    @app.get("/test")
-    async def test_route():
-        return {"message": "ok"}
-
-    client = TestClient(app)
-
-    # Create a session first
-    user = SessionUser(user_id="test-user")
-    _session, token = await manager.create_session(user=user)
-
-    # Make request with session cookie
-    response = client.get("/test", cookies={config.cookie_name: token})
-    assert response.status_code == 200
-
-
 @pytest.mark.asyncio
 async def test_dispatch_with_expired_session(
     manager: SessionManager, config: SessionConfig
@@ -254,7 +184,7 @@ async def test_dispatch_with_expired_session(
     await manager._save_session(session)
 
     # Make request with expired session
-    response = client.get("/test", cookies={config.cookie_name: token})
+    response = client.get("/test", headers={config.header_name: token})
     # Should succeed but without session loaded
     assert response.status_code == 200
 
@@ -273,8 +203,8 @@ async def test_dispatch_with_invalid_session(
 
     client = TestClient(app)
 
-    # Make request with invalid session cookie
-    response = client.get("/test", cookies={config.cookie_name: "invalid-token"})
+    # Make request with invalid session header
+    response = client.get("/test", headers={config.header_name: "invalid-token"})
     assert response.status_code == 200
 
 
@@ -294,51 +224,6 @@ async def test_dispatch_with_no_session(
 
     # Make request without session
     response = client.get("/test")
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sets_new_session_cookie(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test dispatch sets new session cookie when created."""
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
-
-    @app.post("/create-session")
-    async def create_session_route():
-        # Return a simple response
-        return {"message": "created"}
-
-    client = TestClient(app)
-
-    # Make request that creates session
-    response = client.post("/create-session")
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_dispatch_updates_modified_session(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test dispatch updates session when modified flag is set."""
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
-
-    @app.post("/update-session")
-    async def update_session_route():
-        request = Request({"type": "http", "method": "POST", "headers": []})
-        request.state.session_modified = True
-        return {"message": "updated"}
-
-    client = TestClient(app)
-
-    # Create a session first
-    user = SessionUser(user_id="test-user")
-    _session, token = await manager.create_session(user=user)
-
-    # Make request with session
-    response = client.post("/update-session", cookies={config.cookie_name: token})
     assert response.status_code == 200
 
 
@@ -366,7 +251,7 @@ async def test_dispatch_sets_session_in_request_state(
     _session, token = await manager.create_session(user=user)
 
     # Make request with session
-    response = client.get("/check-session", cookies={config.cookie_name: token})
+    response = client.get("/check-session", headers={config.header_name: token})
     assert response.status_code == 200
 
 
@@ -383,7 +268,6 @@ def test_extract_token_from_bearer_with_malformed_header(
 
     # Create a mock request with malformed Bearer token
     request = MagicMock(spec=Request)
-    request.cookies = {}
     request.headers = {"authorization": "Bearer"}  # Missing token
 
     token = middleware._extract_token(request)
@@ -436,7 +320,7 @@ async def test_dispatch_with_session_and_ip_binding(
     )
 
     # Request with same IP should work
-    response = client.get("/test", cookies={config.cookie_name: token})
+    response = client.get("/test", headers={config.header_name: token})
     assert response.status_code == 200
 
 
@@ -466,7 +350,7 @@ async def test_dispatch_with_user_agent_binding(
     )
 
     # Request with session
-    response = client.get("/test", cookies={config.cookie_name: token})
+    response = client.get("/test", headers={config.header_name: token})
     assert response.status_code == 200
 
 
@@ -488,8 +372,7 @@ async def test_dispatch_direct_call(
 
     # Create a mock request
     request = MagicMock(spec=Request)
-    request.cookies = {config.cookie_name: token}
-    request.headers = {"user-agent": "test-agent"}
+    request.headers = {config.header_name: token, "user-agent": "test-agent"}
     request.state = MagicMock()
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
@@ -510,121 +393,6 @@ async def test_dispatch_direct_call(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_direct_with_modified_flag(
-    manager: SessionManager,
-    config: SessionConfig,
-) -> None:
-    """Test dispatch with session_modified flag directly."""
-
-    # Create mock app
-    mock_app = AsyncMock()
-
-    middleware = SessionMiddleware(mock_app, manager, config)
-
-    # Create a session
-    user = SessionUser(user_id="test-user")
-    _session, token = await manager.create_session(user=user)
-
-    # Create mock request with session_modified flag
-    request = MagicMock(spec=Request)
-    request.cookies = {config.cookie_name: token}
-    request.headers = {"user-agent": "test-agent"}
-    request.state = MagicMock()
-    request.state.session_modified = True
-    request.client = MagicMock()
-    request.client.host = "127.0.0.1"
-
-    # Create mock response
-    mock_response = MagicMock(spec=Response)
-    mock_response.set_cookie = MagicMock()
-
-    # Set up call_next to return response
-    call_next = AsyncMock(return_value=mock_response)
-
-    # Call dispatch
-    result = await middleware.dispatch(request, call_next)
-
-    # Verify result
-    assert result == mock_response
-    # Verify set_cookie was called
-    mock_response.set_cookie.assert_called()
-
-
-@pytest.mark.asyncio
-async def test_dispatch_direct_with_new_token(
-    manager: SessionManager,
-    config: SessionConfig,
-) -> None:
-    """Test dispatch with new_session_token flag directly."""
-
-    # Create mock app
-    mock_app = AsyncMock()
-
-    middleware = SessionMiddleware(mock_app, manager, config)
-
-    # Create mock request with new_session_token
-    request = MagicMock(spec=Request)
-    request.cookies = {}
-    request.headers = {}
-    request.state = MagicMock()
-    request.state.new_session_token = "new-token-123"  # noqa: S105
-    request.client = MagicMock()
-    request.client.host = "127.0.0.1"
-
-    # Create mock response
-    mock_response = MagicMock(spec=Response)
-    mock_response.set_cookie = MagicMock()
-
-    # Set up call_next to return response
-    call_next = AsyncMock(return_value=mock_response)
-
-    # Call dispatch
-    result = await middleware.dispatch(request, call_next)
-
-    # Verify result
-    assert result == mock_response
-    # Verify set_cookie was called
-    mock_response.set_cookie.assert_called()
-
-
-@pytest.mark.asyncio
-async def test_dispatch_without_session_modified_flag(
-    manager: SessionManager,
-    config: SessionConfig,
-) -> None:
-    """Test dispatch without session_modified flag in request state."""
-
-    # Create mock app
-    mock_app = AsyncMock()
-
-    middleware = SessionMiddleware(mock_app, manager, config)
-
-    # Create a session
-    user = SessionUser(user_id="test-user")
-    _session, token = await manager.create_session(user=user)
-
-    # Create mock request without session_modified flag
-    request = MagicMock(spec=Request)
-    request.cookies = {config.cookie_name: token}
-    request.headers = {"user-agent": "test-agent"}
-    request.state = MagicMock(spec=[])  # No attributes
-    request.client = MagicMock()
-    request.client.host = "127.0.0.1"
-
-    # Create mock response
-    mock_response = MagicMock(spec=Response)
-
-    # Set up call_next to return response
-    call_next = AsyncMock(return_value=mock_response)
-
-    # Call dispatch
-    result = await middleware.dispatch(request, call_next)
-
-    # Verify result
-    assert result == mock_response
-
-
-@pytest.mark.asyncio
 async def test_dispatch_with_session_error(
     manager: SessionManager,
     config: SessionConfig,
@@ -638,8 +406,7 @@ async def test_dispatch_with_session_error(
 
     # Create mock request with invalid token
     request = MagicMock(spec=Request)
-    request.cookies = {config.cookie_name: "invalid-token-xyz"}
-    request.headers = {}
+    request.headers = {config.header_name: "invalid-token-xyz"}
     request.state = MagicMock()
     request.client = MagicMock()
     request.client.host = "127.0.0.1"

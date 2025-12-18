@@ -10,10 +10,11 @@ FastAPI-CacheX Session Management 提供完整的使用者 Session 管理功能�
   - IP 地址綁定（可選）
   - User-Agent 綁定（可選）
   - 登入後自動重新生成 Session ID
-- ✅ **多種 Token 來源**：Cookie、Header、Bearer Token
+- ✅ **多種 Token 來源**：Header、Bearer Token
 - ✅ **自動展期**：滑動過期時間支援
 - ✅ **Flash Messages**：跨請求訊息傳遞
 - ✅ **多後端支援**：Redis、Memcached、In-Memory
+- ✅ **API-first 架構**：適用於前後端分離應用，由客戶端管理 Token
 
 ## 快速開始
 
@@ -42,11 +43,10 @@ from fastapi_cachex.session import (
 # 初始化 FastAPI 應用
 app = FastAPI()
 
-# 設定 Session 配置
+# 設定 Session 配置（API-first 架構：客戶端管理 Token）
 config = SessionConfig(
     secret_key="your-secret-key-min-32-chars-long!!!",
     session_ttl=3600,  # 1 hour
-    cookie_secure=False,  # 開發時設為 False，生產環境設為 True
 )
 
 # 設定後端和 Session Manager
@@ -74,8 +74,8 @@ async def login(username: str, password: str):
         )
         session, token = await session_manager.create_session(user=user)
 
-        # 儲存 token 供 middleware 設定 cookie
-        # （在實際應用中，middleware 會自動處理）
+        # 返回 token 供客戶端儲存（localStorage/sessionStorage）
+        # 客戶端應在後續請求中透過 Authorization header 或 X-Session-Token header 傳送
         return {"message": "Login successful", "token": token}
 
     return {"error": "Invalid credentials"}, 401
@@ -140,9 +140,6 @@ config = SessionConfig(
     ip_binding=True,  # 啟用 IP 綁定
     user_agent_binding=False,  # UA 綁定（可選）
     regenerate_on_login=True,
-    cookie_secure=True,
-    cookie_httponly=True,
-    cookie_samesite="lax",
 )
 
 session_manager = SessionManager(backend, config)
@@ -182,11 +179,9 @@ async def login(username: str, password: str, request: Request):
     session.add_flash_message("Login successful!", "success")
     await session_manager.update_session(session)
 
-    # 標記需要設定 cookie
-    request.state.new_session_token = token
-
     return {
         "message": "Login successful",
+        "token": token,  # 客戶端應儲存此 token 並在後續請求中使用
         "user": {
             "username": user.username,
             "roles": user.roles,
@@ -211,15 +206,14 @@ async def get_user_profile(session=Depends(get_session)):
 async def update_user_profile(
     email: str,
     session=Depends(get_session),
-    request: Request,
 ):
     """更新使用者資料"""
     # 更新使用者資料
     session.user.email = email
     session.data["last_updated"] = datetime.now(timezone.utc).isoformat()
 
-    # 標記 session 已修改
-    request.state.session_modified = True
+    # 儲存更新後的 session
+    await session_manager.update_session(session)
 
     return {"message": "Profile updated"}
 
@@ -232,16 +226,11 @@ async def get_flash_messages(session=Depends(get_session)):
 
 
 @app.post("/api/auth/logout")
-async def logout(session=Depends(get_session), response: Response):
+async def logout(session=Depends(get_session)):
     """登出"""
     await session_manager.delete_session(session.session_id)
 
-    # 清除 cookie
-    response.delete_cookie(
-        key=config.cookie_name,
-        path=config.cookie_path,
-    )
-
+    # 客戶端應該清除儲存的 token
     return {"message": "Logged out successfully"}
 
 
@@ -281,19 +270,10 @@ SessionConfig(
     sliding_expiration=True,       # 滑動過期
     sliding_threshold=0.5,         # 滑動閾值（0.5 = TTL 過半時更新）
 
-    # Cookie 設定
-    cookie_name="fastapi_session",
-    cookie_max_age=None,           # Cookie max-age（None = session cookie）
-    cookie_path="/",
-    cookie_domain=None,
-    cookie_secure=True,            # HTTPS only
-    cookie_httponly=True,          # 不可被 JavaScript 存取
-    cookie_samesite="lax",         # CSRF 防護
-
-    # Token 來源
+    # Token 來源（API-first 架構）
     header_name="X-Session-Token",
     use_bearer_token=True,
-    token_source_priority=["cookie", "header", "bearer"],
+    token_source_priority=["header", "bearer"],  # 客戶端透過 header 傳送 token
 
     # 安全設定
     secret_key="...",              # 必須：至少 32 字元
@@ -308,6 +288,8 @@ SessionConfig(
     enable_csrf=False,
 )
 ```
+
+**注意**：此設計為 API-first 架構（前後端分離），Token 由客戶端管理並在每次請求的 Header 中傳送。客戶端應將 token 儲存在 `localStorage` 或 `sessionStorage` 中，並在請求時透過 `Authorization: Bearer <token>` 或 `X-Session-Token: <token>` header 傳送。
 
 ## 安全最佳實踐
 
@@ -324,16 +306,18 @@ config = SessionConfig(secret_key=secret_key)
 
 ### 2. HTTPS Only
 
-生產環境務必使用 HTTPS 並啟用 `cookie_secure`：
+生產環境務必使用 HTTPS 傳輸 token：
 
 ```python
 config = SessionConfig(
     secret_key="...",
-    cookie_secure=True,  # 僅透過 HTTPS 傳輸
-    cookie_httponly=True,  # 防止 XSS
-    cookie_samesite="lax",  # 防止 CSRF
 )
 ```
+
+**客戶端注意事項**：
+- 僅透過 HTTPS 傳輸 token
+- 使用 `httpOnly` 選項（如果使用 cookie 儲存）來防止 XSS
+- 避免在 URL 中傳遞 token
 
 ### 3. IP 綁定（可選）
 

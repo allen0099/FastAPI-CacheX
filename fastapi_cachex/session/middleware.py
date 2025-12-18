@@ -74,20 +74,6 @@ class SessionMiddleware(BaseHTTPMiddleware):
         # Process request
         response: Response = await call_next(request)
 
-        # Update session cookie if session exists and was modified
-        if (
-            session
-            and token
-            and hasattr(request.state, "session_modified")
-            and request.state.session_modified
-        ):
-            await self.session_manager.update_session(session)
-            self._set_session_cookie(response, token)
-
-        # Set new session cookie if session was just created
-        if hasattr(request.state, "new_session_token"):
-            self._set_session_cookie(response, request.state.new_session_token)
-
         return response
 
     def _extract_token(self, request: Request) -> str | None:
@@ -100,12 +86,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
             Session token or None
         """
         for source in self.config.token_source_priority:
-            if source == "cookie":
-                token = request.cookies.get(self.config.cookie_name)
-                if token:
-                    return token
-
-            elif source == "header":
+            if source == "header":
                 token = request.headers.get(self.config.header_name)
                 if token:
                     return token
@@ -118,24 +99,6 @@ class SessionMiddleware(BaseHTTPMiddleware):
                         return auth_header[bearer_prefix_len:]
 
         return None
-
-    def _set_session_cookie(self, response: Response, token: str) -> None:
-        """Set session cookie in response.
-
-        Args:
-            response: Response object
-            token: Session token
-        """
-        response.set_cookie(
-            key=self.config.cookie_name,
-            value=token,
-            max_age=self.config.cookie_max_age,
-            path=self.config.cookie_path,
-            domain=self.config.cookie_domain,
-            secure=self.config.cookie_secure,
-            httponly=self.config.cookie_httponly,
-            samesite=self.config.cookie_samesite,
-        )
 
     def _get_client_ip(self, request: Request) -> str | None:
         """Get client IP address from request.

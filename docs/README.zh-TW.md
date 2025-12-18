@@ -33,11 +33,10 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
 ### Session 管理（可選擴充套件）
 - 使用 HMAC-SHA256 權杖簽名的安全 Session 管理
 - IP 地址和 User-Agent 綁定（可選安全功能）
-- Cookie、標頭和 Bearer 權杖支援
+- Header 和 Bearer 權杖支援（API-first 架構）
 - 自動 Session 更新（滑動過期）
 - 跨請求通訊的 Flash Messages
 - 支援多種後端（Redis、Memcached、記憶體內）
-- CSRF 權杖生成和驗證
 - 完整的 Session 生命週期管理（建立、驗證、更新、失效）
 
 ### Cache-Control 指令
