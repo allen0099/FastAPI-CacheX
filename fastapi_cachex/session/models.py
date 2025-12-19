@@ -1,5 +1,6 @@
 """Session data models and user structures."""
 
+import logging
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -9,6 +10,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 from pydantic import Field
+
+logger = logging.getLogger(__name__)
 
 # Token format constant
 TOKEN_PARTS_COUNT = 3
@@ -70,6 +73,7 @@ class Session(BaseModel):
     def update_last_accessed(self) -> None:
         """Update the last accessed timestamp."""
         self.last_accessed = datetime.now(timezone.utc)
+        logger.debug("Session last_accessed updated; id=%s", self.session_id)
 
     def renew(self, ttl: int) -> None:
         """Renew session expiry time.
@@ -79,10 +83,12 @@ class Session(BaseModel):
         """
         self.expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl)
         self.update_last_accessed()
+        logger.debug("Session renewed; id=%s ttl=%s", self.session_id, ttl)
 
     def invalidate(self) -> None:
         """Mark session as invalidated."""
         self.status = SessionStatus.INVALIDATED
+        logger.debug("Session invalidated; id=%s", self.session_id)
 
     def regenerate_id(self) -> str:
         """Regenerate session ID (for security after login).
@@ -90,7 +96,11 @@ class Session(BaseModel):
         Returns:
             The new session ID
         """
+        old_id = self.session_id
         self.session_id = str(uuid4())
+        logger.debug(
+            "Session ID regenerated; old_id=%s new_id=%s", old_id, self.session_id
+        )
         return self.session_id
 
     def add_flash_message(self, message: str, category: str = "info") -> None:
@@ -107,6 +117,9 @@ class Session(BaseModel):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
+        logger.debug(
+            "Flash message added; id=%s category=%s", self.session_id, category
+        )
 
     def get_flash_messages(self, clear: bool = True) -> list[dict[str, Any]]:
         """Get and optionally clear flash messages.
@@ -120,6 +133,9 @@ class Session(BaseModel):
         messages = self.flash_messages.copy()
         if clear:
             self.flash_messages.clear()
+            logger.debug(
+                "Flash messages cleared; id=%s count=%s", self.session_id, len(messages)
+            )
         return messages
 
 
@@ -136,6 +152,8 @@ class SessionToken(BaseModel):
         Format: {session_id}.{signature}.{timestamp}
         """
         timestamp = int(self.issued_at.timestamp())
+
+        logger.debug("SessionToken to_string called; id=%s", self.session_id)
         return f"{self.session_id}.{self.signature}.{timestamp}"
 
     @classmethod
@@ -163,4 +181,5 @@ class SessionToken(BaseModel):
             msg = f"Invalid timestamp in token: {e}"
             raise ValueError(msg) from e
 
+        logger.debug("SessionToken parsed from string; id=%s", session_id)
         return cls(session_id=session_id, signature=signature, issued_at=issued_at)

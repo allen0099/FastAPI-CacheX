@@ -1,5 +1,6 @@
 """Session manager for CRUD operations."""
 
+import logging
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -18,6 +19,8 @@ from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.session.security import SecurityManager
 from fastapi_cachex.types import ETagContent
 
+logger = logging.getLogger(__name__)
+
 
 class SessionManager:
     """Manages session lifecycle and storage."""
@@ -32,6 +35,10 @@ class SessionManager:
         self.backend = backend
         self.config = config
         self.security = SecurityManager(config.secret_key)
+        logger.debug(
+            "SessionManager initialized with backend prefix=%s",
+            config.backend_key_prefix,
+        )
 
     def _get_backend_key(self, session_id: str) -> str:
         """Get backend storage key for a session.
@@ -85,6 +92,13 @@ class SessionManager:
 
         # Generate signed token
         token = self._create_token(session.session_id)
+        logger.debug(
+            "Session created; id=%s ttl=%s ip=%s ua=%s",
+            session.session_id,
+            self.config.session_ttl,
+            session.ip_address,
+            session.user_agent,
+        )
 
         return session, token.to_string()
 
@@ -115,27 +129,38 @@ class SessionManager:
         try:
             token = SessionToken.from_string(token_string)
         except ValueError as e:
+            logger.debug("Session token parse error: %s", e)
             raise SessionTokenError(str(e)) from e
 
         if not self.security.verify_signature(token.session_id, token.signature):
             msg = "Invalid session signature"
+            logger.debug(
+                "Session signature verification failed; id=%s", token.session_id
+            )
             raise SessionSecurityError(msg)
 
         # Load session from backend
         session = await self._load_session(token.session_id)
         if not session:
             msg = f"Session {token.session_id} not found"
+            logger.debug("Session not found; id=%s", token.session_id)
             raise SessionNotFoundError(msg)
 
         # Validate session
         if session.status != SessionStatus.ACTIVE:
             msg = f"Session is {session.status}"
+            logger.debug(
+                "Session not active; id=%s status=%s",
+                session.session_id,
+                session.status,
+            )
             raise SessionInvalidError(msg)
 
         if session.is_expired():
             session.status = SessionStatus.EXPIRED
             await self._save_session(session)
             msg = "Session has expired"
+            logger.debug("Session expired; id=%s", session.session_id)
             raise SessionExpiredError(msg)
 
         # Security checks
@@ -144,6 +169,12 @@ class SessionManager:
             ip_address,
         ):
             msg = "IP address mismatch"
+            logger.debug(
+                "IP mismatch; id=%s expected=%s got=%s",
+                session.session_id,
+                session.ip_address,
+                ip_address,
+            )
             raise SessionSecurityError(msg)
 
         if self.config.user_agent_binding and not self.security.check_user_agent_match(
@@ -151,6 +182,12 @@ class SessionManager:
             user_agent,
         ):
             msg = "User-Agent mismatch"
+            logger.debug(
+                "UA mismatch; id=%s expected=%s got=%s",
+                session.session_id,
+                session.user_agent,
+                user_agent,
+            )
             raise SessionSecurityError(msg)
 
         # Update last accessed and handle sliding expiration
@@ -164,6 +201,11 @@ class SessionManager:
 
             if time_remaining < threshold:
                 session.renew(self.config.session_ttl)
+                logger.debug(
+                    "Session renewed (sliding expiration); id=%s ttl=%s",
+                    session.session_id,
+                    self.config.session_ttl,
+                )
 
         await self._save_session(session)
 
@@ -177,6 +219,7 @@ class SessionManager:
         """
         session.update_last_accessed()
         await self._save_session(session)
+        logger.debug("Session updated; id=%s", session.session_id)
 
     async def delete_session(self, session_id: str) -> None:
         """Delete a session.
@@ -186,6 +229,7 @@ class SessionManager:
         """
         key = self._get_backend_key(session_id)
         await self.backend.delete(key)
+        logger.debug("Session deleted; id=%s", session_id)
 
     async def invalidate_session(self, session: Session) -> None:
         """Invalidate a session.
@@ -195,6 +239,7 @@ class SessionManager:
         """
         session.invalidate()
         await self._save_session(session)
+        logger.debug("Session invalidated; id=%s", session.session_id)
 
     async def regenerate_session_id(
         self,
@@ -212,6 +257,7 @@ class SessionManager:
         await self.delete_session(session.session_id)
 
         # Generate new ID
+        old_id = session.session_id
         session.regenerate_id()
 
         # Save with new ID
@@ -219,6 +265,9 @@ class SessionManager:
 
         # Create new token
         token = self._create_token(session.session_id)
+        logger.debug(
+            "Session ID regenerated; old_id=%s new_id=%s", old_id, session.session_id
+        )
 
         return session, token.to_string()
 
@@ -246,6 +295,7 @@ class SessionManager:
             # Backend doesn't support get_all_keys, can't delete by user
             pass
 
+        logger.debug("User sessions deleted; user_id=%s count=%s", user_id, count)
         return count
 
     async def clear_expired_sessions(self) -> int:
@@ -268,6 +318,7 @@ class SessionManager:
             # Backend doesn't support get_all_keys
             pass
 
+        logger.debug("Expired sessions cleared; count=%s", count)
         return count
 
     def _create_token(self, session_id: str) -> SessionToken:
@@ -300,6 +351,7 @@ class SessionManager:
         # Store as bytes in cache backend (wrapped in ETagContent for compatibility)
         etag = self.security.hash_data(value.decode("utf-8"))
         await self.backend.set(key, ETagContent(etag=etag, content=value), ttl=ttl)
+        logger.debug("Session saved; id=%s ttl=%s", session.session_id, ttl)
 
     async def _load_session(self, session_id: str) -> Session | None:
         """Load session from backend.
@@ -324,10 +376,12 @@ class SessionManager:
         """
         cached = await self.backend.get(key)
         if not cached:
+            logger.debug("Session load MISS; key=%s", key)
             return None
 
         try:
             return Session.model_validate_json(cached.content)
         except (ValueError, TypeError):  # pragma: no cover
             # Invalid session data
+            logger.debug("Session load DESERIALIZE ERROR; key=%s", key)
             return None

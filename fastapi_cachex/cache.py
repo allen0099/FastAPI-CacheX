@@ -2,6 +2,7 @@
 
 import hashlib
 import inspect
+import logging
 from collections.abc import Awaitable
 from collections.abc import Callable
 from functools import update_wrapper
@@ -37,6 +38,8 @@ AsyncCallable = Callable[..., Awaitable[T]]
 SyncCallable = Callable[..., T]
 AnyCallable = Union[AsyncCallable[T], SyncCallable[T]]  # noqa: UP007
 
+logger = logging.getLogger(__name__)
+
 
 def default_key_builder(request: Request) -> str:
     """Default cache key builder function.
@@ -49,7 +52,14 @@ def default_key_builder(request: Request) -> str:
     Returns:
         Generated cache key string
     """
-    return f"{request.method}{CACHE_KEY_SEPARATOR}{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}{request.url.path}{CACHE_KEY_SEPARATOR}{request.query_params}"
+    key = (
+        f"{request.method}{CACHE_KEY_SEPARATOR}"
+        f"{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}"
+        f"{request.url.path}{CACHE_KEY_SEPARATOR}"
+        f"{request.query_params}"
+    )
+    logger.debug("Built cache key: %s", key)
+    return key
 
 
 class CacheControl:
@@ -146,6 +156,7 @@ def cache(  # noqa: C901
             # Fallback to memory backend if no backend is set
             cache_backend = MemoryBackend()
             BackendProxy.set_backend(cache_backend)
+            logger.debug("No backend configured; using MemoryBackend fallback")
 
         # Analyze the original function's signature
         sig: Signature = inspect.signature(func)
@@ -223,6 +234,9 @@ def cache(  # noqa: C901
 
             # Only cache GET requests
             if req.method != "GET":
+                logger.debug(
+                    "Non-GET request; bypassing cache for method=%s", req.method
+                )
                 return await get_response(func, req, *args, **kwargs)
 
             # Generate cache key using custom builder or default
@@ -237,6 +251,7 @@ def cache(  # noqa: C901
                 cc = CacheControl()
                 cc.add(DirectiveType.NO_STORE)
                 response.headers["Cache-Control"] = str(cc)
+                logger.debug("no-store active; bypassed cache for key=%s", cache_key)
                 return response
 
             # Check cache and handle ETag validation
@@ -255,6 +270,7 @@ def cache(  # noqa: C901
 
                     if client_etag == current_etag:
                         # For no-cache, compare fresh data with client's ETag
+                        logger.debug("304 Not Modified via no-cache; key=%s", cache_key)
                         return Response(
                             status_code=HTTP_304_NOT_MODIFIED,
                             headers={
@@ -268,6 +284,9 @@ def cache(  # noqa: C901
                     cached_data and client_etag == cached_data.etag
                 ):  # pragma: no branch
                     # Cache hit with matching ETag: return 304 Not Modified
+                    logger.debug(
+                        "304 Not Modified (cached ETag match); key=%s", cache_key
+                    )
                     return Response(
                         status_code=HTTP_304_NOT_MODIFIED,
                         headers={
@@ -281,6 +300,7 @@ def cache(  # noqa: C901
             if cached_data and not no_cache and ttl is not None:
                 # We have a cached entry and TTL-based caching is enabled
                 # Return the cached content directly with 200 OK without revalidation
+                logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
                 return Response(
                     content=cached_data.content,
                     status_code=200,
@@ -294,6 +314,7 @@ def cache(  # noqa: C901
                 # Retrieve the current response if not already done
                 current_response = await get_response(func, req, *args, **kwargs)
                 current_etag = f'W/"{hashlib.md5(current_response.body).hexdigest()}"'  # noqa: S324
+                logger.debug("Cache MISS; computed fresh ETag for key=%s", cache_key)
 
             # Set ETag header
             current_response.headers["ETag"] = current_etag
@@ -306,6 +327,7 @@ def cache(  # noqa: C901
                     ETagContent(current_etag, current_response.body),
                     ttl=ttl,
                 )
+                logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
 
             current_response.headers["Cache-Control"] = cache_control
             return current_response

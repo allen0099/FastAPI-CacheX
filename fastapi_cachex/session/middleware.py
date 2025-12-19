@@ -1,5 +1,6 @@
 """Session middleware for FastAPI."""
 
+import logging
 from typing import TYPE_CHECKING
 
 from fastapi import Request
@@ -14,6 +15,8 @@ from fastapi_cachex.session.manager import SessionManager
 
 if TYPE_CHECKING:
     from fastapi_cachex.session.models import Session
+
+logger = logging.getLogger(__name__)
 
 
 class SessionMiddleware(BaseHTTPMiddleware):
@@ -35,6 +38,11 @@ class SessionMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.session_manager = session_manager
         self.config = config
+        logger.debug(
+            "SessionMiddleware initialized; header=%s bearer=%s",
+            config.header_name,
+            config.use_bearer_token,
+        )
 
     async def dispatch(
         self,
@@ -64,9 +72,11 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
+                logger.debug("Session loaded in middleware; id=%s", session.session_id)
             except SessionError:
                 # Session invalid/expired, continue without session
                 session = None
+                logger.debug("Session failed to load; token invalid/expired")
 
         # Store session in request state
         request.state.session = session
@@ -89,6 +99,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
             if source == "header":
                 token = request.headers.get(self.config.header_name)
                 if token:
+                    logger.debug("Token extracted from header")
                     return token
 
             elif source == "bearer":
@@ -96,7 +107,9 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     auth_header = request.headers.get("authorization")
                     if auth_header and auth_header.startswith("Bearer "):
                         bearer_prefix_len = 7
-                        return auth_header[bearer_prefix_len:]
+                        token_value = auth_header[bearer_prefix_len:]
+                        logger.debug("Token extracted from bearer auth")
+                        return token_value
 
         return None
 
@@ -113,15 +126,19 @@ class SessionMiddleware(BaseHTTPMiddleware):
         forwarded_for = request.headers.get("x-forwarded-for")
         if forwarded_for:
             # Get first IP from comma-separated list
-            return forwarded_for.split(",")[0].strip()
+            ip = forwarded_for.split(",")[0].strip()
+            logger.debug("Client IP from X-Forwarded-For: %s", ip)
+            return ip
 
         # Check X-Real-IP header
         real_ip = request.headers.get("x-real-ip")
         if real_ip:
+            logger.debug("Client IP from X-Real-IP: %s", real_ip)
             return real_ip
 
         # Fallback to direct client IP
         if request.client:
+            logger.debug("Client IP from connection: %s", request.client.host)
             return request.client.host
 
         return None

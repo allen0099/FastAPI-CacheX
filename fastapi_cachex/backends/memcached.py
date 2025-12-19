@@ -1,5 +1,6 @@
 """Memcached cache backend implementation."""
 
+import logging
 import warnings
 
 from fastapi_cachex.backends.base import BaseCacheBackend
@@ -14,6 +15,9 @@ except ImportError:  # pragma: no cover
 
 # Default Memcached key prefix for fastapi-cachex
 DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
+
+# Module-level logger (inherits package logger)
+logger = logging.getLogger(__name__)
 
 
 class MemcachedBackend(BaseCacheBackend):
@@ -70,11 +74,13 @@ class MemcachedBackend(BaseCacheBackend):
         prefixed_key = self._make_key(key)
         value = self.client.get(prefixed_key)
         if value is None:
+            logger.debug("Memcached MISS; key=%s", key)
             return None
 
         # Memcached stores data as bytes; deserialize from JSON
         try:
             data = json.loads(value.decode("utf-8"))
+            logger.debug("Memcached HIT; key=%s", key)
             return ETagContent(
                 etag=data["etag"],
                 content=data["content"].encode()
@@ -82,6 +88,7 @@ class MemcachedBackend(BaseCacheBackend):
                 else data["content"],
             )
         except (json.JSONDecodeError, KeyError, ValueError):
+            logger.debug("Memcached DESERIALIZE ERROR; key=%s", key)
             return None
 
     async def set(self, key: str, value: ETagContent, ttl: int | None = None) -> None:
@@ -119,6 +126,7 @@ class MemcachedBackend(BaseCacheBackend):
             serialized_bytes,
             expire=ttl if ttl is not None else 0,
         )
+        logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> None:
         """Delete value from cache.
@@ -127,6 +135,7 @@ class MemcachedBackend(BaseCacheBackend):
             key: Cache key to delete
         """
         self.client.delete(self._make_key(key))
+        logger.debug("Memcached DELETE; key=%s", key)
 
     async def clear(self) -> None:
         """Clear all values from cache.
@@ -142,6 +151,7 @@ class MemcachedBackend(BaseCacheBackend):
             stacklevel=2,
         )
         self.client.flush_all()
+        logger.debug("Memcached CLEAR; flush_all issued")
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
@@ -175,9 +185,15 @@ class MemcachedBackend(BaseCacheBackend):
         except Exception:  # noqa: BLE001
             return 0
         else:
+            logger.debug(
+                "Memcached CLEAR_PATH; path=%s include_params=%s removed=%s",
+                path,
+                include_params,
+                1 if result else 0,
+            )
             return 1 if result else 0
 
-    async def clear_pattern(self, pattern: str) -> int:  # noqa: ARG002
+    async def clear_pattern(self, pattern: str) -> int:
         """Clear cached responses matching a pattern.
 
         Memcached does not support pattern matching or key scanning.
@@ -197,6 +213,7 @@ class MemcachedBackend(BaseCacheBackend):
             RuntimeWarning,
             stacklevel=2,
         )
+        logger.debug("Memcached CLEAR_PATTERN unsupported; pattern=%s", pattern)
         return 0
 
     async def get_all_keys(self) -> list[str]:
@@ -218,6 +235,7 @@ class MemcachedBackend(BaseCacheBackend):
             RuntimeWarning,
             stacklevel=2,
         )
+        logger.debug("Memcached GET_ALL_KEYS unsupported; returning empty list")
         return []
 
     async def get_cache_data(self) -> dict[str, tuple[ETagContent, float | None]]:
@@ -236,4 +254,5 @@ class MemcachedBackend(BaseCacheBackend):
             RuntimeWarning,
             stacklevel=2,
         )
+        logger.debug("Memcached GET_CACHE_DATA unsupported; returning empty dict")
         return {}
