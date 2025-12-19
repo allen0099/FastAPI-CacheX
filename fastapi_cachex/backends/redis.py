@@ -1,5 +1,6 @@
 """Redis cache backend implementation."""
 
+import logging
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
@@ -20,6 +21,9 @@ except ImportError:  # pragma: no cover
 
 # Default Redis key prefix for fastapi-cachex
 DEFAULT_REDIS_PREFIX = "fastapi_cachex:"
+
+# Module-level logger (inherits package logger)
+logger = logging.getLogger(__name__)
 
 
 class AsyncRedisCacheBackend(BaseCacheBackend):
@@ -117,7 +121,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
     async def get(self, key: str) -> ETagContent | None:
         """Retrieve a cached response."""
         result = await self.client.get(self._make_key(key))
-        return self._deserialize(result)
+        value = self._deserialize(result)
+        logger.debug("Redis %s; key=%s", "HIT" if value else "MISS", key)
+        return value
 
     async def set(self, key: str, value: ETagContent, ttl: int | None = None) -> None:
         """Store a response in the cache."""
@@ -127,10 +133,12 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             await self.client.setex(prefixed_key, ttl, serialized)
         else:
             await self.client.set(prefixed_key, serialized)
+        logger.debug("Redis SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> None:
         """Remove a response from the cache."""
         await self.client.delete(self._make_key(key))
+        logger.debug("Redis DELETE; key=%s", key)
 
     async def clear(self) -> None:
         """Clear all cached responses for this namespace.
@@ -161,6 +169,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 batch = keys_to_delete[i : i + batch_size]
                 if batch:
                     await self.client.delete(*batch)
+        logger.debug("Redis CLEAR; removed=%s", len(keys_to_delete))
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
@@ -209,6 +218,12 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                     deleted = await self.client.delete(*batch)
                     cleared_count += deleted
 
+        logger.debug(
+            "Redis CLEAR_PATH; path=%s include_params=%s removed=%s",
+            path,
+            include_params,
+            cleared_count,
+        )
         return cleared_count
 
     async def clear_pattern(self, pattern: str) -> int:
@@ -253,6 +268,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                     deleted = await self.client.delete(*batch)
                     cleared_count += deleted
 
+        logger.debug(
+            "Redis CLEAR_PATTERN; pattern=%s removed=%s", full_pattern, cleared_count
+        )
         return cleared_count
 
     async def get_all_keys(self) -> list[str]:
@@ -278,6 +296,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             if cursor == 0:
                 break
 
+        logger.debug("Redis GET_ALL_KEYS; count=%s", len(all_keys))
         return all_keys
 
     async def get_cache_data(self) -> dict[str, tuple[ETagContent, float | None]]:
@@ -300,4 +319,5 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             if value is not None:
                 cache_data[original_key] = (value, None)
 
+        logger.debug("Redis GET_CACHE_DATA; keys=%s", len(cache_data))
         return cache_data

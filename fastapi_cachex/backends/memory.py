@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import fnmatch
+import logging
 import time
 
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
@@ -16,6 +17,9 @@ from .base import BaseCacheBackend
 _MIN_KEY_PARTS = 3
 # Maximum parts to split (method, host, path, query_params)
 _MAX_KEY_PARTS = 3
+
+# Module-level logger (inherits package logger)
+logger = logging.getLogger(__name__)
 
 
 class MemoryBackend(BaseCacheBackend):
@@ -44,6 +48,10 @@ class MemoryBackend(BaseCacheBackend):
             with contextlib.suppress(RuntimeError):
                 # No event loop yet; will be created on first async operation
                 self._cleanup_task = asyncio.create_task(self._cleanup_task_impl())
+                logger.debug(
+                    "Started memory backend cleanup task (interval=%s)",
+                    self.cleanup_interval,
+                )
 
     def start_cleanup(self) -> None:
         """Start the cleanup task if it's not already running.
@@ -57,6 +65,7 @@ class MemoryBackend(BaseCacheBackend):
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
             self._cleanup_task = None
+            logger.debug("Stopped memory backend cleanup task")
 
     async def get(self, key: str) -> ETagContent | None:
         """Retrieve a cached response.
@@ -70,10 +79,13 @@ class MemoryBackend(BaseCacheBackend):
             cached_item = self.cache.get(key)
             if cached_item:
                 if cached_item.expiry is None or cached_item.expiry > time.time():
+                    logger.debug("Memory cache HIT; key=%s", key)
                     return cached_item.value
                 # Entry has expired; clean it up
                 del self.cache[key]
+                logger.debug("Memory cache EXPIRED; key=%s removed", key)
                 return None
+            logger.debug("Memory cache MISS; key=%s", key)
             return None
 
     async def set(self, key: str, value: ETagContent, ttl: int | None = None) -> None:
@@ -87,16 +99,19 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             expiry = time.time() + ttl if ttl is not None else None
             self.cache[key] = CacheItem(value=value, expiry=expiry)
+            logger.debug("Memory cache SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> None:
         """Remove a response from the cache."""
         async with self.lock:
             self.cache.pop(key, None)
+            logger.debug("Memory cache DELETE; key=%s", key)
 
     async def clear(self) -> None:
         """Clear all cached responses."""
         async with self.lock:
             self.cache.clear()
+            logger.debug("Memory cache CLEAR; all entries removed")
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
@@ -128,6 +143,12 @@ class MemoryBackend(BaseCacheBackend):
             for key in keys_to_delete:
                 del self.cache[key]
 
+        logger.debug(
+            "Memory cache CLEAR_PATH; path=%s include_params=%s removed=%s",
+            path,
+            include_params,
+            cleared_count,
+        )
         return cleared_count
 
     async def clear_pattern(self, pattern: str) -> int:
@@ -157,6 +178,9 @@ class MemoryBackend(BaseCacheBackend):
             for key in keys_to_delete:
                 del self.cache[key]
 
+        logger.debug(
+            "Memory cache CLEAR_PATTERN; pattern=%s removed=%s", pattern, cleared_count
+        )
         return cleared_count
 
     async def get_all_keys(self) -> list[str]:
@@ -197,3 +221,7 @@ class MemoryBackend(BaseCacheBackend):
             ]
             for key in expired_keys:
                 self.cache.pop(key, None)
+            if expired_keys:
+                logger.debug(
+                    "Memory cache CLEANUP; expired removed=%s", len(expired_keys)
+                )

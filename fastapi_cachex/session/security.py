@@ -2,8 +2,11 @@
 
 import hashlib
 import hmac
+import logging
 
 from fastapi_cachex.session.models import Session
+
+logger = logging.getLogger(__name__)
 
 
 class SecurityManager:
@@ -19,6 +22,10 @@ class SecurityManager:
             msg = "Secret key must be at least 32 characters"
             raise ValueError(msg)
         self.secret_key = secret_key.encode("utf-8")
+
+        logger.debug(
+            "SecurityManager initialized with secret length=%s", len(secret_key)
+        )
 
     def sign_session_id(self, session_id: str) -> str:
         """Sign a session ID using HMAC-SHA256.
@@ -47,7 +54,11 @@ class SecurityManager:
         """
         expected_signature = self.sign_session_id(session_id)
         # Use constant-time comparison to prevent timing attacks
-        return hmac.compare_digest(expected_signature, signature)
+        valid = hmac.compare_digest(expected_signature, signature)
+
+        if not valid:
+            logger.debug("Signature verification failed; id=%s", session_id)
+        return valid
 
     def check_ip_match(self, session: Session, current_ip: str | None) -> bool:
         """Check if session IP matches current request IP.
@@ -94,4 +105,7 @@ class SecurityManager:
         Returns:
             Hex digest of the hash
         """
-        return hashlib.sha256(data.encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+        logger.debug("Data hashed for session operations")
+        return digest
