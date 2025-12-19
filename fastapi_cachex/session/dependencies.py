@@ -19,7 +19,7 @@ def get_optional_session(request: Request) -> Session | None:
     Returns:
         Session object or None if not authenticated
     """
-    return getattr(request.state, "session", None)
+    return getattr(request.state, "__fastapi_cachex_session", None)
 
 
 def get_session(request: Request) -> Session:
@@ -34,7 +34,7 @@ def get_session(request: Request) -> Session:
     Raises:
         HTTPException: 401 if session not found
     """
-    session: Session | None = getattr(request.state, "session", None)
+    session: Session | None = getattr(request.state, "__fastapi_cachex_session", None)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
