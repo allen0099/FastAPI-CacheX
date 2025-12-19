@@ -1,9 +1,12 @@
 """Backend proxy for managing cache backend instances."""
 
+from logging import getLogger
+
 from .backends import BaseCacheBackend
 from .exceptions import BackendNotFoundError
 
 _default_backend: BaseCacheBackend | None = None
+logger = getLogger(__name__)
 
 
 class BackendProxy:
@@ -33,4 +36,8 @@ class BackendProxy:
             backend: The backend to use for caching, or None to clear the current backend
         """
         global _default_backend
+        logger.info(
+            "Setting backend to: <%s>",
+            backend.__class__.__name__ if backend else "None",
+        )
         _default_backend = backend
