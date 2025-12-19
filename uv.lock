@@ -390,6 +390,7 @@ version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "pydantic" },
 ]
 
 [package.optional-dependencies]
@@ -425,6 +426,7 @@ dev = [
 requires-dist = [
     { name = "fastapi" },
     { name = "orjson", marker = "extra == 'redis'" },
+    { name = "pydantic" },
     { name = "pymemcache", marker = "extra == 'memcache'" },
     { name = "redis", extras = ["hiredis"], marker = "extra == 'redis'" },
 ]
