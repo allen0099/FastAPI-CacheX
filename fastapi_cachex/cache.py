@@ -121,6 +121,7 @@ async def get_response(
 def cache(  # noqa: C901
     ttl: int | None = None,
     stale_ttl: int | None = None,
+    *,
     stale: Literal["error", "revalidate"] | None = None,
     no_cache: bool = False,
     no_store: bool = False,
@@ -128,7 +129,7 @@ def cache(  # noqa: C901
     private: bool = False,
     immutable: bool = False,
     must_revalidate: bool = False,
-    cache_key_builder: CacheKeyBuilder | None = None,
+    key_builder: CacheKeyBuilder | None = None,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -142,7 +143,7 @@ def cache(  # noqa: C901
         private: Whether responses are for single user only
         immutable: Whether cached responses never change
         must_revalidate: Whether to force revalidation when stale
-        cache_key_builder: Custom function to build cache keys. If None, uses default_cache_key_builder
+        key_builder: Custom function to build cache keys. If None, uses default_key_builder
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -239,8 +240,8 @@ def cache(  # noqa: C901
                 return await get_response(func, req, *args, **kwargs)
 
             # Generate cache key using custom builder or default
-            key_builder = cache_key_builder or default_key_builder
-            cache_key = key_builder(req)
+            builder = key_builder or default_key_builder
+            cache_key = builder(req)
             client_etag = req.headers.get("if-none-match")
             cache_control = await get_cache_control(CacheControl())
 
