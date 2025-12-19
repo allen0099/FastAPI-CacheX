@@ -5,6 +5,7 @@ from datetime import timedelta
 from datetime import timezone
 
 import pytest
+from pydantic import SecretStr
 
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
@@ -33,6 +34,16 @@ def config() -> SessionConfig:
 def manager(backend: MemoryBackend, config: SessionConfig) -> SessionManager:
     """Create session manager for testing."""
     return SessionManager(backend, config)
+
+
+def test_session_manager_accepts_secretstr(backend: MemoryBackend) -> None:
+    """Ensure SessionManager works with SecretStr secrets."""
+    config = SessionConfig(secret_key=SecretStr("a" * 32))
+    manager = SessionManager(backend, config)
+
+    signature = manager.security.sign_session_id("test-session-id")
+
+    assert len(signature) == 64
 
 
 @pytest.mark.asyncio
