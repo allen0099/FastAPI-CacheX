@@ -26,6 +26,7 @@ classifiers = [
 keywords = ["fastapi", "cache", "etag", "cache-control", "redis", "memcached", "in-memory"]
 dependencies = [
     "fastapi",
+    "pydantic",
 ]
 
 [project.urls]
