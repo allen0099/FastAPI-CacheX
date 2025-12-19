@@ -389,7 +389,7 @@ async def test_dispatch_direct_call(
     # Verify result
     assert result == mock_response
     # Verify session was set in request state
-    assert request.state.session is not None
+    assert getattr(request.state, "__fastapi_cachex_session", None) is not None
 
 
 @pytest.mark.asyncio
@@ -423,4 +423,4 @@ async def test_dispatch_with_session_error(
     # Verify result
     assert result == mock_response
     # Session should be None in request state due to error
-    assert request.state.session is None
+    assert getattr(request.state, "__fastapi_cachex_session", None) is None

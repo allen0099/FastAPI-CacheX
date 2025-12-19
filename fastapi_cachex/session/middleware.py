@@ -79,7 +79,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
                 logger.debug("Session failed to load; token invalid/expired")
 
         # Store session in request state
-        request.state.session = session
+        setattr(request.state, "__fastapi_cachex_session", session)
 
         # Process request
         response: Response = await call_next(request)
