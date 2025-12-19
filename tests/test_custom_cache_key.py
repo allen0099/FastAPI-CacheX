@@ -50,7 +50,7 @@ def test_custom_cache_key_builder_ignore_query_params() -> None:
         return f"{request.method}||{request.url.path}"
 
     @app.get("/products")
-    @cache(ttl=60, cache_key_builder=custom_key_builder)
+    @cache(ttl=60, key_builder=custom_key_builder)
     async def get_products():
         return {"message": "Products"}
 
@@ -82,7 +82,7 @@ def test_custom_cache_key_builder_with_user_id() -> None:
         return f"{request.method}||{request.url.path}||{user_id}"
 
     @app.get("/profile")
-    @cache(ttl=60, cache_key_builder=user_specific_key_builder)
+    @cache(ttl=60, key_builder=user_specific_key_builder)
     async def get_profile(request: Request):
         user_id = request.headers.get("X-User-ID", "anonymous")
         return {"user": user_id, "message": "Profile data"}
@@ -117,7 +117,7 @@ def test_custom_cache_key_builder_with_language() -> None:
         return f"{request.method}||{request.url.path}||{lang}"
 
     @app.get("/content")
-    @cache(ttl=60, cache_key_builder=language_aware_key_builder)
+    @cache(ttl=60, key_builder=language_aware_key_builder)
     async def get_content(request: Request):
         lang = request.headers.get("Accept-Language", "en")
         messages = {
@@ -152,7 +152,7 @@ def test_cache_key_builder_none_uses_default() -> None:
     BackendProxy.set_backend(backend)
 
     @app.get("/default")
-    @cache(ttl=60, cache_key_builder=None)
+    @cache(ttl=60, key_builder=None)
     async def get_default():
         return {"message": "Using default"}
 
