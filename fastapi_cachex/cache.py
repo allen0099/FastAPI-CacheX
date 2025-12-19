@@ -12,8 +12,6 @@ from inspect import Signature
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
-from typing import TypeVar
-from typing import Union
 
 from fastapi import Request
 from fastapi import Response
@@ -33,10 +31,11 @@ from .types import ETagContent
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
 
-T = TypeVar("T", bound=Response)
-AsyncCallable = Callable[..., Awaitable[T]]
-SyncCallable = Callable[..., T]
-AnyCallable = Union[AsyncCallable[T], SyncCallable[T]]  # noqa: UP007
+# Handler callable accepted by @cache: can return any type (sync or async).
+HandlerCallable = Callable[..., Awaitable[object]] | Callable[..., object]
+
+# Wrapper callable produced by @cache: always async and returns Response.
+AsyncResponseCallable = Callable[..., Awaitable[Response]]
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +86,7 @@ class CacheControl:
 
 
 async def get_response(
-    __func: AnyCallable[Response],
+    __func: HandlerCallable,
     __request: Request,
     /,
     *args: Any,
@@ -130,7 +129,7 @@ def cache(  # noqa: C901
     immutable: bool = False,
     must_revalidate: bool = False,
     cache_key_builder: CacheKeyBuilder | None = None,
-) -> Callable[[AnyCallable[Response]], AsyncCallable[Response]]:
+) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
     Args:
@@ -149,7 +148,7 @@ def cache(  # noqa: C901
         Decorator function that wraps route handlers with caching logic
     """
 
-    def decorator(func: AnyCallable[Response]) -> AsyncCallable[Response]:  # noqa: C901
+    def decorator(func: HandlerCallable) -> AsyncResponseCallable:  # noqa: C901
         try:
             cache_backend = BackendProxy.get_backend()
         except BackendNotFoundError:
