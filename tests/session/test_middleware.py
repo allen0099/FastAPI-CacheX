@@ -47,6 +47,19 @@ def test_middleware_initialization(
     assert middleware.config is config
 
 
+def test_middleware_initialization_uses_manager_config(
+    manager: SessionManager,
+) -> None:
+    """Ensure middleware defaults to manager config when none provided."""
+
+    async def app(scope, receive, send):
+        pass
+
+    middleware = SessionMiddleware(app, manager)
+
+    assert middleware.config is manager.config
+
+
 def test_extract_token_from_header(
     manager: SessionManager, config: SessionConfig
 ) -> None:
