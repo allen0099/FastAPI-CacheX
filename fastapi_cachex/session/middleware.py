@@ -9,12 +9,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.types import ASGIApp
 
-from fastapi_cachex.session.config import SessionConfig
-from fastapi_cachex.session.exceptions import SessionError
-from fastapi_cachex.session.manager import SessionManager
+from .config import SessionConfig
+from .exceptions import SessionError
+from .manager import SessionManager
 
 if TYPE_CHECKING:
-    from fastapi_cachex.session.models import Session
+    from .models import Session
 
 logger = logging.getLogger(__name__)
 

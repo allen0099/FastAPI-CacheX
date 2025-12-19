@@ -4,8 +4,8 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from fastapi_cachex.backends.base import BaseCacheBackend
-from fastapi_cachex.proxy import BackendProxy
+from .backends.base import BaseCacheBackend
+from .proxy import BackendProxy
 
 
 def get_cache_backend() -> BaseCacheBackend:

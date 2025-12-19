@@ -12,14 +12,13 @@ from fastapi_cachex.types import ETagContent
 
 from .base import BaseCacheBackend
 
+logger = logging.getLogger(__name__)
+
 # Cache keys are formatted as: method|||host|||path|||query_params
 # Minimum parts required to extract path component
 _MIN_KEY_PARTS = 3
 # Maximum parts to split (method, host, path, query_params)
 _MAX_KEY_PARTS = 3
-
-# Module-level logger (inherits package logger)
-logger = logging.getLogger(__name__)
 
 
 class MemoryBackend(BaseCacheBackend):

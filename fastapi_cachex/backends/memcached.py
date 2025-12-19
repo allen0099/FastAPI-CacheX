@@ -3,9 +3,10 @@
 import logging
 import warnings
 
-from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import ETagContent
+
+from .base import BaseCacheBackend
 
 try:
     import orjson as json
@@ -13,11 +14,10 @@ try:
 except ImportError:  # pragma: no cover
     import json  # type: ignore[no-redef]  # pragma: no cover
 
+logger = logging.getLogger(__name__)
+
 # Default Memcached key prefix for fastapi-cachex
 DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
-
-# Module-level logger (inherits package logger)
-logger = logging.getLogger(__name__)
 
 
 class MemcachedBackend(BaseCacheBackend):

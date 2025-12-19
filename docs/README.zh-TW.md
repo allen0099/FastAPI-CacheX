@@ -60,7 +60,7 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
 ## 安裝指南
 
 ```bash
-uv pip install fastapi-cachex
+uv add fastapi-cachex
 ```
 
 ### 開發版本安裝

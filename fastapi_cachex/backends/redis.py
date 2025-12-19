@@ -5,10 +5,11 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 
-from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import ETagContent
+
+from .base import BaseCacheBackend
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
@@ -19,11 +20,10 @@ try:
 except ImportError:  # pragma: no cover
     import json  # type: ignore[no-redef]  # pragma: no cover
 
+logger = logging.getLogger(__name__)
+
 # Default Redis key prefix for fastapi-cachex
 DEFAULT_REDIS_PREFIX = "fastapi_cachex:"
-
-# Module-level logger (inherits package logger)
-logger = logging.getLogger(__name__)
 
 
 class AsyncRedisCacheBackend(BaseCacheBackend):
