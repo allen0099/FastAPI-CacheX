@@ -35,7 +35,8 @@ class SessionManager:
         """
         self.backend = backend
         self.config = config
-        self.security = SecurityManager(config.secret_key)
+        secret_value = config.secret_key.get_secret_value()
+        self.security = SecurityManager(secret_value)
         logger.debug(
             "SessionManager initialized with backend prefix=%s",
             config.backend_key_prefix,

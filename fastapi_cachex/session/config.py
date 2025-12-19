@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import SecretStr
 
 
 class SessionConfig(BaseModel):
@@ -44,7 +45,7 @@ class SessionConfig(BaseModel):
     )
 
     # Security settings
-    secret_key: str = Field(
+    secret_key: SecretStr = Field(
         ...,
         min_length=32,
         description="Secret key for signing session tokens (min 32 characters)",
