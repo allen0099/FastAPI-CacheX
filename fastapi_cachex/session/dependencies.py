@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi import status
 
-from fastapi_cachex.session.models import Session
+from .models import Session
 
 
 def get_optional_session(request: Request) -> Session | None:

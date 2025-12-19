@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import logging
 
-from fastapi_cachex.session.models import Session
+from .models import Session
 
 logger = logging.getLogger(__name__)
 

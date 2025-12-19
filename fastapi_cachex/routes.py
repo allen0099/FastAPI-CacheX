@@ -4,10 +4,10 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from fastapi_cachex.backends import BaseCacheBackend
-from fastapi_cachex.exceptions import BackendNotFoundError
-from fastapi_cachex.proxy import BackendProxy
-from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+from .backends import BaseCacheBackend
+from .exceptions import BackendNotFoundError
+from .proxy import BackendProxy
+from .types import CACHE_KEY_SEPARATOR
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

@@ -20,15 +20,15 @@ from fastapi import Response
 from fastapi.datastructures import DefaultPlaceholder
 from starlette.status import HTTP_304_NOT_MODIFIED
 
-from fastapi_cachex.backends import MemoryBackend
-from fastapi_cachex.directives import DirectiveType
-from fastapi_cachex.exceptions import BackendNotFoundError
-from fastapi_cachex.exceptions import CacheXError
-from fastapi_cachex.exceptions import RequestNotFoundError
-from fastapi_cachex.proxy import BackendProxy
-from fastapi_cachex.types import CACHE_KEY_SEPARATOR
-from fastapi_cachex.types import CacheKeyBuilder
-from fastapi_cachex.types import ETagContent
+from .backends import MemoryBackend
+from .directives import DirectiveType
+from .exceptions import BackendNotFoundError
+from .exceptions import CacheXError
+from .exceptions import RequestNotFoundError
+from .proxy import BackendProxy
+from .types import CACHE_KEY_SEPARATOR
+from .types import CacheKeyBuilder
+from .types import ETagContent
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute

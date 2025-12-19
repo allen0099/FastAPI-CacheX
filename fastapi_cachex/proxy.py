@@ -1,7 +1,7 @@
 """Backend proxy for managing cache backend instances."""
 
-from fastapi_cachex.backends import BaseCacheBackend
-from fastapi_cachex.exceptions import BackendNotFoundError
+from .backends import BaseCacheBackend
+from .exceptions import BackendNotFoundError
 
 _default_backend: BaseCacheBackend | None = None
 
