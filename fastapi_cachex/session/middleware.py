@@ -26,7 +26,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         self,
         app: ASGIApp,
         session_manager: SessionManager,
-        config: SessionConfig,
+        config: SessionConfig | None = None,
     ) -> None:
         """Initialize session middleware.
 
@@ -37,7 +37,12 @@ class SessionMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self.session_manager = session_manager
+
+        if config is None:
+            config = self.session_manager.config
+
         self.config = config
+
         logger.debug(
             "SessionMiddleware initialized; header=%s bearer=%s",
             config.header_name,
