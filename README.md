@@ -63,6 +63,12 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 uv add fastapi-cachex
 ```
 
+### Development Installation
+
+```bash
+uv add git+https://github.com/allen0099/FastAPI-CacheX.git
+```
+
 ## Quick Start
 
 ```python
@@ -106,7 +112,7 @@ FastAPI-CacheX supports multiple caching backends. You can easily switch between
 Cache keys are generated in the following format to avoid collisions:
 
 ```
-{method}:{host}:{path}:{query_params}
+{method}|||{host}|||{path}|||{query_params}
 ```
 
 This ensures that:

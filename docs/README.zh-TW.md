@@ -59,16 +59,14 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
 
 ## 安裝指南
 
-### 使用 pip 安裝
-
-```bash
-pip install fastapi-cachex
-```
-
-### 使用 uv 安裝（推薦）
-
 ```bash
 uv pip install fastapi-cachex
+```
+
+### 開發版本安裝
+
+```bash
+uv add git+https://github.com/allen0099/FastAPI-CacheX.git
 ```
 
 ## 快速開始
@@ -114,7 +112,7 @@ FastAPI-CacheX 支援多種快取後端。你可以使用 `BackendProxy` 輕鬆�
 快取金鑰遵循以下格式以避免衝突：
 
 ```
-{method}:{host}:{path}:{query_params}
+{method}|||{host}|||{path}|||{query_params}
 ```
 
 這確保：
