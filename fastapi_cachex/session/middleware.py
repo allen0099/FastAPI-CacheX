@@ -63,6 +63,15 @@ class SessionMiddleware(BaseHTTPMiddleware):
         Returns:
             Response
         """
+        # Store session manager in app state for dependency injection (first request only)
+        # This allows developers to use get_session_manager() dependency
+        if not hasattr(request.app.state, "__fastapi_cachex_session_manager"):
+            setattr(
+                request.app.state,
+                "__fastapi_cachex_session_manager",
+                self.session_manager,
+            )
+
         # Extract session token from request
         token = self._extract_token(request)
 
