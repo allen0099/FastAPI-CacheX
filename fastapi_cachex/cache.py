@@ -118,7 +118,7 @@ async def get_response(
     return response_class(content=result)
 
 
-def cache(  # noqa: C901
+def cache(
     ttl: int | None = None,
     stale_ttl: int | None = None,
     *,
@@ -149,7 +149,7 @@ def cache(  # noqa: C901
         Decorator function that wraps route handlers with caching logic
     """
 
-    def decorator(func: HandlerCallable) -> AsyncResponseCallable:  # noqa: C901
+    def decorator(func: HandlerCallable) -> AsyncResponseCallable:
         try:
             cache_backend = BackendProxy.get_backend()
         except BackendNotFoundError:
@@ -183,7 +183,7 @@ def cache(  # noqa: C901
         else:
             request_name = found_request.name
 
-        async def get_cache_control(cache_control: CacheControl) -> str:  # noqa: C901
+        async def get_cache_control(cache_control: CacheControl) -> str:
             # Set Cache-Control headers
             if no_cache:
                 cache_control.add(DirectiveType.NO_CACHE)
@@ -222,7 +222,7 @@ def cache(  # noqa: C901
             return str(cache_control)
 
         @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Response:  # noqa: C901
+        async def wrapper(*args: Any, **kwargs: Any) -> Response:
             if found_request:
                 req: Request | None = kwargs.get(request_name)
             else:

@@ -32,6 +32,7 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 
 ### Session Management (Optional Extension)
 - Secure session management with HMAC-SHA256 token signing
+- Optional JWT token format for interoperability (install extra `jwt`)
 - IP address and User-Agent binding (optional security features)
 - Header and bearer token support (API-first architecture)
 - Automatic session renewal (sliding expiration)
@@ -61,6 +62,12 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 
 ```bash
 uv add fastapi-cachex
+```
+
+To enable JWT token format support for sessions:
+
+```bash
+uv add "fastapi-cachex[jwt]"
 ```
 
 ### Development Installation

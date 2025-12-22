@@ -19,6 +19,9 @@ from .models import SessionStatus
 from .models import SessionToken
 from .models import SessionUser
 from .security import SecurityManager
+from .token_serializers import JWTTokenSerializer
+from .token_serializers import SimpleTokenSerializer
+from .token_serializers import TokenSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +29,32 @@ logger = logging.getLogger(__name__)
 class SessionManager:
     """Manages session lifecycle and storage."""
 
-    def __init__(self, backend: BaseCacheBackend, config: SessionConfig) -> None:
+    def __init__(
+        self,
+        backend: BaseCacheBackend,
+        config: SessionConfig,
+        token_serializer: TokenSerializer | None = None,
+    ) -> None:
         """Initialize session manager.
 
         Args:
             backend: Cache backend for session storage
             config: Session configuration
+            token_serializer: Optional custom token serializer. If provided,
+                overrides the built-in selection (simple/jwt).
         """
         self.backend = backend
         self.config = config
         secret_value = config.secret_key.get_secret_value()
         self.security = SecurityManager(secret_value)
+        # Select token serializer strategy (allow DI override)
+        if token_serializer is not None:
+            self._serializer = token_serializer
+        elif config.token_format == "jwt":
+            self._serializer = JWTTokenSerializer(config)
+        else:
+            self._serializer = SimpleTokenSerializer()
+        logger.debug("Token serializer: %s", type(self._serializer).__name__)
         logger.debug(
             "SessionManager initialized with backend prefix=%s",
             config.backend_key_prefix,
@@ -102,7 +120,7 @@ class SessionManager:
             session.user_agent,
         )
 
-        return session, token.to_string()
+        return session, self._serializer.to_string(token)
 
     async def get_session(
         self,
@@ -129,12 +147,15 @@ class SessionManager:
         """
         # Parse and verify token
         try:
-            token = SessionToken.from_string(token_string)
+            token = self._serializer.from_string(token_string)
         except ValueError as e:
             logger.debug("Session token parse error: %s", e)
             raise SessionTokenError(str(e)) from e
-
-        if not self.security.verify_signature(token.session_id, token.signature):
+        # For simple format, verify signature explicitly
+        if self.config.token_format == "simple" and not self.security.verify_signature(
+            token.session_id,
+            token.signature,
+        ):
             msg = "Invalid session signature"
             logger.debug(
                 "Session signature verification failed; id=%s", token.session_id
@@ -271,7 +292,7 @@ class SessionManager:
             "Session ID regenerated; old_id=%s new_id=%s", old_id, session.session_id
         )
 
-        return session, token.to_string()
+        return session, self._serializer.to_string(token)
 
     async def delete_user_sessions(self, user_id: str) -> int:
         """Delete all sessions for a user.
@@ -332,7 +353,14 @@ class SessionManager:
         Returns:
             SessionToken object
         """
-        signature = self.security.sign_session_id(session_id)
+        # For 'simple' format, include HMAC signature in the token model.
+        # For 'jwt' format, signature will be embedded in the JWT string; we can
+        # leave the signature field empty as it won't be used downstream.
+        signature = (
+            self.security.sign_session_id(session_id)
+            if self.config.token_format == "simple"
+            else ""
+        )
         return SessionToken(session_id=session_id, signature=signature)
 
     async def _save_session(self, session: Session) -> None:

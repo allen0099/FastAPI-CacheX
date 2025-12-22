@@ -31,6 +31,10 @@ class SessionConfig(BaseModel):
     )
 
     # Token settings
+    token_format: Literal["simple", "jwt"] = Field(
+        default="simple",
+        description="Token serialization format: 'simple' (default) or 'jwt'",
+    )
     header_name: str = Field(
         default="X-Session-Token",
         description="Custom header name for session token",
@@ -42,6 +46,25 @@ class SessionConfig(BaseModel):
     token_source_priority: list[Literal["header", "bearer"]] = Field(
         default=["header", "bearer"],
         description="Priority order for token sources",
+    )
+
+    # JWT settings (used when token_format == 'jwt')
+    jwt_algorithm: str = Field(
+        default="HS256",
+        description="JWT signing algorithm (default: HS256)",
+    )
+    jwt_issuer: str | None = Field(
+        default=None,
+        description="Expected JWT issuer (iss). If set, will be verified.",
+    )
+    jwt_audience: str | None = Field(
+        default=None,
+        description="Expected JWT audience (aud). If set, will be verified.",
+    )
+    jwt_leeway: int = Field(
+        default=0,
+        ge=0,
+        description="Leeway in seconds for exp/nbf/iat validation",
     )
 
     # Security settings

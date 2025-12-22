@@ -57,6 +57,7 @@ dev = [
 [project.optional-dependencies]
 memcache = ["pymemcache"]
 redis = ["redis[hiredis]", "orjson"]
+jwt = ["PyJWT>=2.9.0"]
 
 [build-system]
 requires = ["uv_build>=0.9.17,<0.10.0"]
@@ -80,6 +81,8 @@ ignore = [
     "B008", # do not perform function calls in argument defaults
     "B904", # Allow raising exceptions without from e, for HTTPException
     "FBT001", "FBT002", # Boolean arguments are part of Cache-Control API design
+    "S105", # false-positive on token_format strings
+    "C901", # allow slightly complex session flow
 ]
 preview = true
 explicit-preview-rules = true
@@ -96,6 +99,7 @@ keep-runtime-typing = true
 "tests/**" = [
     "D",
     "S101",
+    "S106",
     "ARG",
     "ANN",
     "B011",
