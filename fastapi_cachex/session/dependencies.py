@@ -1,5 +1,6 @@
 """FastAPI dependency injection utilities for session management."""
 
+from typing import TYPE_CHECKING
 from typing import Annotated
 
 from fastapi import Depends
@@ -8,6 +9,9 @@ from fastapi import Request
 from fastapi import status
 
 from .models import Session
+
+if TYPE_CHECKING:
+    from .manager import SessionManager
 
 
 def get_optional_session(request: Request) -> Session | None:
@@ -59,7 +63,49 @@ def require_session(request: Request) -> Session:
     return get_session(request)
 
 
+def get_session_manager(request: Request) -> "SessionManager":
+    """Get SessionManager instance from app state.
+
+    This dependency allows you to access the SessionManager instance
+    that was registered via SessionMiddleware. Use this when you need
+    to perform session operations like create, delete, or regenerate.
+
+    Example:
+        ```python
+        from fastapi import Depends
+        from fastapi_cachex.session import get_session_manager, SessionManager
+
+
+        @app.post("/login")
+        async def login(
+            username: str, manager: SessionManager = Depends(get_session_manager)
+        ):
+            session, token = await manager.create_session(...)
+            return {"token": token}
+        ```
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        SessionManager instance
+
+    Raises:
+        HTTPException: 500 if SessionManager not found in app state
+    """
+    manager: SessionManager | None = getattr(
+        request.app.state, "__fastapi_cachex_session_manager", None
+    )
+    if manager is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="SessionManager not initialized. Ensure SessionMiddleware is added to the app.",
+        )
+    return manager
+
+
 # Type annotations for dependency injection
 OptionalSession = Annotated[Session | None, Depends(get_optional_session)]
 RequiredSession = Annotated[Session, Depends(get_session)]
 SessionDep = Annotated[Session, Depends(require_session)]
+SessionManagerDep = Annotated["SessionManager", Depends(get_session_manager)]
