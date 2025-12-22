@@ -65,9 +65,15 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             **kwargs: Additional arguments to pass to Redis client
         """
         try:
+            # Import top-level package first so tests that monkeypatch
+            # builtins.__import__("redis") can simulate absence reliably.
+            import redis  # noqa: F401
             from redis.asyncio import Redis as AsyncRedis
         except ImportError:
-            msg = "redis[hiredis] is not installed. Please install it with 'pip install \"redis[hiredis]\"' "
+            msg = (
+                "redis[hiredis] is not installed. Please install it with "
+                "'pip install \"redis[hiredis]\"' "
+            )
             raise CacheXError(msg)
 
         self.client = AsyncRedis(
