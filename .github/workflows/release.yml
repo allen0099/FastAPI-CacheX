@@ -131,6 +131,12 @@ jobs:
 
             Released on: ${{ steps.changelog.outputs.release_date }}.
 
+            ### Installation
+
+            ```bash
+            uv add fastapi-cachex==${{ steps.version.outputs.new_version }}
+            ```
+
             **📊 Statistics:**
             - New commits: ${{ steps.check_commits.outputs.commit_count }}
             - Previous version: ${{ steps.last_tag.outputs.last_tag || 'Initial release' }}
@@ -140,8 +146,6 @@ jobs:
 
             ---
             **Full Changelog**: https://github.com/allen0099/FastAPI-CacheX/compare/${{ steps.last_tag.outputs.last_tag }}...v${{ steps.version.outputs.new_version }}
-
-            *This is an automated weekly release*
           draft: false
           prerelease: false
           make_latest: true

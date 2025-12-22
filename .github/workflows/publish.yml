@@ -43,12 +43,10 @@ jobs:
         id: version
         run: |
           if [ -n "${{ inputs.version }}" ]; then
-            # 使用指定的版本
             uv version ${{ inputs.version }}
             new_version="${{ inputs.version }}"
             echo "Using specified version: $new_version"
           else
-            # 自动 bump patch 版本
             uv version --bump patch
             new_version=$(uv version --short)
             echo "Auto-bumped patch version to: $new_version"
@@ -100,16 +98,19 @@ jobs:
 
             Released on: ${{ steps.changelog.outputs.release_date }}.
 
-            ${{ inputs.release_notes != '' && format('**Release Notes:**\n{0}\n\n', inputs.release_notes) || '' }}**📊 Statistics:**
-            - Previous version: ${{ steps.last_tag.outputs.last_tag || 'Initial release' }}
+            ### Installation
+
+            ```bash
+            uv add fastapi-cachex==${{ steps.version.outputs.new_version }}
+            ```
+
+            ${{ inputs.release_notes != '' && format('**Release Notes:**\n{0}\n\n', inputs.release_notes) || '' }}
 
             **📝 Changelog:**
             ${{ steps.changelog.outputs.changelog }}
 
             ---
             **Full Changelog**: https://github.com/allen0099/FastAPI-CacheX/compare/${{ steps.last_tag.outputs.last_tag }}...v${{ steps.version.outputs.new_version }}
-
-            *This is a manual patch release*
           draft: false
           prerelease: false
           make_latest: true
