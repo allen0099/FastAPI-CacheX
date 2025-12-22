@@ -75,7 +75,7 @@ def test_extract_token_from_header(
     request.headers = {config.header_name: "test-token"}
 
     token = middleware._extract_token(request)
-    assert token == "test-token"  # noqa: S105
+    assert token == "test-token"
 
 
 def test_extract_token_from_bearer(
@@ -94,7 +94,7 @@ def test_extract_token_from_bearer(
     request.headers = {"authorization": "Bearer test-token"}
 
     token = middleware._extract_token(request)
-    assert token == "test-token"  # noqa: S105
+    assert token == "test-token"
 
 
 def test_extract_token_none(manager: SessionManager, config: SessionConfig) -> None:

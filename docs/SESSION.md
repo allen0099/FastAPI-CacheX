@@ -11,6 +11,7 @@ FastAPI-CacheX Session Management 提供完整的使用者 Session 管理功能�
   - User-Agent 綁定（可選）
   - 登入後自動重新生成 Session ID
 - ✅ **多種 Token 來源**：Header、Bearer Token
+- ✅ **可選 JWT 格式**：支援以 JWT 作為 Session Token（需安裝 extra `jwt`）
 - ✅ **自動展期**：滑動過期時間支援
 - ✅ **Flash Messages**：跨請求訊息傳遞
 - ✅ **多後端支援**：Redis、Memcached、In-Memory
@@ -24,6 +25,12 @@ Session 管理已整合在 FastAPI-CacheX 中：
 
 ```bash
 uv add fastapi-cachex
+```
+
+若要啟用 JWT Token 格式支援：
+
+```bash
+uv add "fastapi-cachex[jwt]"
 ```
 
 ### 2. 基本使用
@@ -271,9 +278,16 @@ SessionConfig(
     sliding_threshold=0.5,         # 滑動閾值（0.5 = TTL 過半時更新）
 
     # Token 來源（API-first 架構）
+    token_format="simple",         # 可選："simple"（預設）、"jwt"
     header_name="X-Session-Token",
     use_bearer_token=True,
     token_source_priority=["header", "bearer"],  # 客戶端透過 header 傳送 token
+
+    # JWT（token_format == "jwt" 時使用）
+    jwt_algorithm="HS256",
+    jwt_issuer=None,                # 若設定，解析時會驗證 iss
+    jwt_audience=None,              # 若設定，解析時會驗證 aud
+    jwt_leeway=60,                  # exp/nbf/iat 驗證的容忍秒數
 
     # 安全設定
     secret_key="...",              # 必須：至少 32 字元
@@ -290,6 +304,33 @@ SessionConfig(
 ```
 
 **注意**：此設計為 API-first 架構（前後端分離），Token 由客戶端管理並在每次請求的 Header 中傳送。客戶端應將 token 儲存在 `localStorage` 或 `sessionStorage` 中，並在請求時透過 `Authorization: Bearer <token>` 或 `X-Session-Token: <token>` header 傳送。
+
+### 使用 JWT Token 格式
+
+啟用 `token_format="jwt"` 後，Session Token 會以 JWT 簽發，內含下列 claims：
+
+- `sid`: Session ID（自訂 claim，用於對應伺服器端 Session）
+- `iat`: 簽發時間（epoch 秒）
+- `exp`: 過期時間（`iat + session_ttl`）
+- `iss`/`aud`: 若於設定中提供，則會被寫入並在解析時驗證
+
+設定範例：
+
+```python
+config = SessionConfig(
+    secret_key="your-secret-at-least-32-chars",
+    token_format="jwt",
+    jwt_algorithm="HS256",
+    jwt_issuer="your-issuer",
+    jwt_audience="your-audience",
+)
+```
+
+安全性說明：
+
+- 伺服器端仍維持「有狀態」Session（JWT 只作為攜帶 `sid` 的憑證），避免將敏感資料放入 Token
+- 解析時會驗證簽章與必要 claims（`sid/iat/exp`，以及設定的 `iss/aud`）
+- 建議在生產環境使用 HTTPS 與金鑰輪替策略（可使用 `kid` 與多把金鑰的進階方案，未來可擴展）
 
 ## 安全最佳實踐
 

@@ -31,6 +31,48 @@ requires_redis = pytest.mark.skipif(
 )
 
 
+def has_redis_package() -> bool:
+    """Return True if the `redis` package is importable."""
+    try:
+        import redis.asyncio  # type: ignore[unused-ignore]  # noqa: F401
+
+    except Exception:
+        return False
+    return True
+
+
+@pytest.mark.skipif(
+    not has_redis_package(),
+    reason="redis package is not installed",
+)
+def test_redis_load_from_config_initializes_client_and_prefix() -> None:
+    """Ensure `load_from_config` builds a backend with expected settings."""
+    from pydantic import SecretStr
+
+    from fastapi_cachex.backends.config import RedisConfig
+    from fastapi_cachex.backends.redis import DEFAULT_REDIS_PREFIX
+
+    cfg = RedisConfig(host="127.0.0.1", port=6380, password=SecretStr("pw"))
+    backend = AsyncRedisCacheBackend.load_from_config(cfg)
+
+    # Instance type and default prefix
+    assert isinstance(backend, AsyncRedisCacheBackend)
+    assert backend.key_prefix == DEFAULT_REDIS_PREFIX
+
+    # Verify client connection settings come from the config
+    pool = backend.client.connection_pool
+    kwargs = getattr(pool, "connection_kwargs", {})
+
+    if kwargs:
+        assert kwargs.get("host") == cfg.host
+        assert kwargs.get("port") == cfg.port
+        # Password is taken from SecretStr via get_secret_value()
+        assert kwargs.get("password") == "pw"
+    else:  # pragma: no cover - defensive fallback for unexpected redis versions
+        # Fallback sanity check when internals differ
+        assert hasattr(backend.client, "connection_pool")
+
+
 @pytest_asyncio.fixture
 async def async_redis_backend() -> AsyncGenerator[AsyncRedisCacheBackend, Any]:
     """Fixture for async Redis cache backend."""

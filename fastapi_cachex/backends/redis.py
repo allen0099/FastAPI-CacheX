@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 
+from fastapi_cachex.backends.config import RedisConfig
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import ETagContent
@@ -64,9 +65,15 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             **kwargs: Additional arguments to pass to Redis client
         """
         try:
+            # Import top-level package first so tests that monkeypatch
+            # builtins.__import__("redis") can simulate absence reliably.
+            import redis  # noqa: F401
             from redis.asyncio import Redis as AsyncRedis
         except ImportError:
-            msg = "redis[hiredis] is not installed. Please install it with 'pip install \"redis[hiredis]\"' "
+            msg = (
+                "redis[hiredis] is not installed. Please install it with "
+                "'pip install \"redis[hiredis]\"' "
+            )
             raise CacheXError(msg)
 
         self.client = AsyncRedis(
@@ -81,6 +88,23 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             **kwargs,
         )
         self.key_prefix = key_prefix
+
+    @staticmethod
+    def load_from_config(config: RedisConfig) -> "AsyncRedisCacheBackend":
+        """Create AsyncRedisCacheBackend from RedisConfig.
+
+        Args:
+            config: RedisConfig instance
+        Returns:
+            An instance of AsyncRedisCacheBackend
+        """
+        return AsyncRedisCacheBackend(
+            host=config.host,
+            port=config.port,
+            password=config.password.get_secret_value()
+            if config.password is not None
+            else None,
+        )
 
     def _make_key(self, key: str) -> str:
         """Add prefix to cache key."""
