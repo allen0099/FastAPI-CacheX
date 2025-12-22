@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 
+from fastapi_cachex.backends.config import RedisConfig
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import ETagContent
@@ -81,6 +82,23 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             **kwargs,
         )
         self.key_prefix = key_prefix
+
+    @staticmethod
+    def load_from_config(config: RedisConfig) -> "AsyncRedisCacheBackend":
+        """Create AsyncRedisCacheBackend from RedisConfig.
+
+        Args:
+            config: RedisConfig instance
+        Returns:
+            An instance of AsyncRedisCacheBackend
+        """
+        return AsyncRedisCacheBackend(
+            host=config.host,
+            port=config.port,
+            password=config.password.get_secret_value()
+            if config.password is not None
+            else None,
+        )
 
     def _make_key(self, key: str) -> str:
         """Add prefix to cache key."""
