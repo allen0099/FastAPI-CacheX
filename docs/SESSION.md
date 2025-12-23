@@ -332,6 +332,8 @@ config = SessionConfig(
 - 解析時會驗證簽章與必要 claims（`sid/iat/exp`，以及設定的 `iss/aud`）
 - 建議在生產環境使用 HTTPS 與金鑰輪替策略（可使用 `kid` 與多把金鑰的進階方案，未來可擴展）
 
+**進階主題**：關於 JWT claims 的設計考量、為何沒有實作 `jti`/`nbf` 等可選 claims，以及如何擴展添加自訂 claims，請參考 **[JWT Claims 實作說明與擴展指南](JWT_CLAIMS.md)**。
+
 ## 安全最佳實踐
 
 ### 1. Secret Key
