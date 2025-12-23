@@ -48,21 +48,6 @@ def get_session(request: Request) -> Session:
     return session
 
 
-def require_session(request: Request) -> Session:
-    """Require authenticated session (alias for get_session).
-
-    Args:
-        request: FastAPI request object
-
-    Returns:
-        Session object
-
-    Raises:
-        HTTPException: 401 if session not found
-    """
-    return get_session(request)
-
-
 def get_session_manager(request: Request) -> "SessionManager":
     """Get SessionManager instance from app state.
 
@@ -104,8 +89,11 @@ def get_session_manager(request: Request) -> "SessionManager":
     return manager
 
 
+require_session = get_session  # Alias for required session dependency
+
 # Type annotations for dependency injection
 OptionalSession = Annotated[Session | None, Depends(get_optional_session)]
 RequiredSession = Annotated[Session, Depends(get_session)]
-SessionDep = Annotated[Session, Depends(require_session)]
+SessionDep = Annotated[Session, Depends(get_session)]
+UserSessionDep = Annotated[Session, Depends(get_session)]
 SessionManagerDep = Annotated["SessionManager", Depends(get_session_manager)]
