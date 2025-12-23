@@ -73,15 +73,15 @@ class SessionManager:
 
     async def create_session(
         self,
-        user: SessionUser | None = None,
+        user: SessionUser,
         ip_address: str | None = None,
         user_agent: str | None = None,
         **extra_data: dict[str, object],
     ) -> tuple[Session, str]:
-        """Create a new session.
+        """Create a new session for an authenticated user.
 
         Args:
-            user: Optional user data
+            user: Authenticated user data
             ip_address: Client IP address (if IP binding enabled)
             user_agent: Client User-Agent (if UA binding enabled)
             **extra_data: Additional session data
@@ -89,7 +89,35 @@ class SessionManager:
         Returns:
             Tuple of (Session, token_string)
         """
-        # Create session
+        return await self._create_session(
+            user=user,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            **extra_data,
+        )
+
+    async def create_anonymous_session(
+        self,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+        **extra_data: dict[str, object],
+    ) -> tuple[Session, str]:
+        """Create a new session without user information."""
+        return await self._create_session(
+            user=None,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            **extra_data,
+        )
+
+    async def _create_session(
+        self,
+        user: SessionUser | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+        **extra_data: dict[str, object],
+    ) -> tuple[Session, str]:
+        """Internal helper to create and persist a session."""
         session = Session(
             user=user,
             data=extra_data,
