@@ -59,6 +59,18 @@ async def test_create_session(manager: SessionManager) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_anonymous_session(manager: SessionManager) -> None:
+    """Test creating an anonymous session."""
+    session, token = await manager.create_anonymous_session()
+
+    assert session.session_id is not None
+    assert session.user is None
+
+    retrieved = await manager.get_session(token)
+    assert retrieved.user is None
+
+
+@pytest.mark.asyncio
 async def test_get_session(manager: SessionManager) -> None:
     """Test retrieving a session."""
     user = SessionUser(user_id="123", username="testuser")
