@@ -17,7 +17,11 @@ if TYPE_CHECKING:
 
 
 # HTTPBearer security scheme for OpenAPI UI
-_http_bearer = HTTPBearer(auto_error=False)
+_http_bearer = HTTPBearer(
+    scheme_name="SessionBearer",
+    description="Session authentication using Bearer token",
+    auto_error=False,
+)
 
 
 def get_optional_session(
