@@ -15,7 +15,10 @@ from fastapi_cachex.session.exceptions import SessionNotFoundError
 from fastapi_cachex.session.exceptions import SessionSecurityError
 from fastapi_cachex.session.exceptions import SessionTokenError
 from fastapi_cachex.session.manager import SessionManager
+from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.models import SessionUser
+from fastapi_cachex.types import CacheItem
+from fastapi_cachex.types import ETagContent
 
 
 @pytest.fixture
@@ -34,6 +37,29 @@ def config() -> SessionConfig:
 def manager(backend: MemoryBackend, config: SessionConfig) -> SessionManager:
     """Create session manager for testing."""
     return SessionManager(backend, config)
+
+
+class DummySerializer:
+    """Stub serializer used to verify DI override coverage."""
+
+    def __init__(self) -> None:
+        self.last_token: SessionToken | None = None
+        self.to_string_calls = 0
+        self.from_string_calls = 0
+
+    def to_string(self, token: SessionToken) -> str:
+        self.last_token = token
+        self.to_string_calls += 1
+        return f"dummy.{token.session_id}"
+
+    def from_string(self, token_str: str) -> SessionToken:
+        self.from_string_calls += 1
+        _prefix, session_id = token_str.split(".", 1)
+        return SessionToken(
+            session_id=session_id,
+            signature="",
+            issued_at=datetime.now(timezone.utc),
+        )
 
 
 def test_session_manager_accepts_secretstr(backend: MemoryBackend) -> None:
@@ -351,3 +377,105 @@ async def test_invalid_session_signature(
     # Try to get session with tampered token
     with pytest.raises(SessionSecurityError, match="Invalid session signature"):
         await manager.get_session(tampered_token.to_string())
+
+
+@pytest.mark.asyncio
+async def test_session_manager_respects_custom_serializer(
+    backend: MemoryBackend,
+) -> None:
+    """Ensure DI serializer override is used for token operations."""
+    config = SessionConfig(secret_key="a" * 32, token_format="jwt")
+    serializer = DummySerializer()
+    manager = SessionManager(backend, config, token_serializer=serializer)
+
+    session, token = await manager.create_anonymous_session()
+
+    assert token.startswith("dummy.")
+    retrieved = await manager.get_session(token)
+    assert retrieved.session_id == session.session_id
+    assert serializer.to_string_calls == 1
+    assert serializer.from_string_calls == 1
+    assert serializer.last_token is not None
+
+
+@pytest.mark.asyncio
+async def test_jwt_token_format_uses_serializer(
+    monkeypatch: pytest.MonkeyPatch, backend: MemoryBackend
+) -> None:
+    """Cover JWT token path without requiring external jwt dependency."""
+
+    class StubJWTSerializer:
+        def __init__(self, config: SessionConfig) -> None:
+            self.config = config
+            self.to_string_tokens: list[SessionToken] = []
+            self.from_string_payloads: list[str] = []
+
+        def to_string(self, token: SessionToken) -> str:
+            self.to_string_tokens.append(token)
+            return f"jwt.{token.session_id}"
+
+        def from_string(self, token_str: str) -> SessionToken:
+            self.from_string_payloads.append(token_str)
+            _prefix, session_id = token_str.split(".", 1)
+            return SessionToken(
+                session_id=session_id,
+                signature="",
+                issued_at=datetime.now(timezone.utc),
+            )
+
+    monkeypatch.setattr(
+        "fastapi_cachex.session.manager.JWTTokenSerializer", StubJWTSerializer
+    )
+
+    config = SessionConfig(secret_key="a" * 32, token_format="jwt")
+    manager = SessionManager(backend, config)
+
+    assert isinstance(manager._serializer, StubJWTSerializer)
+
+    user = SessionUser(user_id="jwt-user", username=None)
+    session, token = await manager.create_session(user=user)
+
+    stub = manager._serializer
+    assert stub.to_string_tokens[0].signature == ""
+
+    retrieved = await manager.get_session(token)
+    assert retrieved.session_id == session.session_id
+    assert stub.from_string_payloads == [token]
+
+
+@pytest.mark.asyncio
+async def test_load_session_by_key_invalid_payload_returns_none(
+    manager: SessionManager, backend: MemoryBackend
+) -> None:
+    """Ensure invalid cached payloads are ignored gracefully."""
+    key = manager._get_backend_key("invalid-id")
+    backend.cache[key] = CacheItem(
+        value=ETagContent(etag="bad", content=b"{not-json}"),
+        expiry=None,
+    )
+
+    session = await manager._load_session_by_key(key)
+
+    assert session is None
+
+
+@pytest.mark.asyncio
+async def test_save_session_without_ttl_uses_none_expiry(
+    backend: MemoryBackend,
+) -> None:
+    """Sessions without TTL should persist with no expiry set."""
+    config = SessionConfig(secret_key="a" * 32, session_ttl=0)
+    manager = SessionManager(backend, config)
+
+    session, token = await manager.create_anonymous_session()
+
+    cache_data = await backend.get_cache_data()
+    key = manager._get_backend_key(session.session_id)
+
+    assert session.expires_at is None
+    assert key in cache_data
+    _value, expiry = cache_data[key]
+    assert expiry is None
+
+    retrieved = await manager.get_session(token)
+    assert retrieved.session_id == session.session_id
