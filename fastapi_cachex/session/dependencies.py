@@ -7,6 +7,8 @@ from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi import status
+from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer
 
 from .models import Session
 
@@ -14,11 +16,23 @@ if TYPE_CHECKING:
     from .manager import SessionManager
 
 
-def get_optional_session(request: Request) -> Session | None:
+# HTTPBearer security scheme for OpenAPI UI
+_http_bearer = HTTPBearer(auto_error=False)
+
+
+def get_optional_session(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),  # noqa: ARG001
+) -> Session | None:
     """Get session from request state (optional).
+
+    This dependency automatically displays the authorization input box in OpenAPI/Swagger UI.
+    The actual authentication is handled by SessionMiddleware; the credentials parameter
+    is only used to generate the OpenAPI security scheme.
 
     Args:
         request: FastAPI request object
+        credentials: HTTPBearer credentials (for OpenAPI UI display only)
 
     Returns:
         Session object or None if not authenticated
@@ -26,11 +40,19 @@ def get_optional_session(request: Request) -> Session | None:
     return getattr(request.state, "__fastapi_cachex_session", None)
 
 
-def get_session(request: Request) -> Session:
+def get_session(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),  # noqa: ARG001
+) -> Session:
     """Get session from request state (required).
+
+    This dependency automatically displays the authorization input box in OpenAPI/Swagger UI.
+    The actual authentication is handled by SessionMiddleware; the credentials parameter
+    is only used to generate the OpenAPI security scheme.
 
     Args:
         request: FastAPI request object
+        credentials: HTTPBearer credentials (for OpenAPI UI display only)
 
     Returns:
         Session object
