@@ -10,6 +10,7 @@ from fastapi_cachex.session.models import Session
 from fastapi_cachex.session.models import SessionStatus
 from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.models import SessionUser
+from fastapi_cachex.session.token_serializers import SimpleTokenSerializer
 
 
 def test_session_user_creation() -> None:
@@ -129,8 +130,9 @@ def test_session_flash_messages() -> None:
 
 def test_session_token_to_string() -> None:
     """Test session token string conversion."""
+    serializer = SimpleTokenSerializer()
     token = SessionToken(session_id="test123", signature="abc123")
-    token_str = token.to_string()
+    token_str = serializer.to_string(token)
 
     assert "test123" in token_str
     assert "abc123" in token_str
@@ -139,10 +141,11 @@ def test_session_token_to_string() -> None:
 
 def test_session_token_from_string() -> None:
     """Test session token parsing."""
+    serializer = SimpleTokenSerializer()
     token = SessionToken(session_id="test123", signature="abc123")
-    token_str = token.to_string()
+    token_str = serializer.to_string(token)
 
-    parsed = SessionToken.from_string(token_str)
+    parsed = serializer.from_string(token_str)
 
     assert parsed.session_id == "test123"
     assert parsed.signature == "abc123"
@@ -150,14 +153,16 @@ def test_session_token_from_string() -> None:
 
 def test_session_token_invalid_format() -> None:
     """Test session token with invalid format."""
+    serializer = SimpleTokenSerializer()
     with pytest.raises(ValueError, match="Invalid token format"):
-        SessionToken.from_string("invalid")
+        serializer.from_string("invalid")
 
     with pytest.raises(ValueError, match="Invalid token format"):
-        SessionToken.from_string("only.two")
+        serializer.from_string("only.two")
 
 
 def test_session_token_invalid_timestamp() -> None:
     """Test session token with invalid timestamp."""
+    serializer = SimpleTokenSerializer()
     with pytest.raises(ValueError, match="Invalid timestamp"):
-        SessionToken.from_string("test123.abc123.invalid")
+        serializer.from_string("test123.abc123.invalid")

@@ -25,6 +25,9 @@ if TYPE_CHECKING:  # Import for typing only to avoid circular import concerns
 
 logger = logging.getLogger(__name__)
 
+# Token format constant - 3 parts: session_id, signature, timestamp
+TOKEN_PARTS_COUNT = 3
+
 
 class TokenSerializer(Protocol):
     """Protocol for token serialization strategies."""
@@ -42,12 +45,49 @@ class SimpleTokenSerializer:
     """Serializer for the default simple token format."""
 
     def to_string(self, token: SessionToken) -> str:
-        """Serialize using the built-in simple format."""
-        return token.to_string()
+        """Convert token to string format.
+
+        Format: {session_id}.{signature}.{timestamp}
+
+        Args:
+            token: SessionToken instance to serialize
+
+        Returns:
+            Token string in format {session_id}.{signature}.{timestamp}
+        """
+        timestamp = int(token.issued_at.timestamp())
+
+        logger.debug("SimpleTokenSerializer to_string called; id=%s", token.session_id)
+        return f"{token.session_id}.{token.signature}.{timestamp}"
 
     def from_string(self, token_str: str) -> SessionToken:
-        """Parse the built-in simple token format."""
-        return SessionToken.from_string(token_str)
+        """Parse token from string format.
+
+        Args:
+            token_str: Token string in format {session_id}.{signature}.{timestamp}
+
+        Returns:
+            SessionToken instance
+
+        Raises:
+            ValueError: If token format is invalid
+        """
+        parts = token_str.split(".")
+        if len(parts) != TOKEN_PARTS_COUNT:
+            msg = "Invalid token format"
+            raise ValueError(msg)
+
+        session_id, signature, timestamp = parts
+        try:
+            issued_at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+        except (ValueError, OSError) as e:
+            msg = f"Invalid timestamp in token: {e}"
+            raise ValueError(msg) from e
+
+        logger.debug("SimpleTokenSerializer parsed from string; id=%s", session_id)
+        return SessionToken(
+            session_id=session_id, signature=signature, issued_at=issued_at
+        )
 
 
 class JWTTokenSerializer:

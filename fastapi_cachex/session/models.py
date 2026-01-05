@@ -13,9 +13,6 @@ from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
-# Token format constant
-TOKEN_PARTS_COUNT = 3
-
 
 class SessionStatus(str, Enum):
     """Session status enumeration."""
@@ -145,41 +142,3 @@ class SessionToken(BaseModel):
     session_id: str
     signature: str
     issued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    def to_string(self) -> str:
-        """Convert token to string format.
-
-        Format: {session_id}.{signature}.{timestamp}
-        """
-        timestamp = int(self.issued_at.timestamp())
-
-        logger.debug("SessionToken to_string called; id=%s", self.session_id)
-        return f"{self.session_id}.{self.signature}.{timestamp}"
-
-    @classmethod
-    def from_string(cls, token_str: str) -> "SessionToken":
-        """Parse token from string format.
-
-        Args:
-            token_str: Token string in format {session_id}.{signature}.{timestamp}
-
-        Returns:
-            SessionToken instance
-
-        Raises:
-            ValueError: If token format is invalid
-        """
-        parts = token_str.split(".")
-        if len(parts) != TOKEN_PARTS_COUNT:
-            msg = "Invalid token format"
-            raise ValueError(msg)
-
-        session_id, signature, timestamp = parts
-        try:
-            issued_at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
-        except (ValueError, OSError) as e:
-            msg = f"Invalid timestamp in token: {e}"
-            raise ValueError(msg) from e
-
-        logger.debug("SessionToken parsed from string; id=%s", session_id)
-        return cls(session_id=session_id, signature=signature, issued_at=issued_at)
