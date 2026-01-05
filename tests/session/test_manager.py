@@ -120,14 +120,16 @@ async def test_get_nonexistent_session(manager: SessionManager) -> None:
     """Test getting nonexistent session."""
     # Create a valid token for a session that doesn't exist
     from fastapi_cachex.session.models import SessionToken
+    from fastapi_cachex.session.token_serializers import SimpleTokenSerializer
 
     token = SessionToken(
         session_id="nonexistent",
         signature=manager.security.sign_session_id("nonexistent"),
     )
 
+    serializer = SimpleTokenSerializer()
     with pytest.raises(SessionNotFoundError):
-        await manager.get_session(token.to_string())
+        await manager.get_session(serializer.to_string(token))
 
 
 @pytest.mark.asyncio
@@ -366,8 +368,10 @@ async def test_invalid_session_signature(
 
     # Tamper with the token signature
     from fastapi_cachex.session.models import SessionToken
+    from fastapi_cachex.session.token_serializers import SimpleTokenSerializer
 
-    original_token = SessionToken.from_string(token)
+    serializer = SimpleTokenSerializer()
+    original_token = serializer.from_string(token)
     tampered_token = SessionToken(
         session_id=original_token.session_id,
         signature="invalid_signature_' " + original_token.signature,
@@ -376,7 +380,7 @@ async def test_invalid_session_signature(
 
     # Try to get session with tampered token
     with pytest.raises(SessionSecurityError, match="Invalid session signature"):
-        await manager.get_session(tampered_token.to_string())
+        await manager.get_session(serializer.to_string(tampered_token))
 
 
 @pytest.mark.asyncio
