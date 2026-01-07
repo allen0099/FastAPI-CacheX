@@ -2,12 +2,17 @@
 
 import hashlib
 import json
+import socket
+from collections.abc import AsyncGenerator
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from typing import Any
 
 import pytest
+import pytest_asyncio
 
+from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.state.exceptions import InvalidStateError
@@ -17,12 +22,105 @@ from fastapi_cachex.state.models import StateData
 from fastapi_cachex.types import ETagContent
 
 
-@pytest.fixture
-def state_manager() -> StateManager:
-    """Create a StateManager instance with MemoryBackend."""
+def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
+    """Check if Redis server is running."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        s.connect((host, port))
+        s.close()
+    except (TimeoutError, ConnectionRefusedError, OSError):
+        return False
+    else:
+        return True
+
+
+def has_redis_package() -> bool:
+    """Return True if the redis package is importable."""
+    try:
+        import redis.asyncio  # type: ignore[unused-ignore]  # noqa: F401
+
+    except Exception:
+        return False
+    return True
+
+
+@pytest_asyncio.fixture
+async def memory_backend_for_state() -> AsyncGenerator[BaseCacheBackend, Any]:
+    """Create a MemoryBackend instance."""
     backend = MemoryBackend()
+    backend.start_cleanup()
+    yield backend
+    backend.stop_cleanup()
+
+
+@pytest_asyncio.fixture
+async def redis_backend_for_state() -> AsyncGenerator[BaseCacheBackend, Any]:
+    """Create a Redis backend instance if Redis is available."""
+    if not is_redis_running() or not has_redis_package():
+        pytest.skip("Redis server is not running or redis package not installed")
+
+    from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+    backend = AsyncRedisCacheBackend(
+        host="127.0.0.1",
+        port=6379,
+        socket_timeout=1.0,
+        socket_connect_timeout=1.0,
+        key_prefix="test_state:",
+    )
+    yield backend
+    await backend.clear()
+
+
+@pytest_asyncio.fixture(
+    params=[
+        pytest.param("memory", id="MemoryBackend"),
+        pytest.param(
+            "redis",
+            id="RedisBackend",
+            marks=pytest.mark.skipif(
+                not (is_redis_running() and has_redis_package()),
+                reason="Redis not available",
+            ),
+        ),
+    ]
+)
+async def state_manager(
+    request: Any,
+) -> AsyncGenerator[StateManager, Any]:
+    """Create a StateManager instance with different backends.
+
+    This fixture is parametrized to test with:
+    - MemoryBackend (always runs)
+    - RedisBackend (runs only if Redis is available)
+    """
+    backend_type = request.param
+
+    if backend_type == "memory":
+        mem_backend = MemoryBackend()
+        mem_backend.start_cleanup()
+        backend: BaseCacheBackend = mem_backend
+    else:  # redis
+        from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+        backend = AsyncRedisCacheBackend(
+            host="127.0.0.1",
+            port=6379,
+            socket_timeout=1.0,
+            socket_connect_timeout=1.0,
+            key_prefix="test_state:",
+        )
+
     BackendProxy.set_backend(backend)
-    return StateManager()
+    manager = StateManager()
+
+    yield manager
+
+    # Cleanup
+    await backend.clear()
+    if backend_type == "memory" and isinstance(backend, MemoryBackend):
+        backend.stop_cleanup()
 
 
 @pytest.mark.asyncio
@@ -86,6 +184,28 @@ async def test_consume_state(state_manager: StateManager) -> None:
 
 
 @pytest.mark.asyncio
+async def test_consume_state_with_different_manager(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Test consuming state with a different StateManager instance."""
+    BackendProxy.set_backend(memory_backend)
+
+    manager1 = StateManager()
+    state = await manager1.create_state()
+
+    # Create a new StateManager instance
+    new_manager = StateManager()
+    state_data = await new_manager.consume_state(state)
+
+    assert isinstance(state_data, StateData)
+    assert state_data.state == state
+
+    # Original manager should also see the state as consumed
+    is_valid = await manager1.validate_state(state)
+    assert is_valid is False
+
+
+@pytest.mark.asyncio
 async def test_consume_state_with_metadata(state_manager: StateManager) -> None:
     """Test consuming state and retrieving its metadata."""
     metadata = {
@@ -110,7 +230,14 @@ async def test_consume_invalid_state(state_manager: StateManager) -> None:
 
 @pytest.mark.asyncio
 async def test_consume_expired_state(state_manager: StateManager) -> None:
-    """Test consuming an expired state raises InvalidStateError (expired from cache)."""
+    """Test consuming an expired state raises an error.
+
+    Different backends behave differently for expired states:
+    - MemoryBackend: InvalidStateError (auto-removes expired entries)
+    - RedisBackend: StateExpiredError (TTL expired but data still exists)
+    """
+    from fastapi_cachex.state.exceptions import StateExpiredError
+
     # Create state with very short TTL
     state = await state_manager.create_state(ttl=1)
 
@@ -119,8 +246,8 @@ async def test_consume_expired_state(state_manager: StateManager) -> None:
 
     await asyncio.sleep(1.1)
 
-    # Try to consume expired state - cache auto-deletes, so it appears as not found
-    with pytest.raises(InvalidStateError, match="Invalid or expired state"):
+    # Try to consume expired state - should fail with one of these exceptions
+    with pytest.raises((InvalidStateError, StateExpiredError)):
         await state_manager.consume_state(state)
 
 

@@ -128,11 +128,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         return serialized.decode() if isinstance(serialized, bytes) else serialized
 
     def _deserialize(self, value: str | None) -> ETagContent | None:
-        """Deserialize JSON string to ETagContent."""
+        """Deserialize JSON string to ETagContent.
+
+        Converts string content back to bytes to maintain consistency with
+        other backends and standard Response.body type (bytes).
+        """
         if value is None:
             return None
         try:
             data = json.loads(value)
+            logger.debug("Content type in JSON: %s", type(data["content"]))
             return ETagContent(
                 etag=data["etag"],
                 content=data["content"].encode()

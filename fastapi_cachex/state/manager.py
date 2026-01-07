@@ -108,7 +108,9 @@ class StateManager:
 
         # Extract content from ETagContent
         json_content = cached_etag_content.content
-        if not isinstance(json_content, str):
+        if isinstance(json_content, bytes):
+            json_content = json_content.decode("utf-8")
+        elif not isinstance(json_content, str):
             msg = "Unexpected state data format"
             logger.error(
                 "Unexpected content type in state; state=%s type=%s",
@@ -164,7 +166,16 @@ class StateManager:
 
         # Extract content from ETagContent
         json_content = cached_etag_content.content
-        if not isinstance(json_content, str):
+        if isinstance(json_content, bytes):
+            try:
+                json_content = json_content.decode("utf-8")
+            except UnicodeDecodeError:
+                logger.exception(
+                    "Failed to decode bytes content in state; state=%s",
+                    state,
+                )
+                return False
+        elif not isinstance(json_content, str):
             logger.error(
                 "Unexpected content type in state; state=%s type=%s",
                 state,
@@ -174,19 +185,11 @@ class StateManager:
 
         try:
             state_dict: dict[str, Any] = json.loads(json_content)
-        except json.JSONDecodeError:
-            logger.exception(
-                "Failed to parse state data during validation; state=%s",
-                state,
-            )
-            return False
-
-        # Validate and create StateData model
-        try:
+            # Validate and create StateData model
             state_data = StateData(**state_dict)
-        except ValueError:
+        except (json.JSONDecodeError, ValueError):
             logger.exception(
-                "Failed to create StateData model during validation; state=%s",
+                "Failed to parse or validate state data; state=%s",
                 state,
             )
             return False
@@ -216,7 +219,16 @@ class StateManager:
 
         # Extract content from ETagContent
         json_content = cached_etag_content.content
-        if not isinstance(json_content, str):
+        if isinstance(json_content, bytes):
+            try:
+                json_content = json_content.decode("utf-8")
+            except UnicodeDecodeError:
+                logger.exception(
+                    "Failed to decode bytes content in state; state=%s",
+                    state,
+                )
+                return None
+        elif not isinstance(json_content, str):
             logger.error(
                 "Unexpected content type in state; state=%s type=%s",
                 state,
@@ -226,15 +238,10 @@ class StateManager:
 
         try:
             state_dict: dict[str, Any] = json.loads(json_content)
-        except json.JSONDecodeError:
-            logger.exception("Failed to parse state data; state=%s", state)
-            return None
-
-        # Validate and create StateData model
-        try:
+            # Validate and create StateData model
             state_data = StateData(**state_dict)
-        except ValueError:
-            logger.exception("Failed to create StateData model; state=%s", state)
+        except (json.JSONDecodeError, ValueError):
+            logger.exception("Failed to parse or validate state data; state=%s", state)
             return None
 
         # Check expiry
