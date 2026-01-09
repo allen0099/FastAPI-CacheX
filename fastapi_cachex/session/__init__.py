@@ -9,11 +9,13 @@ from .manager import SessionManager
 from .middleware import SessionMiddleware
 from .models import Session
 from .models import SessionUser
+from .proxy import SessionManagerProxy
 
 __all__ = [
     "Session",
     "SessionConfig",
     "SessionManager",
+    "SessionManagerProxy",
     "SessionMiddleware",
     "SessionUser",
     "get_optional_session",

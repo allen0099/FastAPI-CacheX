@@ -67,6 +67,12 @@ app.add_middleware(
     config=config,
 )
 
+# 或者使用 Proxy（可選）
+from fastapi_cachex.session import SessionManagerProxy
+SessionManagerProxy.set(session_manager)
+
+app.add_middleware(SessionMiddleware) # 自動從 Proxy 取得
+
 
 # 登入端點
 @app.post("/login")

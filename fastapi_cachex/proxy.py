@@ -9,7 +9,6 @@ from typing import TypeVar
 
 from .backends import BaseCacheBackend
 from .exceptions import BackendNotFoundError
-from .session.manager import SessionManager
 
 ProxyInstance = TypeVar("ProxyInstance")
 
@@ -38,7 +37,7 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
             The current instance
         """
         if cls._instance is None:
-            msg = "Instance is not set. Please set the instance first."
+            msg = f"No instance set for proxy {cls.__name__}"
             raise BackendNotFoundError(msg)
         return cls._instance
 
@@ -94,7 +93,3 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
             stacklevel=2,
         )
         BackendProxy.set(backend)
-
-
-class SessionManagerProxy(ProxyBase[SessionManager]):
-    """FastAPI CacheX Proxy for session manager management."""

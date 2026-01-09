@@ -12,6 +12,7 @@ from starlette.types import ASGIApp
 from .config import SessionConfig
 from .exceptions import SessionError
 from .manager import SessionManager
+from .proxy import SessionManagerProxy
 
 if TYPE_CHECKING:
     from .models import Session
@@ -25,7 +26,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: ASGIApp,
-        session_manager: SessionManager,
+        session_manager: SessionManager | None = None,
         config: SessionConfig | None = None,
     ) -> None:
         """Initialize session middleware.
@@ -36,7 +37,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
             config: Session configuration
         """
         super().__init__(app)
-        self.session_manager = session_manager
+        self.session_manager = session_manager or SessionManagerProxy.get()
 
         if config is None:
             config = self.session_manager.config
