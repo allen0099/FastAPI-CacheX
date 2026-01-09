@@ -112,7 +112,7 @@ async def state_manager(
             key_prefix="test_state:",
         )
 
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
     manager = StateManager()
 
     yield manager
@@ -188,7 +188,7 @@ async def test_consume_state_with_different_manager(
     memory_backend: MemoryBackend,
 ) -> None:
     """Test consuming state with a different StateManager instance."""
-    BackendProxy.set_backend(memory_backend)
+    BackendProxy.set(memory_backend)
 
     manager1 = StateManager()
     state = await manager1.create_state()
@@ -358,7 +358,7 @@ async def test_state_expiry_information(state_manager: StateManager) -> None:
 @pytest.mark.asyncio
 async def test_state_manager_custom_prefix(memory_backend: MemoryBackend) -> None:
     """Test StateManager with custom key prefix."""
-    BackendProxy.set_backend(memory_backend)
+    BackendProxy.set(memory_backend)
     manager = StateManager(key_prefix="custom_prefix:")
 
     state = await manager.create_state(metadata={"test": "data"})

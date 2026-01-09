@@ -151,11 +151,11 @@ def cache(
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
         try:
-            cache_backend = BackendProxy.get_backend()
+            cache_backend = BackendProxy.get()
         except BackendNotFoundError:
             # Fallback to memory backend if no backend is set
             cache_backend = MemoryBackend()
-            BackendProxy.set_backend(cache_backend)
+            BackendProxy.set(cache_backend)
             logger.debug("No backend configured; using MemoryBackend fallback")
 
         # Analyze the original function's signature

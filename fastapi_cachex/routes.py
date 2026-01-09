@@ -266,7 +266,7 @@ def add_routes(
             CacheHitsResponse containing cache hit records and statistics
         """
         try:
-            backend: BaseCacheBackend = BackendProxy.get_backend()
+            backend: BaseCacheBackend = BackendProxy.get()
         except BackendNotFoundError:
             return CacheHitsResponse(
                 cached_hits=[],
@@ -294,7 +294,7 @@ def add_routes(
             CachedRecordsResponse containing cached records and statistics
         """
         try:
-            backend: BaseCacheBackend = BackendProxy.get_backend()
+            backend: BaseCacheBackend = BackendProxy.get()
         except BackendNotFoundError:
             return CachedRecordsResponse(
                 cached_records=[],

@@ -22,7 +22,7 @@ async def backend_endpoint(backend: CacheBackend):
 @pytest.mark.asyncio
 async def test_get_cache_backend_no_backend():
     """Test that get_cache_backend raises BackendNotFoundError when no backend is set."""
-    BackendProxy.set_backend(None)
+    BackendProxy.set(None)
     with pytest.raises(BackendNotFoundError):
         client.get("/test-backend")
 
@@ -31,7 +31,7 @@ async def test_get_cache_backend_no_backend():
 async def test_get_cache_backend_with_memory_backend():
     """Test that get_cache_backend returns the configured backend."""
     backend = MemoryBackend()
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
 
     response = client.get("/test-backend")
     assert response.status_code == 200

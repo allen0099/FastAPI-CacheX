@@ -27,11 +27,11 @@ def client(app):
 def setup_cache():
     """Setup cache backend before test and cleanup after."""
     backend = MemoryBackend()
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
     backend.start_cleanup()
     yield backend
     backend.stop_cleanup()
-    BackendProxy.set_backend(None)
+    BackendProxy.set(None)
 
 
 class TestCachedHitsRoute:

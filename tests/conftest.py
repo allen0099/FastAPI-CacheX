@@ -18,6 +18,6 @@ def setup_default_backend():
     """Auto-use fixture to set MemoryBackend as default for all tests."""
     backend = MemoryBackend()
     backend.start_cleanup()
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
     yield
     backend.stop_cleanup()

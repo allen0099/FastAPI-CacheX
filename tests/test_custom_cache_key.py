@@ -14,7 +14,7 @@ def test_default_cache_key_builder() -> None:
     """Test that default cache key builder works as expected."""
     app = FastAPI()
     backend = MemoryBackend()
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
 
     @app.get("/items")
     @cache(ttl=60)
@@ -43,7 +43,7 @@ def test_custom_cache_key_builder_ignore_query_params() -> None:
     """Test custom cache key builder that ignores query parameters."""
     app = FastAPI()
     backend = MemoryBackend()
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
 
     def custom_key_builder(request: Request) -> str:
         """Build cache key without query parameters."""
@@ -74,7 +74,7 @@ def test_custom_cache_key_builder_with_user_id() -> None:
     """Test custom cache key builder that includes user-specific data."""
     app = FastAPI()
     backend = MemoryBackend()
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
 
     def user_specific_key_builder(request: Request) -> str:
         """Build cache key with user ID from headers."""
@@ -109,7 +109,7 @@ def test_custom_cache_key_builder_with_language() -> None:
     """Test custom cache key builder that includes language preference."""
     app = FastAPI()
     backend = MemoryBackend()
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
 
     def language_aware_key_builder(request: Request) -> str:
         """Build cache key with language from Accept-Language header."""
@@ -149,7 +149,7 @@ def test_cache_key_builder_none_uses_default() -> None:
     """Test that passing None for cache_key_builder uses the default."""
     app = FastAPI()
     backend = MemoryBackend()
-    BackendProxy.set_backend(backend)
+    BackendProxy.set(backend)
 
     @app.get("/default")
     @cache(ttl=60, key_builder=None)
