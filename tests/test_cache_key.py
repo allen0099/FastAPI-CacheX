@@ -17,7 +17,7 @@ class TestCacheKeyGeneration:
         """Test cache key generation with host containing port number (e.g., 127.0.0.1:8000)."""
         app = FastAPI()
         backend = MemoryBackend()
-        BackendProxy.set_backend(backend)
+        BackendProxy.set(backend)
 
         @app.get("/api/test")
         @cache(ttl=60)
@@ -49,7 +49,7 @@ class TestCacheKeyGeneration:
         """Test cache key generation with localhost."""
         app = FastAPI()
         backend = MemoryBackend()
-        BackendProxy.set_backend(backend)
+        BackendProxy.set(backend)
 
         @app.get("/api/users")
         @cache(ttl=60)
@@ -75,7 +75,7 @@ class TestCacheKeyGeneration:
         """Test cache key generation with query parameters."""
         app = FastAPI()
         backend = MemoryBackend()
-        BackendProxy.set_backend(backend)
+        BackendProxy.set(backend)
 
         @app.get("/api/search")
         @cache(ttl=60)
@@ -169,7 +169,7 @@ class TestCacheKeyDifferentiation:
         """Test that requests to different hosts generate different cache keys."""
         app = FastAPI()
         backend = MemoryBackend()
-        BackendProxy.set_backend(backend)
+        BackendProxy.set(backend)
 
         @app.get("/api/test")
         @cache(ttl=60)
@@ -200,7 +200,7 @@ class TestCacheKeyDifferentiation:
         """Test that same host with different ports generate different cache keys."""
         app = FastAPI()
         backend = MemoryBackend()
-        BackendProxy.set_backend(backend)
+        BackendProxy.set(backend)
 
         @app.get("/api/data")
         @cache(ttl=60)

@@ -150,7 +150,7 @@ from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex import BackendProxy
 
 backend = MemoryBackend()
-BackendProxy.set_backend(backend)
+BackendProxy.set(backend)
 ```
 
 **Note**: In-memory cache is not suitable for production with multiple processes.
@@ -163,7 +163,7 @@ from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex import BackendProxy
 
 backend = MemcachedBackend(servers=["localhost:11211"])
-BackendProxy.set_backend(backend)
+BackendProxy.set(backend)
 ```
 
 **Limitations**:
@@ -178,7 +178,7 @@ from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex import BackendProxy
 
 backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
-BackendProxy.set_backend(backend)
+BackendProxy.set(backend)
 ```
 
 **Features**:
@@ -196,7 +196,7 @@ backend = AsyncRedisCacheBackend(
     port=6379,
     key_prefix="myapp:cache:",
 )
-BackendProxy.set_backend(backend)
+BackendProxy.set(backend)
 ```
 
 ## Performance Considerations

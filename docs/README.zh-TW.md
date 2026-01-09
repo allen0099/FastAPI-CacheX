@@ -142,7 +142,7 @@ from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex import BackendProxy
 
 backend = MemoryBackend()
-BackendProxy.set_backend(backend)
+BackendProxy.set(backend)
 ```
 
 **注意**：記憶體快取不適合多處理程式的生產環境。
@@ -155,7 +155,7 @@ from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex import BackendProxy
 
 backend = MemcachedBackend(servers=["localhost:11211"])
-BackendProxy.set_backend(backend)
+BackendProxy.set(backend)
 ```
 
 **限制**：
@@ -170,7 +170,7 @@ from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex import BackendProxy
 
 backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
-BackendProxy.set_backend(backend)
+BackendProxy.set(backend)
 ```
 
 **功能**：
@@ -188,7 +188,7 @@ backend = AsyncRedisCacheBackend(
     port=6379,
     key_prefix="myapp:cache:",
 )
-BackendProxy.set_backend(backend)
+BackendProxy.set(backend)
 ```
 
 ## 效能考量

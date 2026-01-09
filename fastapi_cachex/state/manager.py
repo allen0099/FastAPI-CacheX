@@ -35,7 +35,7 @@ class StateManager:
             key_prefix: Prefix for state keys in cache backend
             default_ttl: Default time-to-live in seconds for state
         """
-        self.backend = BackendProxy.get_backend()
+        self.backend = BackendProxy.get()
         self.key_prefix = key_prefix
         self.default_ttl = default_ttl
 

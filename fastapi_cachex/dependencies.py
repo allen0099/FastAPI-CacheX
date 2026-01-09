@@ -10,7 +10,7 @@ from .proxy import BackendProxy
 
 def get_cache_backend() -> BaseCacheBackend:
     """Dependency to get the current cache backend instance."""
-    return BackendProxy.get_backend()
+    return BackendProxy.get()
 
 
 CacheBackend = Annotated[BaseCacheBackend, Depends(get_cache_backend)]

@@ -20,11 +20,11 @@ client = TestClient(app)
 async def cleanup():
     # Reset backend before each test
     try:
-        backend = BackendProxy.get_backend()
+        backend = BackendProxy.get()
         if isinstance(backend, MemoryBackend):
             backend.stop_cleanup()
         # Reset backend by setting it to None
-        BackendProxy.set_backend(None)
+        BackendProxy.set(None)
     except BackendNotFoundError:
         pass
 
@@ -32,12 +32,12 @@ async def cleanup():
 
     # Clean up after each test
     try:
-        backend = BackendProxy.get_backend()
+        backend = BackendProxy.get()
         if isinstance(backend, MemoryBackend):
             await backend.clear()  # Clear all cached data
             backend.stop_cleanup()
         # Reset backend by setting it to None
-        BackendProxy.set_backend(None)
+        BackendProxy.set(None)
     except BackendNotFoundError:
         pass
 
@@ -45,12 +45,12 @@ async def cleanup():
 def test_backend_switching():
     # Initial state should have no backend
     with pytest.raises(BackendNotFoundError):
-        BackendProxy.get_backend()
+        BackendProxy.get()
 
     # Set up MemoryBackend
     memory_backend = MemoryBackend()
-    BackendProxy.set_backend(memory_backend)
-    assert isinstance(BackendProxy.get_backend(), MemoryBackend)
+    BackendProxy.set(memory_backend)
+    assert isinstance(BackendProxy.get(), MemoryBackend)
 
 
 def test_memory_cache():
@@ -61,7 +61,7 @@ def test_memory_cache():
 
     # Use MemoryBackend
     memory_backend = MemoryBackend()
-    BackendProxy.set_backend(memory_backend)
+    BackendProxy.set(memory_backend)
 
     # First request should return 200
     response1 = client.get("/test")
@@ -77,7 +77,7 @@ def test_memory_cache():
 async def test_backend_cleanup():
     # Run cleanup task in async environment
     memory_backend = MemoryBackend()
-    BackendProxy.set_backend(memory_backend)
+    BackendProxy.set(memory_backend)
 
     # Verify initial state
     assert memory_backend._cleanup_task is None
