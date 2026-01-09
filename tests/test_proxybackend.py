@@ -99,3 +99,9 @@ async def test_backend_cleanup():
 
     # Verify data has been cleaned up
     assert await memory_backend.get("test_key") is None
+
+
+def test_backend_proxy_cannot_be_instantiated():
+    """Test that BackendProxy cannot be instantiated due to ProxyMeta."""
+    with pytest.raises(TypeError, match="Proxy class cannot be instantiated"):
+        BackendProxy()
