@@ -48,7 +48,7 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
         Args:
             instance: The instance to set, or None to clear
         """
-        logger.info(
+        logger.debug(
             "Setting instance to: <%s>",
             instance.__class__.__name__ if instance else "None",
         )
