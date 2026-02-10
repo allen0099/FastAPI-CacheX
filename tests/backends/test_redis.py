@@ -267,6 +267,57 @@ async def test_redis_clear_path_no_matches(async_redis_backend: AsyncRedisCacheB
 
 @requires_redis
 @pytest.mark.asyncio
+async def test_redis_clear_path_direct_key(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """clear_path should also delete direct keys stored without ||| separators.
+
+    Users may store keys like 'gitlab:template' directly via backend.set(),
+    bypassing the default_key_builder format.
+    """
+    value = ETagContent(etag="test-etag", content=b"test-content")
+    # Store direct keys (no method|||host|||path||| format)
+    await async_redis_backend.set("gitlab:template", value)
+    await async_redis_backend.set("gitlab:template:projects", value)
+    await async_redis_backend.set("gitlab:template:by_tag", value)
+
+    # clear_path should match the direct key exactly
+    cleared = await async_redis_backend.clear_path(
+        "gitlab:template", include_params=False
+    )
+    assert cleared == 1
+    assert await async_redis_backend.get("gitlab:template") is None
+    # Other direct keys should remain
+    assert await async_redis_backend.get("gitlab:template:projects") == value
+    assert await async_redis_backend.get("gitlab:template:by_tag") == value
+
+    # Clean up remaining keys
+    cleared2 = await async_redis_backend.clear_path(
+        "gitlab:template:projects", include_params=False
+    )
+    assert cleared2 == 1
+    assert await async_redis_backend.get("gitlab:template:projects") is None
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_clear_path_direct_key_and_separator_key(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """clear_path should delete both direct keys and separator-format keys."""
+    value = ETagContent(etag="test-etag", content=b"test-content")
+    # Store a direct key and a separator-format key for the same path
+    await async_redis_backend.set("my:path", value)
+    await async_redis_backend.set("GET|||localhost|||my:path|||", value)
+
+    cleared = await async_redis_backend.clear_path("my:path", include_params=False)
+    assert cleared == 2
+    assert await async_redis_backend.get("my:path") is None
+    assert await async_redis_backend.get("GET|||localhost|||my:path|||") is None
+
+
+@requires_redis
+@pytest.mark.asyncio
 async def test_redis_clear_pattern_no_matches(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
@@ -299,15 +350,78 @@ async def test_redis_clear_path_exact_without_params(
 ) -> None:
     """Cover include_params=False branch: only exact path without params gets removed."""
     value = ETagContent(etag="test-etag", content=b"test-content")
-    # exact path (no params) has no extra suffix after the path
-    await async_redis_backend.set("GET|||localhost|||/users/42", value)
+    # Proper key format always has trailing separator (empty query params)
+    await async_redis_backend.set("GET|||localhost|||/users/42|||", value)
     await async_redis_backend.set("GET|||localhost|||/users/42|||id=42", value)
 
     cleared = await async_redis_backend.clear_path("/users/42", include_params=False)
     assert cleared == 1
-    assert await async_redis_backend.get("GET|||localhost|||/users/42") is None
+    assert await async_redis_backend.get("GET|||localhost|||/users/42|||") is None
     # Param variant should remain
     assert await async_redis_backend.get("GET|||localhost|||/users/42|||id=42") == value
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_clear_path_with_colon_in_path(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Paths containing colons (e.g. gitlab:template) must be clearable.
+
+    Colons are legal in URL paths and must not be confused with the Redis
+    key-prefix separator.
+    """
+    value = ETagContent(etag="test-etag", content=b"test-content")
+    # Simulate keys created by default_key_builder for colon-containing paths
+    await async_redis_backend.set("GET|||localhost:8000|||/gitlab:template|||", value)
+    await async_redis_backend.set(
+        "GET|||localhost:8000|||/gitlab:template:projects|||", value
+    )
+    await async_redis_backend.set(
+        "GET|||localhost:8000|||/gitlab:template|||tag=v1", value
+    )
+
+    # include_params=False should only clear the exact path (empty query params)
+    cleared = await async_redis_backend.clear_path(
+        "/gitlab:template", include_params=False
+    )
+    assert cleared == 1
+    assert (
+        await async_redis_backend.get("GET|||localhost:8000|||/gitlab:template|||")
+        is None
+    )
+    # Sub-path and param variant should remain
+    assert (
+        await async_redis_backend.get(
+            "GET|||localhost:8000|||/gitlab:template:projects|||"
+        )
+        == value
+    )
+    assert (
+        await async_redis_backend.get(
+            "GET|||localhost:8000|||/gitlab:template|||tag=v1"
+        )
+        == value
+    )
+
+    # include_params=True should clear both the exact path and param variants
+    cleared = await async_redis_backend.clear_path(
+        "/gitlab:template", include_params=True
+    )
+    assert cleared == 1  # only the param variant is left
+    assert (
+        await async_redis_backend.get(
+            "GET|||localhost:8000|||/gitlab:template|||tag=v1"
+        )
+        is None
+    )
+    # Sub-path should still remain (it's a different path)
+    assert (
+        await async_redis_backend.get(
+            "GET|||localhost:8000|||/gitlab:template:projects|||"
+        )
+        == value
+    )
 
 
 @requires_redis
