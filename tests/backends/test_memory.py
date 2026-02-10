@@ -216,46 +216,140 @@ async def test_memory_backend_cleanup_task_impl(memory_backend: MemoryBackend):
 @pytest.mark.asyncio
 async def test_memory_backend_clear_path(memory_backend: MemoryBackend):
     # Set up test data with proper cache key format: method|||host|||path|||query_params
-    # The split uses "|||", 3 which creates up to 4 parts
+    # default_key_builder always appends a trailing separator for query_params
     path = "/test"
     value1 = ETagContent(etag="test_etag1", content=b"test_value1")
     value2 = ETagContent(etag="test_etag2", content=b"test_value2")
     value3 = ETagContent(etag="test_etag3", content=b"test_value3")
 
-    # Store data with method|||host|||path format (3 parts minimum)
-    await memory_backend.set(f"GET|||localhost|||{path}", value1)
-    await memory_backend.set(f"POST|||localhost|||{path}", value2)
-    await memory_backend.set("GET|||localhost|||/other", value3)
+    # Store data with method|||host|||path||| format (trailing separator, empty params)
+    await memory_backend.set(f"GET|||localhost|||{path}|||", value1)
+    await memory_backend.set(f"POST|||localhost|||{path}|||", value2)
+    await memory_backend.set("GET|||localhost|||/other|||", value3)
 
     # Test clearing without parameters - should clear entries with exact path
     cleared = await memory_backend.clear_path(path, include_params=False)
     assert cleared == 2  # Should clear GET and POST entries with /test path
 
     # Verify the other path's data still exists
-    other_value = await memory_backend.get("GET|||localhost|||/other")
+    other_value = await memory_backend.get("GET|||localhost|||/other|||")
     assert other_value == value3
 
 
 @pytest.mark.asyncio
 async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
     # Set up test data with proper cache key format: method|||host|||path|||query_params
-    # The split uses "|||", 3 which creates up to 4 parts
     value1 = ETagContent(etag="test_etag1", content=b"test_value1")
     value2 = ETagContent(etag="test_etag2", content=b"test_value2")
     value3 = ETagContent(etag="test_etag3", content=b"test_value3")
 
-    # Store data with method|||host|||path format
-    await memory_backend.set("GET|||localhost|||/users/123", value1)
-    await memory_backend.set("POST|||localhost|||/users/456", value2)
-    await memory_backend.set("GET|||localhost|||/posts/789", value3)
+    # Store data with method|||host|||path||| format (trailing separator)
+    await memory_backend.set("GET|||localhost|||/users/123|||", value1)
+    await memory_backend.set("POST|||localhost|||/users/456|||", value2)
+    await memory_backend.set("GET|||localhost|||/posts/789|||", value3)
 
     # Test clearing with pattern
     cleared = await memory_backend.clear_pattern("/users/*")
     assert cleared == 2  # Should clear both user entries
 
     # Verify the posts data still exists
-    posts_value = await memory_backend.get("GET|||localhost|||/posts/789")
+    posts_value = await memory_backend.get("GET|||localhost|||/posts/789|||")
     assert posts_value == value3
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_path_with_colon_in_path(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Paths containing colons (e.g. gitlab:template) must be clearable."""
+    value = ETagContent(etag="e", content=b"v")
+
+    await memory_backend.set("GET|||localhost:8000|||/gitlab:template|||", value)
+    await memory_backend.set(
+        "GET|||localhost:8000|||/gitlab:template:projects|||", value
+    )
+    await memory_backend.set("GET|||localhost:8000|||/gitlab:template|||tag=v1", value)
+
+    # include_params=False: only empty-query-param entries
+    cleared = await memory_backend.clear_path("/gitlab:template", include_params=False)
+    assert cleared == 1
+    assert (
+        await memory_backend.get("GET|||localhost:8000|||/gitlab:template|||") is None
+    )
+    # Sub-path and param variant remain
+    assert (
+        await memory_backend.get("GET|||localhost:8000|||/gitlab:template:projects|||")
+        == value
+    )
+    assert (
+        await memory_backend.get("GET|||localhost:8000|||/gitlab:template|||tag=v1")
+        == value
+    )
+
+    # include_params=True: clear remaining entries with that exact path
+    cleared = await memory_backend.clear_path("/gitlab:template", include_params=True)
+    assert cleared == 1  # only the param variant was left
+    assert (
+        await memory_backend.get("GET|||localhost:8000|||/gitlab:template|||tag=v1")
+        is None
+    )
+    # Sub-path is a different path, should remain
+    assert (
+        await memory_backend.get("GET|||localhost:8000|||/gitlab:template:projects|||")
+        == value
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_path_include_params(
+    memory_backend: MemoryBackend,
+) -> None:
+    """include_params=True should clear path entries with and without query params."""
+    value = ETagContent(etag="e", content=b"v")
+
+    await memory_backend.set("GET|||localhost|||/items|||", value)
+    await memory_backend.set("GET|||localhost|||/items|||page=2", value)
+    await memory_backend.set("GET|||localhost|||/other|||", value)
+
+    cleared = await memory_backend.clear_path("/items", include_params=True)
+    assert cleared == 2
+    assert await memory_backend.get("GET|||localhost|||/items|||") is None
+    assert await memory_backend.get("GET|||localhost|||/items|||page=2") is None
+    assert await memory_backend.get("GET|||localhost|||/other|||") == value
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_path_direct_key(
+    memory_backend: MemoryBackend,
+) -> None:
+    """clear_path should delete direct keys stored without ||| separators."""
+    value = ETagContent(etag="e", content=b"v")
+
+    await memory_backend.set("gitlab:template", value)
+    await memory_backend.set("gitlab:template:projects", value)
+    await memory_backend.set("gitlab:template:by_tag", value)
+
+    cleared = await memory_backend.clear_path("gitlab:template", include_params=False)
+    assert cleared == 1
+    assert await memory_backend.get("gitlab:template") is None
+    assert await memory_backend.get("gitlab:template:projects") == value
+    assert await memory_backend.get("gitlab:template:by_tag") == value
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_path_direct_key_and_separator_key(
+    memory_backend: MemoryBackend,
+) -> None:
+    """clear_path should delete both direct keys and separator-format keys."""
+    value = ETagContent(etag="e", content=b"v")
+
+    await memory_backend.set("my:path", value)
+    await memory_backend.set("GET|||localhost|||my:path|||", value)
+
+    cleared = await memory_backend.clear_path("my:path", include_params=False)
+    assert cleared == 2
+    assert await memory_backend.get("my:path") is None
+    assert await memory_backend.get("GET|||localhost|||my:path|||") is None
 
 
 @pytest.mark.asyncio

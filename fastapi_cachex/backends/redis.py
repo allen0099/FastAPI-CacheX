@@ -219,8 +219,13 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}{CACHE_KEY_SEPARATOR}*"
             )
         else:
-            # Clear only exact path (no query params): *|||path
-            pattern = f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}"
+            # Clear only exact path (no query params): *|||path|||
+            # The trailing separator is required because default_key_builder
+            # always appends a separator after the path (before query_params),
+            # so keys with empty query params end with "|||".
+            pattern = (
+                f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}{CACHE_KEY_SEPARATOR}"
+            )
 
         cursor = 0
         batch_size = 100
@@ -238,6 +243,12 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 keys_to_delete.extend(keys)
             if cursor == 0:
                 break
+
+        # Also match direct keys (custom key formats without separators)
+        # e.g. key_prefix + "gitlab:template" stored directly via backend.set()
+        direct_key = self._make_key(path)
+        if await self.client.exists(direct_key):
+            keys_to_delete.append(direct_key)
 
         # Delete all collected keys in batches
         if keys_to_delete:

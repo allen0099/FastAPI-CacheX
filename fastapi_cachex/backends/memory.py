@@ -134,10 +134,18 @@ class MemoryBackend(BaseCacheBackend):
                 parts = key.split(CACHE_KEY_SEPARATOR, _MAX_KEY_PARTS)
                 if len(parts) >= _MIN_KEY_PARTS:
                     cache_path = parts[2]
-                    has_params = len(parts) > _MIN_KEY_PARTS
+                    # A key always has 4 parts (method|||host|||path|||query);
+                    # an empty query string means no real query params.
+                    has_params = len(parts) > _MIN_KEY_PARTS and bool(
+                        parts[_MIN_KEY_PARTS]
+                    )
                     if cache_path == path and (include_params or not has_params):
                         keys_to_delete.append(key)
                         cleared_count += 1
+                elif key == path:
+                    # Direct key match (custom key format without separators)
+                    keys_to_delete.append(key)
+                    cleared_count += 1
 
             for key in keys_to_delete:
                 del self.cache[key]
