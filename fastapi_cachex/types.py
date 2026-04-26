@@ -19,6 +19,7 @@ class ETagContent:
 
     etag: str
     content: Any
+    media_type: str | None = None
 
 
 @dataclass

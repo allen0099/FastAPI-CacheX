@@ -679,3 +679,78 @@ async def test_consume_state_with_bad_expiry_date(state_manager: StateManager) -
     # Should raise StateDataError due to bad expiry format
     with pytest.raises(StateDataError, match="Invalid state data structure"):
         await state_manager.consume_state(state)
+
+
+# ---------------------------------------------------------------------------
+# New tests for fixes applied in this session
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_state_nonexistent_returns_false(
+    state_manager: StateManager,
+) -> None:
+    """delete_state() must return False for a state that was never created."""
+    result = await state_manager.delete_state("this_state_does_not_exist")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_delete_state_existing_returns_true(
+    state_manager: StateManager,
+) -> None:
+    """delete_state() must return True when the state exists and is deleted."""
+    state = await state_manager.create_state()
+    result = await state_manager.delete_state(state)
+    assert result is True
+    # And it's gone now
+    is_valid = await state_manager.validate_state(state)
+    assert is_valid is False
+
+
+@pytest.mark.asyncio
+async def test_delete_state_idempotent_returns_false_on_second_call(
+    state_manager: StateManager,
+) -> None:
+    """Deleting a state twice: second call must return False."""
+    state = await state_manager.create_state()
+    assert await state_manager.delete_state(state) is True
+    assert await state_manager.delete_state(state) is False
+
+
+@pytest.mark.asyncio
+async def test_state_manager_accepts_explicit_backend() -> None:
+    """StateManager(backend=...) must use the provided backend without touching BackendProxy."""
+    backend = MemoryBackend()
+    backend.start_cleanup()
+
+    try:
+        # Ensure BackendProxy is NOT set (or set to something else); the manager
+        # should never call BackendProxy.get() when a backend is passed directly.
+        BackendProxy.set(None)
+
+        manager = StateManager(backend=backend)
+        assert manager.backend is backend
+
+        state = await manager.create_state(metadata={"direct": True})
+        is_valid = await manager.validate_state(state)
+        assert is_valid is True
+    finally:
+        backend.stop_cleanup()
+        await backend.clear()
+
+
+@pytest.mark.asyncio
+async def test_state_manager_falls_back_to_backend_proxy(
+    memory_backend: MemoryBackend,
+) -> None:
+    """StateManager() with no backend argument must use BackendProxy.get()."""
+    # setup_default_backend (autouse) already set a backend on BackendProxy.
+    # StateManager() must pick that up via BackendProxy.get().
+    proxy_backend = BackendProxy.get()
+    manager = StateManager()
+    # The manager should use whatever BackendProxy currently holds
+    assert manager.backend is proxy_backend
+
+    state = await manager.create_state()
+    assert await manager.validate_state(state) is True

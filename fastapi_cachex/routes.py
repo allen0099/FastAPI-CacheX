@@ -1,8 +1,10 @@
 """Optional routes for cache monitoring and management."""
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from typing import Any
 
 from .backends import BaseCacheBackend
 from .exceptions import BackendNotFoundError
@@ -229,7 +231,10 @@ async def _get_cached_records_handler(
 
 
 def add_routes(
-    app: "FastAPI", prefix: str = "", include_in_schema: bool = False
+    app: "FastAPI",
+    prefix: str = "",
+    include_in_schema: bool = False,
+    dependencies: Sequence[Any] | None = None,
 ) -> None:
     """Add cache monitoring routes to the FastAPI application.
 
@@ -243,6 +248,10 @@ def add_routes(
                 Defaults to "" (no prefix).
         include_in_schema: Whether to include routes in OpenAPI schema.
                           Defaults to False.
+        dependencies: Optional list of FastAPI ``Depends`` objects applied to
+                      all monitoring routes.  Useful for adding authentication
+                      or authorization guards (e.g.
+                      ``[Depends(verify_api_key)]``).
 
     Example:
         from fastapi import FastAPI
@@ -255,7 +264,11 @@ def add_routes(
         add_routes(app, prefix="/api/cache")  # Routes at /api/cache/cached-hits and /api/cache/cached-records
     """
 
-    @app.get(f"{prefix}/cached-hits", include_in_schema=include_in_schema)
+    @app.get(
+        f"{prefix}/cached-hits",
+        include_in_schema=include_in_schema,
+        dependencies=dependencies,
+    )
     async def get_cached_hits() -> CacheHitsResponse:
         """Return cached hit records.
 
@@ -283,7 +296,11 @@ def add_routes(
 
         return await _get_cached_hits_handler(backend)
 
-    @app.get(f"{prefix}/cached-records", include_in_schema=include_in_schema)
+    @app.get(
+        f"{prefix}/cached-records",
+        include_in_schema=include_in_schema,
+        dependencies=dependencies,
+    )
     async def get_cached_records() -> CachedRecordsResponse:
         """Display currently cached records.
 

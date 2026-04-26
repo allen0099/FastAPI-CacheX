@@ -214,6 +214,22 @@ class SessionManager:
             logger.debug("Session expired; id=%s", session.session_id)
             raise SessionExpiredError(msg)
 
+        # Check absolute timeout (hard cap regardless of sliding expiration)
+        if self.config.absolute_timeout is not None:
+            absolute_expires_at = session.created_at + timedelta(
+                seconds=self.config.absolute_timeout,
+            )
+            if datetime.now(timezone.utc) >= absolute_expires_at:
+                session.status = SessionStatus.EXPIRED
+                await self._save_session(session)
+                msg = "Session has exceeded absolute timeout"
+                logger.debug(
+                    "Session absolute timeout exceeded; id=%s created_at=%s",
+                    session.session_id,
+                    session.created_at,
+                )
+                raise SessionExpiredError(msg)
+
         # Security checks
         if self.config.ip_binding and not self.security.check_ip_match(
             session,

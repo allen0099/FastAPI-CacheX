@@ -9,6 +9,7 @@ from datetime import timedelta
 from datetime import timezone
 from typing import Any
 
+from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import ETagContent
 
@@ -27,17 +28,74 @@ class StateManager:
     """Manages OAuth state and session state lifecycle and storage."""
 
     def __init__(
-        self, key_prefix: str = "oauth_state:", default_ttl: int = DEFAULT_STATE_TTL
+        self,
+        backend: BaseCacheBackend | None = None,
+        key_prefix: str = "oauth_state:",
+        default_ttl: int = DEFAULT_STATE_TTL,
     ) -> None:
         """Initialize StateManager.
 
         Args:
+            backend: Cache backend instance. If None, uses BackendProxy.get().
             key_prefix: Prefix for state keys in cache backend
             default_ttl: Default time-to-live in seconds for state
         """
-        self.backend = BackendProxy.get()
+        self.backend = backend if backend is not None else BackendProxy.get()
         self.key_prefix = key_prefix
         self.default_ttl = default_ttl
+
+    def _extract_json_content(self, cached: ETagContent, state: str) -> str:
+        """Extract JSON string from a cached ETagContent value.
+
+        Args:
+            cached: The ETagContent retrieved from backend
+            state: State string (used for logging)
+
+        Returns:
+            JSON string
+
+        Raises:
+            StateDataError: If the content format is unexpected
+        """
+        content = cached.content
+        if isinstance(content, bytes):
+            return content.decode("utf-8")
+        if isinstance(content, str):
+            return content
+        msg = "Unexpected state data format"
+        logger.error(
+            "Unexpected content type in state; state=%s type=%s",
+            state,
+            type(content),
+        )
+        raise StateDataError(msg)
+
+    def _parse_state_data(self, json_content: str, state: str) -> StateData:
+        """Parse JSON content into a StateData model.
+
+        Args:
+            json_content: JSON string to parse
+            state: State string (used for logging)
+
+        Returns:
+            StateData instance
+
+        Raises:
+            StateDataError: If parsing or validation fails
+        """
+        try:
+            state_dict: dict[str, Any] = json.loads(json_content)
+        except json.JSONDecodeError as e:
+            msg = f"Failed to parse state data: {e}"
+            logger.exception("Failed to parse state data; state=%s", state)
+            raise StateDataError(msg) from e
+
+        try:
+            return StateData(**state_dict)
+        except ValueError as e:
+            msg = f"Invalid state data structure: {e}"
+            logger.exception("Failed to create StateData model; state=%s", state)
+            raise StateDataError(msg) from e
 
     async def create_state(
         self,
@@ -106,34 +164,8 @@ class StateManager:
             msg = "Invalid or expired state"
             raise InvalidStateError(msg)
 
-        # Extract content from ETagContent
-        json_content = cached_etag_content.content
-        if isinstance(json_content, bytes):
-            json_content = json_content.decode("utf-8")
-        elif not isinstance(json_content, str):
-            msg = "Unexpected state data format"
-            logger.error(
-                "Unexpected content type in state; state=%s type=%s",
-                state,
-                type(json_content),
-            )
-            raise StateDataError(msg)
-
-        # Parse the stored state data
-        try:
-            state_dict: dict[str, Any] = json.loads(json_content)
-        except json.JSONDecodeError as e:
-            msg = f"Failed to parse state data: {e}"
-            logger.exception("Failed to parse state data; state=%s", state)
-            raise StateDataError(msg) from e
-
-        # Validate and create StateData model
-        try:
-            state_data = StateData(**state_dict)
-        except ValueError as e:
-            msg = f"Invalid state data structure: {e}"
-            logger.exception("Failed to create StateData model; state=%s", state)
-            raise StateDataError(msg) from e
+        json_content = self._extract_json_content(cached_etag_content, state)
+        state_data = self._parse_state_data(json_content, state)
 
         # Verify expiry
         if datetime.now(timezone.utc) > state_data.expires_at:
@@ -158,43 +190,21 @@ class StateManager:
         """
         cache_key = f"{self.key_prefix}{state}"
 
-        # Try to retrieve state data from backend
         cached_etag_content = await self.backend.get(cache_key)
         if cached_etag_content is None:
             logger.debug("State validation failed - not found; state=%s", state)
             return False
 
-        # Extract content from ETagContent
-        json_content = cached_etag_content.content
-        if isinstance(json_content, bytes):
-            try:
-                json_content = json_content.decode("utf-8")
-            except UnicodeDecodeError:
-                logger.exception(
-                    "Failed to decode bytes content in state; state=%s",
-                    state,
-                )
-                return False
-        elif not isinstance(json_content, str):
-            logger.error(
-                "Unexpected content type in state; state=%s type=%s",
-                state,
-                type(json_content),
-            )
-            return False
-
         try:
-            state_dict: dict[str, Any] = json.loads(json_content)
-            # Validate and create StateData model
-            state_data = StateData(**state_dict)
-        except (json.JSONDecodeError, ValueError):
+            json_content = self._extract_json_content(cached_etag_content, state)
+            state_data = self._parse_state_data(json_content, state)
+        except (StateDataError, UnicodeDecodeError):
             logger.exception(
                 "Failed to parse or validate state data; state=%s",
                 state,
             )
             return False
 
-        # Check expiry
         if datetime.now(timezone.utc) > state_data.expires_at:
             logger.debug("State validation failed - expired; state=%s", state)
             return False
@@ -217,34 +227,13 @@ class StateManager:
         if cached_etag_content is None:
             return None
 
-        # Extract content from ETagContent
-        json_content = cached_etag_content.content
-        if isinstance(json_content, bytes):
-            try:
-                json_content = json_content.decode("utf-8")
-            except UnicodeDecodeError:
-                logger.exception(
-                    "Failed to decode bytes content in state; state=%s",
-                    state,
-                )
-                return None
-        elif not isinstance(json_content, str):
-            logger.error(
-                "Unexpected content type in state; state=%s type=%s",
-                state,
-                type(json_content),
-            )
-            return None
-
         try:
-            state_dict: dict[str, Any] = json.loads(json_content)
-            # Validate and create StateData model
-            state_data = StateData(**state_dict)
-        except (json.JSONDecodeError, ValueError):
+            json_content = self._extract_json_content(cached_etag_content, state)
+            state_data = self._parse_state_data(json_content, state)
+        except (StateDataError, UnicodeDecodeError):
             logger.exception("Failed to parse or validate state data; state=%s", state)
             return None
 
-        # Check expiry
         if datetime.now(timezone.utc) > state_data.expires_at:
             return None
 
@@ -260,6 +249,11 @@ class StateManager:
             True if state was deleted, False if it didn't exist
         """
         cache_key = f"{self.key_prefix}{state}"
+        # Check existence before deleting to return accurate result
+        existing = await self.backend.get(cache_key)
+        if existing is None:
+            logger.debug("OAuth state not found for deletion; state=%s", state)
+            return False
         await self.backend.delete(cache_key)
         logger.debug("OAuth state deleted; state=%s", state)
         return True

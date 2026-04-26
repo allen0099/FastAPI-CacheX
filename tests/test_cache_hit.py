@@ -271,3 +271,62 @@ def test_cache_differentiation_by_content_type():
     response2 = client.get("/flexible-format")
     assert response2.status_code == 200
     assert response1.text == response2.text
+
+
+def test_cache_hit_preserves_content_type():
+    """Cache hit must preserve the original Content-Type header.
+
+    This is the fix for the bug where cache hits returned responses without
+    the original Content-Type, defaulting to text/plain.
+    """
+    from fastapi_cachex.backends.memory import MemoryBackend
+    from fastapi_cachex.proxy import BackendProxy
+
+    backend = MemoryBackend()
+    BackendProxy.set(backend)
+    backend.start_cleanup()
+
+    try:
+        local_app = FastAPI()
+        local_client = TestClient(local_app)
+
+        @local_app.get("/ct-json")
+        @cache(ttl=60)
+        async def ct_json_endpoint():
+            return Response(
+                content=b'{"result": "ok"}',
+                media_type="application/json",
+            )
+
+        @local_app.get("/ct-text")
+        @cache(ttl=60)
+        async def ct_text_endpoint():
+            return Response(
+                content=b"hello world",
+                media_type="text/plain",
+            )
+
+        # ---- JSON endpoint ----
+        r1 = local_client.get("/ct-json")
+        assert r1.status_code == 200
+        assert "application/json" in r1.headers["content-type"]
+
+        r2 = local_client.get("/ct-json")  # cache hit
+        assert r2.status_code == 200
+        assert "application/json" in r2.headers["content-type"], (
+            f"Content-Type not preserved on cache hit: {r2.headers.get('content-type')}"
+        )
+
+        # ---- Plain-text endpoint ----
+        r3 = local_client.get("/ct-text")
+        assert r3.status_code == 200
+        assert "text/plain" in r3.headers["content-type"]
+
+        r4 = local_client.get("/ct-text")  # cache hit
+        assert r4.status_code == 200
+        assert "text/plain" in r4.headers["content-type"], (
+            f"Content-Type not preserved on cache hit: {r4.headers.get('content-type')}"
+        )
+    finally:
+        backend.stop_cleanup()
+        BackendProxy.set(None)
