@@ -73,6 +73,59 @@ def test_redis_load_from_config_initializes_client_and_prefix() -> None:
         assert hasattr(backend.client, "connection_pool")
 
 
+@pytest.mark.skipif(
+    not has_redis_package(),
+    reason="redis package is not installed",
+)
+def test_redis_load_from_config_passes_all_fields() -> None:
+    """load_from_config must forward all RedisConfig fields to the backend."""
+    from pydantic import SecretStr
+
+    from fastapi_cachex.backends.config import RedisConfig
+
+    cfg = RedisConfig(
+        host="10.0.0.1",
+        port=6380,
+        password=SecretStr("s3cr3t"),
+        db=3,
+        encoding="utf-8",
+        socket_timeout=2.5,
+        socket_connect_timeout=1.5,
+        key_prefix="myapp:",
+    )
+    backend = AsyncRedisCacheBackend.load_from_config(cfg)
+
+    assert isinstance(backend, AsyncRedisCacheBackend)
+    assert backend.key_prefix == "myapp:"
+
+    pool = backend.client.connection_pool
+    kwargs = getattr(pool, "connection_kwargs", {})
+    if kwargs:
+        assert kwargs.get("host") == "10.0.0.1"
+        assert kwargs.get("port") == 6380
+        assert kwargs.get("password") == "s3cr3t"
+        assert kwargs.get("db") == 3
+        assert kwargs.get("socket_timeout") == 2.5
+        assert kwargs.get("socket_connect_timeout") == 1.5
+
+
+@pytest.mark.skipif(
+    not has_redis_package(),
+    reason="redis package is not installed",
+)
+def test_redis_config_defaults() -> None:
+    """RedisConfig must expose the new fields with sensible defaults."""
+    from fastapi_cachex.backends.config import DEFAULT_REDIS_PREFIX
+    from fastapi_cachex.backends.config import RedisConfig
+
+    cfg = RedisConfig(host="localhost")
+    assert cfg.db == 0
+    assert cfg.encoding == "utf-8"
+    assert cfg.socket_timeout == 1.0
+    assert cfg.socket_connect_timeout == 1.0
+    assert cfg.key_prefix == DEFAULT_REDIS_PREFIX
+
+
 @pytest_asyncio.fixture
 async def async_redis_backend() -> AsyncGenerator[AsyncRedisCacheBackend, Any]:
     """Fixture for async Redis cache backend."""

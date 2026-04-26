@@ -483,3 +483,61 @@ async def test_save_session_without_ttl_uses_none_expiry(
 
     retrieved = await manager.get_session(token)
     assert retrieved.session_id == session.session_id
+
+
+# ---------------------------------------------------------------------------
+# New tests for fixes applied in this session
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_absolute_timeout_raises_session_expired_error(
+    backend: MemoryBackend,
+) -> None:
+    """absolute_timeout must expire the session even if sliding TTL would renew it."""
+    # absolute_timeout=1 means the session must not live beyond 1 second from creation
+    config = SessionConfig(secret_key="a" * 32, session_ttl=3600, absolute_timeout=1)
+    manager = SessionManager(backend, config)
+
+    user = SessionUser(user_id="abs-user", username="testuser")
+    _session, token = await manager.create_session(user=user)
+
+    # Wait for the absolute timeout to pass
+    import asyncio
+
+    await asyncio.sleep(1.1)
+
+    with pytest.raises(SessionExpiredError):
+        await manager.get_session(token)
+
+
+@pytest.mark.asyncio
+async def test_absolute_timeout_zero_disables_enforcement(
+    backend: MemoryBackend,
+) -> None:
+    """absolute_timeout=None (default/disabled) must not prematurely expire sessions."""
+    config = SessionConfig(secret_key="a" * 32, session_ttl=3600, absolute_timeout=None)
+    manager = SessionManager(backend, config)
+
+    user = SessionUser(user_id="no-abs", username="testuser")
+    _session, token = await manager.create_session(user=user)
+
+    # Should still be valid
+    retrieved = await manager.get_session(token)
+    assert retrieved is not None
+
+
+@pytest.mark.asyncio
+async def test_absolute_timeout_not_triggered_before_expiry(
+    backend: MemoryBackend,
+) -> None:
+    """Session should remain valid before the absolute_timeout is reached."""
+    config = SessionConfig(secret_key="a" * 32, session_ttl=3600, absolute_timeout=60)
+    manager = SessionManager(backend, config)
+
+    user = SessionUser(user_id="fresh-user", username="testuser")
+    _session, token = await manager.create_session(user=user)
+
+    # Should be valid immediately (well within 60 s absolute timeout)
+    retrieved = await manager.get_session(token)
+    assert retrieved is not None

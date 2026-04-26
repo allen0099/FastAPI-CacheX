@@ -86,6 +86,7 @@ class MemcachedBackend(BaseCacheBackend):
                 content=data["content"].encode()
                 if isinstance(data["content"], str)
                 else data["content"],
+                media_type=data.get("media_type"),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             logger.debug("Memcached DESERIALIZE ERROR; key=%s", key)
@@ -111,6 +112,7 @@ class MemcachedBackend(BaseCacheBackend):
             {
                 "etag": value.etag,
                 "content": content,
+                "media_type": value.media_type,
             },
         )
 

@@ -183,7 +183,7 @@ def cache(
         else:
             request_name = found_request.name
 
-        async def get_cache_control(cache_control: CacheControl) -> str:
+        def get_cache_control(cache_control: CacheControl) -> str:
             # Set Cache-Control headers
             if no_cache:
                 cache_control.add(DirectiveType.NO_CACHE)
@@ -243,7 +243,7 @@ def cache(
             builder = key_builder or default_key_builder
             cache_key = builder(req)
             client_etag = req.headers.get("if-none-match")
-            cache_control = await get_cache_control(CacheControl())
+            cache_control = get_cache_control(CacheControl())
 
             # Handle special case: no-store (highest priority)
             if no_store:
@@ -304,6 +304,7 @@ def cache(
                 return Response(
                     content=cached_data.content,
                     status_code=200,
+                    media_type=cached_data.media_type,
                     headers={
                         "ETag": cached_data.etag,
                         "Cache-Control": cache_control,
@@ -324,7 +325,11 @@ def cache(
                 # Store in cache if data changed
                 await cache_backend.set(
                     cache_key,
-                    ETagContent(current_etag, current_response.body),
+                    ETagContent(
+                        current_etag,
+                        current_response.body,
+                        current_response.media_type,
+                    ),
                     ttl=ttl,
                 )
                 logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)

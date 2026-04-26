@@ -453,3 +453,35 @@ class TestRoutesIntegration:
         # Routes should be present in the schema
         assert "/cached-hits" in paths
         assert "/cached-records" in paths
+
+    def test_add_routes_with_dependencies_denies_unauthorized(self, setup_cache):
+        """Routes registered with dependencies= must enforce those dependencies."""
+        from fastapi import Depends
+        from fastapi import Header
+        from fastapi import HTTPException
+
+        unauthorized_calls: list[str] = []
+
+        def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
+            if x_api_key != "secret":
+                unauthorized_calls.append("denied")
+                raise HTTPException(status_code=401, detail="Unauthorized")
+
+        dep_app = FastAPI()
+        dep_client = TestClient(dep_app, raise_server_exceptions=False)
+        add_routes(dep_app, dependencies=[Depends(require_api_key)])
+
+        # Request without the header → 401
+        r = dep_client.get("/cached-hits")
+        assert r.status_code == 401
+        assert unauthorized_calls
+
+        # Request with correct header → 200
+        r2 = dep_client.get("/cached-hits", headers={"x-api-key": "secret"})
+        assert r2.status_code == 200
+
+    def test_add_routes_with_none_dependencies_no_error(self, app, client, setup_cache):
+        """Passing dependencies=None (default) must not raise errors."""
+        add_routes(app, dependencies=None)
+        response = client.get("/cached-hits")
+        assert response.status_code == 200

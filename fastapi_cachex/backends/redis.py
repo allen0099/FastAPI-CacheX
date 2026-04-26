@@ -5,6 +5,9 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 
+from fastapi_cachex.backends.config import (
+    DEFAULT_REDIS_PREFIX as DEFAULT_REDIS_PREFIX,  # noqa: PLC0414
+)
 from fastapi_cachex.backends.config import RedisConfig
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
@@ -23,8 +26,7 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-# Default Redis key prefix for fastapi-cachex
-DEFAULT_REDIS_PREFIX = "fastapi_cachex:"
+# Default Redis key prefix for fastapi-cachex — re-exported from config for convenience
 
 
 class AsyncRedisCacheBackend(BaseCacheBackend):
@@ -104,6 +106,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             password=config.password.get_secret_value()
             if config.password is not None
             else None,
+            db=config.db,
+            encoding=config.encoding,
+            socket_timeout=config.socket_timeout,
+            socket_connect_timeout=config.socket_connect_timeout,
+            key_prefix=config.key_prefix,
         )
 
     def _make_key(self, key: str) -> str:
@@ -121,6 +128,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             {
                 "etag": value.etag,
                 "content": content,
+                "media_type": value.media_type,
             },
         )
 
@@ -143,6 +151,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 content=data["content"].encode()
                 if isinstance(data["content"], str)
                 else data["content"],
+                media_type=data.get("media_type"),
             )
         except (json.JSONDecodeError, KeyError):
             return None
