@@ -94,7 +94,7 @@ async def test_jwt_expiration_enforced() -> None:
 
 @pytest.mark.asyncio
 async def test_jwt_sliding_renewal_returns_new_token_with_updated_exp() -> None:
-    """Sliding renewal must return a new JWT whose exp reflects the extended expiry."""
+    """Sliding renewal must extend the session's expires_at back to a full TTL."""
     from datetime import datetime, timedelta, timezone
 
     backend = MemoryBackend()
@@ -113,14 +113,21 @@ async def test_jwt_sliding_renewal_returns_new_token_with_updated_exp() -> None:
     )
 
     # Shorten expires_at so time_remaining < 50% of 3600 s → triggers renewal
-    created.expires_at = datetime.now(timezone.utc) + timedelta(seconds=1000)
+    shortened_expiry = datetime.now(timezone.utc) + timedelta(seconds=1000)
+    created.expires_at = shortened_expiry
     await manager._save_session(created)
 
-    _, renewed_token = await manager.get_session(original_token)
+    renewed_session, renewed_token = await manager.get_session(original_token)
 
+    # A renewed token must be returned (not None)
     assert renewed_token is not None
-    assert renewed_token != original_token
 
-    # The renewed token must be immediately usable (exp updated, not stale)
+    # The session's expires_at must have been extended beyond the shortened value.
+    # JWT strings may be identical if both calls land in the same wall-clock second
+    # (same iat → same exp), so we verify the session state, not the string.
+    assert renewed_session.expires_at is not None
+    assert renewed_session.expires_at > shortened_expiry
+
+    # The renewed token must be immediately usable
     retrieved, _ = await manager.get_session(renewed_token)
     assert retrieved.session_id == created.session_id

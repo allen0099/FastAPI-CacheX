@@ -45,7 +45,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
 
     - name: Sync dependencies
-      run: uv sync
+      run: uv sync --extra jwt
 
     - name: Run tests
       run: uv run coverage run -m pytest && uv run coverage report

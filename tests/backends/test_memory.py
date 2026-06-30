@@ -448,23 +448,20 @@ def test_ensure_cleanup_started_without_event_loop() -> None:
     """_ensure_cleanup_started must not raise and must not leak unawaited coroutines
     when called outside any running event loop (e.g. at import time or in __init__).
 
-    Before the fix, calling ``asyncio.create_task(coro())`` when no loop was running
-    would leave the coroutine unawaited, emitting a RuntimeWarning.
+    Run in a fresh thread so there is guaranteed to be no running event loop,
+    regardless of whether the test runner itself has one active.
     """
+    import concurrent.futures
     import warnings
 
-    backend = MemoryBackend()
-    # Confirm we are outside any event loop
-    try:
-        asyncio.get_running_loop()
-        pytest.skip("test must run outside a running event loop")
-    except RuntimeError:
-        pass
+    def run_in_thread() -> bool:
+        backend = MemoryBackend()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            backend._ensure_cleanup_started()
+        return backend._cleanup_task is None
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", RuntimeWarning)
-        # This must not raise RuntimeWarning about unawaited coroutine
-        backend._ensure_cleanup_started()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        no_task_created = executor.submit(run_in_thread).result()
 
-    # No cleanup task should have been created
-    assert backend._cleanup_task is None
+    assert no_task_created
