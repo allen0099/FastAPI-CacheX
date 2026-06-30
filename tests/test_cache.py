@@ -167,16 +167,15 @@ def test_stale_responses():
 
 
 def test_broken_stale():
-    @app.get("/stale")
-    @cache(stale="revalidate")
-    async def stale_broken_endpoint():
-        return Response(
-            content=b'{"message": "This endpoint allows stale content"}',
-            media_type="application/json",
-        )
-
     with pytest.raises(CacheXError, match="stale_ttl must be set if stale is used"):
-        client.get("/stale")
+
+        @app.get("/stale")
+        @cache(stale="revalidate")
+        async def stale_broken_endpoint():
+            return Response(
+                content=b'{"message": "This endpoint allows stale content"}',
+                media_type="application/json",
+            )
 
 
 def test_positional_args():

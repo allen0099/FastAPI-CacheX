@@ -81,10 +81,6 @@ class SessionConfig(BaseModel):
         default=False,
         description="Whether to bind session to User-Agent",
     )
-    regenerate_on_login: bool = Field(
-        default=True,
-        description="Whether to regenerate session ID on login",
-    )
 
     # Backend settings
     backend_key_prefix: str = Field(

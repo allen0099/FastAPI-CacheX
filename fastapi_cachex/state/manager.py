@@ -44,31 +44,23 @@ class StateManager:
         self.key_prefix = key_prefix
         self.default_ttl = default_ttl
 
-    def _extract_json_content(self, cached: ETagContent, state: str) -> str:
+    def _extract_json_content(self, cached: ETagContent) -> str:
         """Extract JSON string from a cached ETagContent value.
 
         Args:
             cached: The ETagContent retrieved from backend
-            state: State string (used for logging)
 
         Returns:
             JSON string
 
         Raises:
-            StateDataError: If the content format is unexpected
+            StateDataError: If the content cannot be decoded as UTF-8 text
         """
-        content = cached.content
-        if isinstance(content, bytes):
-            return content.decode("utf-8")
-        if isinstance(content, str):
-            return content
-        msg = "Unexpected state data format"
-        logger.error(
-            "Unexpected content type in state; state=%s type=%s",
-            state,
-            type(content),
-        )
-        raise StateDataError(msg)
+        try:
+            return cached.content.decode("utf-8")
+        except (AttributeError, UnicodeDecodeError) as e:
+            msg = "Unexpected state data format"
+            raise StateDataError(msg) from e
 
     def _parse_state_data(self, json_content: str, state: str) -> StateData:
         """Parse JSON content into a StateData model.
@@ -135,7 +127,7 @@ class StateManager:
 
         # Store in backend with TTL using ETagContent
         cache_key = f"{self.key_prefix}{state}"
-        etag_content = ETagContent(etag=etag, content=json_content)
+        etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
         await self.backend.set(cache_key, etag_content, ttl=effective_ttl)
 
         logger.debug("OAuth state created; state=%s ttl=%s", state, effective_ttl)
@@ -164,7 +156,7 @@ class StateManager:
             msg = "Invalid or expired state"
             raise InvalidStateError(msg)
 
-        json_content = self._extract_json_content(cached_etag_content, state)
+        json_content = self._extract_json_content(cached_etag_content)
         state_data = self._parse_state_data(json_content, state)
 
         # Verify expiry
@@ -196,7 +188,7 @@ class StateManager:
             return False
 
         try:
-            json_content = self._extract_json_content(cached_etag_content, state)
+            json_content = self._extract_json_content(cached_etag_content)
             state_data = self._parse_state_data(json_content, state)
         except (StateDataError, UnicodeDecodeError):
             logger.exception(
@@ -228,7 +220,7 @@ class StateManager:
             return None
 
         try:
-            json_content = self._extract_json_content(cached_etag_content, state)
+            json_content = self._extract_json_content(cached_etag_content)
             state_data = self._parse_state_data(json_content, state)
         except (StateDataError, UnicodeDecodeError):
             logger.exception("Failed to parse or validate state data; state=%s", state)

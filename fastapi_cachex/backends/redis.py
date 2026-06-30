@@ -127,10 +127,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
     def _serialize(self, value: ETagContent) -> str:
         """Serialize ETagContent to JSON string."""
-        if isinstance(value.content, bytes):
-            content = value.content.decode()
-        else:
-            content = value.content
+        # Use latin-1 to round-trip arbitrary bytes through JSON/UTF-8 Redis storage
+        content = value.content.decode("latin-1")
 
         serialized: str | bytes = json.dumps(
             {
@@ -156,12 +154,10 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             logger.debug("Content type in JSON: %s", type(data["content"]))
             return ETagContent(
                 etag=data["etag"],
-                content=data["content"].encode()
-                if isinstance(data["content"], str)
-                else data["content"],
+                content=data["content"].encode("latin-1"),
                 media_type=data.get("media_type"),
             )
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, AttributeError):
             return None
 
     async def get(self, key: str) -> ETagContent | None:
@@ -364,12 +360,18 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         all_keys = await self.get_all_keys()
         cache_data: dict[str, tuple[ETagContent, float | None]] = {}
 
-        for prefixed_key in all_keys:
-            # Remove prefix to get the original cache key
-            original_key = prefixed_key.removeprefix(self.key_prefix)
+        if not all_keys:
+            return cache_data
 
-            # Get the value using the original key (get() adds prefix internally)
-            value = await self.get(original_key)
+        # Fetch all values in a single pipeline round-trip instead of N+1 GETs
+        pipe = self.client.pipeline()
+        for prefixed_key in all_keys:
+            pipe.get(prefixed_key)
+        raw_values: list[str | None] = await pipe.execute()
+
+        for prefixed_key, raw in zip(all_keys, raw_values, strict=False):
+            original_key = prefixed_key.removeprefix(self.key_prefix)
+            value = self._deserialize(raw)
             if value is not None:
                 cache_data[original_key] = (value, None)
 

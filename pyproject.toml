@@ -110,7 +110,7 @@ keep-runtime-typing = true
     "PT031"  # Single statement in pytest.warns is acceptable
 ]
 "fastapi_cachex/cache.py" = [
-    "PLR0913", "PLR0915", # Many arguments/statements needed for flexible caching logic
+    "PLR0913", "PLR0915", "PLR0911", "PLR0912", # Many arguments/statements/returns/branches needed for flexible caching logic
 ]
 "fastapi_cachex/backends/memcached.py" = ["PLC0415"]  # Optional dependency
 "fastapi_cachex/backends/redis.py" = ["PLR0913", "PLC0415"]  # Optional dependency, Redis config

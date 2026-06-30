@@ -207,18 +207,17 @@ async def test_memcached_clear_pattern_warning(memcached_backend: MemcachedBacke
 
 @requires_memcached
 @pytest.mark.asyncio
-async def test_memcached_set_content_str(monkeypatch) -> None:
-    """Test the ETagContent content str branch in set()."""
+async def test_memcached_set_content_bytes(monkeypatch) -> None:
+    """Test bytes content round-trip through set/get."""
     backend = MemcachedBackend(servers=["127.0.0.1:11211"])
     await backend.clear()
-    value = ETagContent(etag="c", content="str-content")
+    value = ETagContent(etag="c", content=b"bytes-content")
 
-    await backend.set("str-key", value)
-    out = await backend.get("str-key")
-    # Backend converts string content to bytes when deserializing
+    await backend.set("bytes-key", value)
+    out = await backend.get("bytes-key")
     assert out is not None
     assert out.etag == value.etag
-    assert out.content == b"str-content"
+    assert out.content == b"bytes-content"
 
 
 @requires_memcached

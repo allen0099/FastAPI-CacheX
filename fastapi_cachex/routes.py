@@ -39,7 +39,7 @@ class CacheHitSummary:
 
     total_cached_entries: int
     active_entries: int
-    frequently_cached_routes: list[str]
+    cached_paths: list[str]
 
 
 @dataclass
@@ -129,7 +129,7 @@ async def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsRespon
         if method:  # Valid cache key
             # Check if cache entry is expired
             is_expired = expiry is not None and expiry <= now
-            ttl_remaining = round(expiry - now, 2) if expiry is not None else None
+            ttl_remaining = max(0.0, round(expiry - now, 2)) if expiry is not None else None
 
             cached_hits.append(
                 CacheHitRecord(
@@ -157,7 +157,7 @@ async def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsRespon
         summary=CacheHitSummary(
             total_cached_entries=len(cached_hits),
             active_entries=len(valid_hits),
-            frequently_cached_routes=sorted(routes_hit),
+            cached_paths=sorted(routes_hit),
         ),
     )
 
@@ -188,7 +188,7 @@ async def _get_cached_records_handler(
             content = etag_content.content
             content_size = len(content) if isinstance(content, (bytes, str)) else 0
 
-            ttl_remaining = round(expiry - now, 2) if expiry is not None else None
+            ttl_remaining = max(0.0, round(expiry - now, 2)) if expiry is not None else None
 
             content_preview = (
                 content[:100].decode("utf-8", errors="ignore")
@@ -290,7 +290,7 @@ def add_routes(
                 summary=CacheHitSummary(
                     total_cached_entries=0,
                     active_entries=0,
-                    frequently_cached_routes=[],
+                    cached_paths=[],
                 ),
             )
 

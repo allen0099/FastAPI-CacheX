@@ -7,9 +7,9 @@ from fastapi_cachex.session.security import SecurityManager
 
 
 def test_security_manager_initialization() -> None:
-    """Test security manager initialization."""
+    """Test security manager initialization: signing works with a valid key."""
     manager = SecurityManager("a" * 32)
-    assert manager.secret_key is not None
+    assert manager.sign_session_id("test") is not None
 
 
 def test_security_manager_short_key() -> None:

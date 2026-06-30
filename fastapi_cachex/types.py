@@ -2,7 +2,6 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 from fastapi import Request
 
@@ -18,7 +17,7 @@ class ETagContent:
     """ETag and content for cache items."""
 
     etag: str
-    content: Any
+    content: bytes
     media_type: str | None = None
 
 

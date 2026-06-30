@@ -11,11 +11,11 @@ class RedisConfig(BaseModel):
     """Configuration for Redis backend."""
 
     host: str = Field(default="localhost", description="Redis server address")
-    port: int = Field(default=6379, description="Redis server port")
+    port: int = Field(default=6379, ge=1, le=65535, description="Redis server port")
     password: SecretStr | None = Field(
         default=None, description="Redis server password"
     )
-    db: int = Field(default=0, description="Redis database number")
+    db: int = Field(default=0, ge=0, description="Redis database number")
     encoding: str = Field(default="utf-8", description="Character encoding to use")
     socket_timeout: float = Field(
         default=1.0, description="Timeout for socket operations in seconds"
@@ -29,6 +29,8 @@ class RedisConfig(BaseModel):
     )
     protocol: int = Field(
         default=2,
+        ge=2,
+        le=3,
         description=(
             "RESP protocol version (2 or 3). "
             "Keep at 2 (default) unless you need RESP3 features and your hiredis "
