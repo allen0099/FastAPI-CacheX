@@ -6,7 +6,7 @@ import pytest_asyncio
 
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.exceptions import CacheXError
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 
 def is_memcached_running(host: str = "127.0.0.1", port: int = 11211) -> bool:
@@ -61,14 +61,14 @@ async def memcached_backend():
 @pytest.mark.asyncio
 async def test_memcached_set_get(memcached_backend: MemcachedBackend):
     key = "test_key"
-    value = ETagContent(etag="test_etag", content=b"test_content")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_content")
     ttl = 60
 
     await memcached_backend.set(key, value, ttl)
     retrieved_value = await memcached_backend.get(key)
 
     assert retrieved_value is not None
-    assert retrieved_value.etag == value.etag
+    assert retrieved_value.fingerprint == value.fingerprint
     assert retrieved_value.content == value.content
 
 
@@ -76,13 +76,13 @@ async def test_memcached_set_get(memcached_backend: MemcachedBackend):
 @pytest.mark.asyncio
 async def test_memcached_set_without_ttl(memcached_backend: MemcachedBackend):
     key = "test_key"
-    value = ETagContent(etag="test_etag", content=b"test_content")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_content")
 
     await memcached_backend.set(key, value)
     retrieved_value = await memcached_backend.get(key)
 
     assert retrieved_value is not None
-    assert retrieved_value.etag == value.etag
+    assert retrieved_value.fingerprint == value.fingerprint
     assert retrieved_value.content == value.content
 
 
@@ -90,7 +90,7 @@ async def test_memcached_set_without_ttl(memcached_backend: MemcachedBackend):
 @pytest.mark.asyncio
 async def test_memcached_delete(memcached_backend: MemcachedBackend):
     key = "test_key"
-    value = ETagContent(etag="test_etag", content=b"test_content")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_content")
 
     await memcached_backend.set(key, value)
     await memcached_backend.delete(key)
@@ -103,9 +103,9 @@ async def test_memcached_delete(memcached_backend: MemcachedBackend):
 @pytest.mark.asyncio
 async def test_memcached_clear(memcached_backend: MemcachedBackend):
     key1 = "test_key1"
-    value1 = ETagContent(etag="test_etag1", content=b"test_content1")
+    value1 = CacheEntry(fingerprint="test_etag1", content=b"test_content1")
     key2 = "test_key2"
-    value2 = ETagContent(etag="test_etag2", content=b"test_content2")
+    value2 = CacheEntry(fingerprint="test_etag2", content=b"test_content2")
 
     await memcached_backend.set(key1, value1)
     await memcached_backend.set(key2, value2)
@@ -123,7 +123,7 @@ async def test_memcached_clear(memcached_backend: MemcachedBackend):
 async def test_memcached_clear_path(memcached_backend: MemcachedBackend):
     # Set up test data
     path = "/test"
-    value = ETagContent(etag="test_etag", content=b"test_value")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_value")
 
     # Store data directly at the path
     await memcached_backend.set(path, value)
@@ -146,7 +146,7 @@ async def test_memcached_clear_path(memcached_backend: MemcachedBackend):
 async def test_memcached_clear_path_not_match(memcached_backend: MemcachedBackend):
     # Set up test data
     path = "/test"
-    value = ETagContent(etag="test_etag", content=b"test_value")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_value")
 
     # Store data directly at the path
     await memcached_backend.set(path, value)
@@ -166,7 +166,7 @@ async def test_memcached_clear_path_not_match(memcached_backend: MemcachedBacken
 async def test_memcached_clear_pattern(memcached_backend: MemcachedBackend):
     # Set up test data
     path = "/users/123"
-    value = ETagContent(etag="test_etag", content=b"test_value")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_value")
 
     # Store some test data
     await memcached_backend.set(path, value)
@@ -178,7 +178,7 @@ async def test_memcached_clear_pattern(memcached_backend: MemcachedBackend):
     # Verify the original data still exists (as pattern matching is not supported)
     result = await memcached_backend.get(path)
     assert result is not None
-    assert result.etag == value.etag
+    assert result.fingerprint == value.fingerprint
 
 
 @requires_memcached
@@ -211,12 +211,12 @@ async def test_memcached_set_content_bytes(monkeypatch) -> None:
     """Test bytes content round-trip through set/get."""
     backend = MemcachedBackend(servers=["127.0.0.1:11211"])
     await backend.clear()
-    value = ETagContent(etag="c", content=b"bytes-content")
+    value = CacheEntry(fingerprint="c", content=b"bytes-content")
 
     await backend.set("bytes-key", value)
     out = await backend.get("bytes-key")
     assert out is not None
-    assert out.etag == value.etag
+    assert out.fingerprint == value.fingerprint
     assert out.content == b"bytes-content"
 
 
@@ -241,7 +241,7 @@ async def test_memcached_set_uses_standard_json_branch(monkeypatch) -> None:
     await backend.clear()
     try:
         key = "branch_json_key"
-        value = ETagContent(etag="e", content=b"bytes-content")
+        value = CacheEntry(fingerprint="e", content=b"bytes-content")
         # When using std json, dumps returns str and code should encode to bytes
         await backend.set(key, value)
         got = await backend.get(key)

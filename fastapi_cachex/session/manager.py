@@ -6,7 +6,7 @@ from datetime import timedelta
 from datetime import timezone
 
 from fastapi_cachex.backends.base import BaseCacheBackend
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 from .config import SessionConfig
 from .exceptions import SessionExpiredError
@@ -436,9 +436,8 @@ class SessionManager:
             ttl = int((session.expires_at - datetime.now(timezone.utc)).total_seconds())
             ttl = max(ttl, 1)  # Ensure at least 1 second
 
-        # Store as bytes in cache backend (wrapped in ETagContent for compatibility)
-        etag = self.security.hash_data(value.decode("utf-8"))
-        await self.backend.set(key, ETagContent(etag=etag, content=value), ttl=ttl)
+        fingerprint = self.security.hash_data(value.decode("utf-8"))
+        await self.backend.set(key, CacheEntry(fingerprint=fingerprint, content=value), ttl=ttl)
         logger.debug("Session saved; id=%s ttl=%s", session.session_id, ttl)
 
     async def _load_session(self, session_id: str) -> Session | None:

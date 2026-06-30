@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.proxy import BackendProxy
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 from .exceptions import InvalidStateError
 from .exceptions import StateDataError
@@ -44,11 +44,11 @@ class StateManager:
         self.key_prefix = key_prefix
         self.default_ttl = default_ttl
 
-    def _extract_json_content(self, cached: ETagContent) -> str:
-        """Extract JSON string from a cached ETagContent value.
+    def _extract_json_content(self, cached: CacheEntry) -> str:
+        """Extract JSON string from a cached CacheEntry.
 
         Args:
-            cached: The ETagContent retrieved from backend
+            cached: The CacheEntry retrieved from backend
 
         Returns:
             JSON string
@@ -122,13 +122,11 @@ class StateManager:
         # Serialize to JSON
         json_content = json.dumps(state_data.model_dump(mode="json"))
 
-        # Create ETag from hash of state data
-        etag = hashlib.sha256(json_content.encode()).hexdigest()
+        fingerprint = hashlib.sha256(json_content.encode()).hexdigest()
 
-        # Store in backend with TTL using ETagContent
         cache_key = f"{self.key_prefix}{state}"
-        etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
-        await self.backend.set(cache_key, etag_content, ttl=effective_ttl)
+        entry = CacheEntry(fingerprint=fingerprint, content=json_content.encode("utf-8"))
+        await self.backend.set(cache_key, entry, ttl=effective_ttl)
 
         logger.debug("OAuth state created; state=%s ttl=%s", state, effective_ttl)
         return state
@@ -150,13 +148,13 @@ class StateManager:
         cache_key = f"{self.key_prefix}{state}"
 
         # Retrieve state data from backend
-        cached_etag_content = await self.backend.get(cache_key)
-        if cached_etag_content is None:
+        cached = await self.backend.get(cache_key)
+        if cached is None:
             logger.warning("OAuth state not found or expired; state=%s", state)
             msg = "Invalid or expired state"
             raise InvalidStateError(msg)
 
-        json_content = self._extract_json_content(cached_etag_content)
+        json_content = self._extract_json_content(cached)
         state_data = self._parse_state_data(json_content, state)
 
         # Verify expiry
@@ -182,13 +180,13 @@ class StateManager:
         """
         cache_key = f"{self.key_prefix}{state}"
 
-        cached_etag_content = await self.backend.get(cache_key)
-        if cached_etag_content is None:
+        cached = await self.backend.get(cache_key)
+        if cached is None:
             logger.debug("State validation failed - not found; state=%s", state)
             return False
 
         try:
-            json_content = self._extract_json_content(cached_etag_content)
+            json_content = self._extract_json_content(cached)
             state_data = self._parse_state_data(json_content, state)
         except (StateDataError, UnicodeDecodeError):
             logger.exception(
@@ -215,12 +213,12 @@ class StateManager:
         """
         cache_key = f"{self.key_prefix}{state}"
 
-        cached_etag_content = await self.backend.get(cache_key)
-        if cached_etag_content is None:
+        cached = await self.backend.get(cache_key)
+        if cached is None:
             return None
 
         try:
-            json_content = self._extract_json_content(cached_etag_content)
+            json_content = self._extract_json_content(cached)
             state_data = self._parse_state_data(json_content, state)
         except (StateDataError, UnicodeDecodeError):
             logger.exception("Failed to parse or validate state data; state=%s", state)

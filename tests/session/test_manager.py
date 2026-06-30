@@ -18,7 +18,7 @@ from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.types import CacheItem
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 
 @pytest.fixture
@@ -456,7 +456,7 @@ async def test_load_session_by_key_invalid_payload_returns_none(
     """Ensure invalid cached payloads are ignored gracefully."""
     key = manager._get_backend_key("invalid-id")
     backend.cache[key] = CacheItem(
-        value=ETagContent(etag="bad", content=b"{not-json}"),
+        value=CacheEntry(fingerprint="bad", content=b"{not-json}"),
         expiry=None,
     )
 

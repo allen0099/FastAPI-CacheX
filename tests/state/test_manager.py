@@ -19,7 +19,7 @@ from fastapi_cachex.state.exceptions import InvalidStateError
 from fastapi_cachex.state.exceptions import StateDataError
 from fastapi_cachex.state.manager import StateManager
 from fastapi_cachex.state.models import StateData
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 
 def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
@@ -408,8 +408,8 @@ async def test_consume_state_with_invalid_json(state_manager: StateManager) -> N
     # Directly set invalid JSON in backend
     cache_key = f"{state_manager.key_prefix}bad_state"
     etag = hashlib.sha256(b"not valid json").hexdigest()
-    etag_content = ETagContent(etag=etag, content=b"not valid json")
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=b"not valid json")
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Try to consume - should raise StateDataError
     with pytest.raises(StateDataError, match="Failed to parse state data"):
@@ -422,8 +422,8 @@ async def test_get_metadata_with_invalid_json(state_manager: StateManager) -> No
     # Directly set invalid JSON in backend
     cache_key = f"{state_manager.key_prefix}bad_state"
     etag = hashlib.sha256(b"not valid json").hexdigest()
-    etag_content = ETagContent(etag=etag, content=b"not valid json")
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=b"not valid json")
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Try to retrieve metadata - should return None
     retrieved = await state_manager.get_state_metadata("bad_state")
@@ -436,8 +436,8 @@ async def test_validate_state_with_invalid_json(state_manager: StateManager) -> 
     # Directly set invalid JSON in backend
     cache_key = f"{state_manager.key_prefix}bad_state"
     etag = hashlib.sha256(b"not valid json").hexdigest()
-    etag_content = ETagContent(etag=etag, content=b"not valid json")
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=b"not valid json")
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Try to validate - should return False
     is_valid = await state_manager.validate_state("bad_state")
@@ -490,8 +490,8 @@ async def test_get_metadata_with_missing_expiry(state_manager: StateManager) -> 
 
     json_content = json.dumps(state_data_obj.model_dump(mode="json"))
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Should still work and return metadata
     retrieved = await state_manager.get_state_metadata(state)
@@ -512,8 +512,8 @@ async def test_validate_state_with_missing_expiry(state_manager: StateManager) -
 
     json_content = json.dumps(state_data_obj.model_dump(mode="json"))
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Should validate as valid
     is_valid = await state_manager.validate_state(state)
@@ -537,8 +537,8 @@ async def test_validate_state_with_invalid_expiry_format(
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Should return False due to invalid expiry
     is_valid = await state_manager.validate_state(state)
@@ -562,8 +562,8 @@ async def test_get_metadata_with_invalid_expiry_format(
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Should return None due to invalid expiry
     retrieved = await state_manager.get_state_metadata(state)
@@ -584,8 +584,8 @@ async def test_consume_state_with_missing_expiry(state_manager: StateManager) ->
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     with pytest.raises(StateDataError):
         await state_manager.consume_state(state)
@@ -598,9 +598,9 @@ async def test_consume_state_with_non_string_content(
     """Test consuming state when backend content is not a string."""
     # Directly set non-string content in backend
     cache_key = f"{state_manager.key_prefix}bad_state"
-    # ETagContent with non-string content (testing edge case)
-    etag_content = ETagContent(etag="test", content=b"\xff\xfe non-utf8")
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    # CacheEntry with non-string content (testing edge case)
+    entry = CacheEntry(fingerprint="test", content=b"\xff\xfe non-utf8")
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Try to consume - should raise StateDataError
     with pytest.raises(StateDataError, match="Unexpected state data format"):
@@ -613,8 +613,8 @@ async def test_validate_state_with_non_string_content(
 ) -> None:
     """Test validating state when backend content is not a string."""
     cache_key = f"{state_manager.key_prefix}bad_state"
-    etag_content = ETagContent(etag="test", content=b"\xff\xfe non-utf8")
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint="test", content=b"\xff\xfe non-utf8")
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Try to validate - should return False
     is_valid = await state_manager.validate_state("bad_state")
@@ -627,8 +627,8 @@ async def test_get_metadata_with_non_string_content(
 ) -> None:
     """Test retrieving metadata when backend content is not a string."""
     cache_key = f"{state_manager.key_prefix}bad_state"
-    etag_content = ETagContent(etag="test", content=b"\xff\xfe non-utf8")
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint="test", content=b"\xff\xfe non-utf8")
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Try to retrieve metadata - should return None
     retrieved = await state_manager.get_state_metadata("bad_state")
@@ -650,8 +650,8 @@ async def test_get_metadata_with_non_dict_metadata(state_manager: StateManager) 
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Should return None since metadata validation fails
     retrieved = await state_manager.get_state_metadata(state)
@@ -673,8 +673,8 @@ async def test_consume_state_with_bad_expiry_date(state_manager: StateManager) -
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
-    await state_manager.backend.set(cache_key, etag_content, ttl=600)
+    entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
+    await state_manager.backend.set(cache_key, entry, ttl=600)
 
     # Should raise StateDataError due to bad expiry format
     with pytest.raises(StateDataError, match="Invalid state data structure"):

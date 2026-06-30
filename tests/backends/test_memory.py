@@ -5,7 +5,7 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex.backends.memory import MemoryBackend
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 
 @pytest_asyncio.fixture
@@ -16,8 +16,8 @@ def memory_backend():
 @pytest.mark.asyncio
 async def test_memory_backend_set_get(memory_backend: MemoryBackend):
     key = "test_key"
-    value = ETagContent(
-        etag="test_etag",
+    value = CacheEntry(
+        fingerprint="test_etag",
         content={
             "response": b"test_value",
             "media_type": "application/json",
@@ -42,8 +42,8 @@ async def test_memory_backend_get_nonexistent_key(memory_backend: MemoryBackend)
 @pytest.mark.asyncio
 async def test_memory_backend_delete(memory_backend: MemoryBackend):
     key = "test_key"
-    value = ETagContent(
-        etag="test_etag",
+    value = CacheEntry(
+        fingerprint="test_etag",
         content={
             "response": b"test_value",
             "media_type": "application/json",
@@ -61,16 +61,16 @@ async def test_memory_backend_delete(memory_backend: MemoryBackend):
 @pytest.mark.asyncio
 async def test_memory_backend_clear(memory_backend: MemoryBackend):
     key1 = "test_key1"
-    value1 = ETagContent(
-        etag="test_etag1",
+    value1 = CacheEntry(
+        fingerprint="test_etag1",
         content={
             "response": b"test_value1",
             "media_type": "application/json",
         },
     )
     key2 = "test_key2"
-    value2 = ETagContent(
-        etag="test_etag2",
+    value2 = CacheEntry(
+        fingerprint="test_etag2",
         content={
             "response": b"test_value2",
             "media_type": "application/json",
@@ -92,8 +92,8 @@ async def test_memory_backend_clear(memory_backend: MemoryBackend):
 @pytest.mark.asyncio
 async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend):
     key = "test_key"
-    value = ETagContent(
-        etag="test_etag",
+    value = CacheEntry(
+        fingerprint="test_etag",
         content={
             "response": b"test_value",
             "media_type": "application/json",
@@ -111,8 +111,8 @@ async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend):
 @pytest.mark.asyncio
 async def test_memory_backend_cleanup(memory_backend: MemoryBackend):
     key1 = "test_key1"
-    value1 = ETagContent(
-        etag="test_etag1",
+    value1 = CacheEntry(
+        fingerprint="test_etag1",
         content={
             "response": b"test_value1",
             "media_type": "application/json",
@@ -120,8 +120,8 @@ async def test_memory_backend_cleanup(memory_backend: MemoryBackend):
     )
     ttl1 = 1
     key2 = "test_key2"
-    value2 = ETagContent(
-        etag="test_etag2",
+    value2 = CacheEntry(
+        fingerprint="test_etag2",
         content={
             "response": b"test_value2",
             "media_type": "application/json",
@@ -178,13 +178,13 @@ async def test_memory_backend_stop_cleanup_when_not_running(
 async def test_memory_backend_cleanup_task_impl(memory_backend: MemoryBackend):
     """Test that the cleanup task actually runs and cleans up expired items."""
     key1 = "test_key1"
-    value1 = ETagContent(
-        etag="test_etag1",
+    value1 = CacheEntry(
+        fingerprint="test_etag1",
         content=b"test_value1",
     )
     key2 = "test_key2"
-    value2 = ETagContent(
-        etag="test_etag2",
+    value2 = CacheEntry(
+        fingerprint="test_etag2",
         content=b"test_value2",
     )
 
@@ -218,9 +218,9 @@ async def test_memory_backend_clear_path(memory_backend: MemoryBackend):
     # Set up test data with proper cache key format: method|||host|||path|||query_params
     # default_key_builder always appends a trailing separator for query_params
     path = "/test"
-    value1 = ETagContent(etag="test_etag1", content=b"test_value1")
-    value2 = ETagContent(etag="test_etag2", content=b"test_value2")
-    value3 = ETagContent(etag="test_etag3", content=b"test_value3")
+    value1 = CacheEntry(fingerprint="test_etag1", content=b"test_value1")
+    value2 = CacheEntry(fingerprint="test_etag2", content=b"test_value2")
+    value3 = CacheEntry(fingerprint="test_etag3", content=b"test_value3")
 
     # Store data with method|||host|||path||| format (trailing separator, empty params)
     await memory_backend.set(f"GET|||localhost|||{path}|||", value1)
@@ -239,9 +239,9 @@ async def test_memory_backend_clear_path(memory_backend: MemoryBackend):
 @pytest.mark.asyncio
 async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
     # Set up test data with proper cache key format: method|||host|||path|||query_params
-    value1 = ETagContent(etag="test_etag1", content=b"test_value1")
-    value2 = ETagContent(etag="test_etag2", content=b"test_value2")
-    value3 = ETagContent(etag="test_etag3", content=b"test_value3")
+    value1 = CacheEntry(fingerprint="test_etag1", content=b"test_value1")
+    value2 = CacheEntry(fingerprint="test_etag2", content=b"test_value2")
+    value3 = CacheEntry(fingerprint="test_etag3", content=b"test_value3")
 
     # Store data with method|||host|||path||| format (trailing separator)
     await memory_backend.set("GET|||localhost|||/users/123|||", value1)
@@ -262,7 +262,7 @@ async def test_memory_backend_clear_path_with_colon_in_path(
     memory_backend: MemoryBackend,
 ) -> None:
     """Paths containing colons (e.g. gitlab:template) must be clearable."""
-    value = ETagContent(etag="e", content=b"v")
+    value = CacheEntry(fingerprint="e", content=b"v")
 
     await memory_backend.set("GET|||localhost:8000|||/gitlab:template|||", value)
     await memory_backend.set(
@@ -305,7 +305,7 @@ async def test_memory_backend_clear_path_include_params(
     memory_backend: MemoryBackend,
 ) -> None:
     """include_params=True should clear path entries with and without query params."""
-    value = ETagContent(etag="e", content=b"v")
+    value = CacheEntry(fingerprint="e", content=b"v")
 
     await memory_backend.set("GET|||localhost|||/items|||", value)
     await memory_backend.set("GET|||localhost|||/items|||page=2", value)
@@ -323,7 +323,7 @@ async def test_memory_backend_clear_path_direct_key(
     memory_backend: MemoryBackend,
 ) -> None:
     """clear_path should delete direct keys stored without ||| separators."""
-    value = ETagContent(etag="e", content=b"v")
+    value = CacheEntry(fingerprint="e", content=b"v")
 
     await memory_backend.set("gitlab:template", value)
     await memory_backend.set("gitlab:template:projects", value)
@@ -341,7 +341,7 @@ async def test_memory_backend_clear_path_direct_key_and_separator_key(
     memory_backend: MemoryBackend,
 ) -> None:
     """clear_path should delete both direct keys and separator-format keys."""
-    value = ETagContent(etag="e", content=b"v")
+    value = CacheEntry(fingerprint="e", content=b"v")
 
     await memory_backend.set("my:path", value)
     await memory_backend.set("GET|||localhost|||my:path|||", value)
@@ -368,7 +368,7 @@ async def test_memory_backend_get_all_keys_with_entries(
     key2 = "POST|||localhost|||/users"
     key3 = "GET|||localhost|||/posts"
 
-    value = ETagContent(etag="test_etag", content=b"test_value")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_value")
 
     await memory_backend.set(key1, value)
     await memory_backend.set(key2, value)
@@ -393,8 +393,8 @@ async def test_memory_backend_get_cache_data_with_entries(
     """Test get_cache_data returns all cache data with expiry."""
     key1 = "GET|||localhost|||/users"
     key2 = "POST|||localhost|||/users"
-    value1 = ETagContent(etag="etag1", content=b"value1")
-    value2 = ETagContent(etag="etag2", content=b"value2")
+    value1 = CacheEntry(fingerprint="etag1", content=b"value1")
+    value2 = CacheEntry(fingerprint="etag2", content=b"value2")
 
     # Set with TTL
     await memory_backend.set(key1, value1, ttl=3600)
@@ -425,7 +425,7 @@ async def test_memory_backend_get_cache_data_expired_entries(
 ) -> None:
     """Test get_cache_data includes expired entries."""
     key = "GET|||localhost|||/test"
-    value = ETagContent(etag="test_etag", content=b"test_value")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_value")
 
     # Set with very short TTL
     await memory_backend.set(key, value, ttl=1)

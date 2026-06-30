@@ -6,8 +6,8 @@ import logging
 import time
 
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import CacheItem
-from fastapi_cachex.types import ETagContent
 
 from .base import BaseCacheBackend
 
@@ -68,7 +68,7 @@ class MemoryBackend(BaseCacheBackend):
             self._cleanup_task = None
             logger.debug("Stopped memory backend cleanup task")
 
-    async def get(self, key: str) -> ETagContent | None:
+    async def get(self, key: str) -> CacheEntry | None:
         """Retrieve a cached response.
 
         Expired entries are skipped and return None.
@@ -89,7 +89,7 @@ class MemoryBackend(BaseCacheBackend):
             logger.debug("Memory cache MISS; key=%s", key)
             return None
 
-    async def set(self, key: str, value: ETagContent, ttl: int | None = None) -> None:
+    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Store a response in the cache.
 
         Args:
@@ -201,11 +201,11 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             return list(self.cache.keys())
 
-    async def get_cache_data(self) -> dict[str, tuple[ETagContent, float | None]]:
+    async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
 
         Returns:
-            Dictionary mapping cache keys to (ETagContent, expiry) tuples
+            Dictionary mapping cache keys to (CacheEntry, expiry) tuples
         """
         async with self.lock:
             return {key: (item.value, item.expiry) for key, item in self.cache.items()}

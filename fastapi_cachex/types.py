@@ -13,10 +13,10 @@ CacheKeyBuilder = Callable[[Request], str]
 
 
 @dataclass
-class ETagContent:
-    """ETag and content for cache items."""
+class CacheEntry:
+    """Cache entry storing a fingerprint, raw content bytes, and an optional media type."""
 
-    etag: str
+    fingerprint: str
     content: bytes
     media_type: str | None = None
 
@@ -26,9 +26,9 @@ class CacheItem:
     """Cache item with optional expiry time.
 
     Args:
-        value: The cached ETagContent
+        value: The cached entry
         expiry: Epoch timestamp when this cache item expires (None = never expires)
     """
 
-    value: ETagContent
+    value: CacheEntry
     expiry: float | None = None
