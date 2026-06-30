@@ -85,6 +85,11 @@ class CacheControl:
         return ", ".join(self.directives)
 
 
+def _get_response_body(response: Response) -> bytes | None:
+    """Return response body bytes, or None for streaming/file responses."""
+    return getattr(response, "body", None)
+
+
 async def get_response(
     __func: HandlerCallable,
     __request: Request,
@@ -266,7 +271,7 @@ def cache(
                 if no_cache:
                     # Get fresh response first if using no-cache
                     current_response = await get_response(func, req, *args, **kwargs)
-                    current_body = getattr(current_response, "body", None)
+                    current_body = _get_response_body(current_response)
                     if current_body is None:
                         # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
                         current_response.headers["Cache-Control"] = cache_control
@@ -321,7 +326,7 @@ def cache(
             if not current_response or not current_etag:
                 # Retrieve the current response if not already done
                 current_response = await get_response(func, req, *args, **kwargs)
-                current_body = getattr(current_response, "body", None)
+                current_body = _get_response_body(current_response)
                 if current_body is None:
                     # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
                     current_response.headers["Cache-Control"] = cache_control
@@ -334,9 +339,7 @@ def cache(
 
             # Update cache if needed
             if not cached_data or cached_data.etag != current_etag:
-                if current_body is None:  # pragma: no cover - guaranteed by earlier guards
-                    msg = "Unexpected state: response body unavailable after ETag computation"
-                    raise CacheXError(msg)
+                assert current_body is not None  # guaranteed by early-return guards above
                 # Store in cache if data changed
                 await cache_backend.set(
                     cache_key,

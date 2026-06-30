@@ -34,7 +34,7 @@ async def test_jwt_create_and_get_session() -> None:
     user = SessionUser(user_id="u1", username="alice")
     created, token = await manager.create_session(user=user)
 
-    retrieved = await manager.get_session(token)
+    retrieved, _ = await manager.get_session(token)
     assert retrieved.session_id == created.session_id
     assert retrieved.user is not None
     assert retrieved.user.user_id == "u1"
@@ -90,3 +90,37 @@ async def test_jwt_expiration_enforced() -> None:
     # JWT should be expired before reaching session checks
     with pytest.raises(SessionTokenError):
         await manager.get_session(token)
+
+
+@pytest.mark.asyncio
+async def test_jwt_sliding_renewal_returns_new_token_with_updated_exp() -> None:
+    """Sliding renewal must return a new JWT whose exp reflects the extended expiry."""
+    from datetime import datetime, timedelta, timezone
+
+    backend = MemoryBackend()
+    config = SessionConfig(
+        secret_key="a" * 32,
+        token_format="jwt",
+        jwt_algorithm="HS256",
+        session_ttl=3600,
+        sliding_expiration=True,
+        sliding_threshold=0.5,
+    )
+    manager = SessionManager(backend, config)
+
+    created, original_token = await manager.create_session(
+        user=SessionUser(user_id="u1")
+    )
+
+    # Shorten expires_at so time_remaining < 50% of 3600 s → triggers renewal
+    created.expires_at = datetime.now(timezone.utc) + timedelta(seconds=1000)
+    await manager._save_session(created)
+
+    _, renewed_token = await manager.get_session(original_token)
+
+    assert renewed_token is not None
+    assert renewed_token != original_token
+
+    # The renewed token must be immediately usable (exp updated, not stale)
+    retrieved, _ = await manager.get_session(renewed_token)
+    assert retrieved.session_id == created.session_id

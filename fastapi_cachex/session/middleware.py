@@ -78,11 +78,12 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
         # Try to load session
         session: Session | None = None
+        renewed_token: str | None = None
         if token:
             try:
                 ip_address = self._get_client_ip(request)
                 user_agent = request.headers.get("user-agent")
-                session = await self.session_manager.get_session(
+                session, renewed_token = await self.session_manager.get_session(
                     token,
                     ip_address=ip_address,
                     user_agent=user_agent,
@@ -98,6 +99,10 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
         # Process request
         response: Response = await call_next(request)
+
+        # Propagate renewed token to client so its JWT exp stays in sync
+        if renewed_token is not None:
+            response.headers[self.config.header_name] = renewed_token
 
         return response
 

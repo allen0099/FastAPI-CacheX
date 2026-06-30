@@ -92,7 +92,7 @@ async def test_create_anonymous_session(manager: SessionManager) -> None:
     assert session.session_id is not None
     assert session.user is None
 
-    retrieved = await manager.get_session(token)
+    retrieved, _ = await manager.get_session(token)
     assert retrieved.user is None
 
 
@@ -102,7 +102,7 @@ async def test_get_session(manager: SessionManager) -> None:
     user = SessionUser(user_id="123", username="testuser")
     created_session, token = await manager.create_session(user=user)
 
-    retrieved_session = await manager.get_session(token)
+    retrieved_session, _ = await manager.get_session(token)
 
     assert retrieved_session.session_id == created_session.session_id
     assert retrieved_session.user.user_id == "123"  # type: ignore[union-attr]
@@ -177,7 +177,7 @@ async def test_regenerate_session_id(manager: SessionManager) -> None:
         await manager.get_session(old_token)
 
     # New token should work
-    retrieved = await manager.get_session(new_token)
+    retrieved, _ = await manager.get_session(new_token)
     assert retrieved.session_id == updated_session.session_id
 
 
@@ -194,7 +194,7 @@ async def test_ip_binding(backend: MemoryBackend) -> None:
     )
 
     # Same IP should work
-    retrieved = await manager.get_session(token, ip_address="192.168.1.1")
+    retrieved, _ = await manager.get_session(token, ip_address="192.168.1.1")
     assert retrieved.session_id == session.session_id
 
     # Different IP should fail
@@ -215,7 +215,7 @@ async def test_user_agent_binding(backend: MemoryBackend) -> None:
     )
 
     # Same UA should work
-    retrieved = await manager.get_session(token, user_agent="Mozilla/5.0")
+    retrieved, _ = await manager.get_session(token, user_agent="Mozilla/5.0")
     assert retrieved.session_id == session.session_id
 
     # Different UA should fail
@@ -249,10 +249,12 @@ async def test_sliding_expiration(backend: MemoryBackend) -> None:
     await manager.update_session(session)
 
     # Access session - should trigger renewal since < 50% of TTL remains
-    retrieved = await manager.get_session(token)
+    retrieved, new_token = await manager.get_session(token)
 
     # Should be renewed to be further in the future than original
     assert retrieved.expires_at > original_expiry  # type: ignore[operator]
+    # A fresh token must be returned so the client's JWT exp stays in sync
+    assert new_token is not None
 
 
 @pytest.mark.asyncio
@@ -328,7 +330,7 @@ async def test_update_session(manager: SessionManager) -> None:
     await manager.update_session(session)
 
     # Retrieve and verify
-    retrieved = await manager.get_session(token)
+    retrieved, _ = await manager.get_session(token)
     assert retrieved.data.get("updated_field") == "updated_value"
 
 
@@ -351,7 +353,7 @@ async def test_delete_user_sessions(manager: SessionManager) -> None:
     assert count == 2
 
     # user2's session should still be accessible
-    retrieved = await manager.get_session(token3)
+    retrieved, _ = await manager.get_session(token3)
     assert retrieved.session_id == session3.session_id
 
 
@@ -395,7 +397,7 @@ async def test_session_manager_respects_custom_serializer(
     session, token = await manager.create_anonymous_session()
 
     assert token.startswith("dummy.")
-    retrieved = await manager.get_session(token)
+    retrieved, _ = await manager.get_session(token)
     assert retrieved.session_id == session.session_id
     assert serializer.to_string_calls == 1
     assert serializer.from_string_calls == 1
@@ -442,7 +444,7 @@ async def test_jwt_token_format_uses_serializer(
     stub = manager._serializer
     assert stub.to_string_tokens[0].signature == ""
 
-    retrieved = await manager.get_session(token)
+    retrieved, _ = await manager.get_session(token)
     assert retrieved.session_id == session.session_id
     assert stub.from_string_payloads == [token]
 
@@ -481,7 +483,7 @@ async def test_save_session_without_ttl_uses_none_expiry(
     _value, expiry = cache_data[key]
     assert expiry is None
 
-    retrieved = await manager.get_session(token)
+    retrieved, _ = await manager.get_session(token)
     assert retrieved.session_id == session.session_id
 
 
@@ -523,7 +525,7 @@ async def test_absolute_timeout_zero_disables_enforcement(
     _session, token = await manager.create_session(user=user)
 
     # Should still be valid
-    retrieved = await manager.get_session(token)
+    retrieved, _ = await manager.get_session(token)
     assert retrieved is not None
 
 
@@ -539,5 +541,5 @@ async def test_absolute_timeout_not_triggered_before_expiry(
     _session, token = await manager.create_session(user=user)
 
     # Should be valid immediately (well within 60 s absolute timeout)
-    retrieved = await manager.get_session(token)
+    retrieved, _ = await manager.get_session(token)
     assert retrieved is not None

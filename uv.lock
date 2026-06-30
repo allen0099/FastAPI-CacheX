@@ -413,7 +413,7 @@ wheels = [
 
 [[package]]
 name = "fastapi-cachex"
-version = "0.2.11"
+version = "0.2.12"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
