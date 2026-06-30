@@ -73,8 +73,7 @@ class MemcachedBackend(BaseCacheBackend):
             Optional[ETagContent]: Cached value with ETag if exists, None otherwise
         """
         prefixed_key = self._make_key(key)
-        loop = asyncio.get_running_loop()
-        value = await loop.run_in_executor(None, self.client.get, prefixed_key)
+        value = await asyncio.to_thread(self.client.get, prefixed_key)
         if value is None:
             logger.debug("Memcached MISS; key=%s", key)
             return None
@@ -121,11 +120,7 @@ class MemcachedBackend(BaseCacheBackend):
         )
 
         expire = ttl if ttl is not None else 0
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: self.client.set(prefixed_key, serialized_bytes, expire=expire),
-        )
+        await asyncio.to_thread(self.client.set, prefixed_key, serialized_bytes, expire)
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> None:
@@ -135,8 +130,7 @@ class MemcachedBackend(BaseCacheBackend):
             key: Cache key to delete
         """
         prefixed = self._make_key(key)
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self.client.delete, prefixed)
+        await asyncio.to_thread(self.client.delete, prefixed)
         logger.debug("Memcached DELETE; key=%s", key)
 
     async def clear(self) -> None:
@@ -152,8 +146,7 @@ class MemcachedBackend(BaseCacheBackend):
             RuntimeWarning,
             stacklevel=2,
         )
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self.client.flush_all)
+        await asyncio.to_thread(self.client.flush_all)
         logger.debug("Memcached CLEAR; flush_all issued")
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
@@ -183,12 +176,8 @@ class MemcachedBackend(BaseCacheBackend):
 
         # Try to delete the prefixed key (exact match only)
         prefixed_key = self._make_key(path)
-        loop = asyncio.get_running_loop()
         try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: self.client.delete(prefixed_key, noreply=False),
-            )
+            result = await asyncio.to_thread(self.client.delete, prefixed_key, False)
         except Exception:  # noqa: BLE001
             return 0
         else:

@@ -155,7 +155,7 @@ class SessionManager:
         token_string: str,
         ip_address: str | None = None,
         user_agent: str | None = None,
-    ) -> Session:
+    ) -> tuple[Session, str | None]:
         """Retrieve and validate a session.
 
         Args:
@@ -164,7 +164,9 @@ class SessionManager:
             user_agent: Current request User-Agent
 
         Returns:
-            Session object
+            Tuple of (session, new_token_string). new_token_string is non-None
+            when sliding expiration triggered a renewal; the caller should
+            propagate it to the client (e.g. via a response header).
 
         Raises:
             SessionTokenError: If token is invalid
@@ -260,6 +262,7 @@ class SessionManager:
         # Update last accessed and handle sliding expiration
         session.update_last_accessed()
 
+        renewed_token: str | None = None
         if self.config.sliding_expiration and session.expires_at:
             time_remaining = (
                 session.expires_at - datetime.now(timezone.utc)
@@ -268,6 +271,10 @@ class SessionManager:
 
             if time_remaining < threshold:
                 session.renew(self.config.session_ttl)
+                token = self._create_token(
+                    session.session_id, expires_at=session.expires_at
+                )
+                renewed_token = self._serializer.to_string(token)
                 logger.debug(
                     "Session renewed (sliding expiration); id=%s ttl=%s",
                     session.session_id,
@@ -276,7 +283,7 @@ class SessionManager:
 
         await self._save_session(session)
 
-        return session
+        return session, renewed_token
 
     async def update_session(self, session: Session) -> None:
         """Update an existing session.

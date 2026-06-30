@@ -437,3 +437,50 @@ async def test_dispatch_with_session_error(
     assert result == mock_response
     # Session should be None in request state due to error
     assert getattr(request.state, "__fastapi_cachex_session", None) is None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sets_renewed_token_header_on_sliding_expiration() -> None:
+    """Middleware must write the refreshed token to the response header when sliding renewal fires.
+
+    Uses JWT format because the renewed JWT has a new exp claim, making
+    the token string reliably different from the original.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from fastapi.responses import JSONResponse
+
+    jwt = pytest.importorskip("jwt")  # noqa: F841
+
+    backend = MemoryBackend()
+    slide_config = SessionConfig(
+        secret_key="a" * 32,
+        token_format="jwt",
+        jwt_algorithm="HS256",
+        session_ttl=3600,
+        sliding_expiration=True,
+        sliding_threshold=0.5,
+    )
+    mgr = SessionManager(backend, slide_config)
+
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, session_manager=mgr, config=slide_config)
+
+    @app.get("/ping")
+    async def ping() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    user = SessionUser(user_id="slide-user")
+    created, original_token = await mgr.create_session(user=user)
+
+    # Shorten expiry so time_remaining < sliding threshold (< 50% of 3600 s)
+    created.expires_at = datetime.now(timezone.utc) + timedelta(seconds=1000)
+    await mgr._save_session(created)
+
+    client = TestClient(app)
+    response = client.get("/ping", headers={slide_config.header_name: original_token})
+
+    assert response.status_code == 200
+    renewed = response.headers.get(slide_config.header_name)
+    assert renewed is not None, "Middleware must set renewed token header on sliding renewal"
+    assert renewed != original_token, "Renewed JWT must have updated exp, producing a different token"

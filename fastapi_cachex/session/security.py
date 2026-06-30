@@ -21,8 +21,7 @@ class SecurityManager:
         if len(secret_key) < 32:  # noqa: PLR2004
             msg = "Secret key must be at least 32 characters"
             raise ValueError(msg)
-        # Use name mangling so the key bytes are not trivially accessible via repr
-        self.__secret_key_bytes = secret_key.encode("utf-8")
+        self._secret_key_bytes = secret_key.encode("utf-8")
 
         logger.debug(
             "SecurityManager initialized with secret length=%s", len(secret_key)
@@ -38,7 +37,7 @@ class SecurityManager:
             The signature as a hex string
         """
         return hmac.new(
-            self.__secret_key_bytes,
+            self._secret_key_bytes,
             session_id.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
