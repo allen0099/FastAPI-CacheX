@@ -130,10 +130,22 @@ class SessionManager:
             )
 
         # Bind IP and User-Agent if configured
-        if self.config.ip_binding and ip_address:
-            session.ip_address = ip_address
-        if self.config.user_agent_binding and user_agent:
-            session.user_agent = user_agent
+        if self.config.ip_binding:
+            if ip_address:
+                session.ip_address = ip_address
+            else:
+                logger.warning(
+                    "ip_binding is enabled but no IP address available; "
+                    "session created without IP binding"
+                )
+        if self.config.user_agent_binding:
+            if user_agent:
+                session.user_agent = user_agent
+            else:
+                logger.warning(
+                    "user_agent_binding is enabled but no User-Agent available; "
+                    "session created without UA binding"
+                )
 
         # Store in backend
         await self._save_session(session)
@@ -468,7 +480,6 @@ class SessionManager:
 
         try:
             return Session.model_validate_json(cached.content)
-        except (ValueError, TypeError):  # pragma: no cover
-            # Invalid session data
+        except (ValueError, TypeError):
             logger.debug("Session load DESERIALIZE ERROR; key=%s", key)
             return None

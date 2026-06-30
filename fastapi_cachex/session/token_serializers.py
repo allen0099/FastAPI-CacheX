@@ -80,7 +80,7 @@ class SimpleTokenSerializer:
         session_id, signature, timestamp = parts
         try:
             issued_at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
-        except (ValueError, OSError) as e:
+        except (ValueError, OSError, OverflowError) as e:
             msg = f"Invalid timestamp in token: {e}"
             raise ValueError(msg) from e
 

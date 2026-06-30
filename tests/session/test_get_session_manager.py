@@ -8,11 +8,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fastapi_cachex.backends.memory import MemoryBackend
+from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.session import SessionConfig
 from fastapi_cachex.session import SessionManager
 from fastapi_cachex.session import SessionMiddleware
 from fastapi_cachex.session import SessionUser
 from fastapi_cachex.session import get_session_manager
+from fastapi_cachex.session.proxy import SessionManagerProxy
 
 
 @pytest.fixture
@@ -160,3 +162,37 @@ def test_session_manager_type_annotation(
 
     assert response.status_code == 200
     assert response.json()["manager_type"] == "SessionManager"
+
+
+class TestSessionManagerProxy:
+    """Test SessionManagerProxy class-level proxy behavior."""
+
+    def setup_method(self) -> None:
+        """Clear proxy state before each test."""
+        SessionManagerProxy.set(None)
+
+    def teardown_method(self) -> None:
+        """Clear proxy state after each test."""
+        SessionManagerProxy.set(None)
+
+    def test_instantiation_raises_type_error(self) -> None:
+        """SessionManagerProxy cannot be instantiated directly."""
+        with pytest.raises(TypeError):
+            SessionManagerProxy()  # type: ignore[call-arg]
+
+    def test_get_raises_when_not_set(self) -> None:
+        """get() raises BackendNotFoundError when no manager has been set."""
+        with pytest.raises(BackendNotFoundError):
+            SessionManagerProxy.get()
+
+    def test_set_and_get_round_trip(self, manager: SessionManager) -> None:
+        """set() + get() round-trip returns the same instance."""
+        SessionManagerProxy.set(manager)
+        assert SessionManagerProxy.get() is manager
+
+    def test_set_none_clears_instance(self, manager: SessionManager) -> None:
+        """set(None) clears the stored instance."""
+        SessionManagerProxy.set(manager)
+        SessionManagerProxy.set(None)
+        with pytest.raises(BackendNotFoundError):
+            SessionManagerProxy.get()

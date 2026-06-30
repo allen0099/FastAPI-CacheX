@@ -6,9 +6,13 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse
 from starlette.responses import JSONResponse
 from starlette.responses import PlainTextResponse
+from starlette.responses import StreamingResponse
 
+from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.types import CacheEntry
 
 app = FastAPI()
 client = TestClient(app)
@@ -470,3 +474,172 @@ def test_cache_with_include_router():
     assert "text/html" in r3.headers["content-type"]
     assert r3.text == "<p>hello</p>"
     assert "ETag" in r3.headers
+
+
+def test_streaming_response_not_cached():
+    """StreamingResponse has no .body; @cache must serve it as-is without an ETag."""
+    call_count = {"n": 0}
+    stream_app = FastAPI()
+
+    @stream_app.get("/stream")
+    @cache(ttl=60)
+    async def streaming_endpoint():
+        call_count["n"] += 1
+
+        async def gen():
+            yield b"chunk"
+
+        return StreamingResponse(gen(), media_type="text/plain")
+
+    stream_client = TestClient(stream_app)
+
+    r1 = stream_client.get("/stream")
+    assert r1.status_code == 200
+    assert "ETag" not in r1.headers
+    assert call_count["n"] == 1
+
+    # Second request — handler must be called again (nothing cached)
+    r2 = stream_client.get("/stream")
+    assert r2.status_code == 200
+    assert "ETag" not in r2.headers
+    assert call_count["n"] == 2
+
+
+def test_streaming_response_with_no_cache_and_if_none_match():
+    """StreamingResponse through no_cache=True + If-None-Match must be served as-is."""
+    stream_app2 = FastAPI()
+
+    @stream_app2.get("/stream-nocache")
+    @cache(no_cache=True)
+    async def streaming_nocache():
+        async def gen():
+            yield b"data"
+
+        return StreamingResponse(gen(), media_type="text/plain")
+
+    stream_client2 = TestClient(stream_app2)
+
+    r = stream_client2.get(
+        "/stream-nocache",
+        headers={"If-None-Match": 'W/"some-old-etag"'},
+    )
+    assert r.status_code == 200
+    assert "ETag" not in r.headers
+
+
+def test_backend_fallback_when_none():
+    """When no backend is configured, @cache silently falls back to MemoryBackend."""
+    BackendProxy.set(None)
+
+    fallback_app = FastAPI()
+
+    @fallback_app.get("/fallback")
+    @cache(ttl=60)
+    async def fallback_endpoint():
+        return Response(content=b"ok", media_type="text/plain")
+
+    fallback_client = TestClient(fallback_app)
+    r = fallback_client.get("/fallback")
+    assert r.status_code == 200
+    # After the request, a MemoryBackend should now be registered
+    assert isinstance(BackendProxy.get(), MemoryBackend)
+
+
+def test_no_store_and_no_cache_combined():
+    """no_store=True takes priority; only 'no-store' appears in Cache-Control."""
+    combo_app = FastAPI()
+
+    @combo_app.get("/no-store-no-cache")
+    @cache(no_store=True, no_cache=True)
+    async def no_store_no_cache_endpoint():
+        return Response(content=b"data", media_type="text/plain")
+
+    combo_client = TestClient(combo_app)
+    r = combo_client.get("/no-store-no-cache")
+    assert r.status_code == 200
+    cc = r.headers["Cache-Control"]
+    assert "no-store" in cc
+    assert "no-cache" not in cc
+
+
+def test_ttl_zero_entry_expires_immediately():
+    """ttl=0 causes the entry to expire immediately; subsequent requests re-execute handler."""
+    call_count = {"n": 0}
+    ttl0_app = FastAPI()
+    ttl0_backend = MemoryBackend()
+    BackendProxy.set(ttl0_backend)
+
+    @ttl0_app.get("/ttl-zero")
+    @cache(ttl=0)
+    async def ttl_zero_endpoint():
+        call_count["n"] += 1
+        return Response(content=b"hello", media_type="text/plain")
+
+    ttl0_client = TestClient(ttl0_app)
+
+    r1 = ttl0_client.get("/ttl-zero")
+    assert r1.status_code == 200
+    assert "ETag" in r1.headers
+    assert call_count["n"] == 1
+
+    # Remove the (immediately-expired) entry directly from the backend dict
+    # so the next request hits a fresh cache miss and re-executes the handler.
+    ttl0_backend.cache.clear()
+
+    # Second request — no cached entry, handler called again
+    r2 = ttl0_client.get("/ttl-zero")
+    assert r2.status_code == 200
+    assert call_count["n"] == 2
+
+
+def test_stale_client_etag_with_changed_cache():
+    """If the client sends an ETag that doesn't match the cached one, return 200 with new ETag."""
+    import time
+
+    from fastapi_cachex.types import CacheItem
+
+    etag_app = FastAPI()
+    etag_backend = MemoryBackend()
+    BackendProxy.set(etag_backend)
+
+    @etag_app.get("/etag-mismatch")
+    @cache(ttl=3600)
+    async def etag_mismatch_endpoint():
+        return Response(content=b"original", media_type="text/plain")
+
+    etag_client = TestClient(etag_app)
+
+    # Warm the cache
+    r1 = etag_client.get("/etag-mismatch")
+    assert r1.status_code == 200
+    original_etag = r1.headers["ETag"]
+
+    # Directly inject a different cache entry into the backend (simulates content change).
+    # We bypass the async interface to avoid cross-event-loop issues in a sync test.
+    # TestClient uses "testserver" as the default Host header.
+    cache_key = "GET|||testserver|||/etag-mismatch|||"
+    new_entry = CacheEntry(fingerprint='W/"newetag"', content=b"changed", media_type="text/plain")
+    etag_backend.cache[cache_key] = CacheItem(value=new_entry, expiry=time.time() + 3600)
+
+    # Client sends old ETag, but cache now has a different ETag — must get 200 with new content
+    r2 = etag_client.get("/etag-mismatch", headers={"If-None-Match": original_etag})
+    assert r2.status_code == 200
+    assert r2.headers["ETag"] == 'W/"newetag"'
+
+
+def test_stale_ttl_without_stale_raises():
+    """stale_ttl without stale= must raise CacheXError at decoration time."""
+    with pytest.raises(CacheXError, match="stale must be set"):
+
+        @cache(stale_ttl=30)
+        async def bad_endpoint():
+            pass
+
+
+def test_public_and_private_raises():
+    """public=True and private=True are mutually exclusive; must raise CacheXError."""
+    with pytest.raises(CacheXError, match="mutually exclusive"):
+
+        @cache(public=True, private=True)
+        async def bad_endpoint():
+            pass
