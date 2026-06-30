@@ -327,7 +327,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Get all cache keys in the backend.
 
         Returns:
-            List of all cache keys currently stored in the backend
+            List of logical cache keys (without the backend key prefix)
         """
         pattern = f"{self.key_prefix}*"
         cursor = 0
@@ -346,8 +346,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             if cursor == 0:
                 break
 
-        logger.debug("Redis GET_ALL_KEYS; count=%s", len(all_keys))
-        return all_keys
+        logical_keys = [k.removeprefix(self.key_prefix) for k in all_keys]
+        logger.debug("Redis GET_ALL_KEYS; count=%s", len(logical_keys))
+        return logical_keys
 
     async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
@@ -365,15 +366,14 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         # Fetch all values in a single pipeline round-trip instead of N+1 GETs
         pipe = self.client.pipeline()
-        for prefixed_key in all_keys:
-            pipe.get(prefixed_key)
+        for key in all_keys:
+            pipe.get(self._make_key(key))
         raw_values: list[str | None] = await pipe.execute()
 
-        for prefixed_key, raw in zip(all_keys, raw_values, strict=False):
-            original_key = prefixed_key.removeprefix(self.key_prefix)
+        for key, raw in zip(all_keys, raw_values, strict=False):
             value = self._deserialize(raw)
             if value is not None:
-                cache_data[original_key] = (value, None)
+                cache_data[key] = (value, None)
 
         logger.debug("Redis GET_CACHE_DATA; keys=%s", len(cache_data))
         return cache_data

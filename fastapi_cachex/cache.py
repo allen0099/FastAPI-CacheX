@@ -156,9 +156,15 @@ def cache(
     """
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
-        # Validate stale parameters eagerly at decoration time
+        # Validate parameters eagerly at decoration time
         if stale is not None and stale_ttl is None:
             msg = "stale_ttl must be set if stale is used"
+            raise CacheXError(msg)
+        if stale_ttl is not None and stale is None:
+            msg = "stale must be set if stale_ttl is used"
+            raise CacheXError(msg)
+        if public and private:
+            msg = "public and private are mutually exclusive"
             raise CacheXError(msg)
 
         # Analyze the original function's signature
@@ -292,9 +298,7 @@ def cache(
                         )
 
                 # Compare with cached ETag - if match, return 304
-                elif (
-                    cached_data and client_etag == cached_data.fingerprint
-                ):  # pragma: no branch
+                elif cached_data and client_etag == cached_data.fingerprint:
                     # Cache hit with matching ETag: return 304 Not Modified
                     logger.debug(
                         "304 Not Modified (cached ETag match); key=%s", cache_key

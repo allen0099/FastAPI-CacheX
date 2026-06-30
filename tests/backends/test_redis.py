@@ -578,13 +578,11 @@ async def test_redis_get_all_keys_with_entries(
 
     keys = await async_redis_backend.get_all_keys()
 
-    # Keys should include the prefix
+    # get_all_keys returns logical keys (without the backend key prefix)
     assert len(keys) == 3
-    # Check that prefixed keys exist
-    prefixed_keys = list(keys)
-    assert any(key1 in k for k in prefixed_keys)
-    assert any(key2 in k for k in prefixed_keys)
-    assert any(key3 in k for k in prefixed_keys)
+    assert key1 in keys
+    assert key2 in keys
+    assert key3 in keys
 
     # Clean up
     await async_redis_backend.clear()

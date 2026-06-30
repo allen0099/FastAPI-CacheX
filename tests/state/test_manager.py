@@ -754,3 +754,16 @@ async def test_state_manager_falls_back_to_backend_proxy(
 
     state = await manager.create_state()
     assert await manager.validate_state(state) is True
+
+
+def test_state_manager_raises_when_no_backend_configured() -> None:
+    """StateManager() raises BackendNotFoundError if no backend is configured in the proxy."""
+    from fastapi_cachex.exceptions import BackendNotFoundError
+
+    BackendProxy.set(None)
+    try:
+        with pytest.raises(BackendNotFoundError):
+            StateManager()
+    finally:
+        # Restore a backend so the autouse fixture teardown works correctly
+        BackendProxy.set(MemoryBackend())

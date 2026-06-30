@@ -114,3 +114,64 @@ def test_jwt_serializer_invalid_payload() -> None:
 
     with pytest.raises(ValueError, match="Invalid JWT payload"):
         serializer.from_string("token")
+
+
+def test_simple_token_overflow_timestamp() -> None:
+    """A token with an astronomically large timestamp must raise ValueError (not OverflowError)."""
+    serializer = SimpleTokenSerializer()
+    # Construct a raw token string with an overflow-inducing timestamp
+    huge_timestamp = "9" * 20
+    token_str = f"some-session-id.some-signature.{huge_timestamp}"
+
+    with pytest.raises(ValueError, match="Invalid timestamp in token"):
+        serializer.from_string(token_str)
+
+
+def test_jwt_serializer_without_issuer_and_audience() -> None:
+    """JWTTokenSerializer must work without jwt_issuer/jwt_audience configured."""
+    stub = StubJWTModule()
+    config = SessionConfig(
+        secret_key=SecretStr("e" * 32),
+        token_format="jwt",
+        session_ttl=60,
+        jwt_issuer=None,
+        jwt_audience=None,
+    )
+    serializer = JWTTokenSerializer(config, jwt_module=stub)
+
+    token = SessionToken(
+        session_id="no-iss-aud",
+        signature="",
+        issued_at=datetime.now(timezone.utc),
+    )
+    token_str = serializer.to_string(token)
+
+    # Payload must not include iss/aud when they are None
+    payload = stub.last_encode_payload or {}
+    assert "iss" not in payload
+    assert "aud" not in payload
+
+    parsed = serializer.from_string(token_str)
+    assert parsed.session_id == "no-iss-aud"
+
+    # decode kwargs must not include issuer/audience
+    decode_kwargs = stub.last_decode_kwargs or {}
+    assert "issuer" not in decode_kwargs
+    assert "audience" not in decode_kwargs
+
+
+def test_jwt_serializer_non_string_sid() -> None:
+    """If JWT decode returns a non-string sid, it must be coerced to str."""
+
+    class IntSidJWTModule:
+        def encode(self, payload: dict[str, object], key: str, algorithm: str) -> str:
+            return "token"
+
+        def decode(self, token_str: str, **kwargs: object) -> dict[str, object]:
+            return {"sid": 42, "iat": 0, "exp": 9999999999}
+
+    config = SessionConfig(secret_key=SecretStr("f" * 32), token_format="jwt")
+    serializer = JWTTokenSerializer(config, jwt_module=IntSidJWTModule())
+
+    parsed = serializer.from_string("token")
+    assert parsed.session_id == "42"

@@ -188,7 +188,7 @@ class StateManager:
         try:
             json_content = self._extract_json_content(cached)
             state_data = self._parse_state_data(json_content, state)
-        except (StateDataError, UnicodeDecodeError):
+        except StateDataError:
             logger.exception(
                 "Failed to parse or validate state data; state=%s",
                 state,
@@ -220,7 +220,7 @@ class StateManager:
         try:
             json_content = self._extract_json_content(cached)
             state_data = self._parse_state_data(json_content, state)
-        except (StateDataError, UnicodeDecodeError):
+        except StateDataError:
             logger.exception("Failed to parse or validate state data; state=%s", state)
             return None
 

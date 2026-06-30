@@ -1,5 +1,7 @@
 """Tests for cache monitoring routes."""
 
+import time
+
 import pytest
 from fastapi import FastAPI
 from fastapi import Response
@@ -9,6 +11,8 @@ from fastapi_cachex import add_routes
 from fastapi_cachex import cache
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import CacheItem
 
 
 @pytest.fixture
@@ -485,3 +489,43 @@ class TestRoutesIntegration:
         add_routes(app, dependencies=None)
         response = client.get("/cached-hits")
         assert response.status_code == 200
+
+
+class TestExpiredEntryMonitoring:
+    """Test monitoring routes show expired entries correctly."""
+
+    def test_cached_hits_shows_expired_entry(self, app, client, setup_cache):
+        """/cached-hits marks is_expired=True for entries whose TTL has passed."""
+        add_routes(app)
+
+        # Directly inject an already-expired entry into the backend's internal dict
+        # TestClient sends Host: testserver by default
+        cache_key = "GET|||testserver|||/expired-route|||"
+        expired_entry = CacheEntry(fingerprint='W/"expiredtag"', content=b"old data", media_type="text/plain")
+        setup_cache.cache[cache_key] = CacheItem(value=expired_entry, expiry=time.time() - 1.0)
+
+        response = client.get("/cached-hits")
+        assert response.status_code == 200
+        data = response.json()
+
+        expired_records = [r for r in data["cached_hits"] if r["path"] == "/expired-route"]
+        assert len(expired_records) == 1
+        assert expired_records[0]["is_expired"] is True
+        assert expired_records[0]["ttl_remaining"] <= 0
+
+    def test_cached_records_shows_expired_entry(self, app, client, setup_cache):
+        """/cached-records marks is_expired=True for entries whose TTL has passed."""
+        add_routes(app)
+
+        cache_key = "GET|||testserver|||/expired-data|||"
+        expired_entry = CacheEntry(fingerprint='W/"expireddata"', content=b"stale", media_type="text/plain")
+        setup_cache.cache[cache_key] = CacheItem(value=expired_entry, expiry=time.time() - 1.0)
+
+        response = client.get("/cached-records")
+        assert response.status_code == 200
+        data = response.json()
+
+        expired_records = [r for r in data["cached_records"] if r["path"] == "/expired-data"]
+        assert len(expired_records) == 1
+        assert expired_records[0]["is_expired"] is True
+        assert expired_records[0]["ttl_remaining"] <= 0

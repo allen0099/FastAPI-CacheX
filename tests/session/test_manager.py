@@ -543,3 +543,77 @@ async def test_absolute_timeout_not_triggered_before_expiry(
     # Should be valid immediately (well within 60 s absolute timeout)
     retrieved, _ = await manager.get_session(token)
     assert retrieved is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_user_sessions_no_sessions(backend: MemoryBackend) -> None:
+    """delete_user_sessions returns 0 when the user has no sessions."""
+    manager = SessionManager(backend, SessionConfig(secret_key="a" * 32))
+    count = await manager.delete_user_sessions("nonexistent-user")
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_clear_expired_sessions_none_expired(backend: MemoryBackend) -> None:
+    """clear_expired_sessions returns 0 when no sessions are expired."""
+    config = SessionConfig(secret_key="a" * 32, session_ttl=3600)
+    manager = SessionManager(backend, config)
+
+    user = SessionUser(user_id="active-user", username="active")
+    await manager.create_session(user=user)
+
+    count = await manager.clear_expired_sessions()
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_load_session_by_key_invalid_json(backend: MemoryBackend) -> None:
+    """_load_session_by_key returns None for corrupt (non-JSON) session data."""
+    config = SessionConfig(secret_key="a" * 32)
+    manager = SessionManager(backend, config)
+
+    bad_key = "session:corrupt-id"
+    await backend.set(bad_key, CacheEntry(fingerprint="x", content=b"{not valid json}"))
+
+    result = await manager._load_session_by_key(bad_key)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_ip_binding_with_none_ip_emits_warning(
+    backend: MemoryBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ip_binding=True with ip_address=None must log a warning and still create session."""
+    import logging
+
+    config = SessionConfig(secret_key="a" * 32, ip_binding=True)
+    manager = SessionManager(backend, config)
+
+    user = SessionUser(user_id="ip-test", username="testuser")
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.session.manager"):
+        session, token = await manager.create_session(user=user, ip_address=None)
+
+    assert session is not None
+    assert token
+    assert session.ip_address is None
+    assert any("ip_binding" in msg for msg in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_user_agent_binding_with_none_ua_emits_warning(
+    backend: MemoryBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    """user_agent_binding=True with user_agent=None must log a warning and still create session."""
+    import logging
+
+    config = SessionConfig(secret_key="a" * 32, user_agent_binding=True)
+    manager = SessionManager(backend, config)
+
+    user = SessionUser(user_id="ua-test", username="testuser")
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.session.manager"):
+        session, token = await manager.create_session(user=user, user_agent=None)
+
+    assert session is not None
+    assert token
+    assert session.user_agent is None
+    assert any("user_agent_binding" in msg for msg in caplog.messages)
