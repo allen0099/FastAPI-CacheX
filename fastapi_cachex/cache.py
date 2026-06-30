@@ -12,10 +12,10 @@ from inspect import Signature
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
+from typing import cast
 
 from fastapi import Request
 from fastapi import Response
-from fastapi.datastructures import DefaultPlaceholder
 from starlette.status import HTTP_304_NOT_MODIFIED
 
 from .backends import MemoryBackend
@@ -108,11 +108,12 @@ async def get_response(
         msg = "Route not found in request scope"
         raise CacheXError(msg)
 
-    if isinstance(route.response_class, DefaultPlaceholder):
-        response_class: type[Response] = route.response_class.value
-
-    else:
-        response_class = route.response_class
+    # FastAPI <= 0.136.x stores a DefaultPlaceholder; >= 0.137.0 stores the class directly.
+    # getattr with a fallback handles both without importing the internal class.
+    response_class: type[Response] = cast(
+        "type[Response]",
+        getattr(route.response_class, "value", route.response_class),
+    )
 
     # Convert non-Response result to Response using appropriate response_class
     return response_class(content=result)

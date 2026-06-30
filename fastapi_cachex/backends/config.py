@@ -27,3 +27,12 @@ class RedisConfig(BaseModel):
         default=DEFAULT_REDIS_PREFIX,
         description="Prefix applied to all cache keys",
     )
+    protocol: int = Field(
+        default=2,
+        description=(
+            "RESP protocol version (2 or 3). "
+            "Keep at 2 (default) unless you need RESP3 features and your hiredis "
+            "version supports it (hiredis >= 3.0 is required for RESP3). "
+            "Redis 8.0 supports RESP3 but older hiredis builds do not."
+        ),
+    )

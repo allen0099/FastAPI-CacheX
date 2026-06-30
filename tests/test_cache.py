@@ -425,3 +425,49 @@ def test_no_cache_with_changing_data():
     assert response3.status_code == 200
     assert response3.json() == {"message": "This endpoint uses no-cache", "counter": 3}
     assert response3.headers["ETag"] != etag2  # ETag should change again
+
+
+def test_cache_with_include_router():
+    """FastAPI 0.137.0 changes router.routes to contain intermediate objects when
+    include_router() is used (routes are preserved, not cloned).
+
+    cache() must still work correctly in this scenario because it accesses the
+    matched route via scope["route"] — not by iterating router.routes.
+    """
+    from fastapi import APIRouter
+    from starlette.responses import HTMLResponse
+
+    sub_router = APIRouter(prefix="/sub")
+
+    @sub_router.get("/json")
+    @cache(ttl=60)
+    async def sub_json():
+        return {"from": "sub_router"}
+
+    @sub_router.get("/html", response_class=HTMLResponse)
+    @cache(ttl=60)
+    async def sub_html():
+        return "<p>hello</p>"
+
+    test_app = FastAPI()
+    test_app.include_router(sub_router)
+
+    test_client = TestClient(test_app)
+
+    # JSON route — default response_class (JSONResponse via DefaultPlaceholder or direct)
+    r1 = test_client.get("/sub/json")
+    assert r1.status_code == 200
+    assert r1.json() == {"from": "sub_router"}
+    assert "ETag" in r1.headers
+    assert r1.headers["Cache-Control"] == "max-age=60"
+
+    # Subsequent request should serve from cache (304 with matching ETag)
+    r2 = test_client.get("/sub/json", headers={"If-None-Match": r1.headers["ETag"]})
+    assert r2.status_code == 304
+
+    # Explicit response_class=HTMLResponse must be respected
+    r3 = test_client.get("/sub/html")
+    assert r3.status_code == 200
+    assert "text/html" in r3.headers["content-type"]
+    assert r3.text == "<p>hello</p>"
+    assert "ETag" in r3.headers

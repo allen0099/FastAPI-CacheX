@@ -442,3 +442,29 @@ async def test_memory_backend_get_cache_data_expired_entries(
     assert retrieved_value == value
     assert expiry is not None
     assert expiry <= time.time()
+
+
+def test_ensure_cleanup_started_without_event_loop() -> None:
+    """_ensure_cleanup_started must not raise and must not leak unawaited coroutines
+    when called outside any running event loop (e.g. at import time or in __init__).
+
+    Before the fix, calling ``asyncio.create_task(coro())`` when no loop was running
+    would leave the coroutine unawaited, emitting a RuntimeWarning.
+    """
+    import warnings
+
+    backend = MemoryBackend()
+    # Confirm we are outside any event loop
+    try:
+        asyncio.get_running_loop()
+        pytest.skip("test must run outside a running event loop")
+    except RuntimeError:
+        pass
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        # This must not raise RuntimeWarning about unawaited coroutine
+        backend._ensure_cleanup_started()
+
+    # No cleanup task should have been created
+    assert backend._cleanup_task is None
