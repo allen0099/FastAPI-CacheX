@@ -1,7 +1,6 @@
 """In-memory cache backend implementation."""
 
 import asyncio
-import contextlib
 import fnmatch
 import logging
 import time
@@ -44,13 +43,16 @@ class MemoryBackend(BaseCacheBackend):
     def _ensure_cleanup_started(self) -> None:
         """Ensure cleanup task is started in proper async context."""
         if self._cleanup_task is None or self._cleanup_task.done():
-            with contextlib.suppress(RuntimeError):
-                # No event loop yet; will be created on first async operation
-                self._cleanup_task = asyncio.create_task(self._cleanup_task_impl())
-                logger.debug(
-                    "Started memory backend cleanup task (interval=%s)",
-                    self.cleanup_interval,
-                )
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running event loop yet; defer until first real async call.
+                return
+            self._cleanup_task = loop.create_task(self._cleanup_task_impl())
+            logger.debug(
+                "Started memory backend cleanup task (interval=%s)",
+                self.cleanup_interval,
+            )
 
     def start_cleanup(self) -> None:
         """Start the cleanup task if it's not already running.

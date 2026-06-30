@@ -50,6 +50,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         socket_timeout: float = 1.0,
         socket_connect_timeout: float = 1.0,
         key_prefix: str = DEFAULT_REDIS_PREFIX,
+        protocol: int = 2,
         **kwargs: Any,
     ) -> None:
         """Initialize async Redis cache backend.
@@ -64,6 +65,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             socket_timeout: Timeout for socket operations (in seconds)
             socket_connect_timeout: Timeout for socket connection (in seconds)
             key_prefix: Prefix for all cache keys (default: 'fastapi_cachex:')
+            protocol: RESP protocol version (2 or 3). Defaults to 2 (RESP2) for
+                broadest compatibility. Use 3 only when hiredis >= 3.0 is installed
+                and Redis 8.0+ RESP3 features are required.
             **kwargs: Additional arguments to pass to Redis client
         """
         try:
@@ -78,6 +82,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             )
             raise CacheXError(msg)
 
+        # `protocol` is not in the types-redis stubs (added in redis-py 5.x).
+        # Pass it via **kwargs so mypy doesn't complain about an unknown keyword.
+        kwargs.setdefault("protocol", protocol)
         self.client = AsyncRedis(
             host=host,
             port=port,
@@ -111,6 +118,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             socket_timeout=config.socket_timeout,
             socket_connect_timeout=config.socket_connect_timeout,
             key_prefix=config.key_prefix,
+            protocol=config.protocol,
         )
 
     def _make_key(self, key: str) -> str:
@@ -167,10 +175,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Store a response in the cache."""
         serialized = self._serialize(value)
         prefixed_key = self._make_key(key)
-        if ttl is not None:
-            await self.client.setex(prefixed_key, ttl, serialized)
-        else:
-            await self.client.set(prefixed_key, serialized)
+        await self.client.set(prefixed_key, serialized, ex=ttl)
         logger.debug("Redis SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> None:

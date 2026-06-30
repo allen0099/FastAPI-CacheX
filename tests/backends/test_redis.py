@@ -124,6 +124,45 @@ def test_redis_config_defaults() -> None:
     assert cfg.socket_timeout == 1.0
     assert cfg.socket_connect_timeout == 1.0
     assert cfg.key_prefix == DEFAULT_REDIS_PREFIX
+    assert cfg.protocol == 2
+
+
+@pytest.mark.skipif(
+    not has_redis_package(),
+    reason="redis package is not installed",
+)
+def test_redis_protocol_default_is_resp2() -> None:
+    """AsyncRedisCacheBackend must default to protocol=2 (RESP2) for Redis 8.0+ compat.
+
+    Redis 8.0 can negotiate RESP3, but hiredis < 3.0 does not support RESP3.
+    Defaulting to RESP2 avoids protocol-negotiation failures on Redis 8.0.
+    """
+    backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379)
+    pool = backend.client.connection_pool
+    kwargs = getattr(pool, "connection_kwargs", {})
+    if kwargs:
+        assert kwargs.get("protocol") == 2
+    else:  # pragma: no cover
+        assert hasattr(backend.client, "connection_pool")
+
+
+@pytest.mark.skipif(
+    not has_redis_package(),
+    reason="redis package is not installed",
+)
+def test_redis_load_from_config_forwards_protocol() -> None:
+    """load_from_config must forward the protocol field from RedisConfig."""
+    from fastapi_cachex.backends.config import RedisConfig
+
+    cfg = RedisConfig(host="127.0.0.1", protocol=2)
+    backend = AsyncRedisCacheBackend.load_from_config(cfg)
+
+    pool = backend.client.connection_pool
+    kwargs = getattr(pool, "connection_kwargs", {})
+    if kwargs:
+        assert kwargs.get("protocol") == 2
+    else:  # pragma: no cover
+        assert hasattr(backend.client, "connection_pool")
 
 
 @pytest_asyncio.fixture
