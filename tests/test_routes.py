@@ -99,7 +99,7 @@ class TestCachedHitsRoute:
         # Check summary
         assert data["summary"]["total_cached_entries"] == 2
         assert data["summary"]["active_entries"] == 2
-        assert set(data["summary"]["frequently_cached_routes"]) == {
+        assert set(data["summary"]["cached_paths"]) == {
             "/api/users",
             "/api/products",
         }

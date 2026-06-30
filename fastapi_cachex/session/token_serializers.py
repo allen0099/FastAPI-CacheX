@@ -133,7 +133,11 @@ class JWTTokenSerializer:
         Uses claims `sid`, `iat`, `exp`, and optional `iss`/`aud`.
         """
         iat = int(token.issued_at.timestamp())
-        exp = iat + int(self._session_ttl)
+        # Use session's expires_at when available (supports sliding expiration)
+        if token.expires_at is not None:
+            exp = int(token.expires_at.timestamp())
+        else:
+            exp = iat + int(self._session_ttl)
 
         payload: dict[str, object] = {
             "sid": token.session_id,

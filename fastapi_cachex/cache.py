@@ -151,13 +151,10 @@ def cache(
     """
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
-        try:
-            cache_backend = BackendProxy.get()
-        except BackendNotFoundError:
-            # Fallback to memory backend if no backend is set
-            cache_backend = MemoryBackend()
-            BackendProxy.set(cache_backend)
-            logger.debug("No backend configured; using MemoryBackend fallback")
+        # Validate stale parameters eagerly at decoration time
+        if stale is not None and stale_ttl is None:
+            msg = "stale_ttl must be set if stale is used"
+            raise CacheXError(msg)
 
         # Analyze the original function's signature
         sig: Signature = inspect.signature(func)
@@ -191,7 +188,6 @@ def cache(
                 if must_revalidate:
                     cache_control.add(DirectiveType.MUST_REVALIDATE)
             else:
-                # Handle normal cache control cases
                 # 1. Access scope (public/private)
                 if public:
                     cache_control.add(DirectiveType.PUBLIC)
@@ -206,11 +202,7 @@ def cache(
                 if must_revalidate:
                     cache_control.add(DirectiveType.MUST_REVALIDATE)
 
-                # 4. Stale response handling
-                if stale is not None and stale_ttl is None:
-                    msg = "stale_ttl must be set if stale is used"
-                    raise CacheXError(msg)
-
+                # 4. Stale response handling (stale_ttl is validated at decoration time)
                 if stale == "revalidate":
                     cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
                 elif stale == "error":
@@ -224,6 +216,14 @@ def cache(
 
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:
+            # Resolve backend on every request to support lifespan-configured backends
+            try:
+                cache_backend = BackendProxy.get()
+            except BackendNotFoundError:
+                cache_backend = MemoryBackend()
+                BackendProxy.set(cache_backend)
+                logger.debug("No backend configured; using MemoryBackend fallback")
+
             if found_request:
                 req: Request | None = kwargs.get(request_name)
             else:
@@ -258,15 +258,21 @@ def cache(
             # Check cache and handle ETag validation
             cached_data = await cache_backend.get(cache_key)
 
-            current_response = None
-            current_etag = None
+            current_response: Response | None = None
+            current_etag: str | None = None
+            current_body: bytes | None = None
 
             if client_etag:
                 if no_cache:
                     # Get fresh response first if using no-cache
                     current_response = await get_response(func, req, *args, **kwargs)
+                    current_body = getattr(current_response, "body", None)
+                    if current_body is None:
+                        # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
+                        current_response.headers["Cache-Control"] = cache_control
+                        return current_response
                     current_etag = (
-                        f'W/"{hashlib.md5(current_response.body).hexdigest()}"'  # noqa: S324
+                        f'W/"{hashlib.md5(current_body).hexdigest()}"'  # noqa: S324
                     )
 
                     if client_etag == current_etag:
@@ -315,7 +321,12 @@ def cache(
             if not current_response or not current_etag:
                 # Retrieve the current response if not already done
                 current_response = await get_response(func, req, *args, **kwargs)
-                current_etag = f'W/"{hashlib.md5(current_response.body).hexdigest()}"'  # noqa: S324
+                current_body = getattr(current_response, "body", None)
+                if current_body is None:
+                    # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
+                    current_response.headers["Cache-Control"] = cache_control
+                    return current_response
+                current_etag = f'W/"{hashlib.md5(current_body).hexdigest()}"'  # noqa: S324
                 logger.debug("Cache MISS; computed fresh ETag for key=%s", cache_key)
 
             # Set ETag header
@@ -323,12 +334,15 @@ def cache(
 
             # Update cache if needed
             if not cached_data or cached_data.etag != current_etag:
+                if current_body is None:  # pragma: no cover - guaranteed by earlier guards
+                    msg = "Unexpected state: response body unavailable after ETag computation"
+                    raise CacheXError(msg)
                 # Store in cache if data changed
                 await cache_backend.set(
                     cache_key,
                     ETagContent(
                         current_etag,
-                        current_response.body,
+                        current_body,
                         current_response.media_type,
                     ),
                     ttl=ttl,

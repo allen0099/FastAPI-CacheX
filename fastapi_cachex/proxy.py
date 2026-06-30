@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from logging import getLogger
 from typing import Generic
+from typing import NoReturn
 from typing import TypeVar
 
 from .backends import BaseCacheBackend
@@ -18,7 +19,7 @@ logger = getLogger(__name__)
 class ProxyMeta(type):
     """Metaclass for BackendProxy to prevent instantiation."""
 
-    def __call__(cls) -> None:
+    def __call__(cls) -> NoReturn:
         """Prevent instantiation of BackendProxy."""
         msg = "Proxy class cannot be instantiated. Use static methods instead."
         raise TypeError(msg)

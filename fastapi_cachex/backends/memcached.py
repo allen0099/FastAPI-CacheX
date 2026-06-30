@@ -1,5 +1,6 @@
 """Memcached cache backend implementation."""
 
+import asyncio
 import logging
 import warnings
 
@@ -72,20 +73,19 @@ class MemcachedBackend(BaseCacheBackend):
             Optional[ETagContent]: Cached value with ETag if exists, None otherwise
         """
         prefixed_key = self._make_key(key)
-        value = self.client.get(prefixed_key)
+        loop = asyncio.get_running_loop()
+        value = await loop.run_in_executor(None, self.client.get, prefixed_key)
         if value is None:
             logger.debug("Memcached MISS; key=%s", key)
             return None
 
         # Memcached stores data as bytes; deserialize from JSON
         try:
-            data = json.loads(value.decode("utf-8"))
+            data = json.loads(value)
             logger.debug("Memcached HIT; key=%s", key)
             return ETagContent(
                 etag=data["etag"],
-                content=data["content"].encode()
-                if isinstance(data["content"], str)
-                else data["content"],
+                content=data["content"].encode("latin-1"),
                 media_type=data.get("media_type"),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
@@ -102,11 +102,8 @@ class MemcachedBackend(BaseCacheBackend):
         """
         prefixed_key = self._make_key(key)
 
-        # Prepare content for JSON serialization
-        if isinstance(value.content, bytes):
-            content = value.content.decode()
-        else:
-            content = value.content
+        # Use latin-1 to round-trip arbitrary bytes through JSON storage
+        content = value.content.decode("latin-1")
 
         serialized_data: str | bytes = json.dumps(
             {
@@ -123,10 +120,11 @@ class MemcachedBackend(BaseCacheBackend):
             else serialized_data.encode("utf-8")
         )
 
-        self.client.set(
-            prefixed_key,
-            serialized_bytes,
-            expire=ttl if ttl is not None else 0,
+        expire = ttl if ttl is not None else 0
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: self.client.set(prefixed_key, serialized_bytes, expire=expire),
         )
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
 
@@ -136,7 +134,9 @@ class MemcachedBackend(BaseCacheBackend):
         Args:
             key: Cache key to delete
         """
-        self.client.delete(self._make_key(key))
+        prefixed = self._make_key(key)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.client.delete, prefixed)
         logger.debug("Memcached DELETE; key=%s", key)
 
     async def clear(self) -> None:
@@ -152,7 +152,8 @@ class MemcachedBackend(BaseCacheBackend):
             RuntimeWarning,
             stacklevel=2,
         )
-        self.client.flush_all()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.client.flush_all)
         logger.debug("Memcached CLEAR; flush_all issued")
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
@@ -182,8 +183,12 @@ class MemcachedBackend(BaseCacheBackend):
 
         # Try to delete the prefixed key (exact match only)
         prefixed_key = self._make_key(path)
+        loop = asyncio.get_running_loop()
         try:
-            result = self.client.delete(prefixed_key, noreply=False)
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.client.delete(prefixed_key, noreply=False),
+            )
         except Exception:  # noqa: BLE001
             return 0
         else:

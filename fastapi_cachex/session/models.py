@@ -142,3 +142,4 @@ class SessionToken(BaseModel):
     session_id: str
     signature: str
     issued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime | None = None

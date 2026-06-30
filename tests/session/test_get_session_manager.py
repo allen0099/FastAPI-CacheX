@@ -133,8 +133,8 @@ async def test_get_session_manager_full_workflow(
     assert login_response.status_code == 200
     token = login_response.json()["token"]
 
-    # Extract session_id from token (format: session_id:signature)
-    session_id = token.split(":")[0]
+    # Extract session_id from token (format: session_id.signature.timestamp)
+    session_id = token.split(".")[0]
 
     # Logout
     logout_response = client.post(f"/logout?session_id={session_id}")

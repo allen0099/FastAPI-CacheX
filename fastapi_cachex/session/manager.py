@@ -138,8 +138,8 @@ class SessionManager:
         # Store in backend
         await self._save_session(session)
 
-        # Generate signed token
-        token = self._create_token(session.session_id)
+        # Generate signed token (pass expires_at so JWT exp reflects sliding expiration)
+        token = self._create_token(session.session_id, expires_at=session.expires_at)
         logger.debug(
             "Session created; id=%s ttl=%s ip=%s ua=%s",
             session.session_id,
@@ -330,8 +330,8 @@ class SessionManager:
         # Save with new ID
         await self._save_session(session)
 
-        # Create new token
-        token = self._create_token(session.session_id)
+        # Create new token (pass expires_at so JWT exp reflects current expiry)
+        token = self._create_token(session.session_id, expires_at=session.expires_at)
         logger.debug(
             "Session ID regenerated; old_id=%s new_id=%s", old_id, session.session_id
         )
@@ -388,11 +388,16 @@ class SessionManager:
         logger.debug("Expired sessions cleared; count=%s", count)
         return count
 
-    def _create_token(self, session_id: str) -> SessionToken:
+    def _create_token(
+        self,
+        session_id: str,
+        expires_at: datetime | None = None,
+    ) -> SessionToken:
         """Create a signed session token.
 
         Args:
             session_id: Session ID to sign
+            expires_at: Session expiry time, forwarded to JWT serializers
 
         Returns:
             SessionToken object
@@ -405,7 +410,9 @@ class SessionManager:
             if self.config.token_format == "simple"
             else ""
         )
-        return SessionToken(session_id=session_id, signature=signature)
+        return SessionToken(
+            session_id=session_id, signature=signature, expires_at=expires_at
+        )
 
     async def _save_session(self, session: Session) -> None:
         """Save session to backend.

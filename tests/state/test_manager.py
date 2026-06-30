@@ -408,7 +408,7 @@ async def test_consume_state_with_invalid_json(state_manager: StateManager) -> N
     # Directly set invalid JSON in backend
     cache_key = f"{state_manager.key_prefix}bad_state"
     etag = hashlib.sha256(b"not valid json").hexdigest()
-    etag_content = ETagContent(etag=etag, content="not valid json")
+    etag_content = ETagContent(etag=etag, content=b"not valid json")
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Try to consume - should raise StateDataError
@@ -422,7 +422,7 @@ async def test_get_metadata_with_invalid_json(state_manager: StateManager) -> No
     # Directly set invalid JSON in backend
     cache_key = f"{state_manager.key_prefix}bad_state"
     etag = hashlib.sha256(b"not valid json").hexdigest()
-    etag_content = ETagContent(etag=etag, content="not valid json")
+    etag_content = ETagContent(etag=etag, content=b"not valid json")
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Try to retrieve metadata - should return None
@@ -436,7 +436,7 @@ async def test_validate_state_with_invalid_json(state_manager: StateManager) -> 
     # Directly set invalid JSON in backend
     cache_key = f"{state_manager.key_prefix}bad_state"
     etag = hashlib.sha256(b"not valid json").hexdigest()
-    etag_content = ETagContent(etag=etag, content="not valid json")
+    etag_content = ETagContent(etag=etag, content=b"not valid json")
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Try to validate - should return False
@@ -490,7 +490,7 @@ async def test_get_metadata_with_missing_expiry(state_manager: StateManager) -> 
 
     json_content = json.dumps(state_data_obj.model_dump(mode="json"))
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content)
+    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Should still work and return metadata
@@ -512,7 +512,7 @@ async def test_validate_state_with_missing_expiry(state_manager: StateManager) -
 
     json_content = json.dumps(state_data_obj.model_dump(mode="json"))
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content)
+    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Should validate as valid
@@ -537,7 +537,7 @@ async def test_validate_state_with_invalid_expiry_format(
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content)
+    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Should return False due to invalid expiry
@@ -562,7 +562,7 @@ async def test_get_metadata_with_invalid_expiry_format(
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content)
+    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Should return None due to invalid expiry
@@ -584,7 +584,7 @@ async def test_consume_state_with_missing_expiry(state_manager: StateManager) ->
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content)
+    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     with pytest.raises(StateDataError):
@@ -599,7 +599,7 @@ async def test_consume_state_with_non_string_content(
     # Directly set non-string content in backend
     cache_key = f"{state_manager.key_prefix}bad_state"
     # ETagContent with non-string content (testing edge case)
-    etag_content = ETagContent(etag="test", content=12345)
+    etag_content = ETagContent(etag="test", content=b"\xff\xfe non-utf8")
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Try to consume - should raise StateDataError
@@ -613,7 +613,7 @@ async def test_validate_state_with_non_string_content(
 ) -> None:
     """Test validating state when backend content is not a string."""
     cache_key = f"{state_manager.key_prefix}bad_state"
-    etag_content = ETagContent(etag="test", content=12345)
+    etag_content = ETagContent(etag="test", content=b"\xff\xfe non-utf8")
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Try to validate - should return False
@@ -627,7 +627,7 @@ async def test_get_metadata_with_non_string_content(
 ) -> None:
     """Test retrieving metadata when backend content is not a string."""
     cache_key = f"{state_manager.key_prefix}bad_state"
-    etag_content = ETagContent(etag="test", content=12345)
+    etag_content = ETagContent(etag="test", content=b"\xff\xfe non-utf8")
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Try to retrieve metadata - should return None
@@ -650,7 +650,7 @@ async def test_get_metadata_with_non_dict_metadata(state_manager: StateManager) 
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content)
+    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Should return None since metadata validation fails
@@ -673,7 +673,7 @@ async def test_consume_state_with_bad_expiry_date(state_manager: StateManager) -
     }
     json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
-    etag_content = ETagContent(etag=etag, content=json_content)
+    etag_content = ETagContent(etag=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, etag_content, ttl=600)
 
     # Should raise StateDataError due to bad expiry format

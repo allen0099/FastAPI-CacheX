@@ -521,27 +521,25 @@ async def test_redis_clear_path_with_colon_in_path(
 async def test_redis_deserialize_non_string_content(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
-    """Ensure _deserialize handles non-string JSON content without encoding."""
+    """Ensure _deserialize returns None when JSON content is non-string (e.g. array)."""
     await async_redis_backend.client.set(
         f"{async_redis_backend.key_prefix}mixed-content",
         '{"etag":"e","content":[1,2,3]}',
     )
+    # Non-string JSON content cannot be decoded to bytes; expect None
     res = await async_redis_backend.get("mixed-content")
-    assert res is not None
-    assert res.etag == "e"
-    assert res.content == [1, 2, 3]
+    assert res is None
 
 
 @requires_redis
 @pytest.mark.asyncio
-async def test_redis_set_get_with_str_content(
+async def test_redis_set_get_with_bytes_content(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
-    """Cover _serialize branch where content is already str."""
-    value = ETagContent(etag="e", content="hello")
-    await async_redis_backend.set("str-key", value)
-    out = await async_redis_backend.get("str-key")
-    # Backend converts string content to bytes when deserializing
+    """Cover bytes content serialization round-trip."""
+    value = ETagContent(etag="e", content=b"hello")
+    await async_redis_backend.set("bytes-key", value)
+    out = await async_redis_backend.get("bytes-key")
     assert out is not None
     assert out.etag == value.etag
     assert out.content == b"hello"
