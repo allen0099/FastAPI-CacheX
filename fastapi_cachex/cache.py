@@ -25,8 +25,8 @@ from .exceptions import CacheXError
 from .exceptions import RequestNotFoundError
 from .proxy import BackendProxy
 from .types import CACHE_KEY_SEPARATOR
+from .types import CacheEntry
 from .types import CacheKeyBuilder
-from .types import ETagContent
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
@@ -293,7 +293,7 @@ def cache(
 
                 # Compare with cached ETag - if match, return 304
                 elif (
-                    cached_data and client_etag == cached_data.etag
+                    cached_data and client_etag == cached_data.fingerprint
                 ):  # pragma: no branch
                     # Cache hit with matching ETag: return 304 Not Modified
                     logger.debug(
@@ -302,7 +302,7 @@ def cache(
                     return Response(
                         status_code=HTTP_304_NOT_MODIFIED,
                         headers={
-                            "ETag": cached_data.etag,
+                            "ETag": cached_data.fingerprint,
                             "Cache-Control": cache_control,
                         },
                     )
@@ -318,7 +318,7 @@ def cache(
                     status_code=200,
                     media_type=cached_data.media_type,
                     headers={
-                        "ETag": cached_data.etag,
+                        "ETag": cached_data.fingerprint,
                         "Cache-Control": cache_control,
                     },
                 )
@@ -338,15 +338,15 @@ def cache(
             current_response.headers["ETag"] = current_etag
 
             # Update cache if needed
-            if not cached_data or cached_data.etag != current_etag:
+            if not cached_data or cached_data.fingerprint != current_etag:
                 assert current_body is not None  # guaranteed by early-return guards above
                 # Store in cache if data changed
                 await cache_backend.set(
                     cache_key,
-                    ETagContent(
-                        current_etag,
-                        current_body,
-                        current_response.media_type,
+                    CacheEntry(
+                        fingerprint=current_etag,
+                        content=current_body,
+                        media_type=current_response.media_type,
                     ),
                     ttl=ttl,
                 )

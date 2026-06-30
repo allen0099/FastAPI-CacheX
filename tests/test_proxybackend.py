@@ -10,7 +10,7 @@ from fastapi_cachex import BackendProxy
 from fastapi_cachex import cache
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.exceptions import BackendNotFoundError
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 app = FastAPI()
 client = TestClient(app)
@@ -83,7 +83,7 @@ async def test_backend_cleanup():
     assert memory_backend._cleanup_task is None
 
     # Set test data
-    test_value = ETagContent(etag="test-etag", content="test_value")
+    test_value = CacheEntry(fingerprint="test-etag", content="test_value")
     await memory_backend.set("test_key", test_value, ttl=1)
 
     # Verify data is stored correctly

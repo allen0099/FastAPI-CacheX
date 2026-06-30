@@ -11,7 +11,7 @@ from fastapi_cachex.backends.config import (
 from fastapi_cachex.backends.config import RedisConfig
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
 
@@ -125,14 +125,14 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Add prefix to cache key."""
         return f"{self.key_prefix}{key}"
 
-    def _serialize(self, value: ETagContent) -> str:
-        """Serialize ETagContent to JSON string."""
+    def _serialize(self, value: CacheEntry) -> str:
+        """Serialize CacheEntry to JSON string."""
         # Use latin-1 to round-trip arbitrary bytes through JSON/UTF-8 Redis storage
         content = value.content.decode("latin-1")
 
         serialized: str | bytes = json.dumps(
             {
-                "etag": value.etag,
+                "fingerprint": value.fingerprint,
                 "content": content,
                 "media_type": value.media_type,
             },
@@ -141,8 +141,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         # orjson returns bytes, stdlib json returns str
         return serialized.decode() if isinstance(serialized, bytes) else serialized
 
-    def _deserialize(self, value: str | None) -> ETagContent | None:
-        """Deserialize JSON string to ETagContent.
+    def _deserialize(self, value: str | None) -> CacheEntry | None:
+        """Deserialize JSON string to CacheEntry.
 
         Converts string content back to bytes to maintain consistency with
         other backends and standard Response.body type (bytes).
@@ -152,22 +152,22 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         try:
             data = json.loads(value)
             logger.debug("Content type in JSON: %s", type(data["content"]))
-            return ETagContent(
-                etag=data["etag"],
+            return CacheEntry(
+                fingerprint=data["fingerprint"],
                 content=data["content"].encode("latin-1"),
                 media_type=data.get("media_type"),
             )
         except (json.JSONDecodeError, KeyError, AttributeError):
             return None
 
-    async def get(self, key: str) -> ETagContent | None:
+    async def get(self, key: str) -> CacheEntry | None:
         """Retrieve a cached response."""
         result = await self.client.get(self._make_key(key))
         value = self._deserialize(result)
         logger.debug("Redis %s; key=%s", "HIT" if value else "MISS", key)
         return value
 
-    async def set(self, key: str, value: ETagContent, ttl: int | None = None) -> None:
+    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Store a response in the cache."""
         serialized = self._serialize(value)
         prefixed_key = self._make_key(key)
@@ -349,16 +349,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         logger.debug("Redis GET_ALL_KEYS; count=%s", len(all_keys))
         return all_keys
 
-    async def get_cache_data(self) -> dict[str, tuple[ETagContent, float | None]]:
+    async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
 
         Returns:
-            Dictionary mapping cache keys to (ETagContent, expiry) tuples.
+            Dictionary mapping cache keys to (CacheEntry, expiry) tuples.
             Note: Redis stores TTL but not absolute expiry time, so this
             returns None for expiry (no expiry tracking in Redis backend).
         """
         all_keys = await self.get_all_keys()
-        cache_data: dict[str, tuple[ETagContent, float | None]] = {}
+        cache_data: dict[str, tuple[CacheEntry, float | None]] = {}
 
         if not all_keys:
             return cache_data

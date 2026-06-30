@@ -5,7 +5,7 @@ import logging
 import warnings
 
 from fastapi_cachex.exceptions import CacheXError
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
 
@@ -63,14 +63,14 @@ class MemcachedBackend(BaseCacheBackend):
         """Add prefix to cache key."""
         return f"{self.key_prefix}{key}"
 
-    async def get(self, key: str) -> ETagContent | None:
+    async def get(self, key: str) -> CacheEntry | None:
         """Get value from cache.
 
         Args:
             key: Cache key to retrieve
 
         Returns:
-            Optional[ETagContent]: Cached value with ETag if exists, None otherwise
+            Cached entry if found, None otherwise
         """
         prefixed_key = self._make_key(key)
         value = await asyncio.to_thread(self.client.get, prefixed_key)
@@ -82,8 +82,8 @@ class MemcachedBackend(BaseCacheBackend):
         try:
             data = json.loads(value)
             logger.debug("Memcached HIT; key=%s", key)
-            return ETagContent(
-                etag=data["etag"],
+            return CacheEntry(
+                fingerprint=data["fingerprint"],
                 content=data["content"].encode("latin-1"),
                 media_type=data.get("media_type"),
             )
@@ -91,12 +91,12 @@ class MemcachedBackend(BaseCacheBackend):
             logger.debug("Memcached DESERIALIZE ERROR; key=%s", key)
             return None
 
-    async def set(self, key: str, value: ETagContent, ttl: int | None = None) -> None:
+    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Set value in cache.
 
         Args:
             key: Cache key
-            value: ETagContent to store
+            value: CacheEntry instance to store
             ttl: Time to live in seconds
         """
         prefixed_key = self._make_key(key)
@@ -106,7 +106,7 @@ class MemcachedBackend(BaseCacheBackend):
 
         serialized_data: str | bytes = json.dumps(
             {
-                "etag": value.etag,
+                "fingerprint": value.fingerprint,
                 "content": content,
                 "media_type": value.media_type,
             },
@@ -234,7 +234,7 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached GET_ALL_KEYS unsupported; returning empty list")
         return []
 
-    async def get_cache_data(self) -> dict[str, tuple[ETagContent, float | None]]:
+    async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
 
         Note: Memcached does not support key enumeration or pattern matching.

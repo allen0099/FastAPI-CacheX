@@ -124,7 +124,7 @@ async def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsRespon
     now = time.time()
     cached_hits: list[CacheHitRecord] = []
 
-    for cache_key, (etag_content, expiry) in cache_data.items():
+    for cache_key, (entry, expiry) in cache_data.items():
         method, host, path, query_params = _parse_cache_key(cache_key)
         if method:  # Valid cache key
             # Check if cache entry is expired
@@ -138,7 +138,7 @@ async def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsRespon
                     host=host,
                     path=path,
                     query_params=query_params,
-                    etag=etag_content.etag,
+                    etag=entry.fingerprint,
                     is_expired=is_expired,
                     ttl_remaining=ttl_remaining,
                 )
@@ -178,14 +178,14 @@ async def _get_cached_records_handler(
     now = time.time()
     cached_records: list[CachedRecord] = []
 
-    for cache_key, (etag_content, expiry) in cache_data.items():
+    for cache_key, (entry, expiry) in cache_data.items():
         method, host, path, query_params = _parse_cache_key(cache_key)
         if method:  # Valid cache key
             # Check if cache entry is expired
             is_expired = expiry is not None and expiry <= now
 
             # Get content size
-            content = etag_content.content
+            content = entry.content
             content_size = len(content) if isinstance(content, (bytes, str)) else 0
 
             ttl_remaining = max(0.0, round(expiry - now, 2)) if expiry is not None else None
@@ -203,7 +203,7 @@ async def _get_cached_records_handler(
                     host=host,
                     path=path,
                     query_params=query_params,
-                    etag=etag_content.etag,
+                    etag=entry.fingerprint,
                     content_type=type(content).__name__,
                     content_size=content_size,
                     is_expired=is_expired,

@@ -9,7 +9,7 @@ import pytest_asyncio
 
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.exceptions import CacheXError
-from fastapi_cachex.types import ETagContent
+from fastapi_cachex.types import CacheEntry
 
 
 def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
@@ -221,7 +221,7 @@ async def test_redis_serialization_with_standard_json() -> None:
 
     try:
         backend = AsyncRedisCacheBackend()
-        value = ETagContent(etag="test-etag", content=b"test-content")
+        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
         serialized = backend._serialize(value)
 
         # Verify the serialization worked correctly and str path executed
@@ -245,14 +245,14 @@ class TestAsyncRedisCacheBackend:
 
     @requires_redis
     async def test_set_get(self, async_redis_backend: AsyncRedisCacheBackend):
-        value = ETagContent(etag="test-etag", content=b"test-content")
+        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
         await async_redis_backend.set("test-key", value)
         result = await async_redis_backend.get("test-key")
         assert result == value
 
     @requires_redis
     async def test_set_with_ttl(self, async_redis_backend: AsyncRedisCacheBackend):
-        value = ETagContent(etag="test-etag", content=b"test-content")
+        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
         await async_redis_backend.set("test-key", value, ttl=100)
         # Use _make_key to get the prefixed key
         ttl = await async_redis_backend.client.ttl(
@@ -263,14 +263,14 @@ class TestAsyncRedisCacheBackend:
 
     @requires_redis
     async def test_delete(self, async_redis_backend: AsyncRedisCacheBackend):
-        value = ETagContent(etag="test-etag", content=b"test-content")
+        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
         await async_redis_backend.set("test-key", value)
         await async_redis_backend.delete("test-key")
         assert await async_redis_backend.get("test-key") is None
 
     @requires_redis
     async def test_clear(self, async_redis_backend: AsyncRedisCacheBackend):
-        value = ETagContent(etag="test-etag", content=b"test-content")
+        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
         await async_redis_backend.set("test-key-1", value)
         await async_redis_backend.set("test-key-2", value)
         await async_redis_backend.clear()
@@ -279,7 +279,7 @@ class TestAsyncRedisCacheBackend:
 
     @requires_redis
     async def test_clear_path(self, async_redis_backend: AsyncRedisCacheBackend):
-        value = ETagContent(etag="test-etag", content=b"test-content")
+        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
         # Use proper cache key format: method|||host|||path|||query_params
         # Keys without query params end with empty string after last separator
         await async_redis_backend.set("GET|||localhost|||/users/1|||", value)
@@ -298,7 +298,7 @@ class TestAsyncRedisCacheBackend:
 
     @requires_redis
     async def test_clear_pattern(self, async_redis_backend: AsyncRedisCacheBackend):
-        value = ETagContent(etag="test-etag", content=b"test-content")
+        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
         await async_redis_backend.set("/api/users/1", value)
         await async_redis_backend.set("/api/users/2", value)
         await async_redis_backend.set("/api/posts/1", value)
@@ -314,7 +314,7 @@ class TestAsyncRedisCacheBackend:
 @pytest.mark.asyncio
 async def test_redis_ttl(async_redis_backend: AsyncRedisCacheBackend):
     """Test TTL functionality."""
-    value = ETagContent(etag="test-etag", content=b"test-content")
+    value = CacheEntry(fingerprint="test-etag", content=b"test-content")
 
     await async_redis_backend.set("test-key", value, ttl=1)
     result = await async_redis_backend.get("test-key")
@@ -367,7 +367,7 @@ async def test_redis_clear_path_direct_key(
     Users may store keys like 'gitlab:template' directly via backend.set(),
     bypassing the default_key_builder format.
     """
-    value = ETagContent(etag="test-etag", content=b"test-content")
+    value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     # Store direct keys (no method|||host|||path||| format)
     await async_redis_backend.set("gitlab:template", value)
     await async_redis_backend.set("gitlab:template:projects", value)
@@ -397,7 +397,7 @@ async def test_redis_clear_path_direct_key_and_separator_key(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
     """clear_path should delete both direct keys and separator-format keys."""
-    value = ETagContent(etag="test-etag", content=b"test-content")
+    value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     # Store a direct key and a separator-format key for the same path
     await async_redis_backend.set("my:path", value)
     await async_redis_backend.set("GET|||localhost|||my:path|||", value)
@@ -424,7 +424,7 @@ async def test_redis_clear_pattern_with_prefixed_pattern(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
     """Cover branch where provided pattern already includes key prefix."""
-    value = ETagContent(etag="test-etag", content=b"test-content")
+    value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     await async_redis_backend.set("/api/users/1", value)
     await async_redis_backend.set("/api/users/2", value)
 
@@ -441,7 +441,7 @@ async def test_redis_clear_path_exact_without_params(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
     """Cover include_params=False branch: only exact path without params gets removed."""
-    value = ETagContent(etag="test-etag", content=b"test-content")
+    value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     # Proper key format always has trailing separator (empty query params)
     await async_redis_backend.set("GET|||localhost|||/users/42|||", value)
     await async_redis_backend.set("GET|||localhost|||/users/42|||id=42", value)
@@ -463,7 +463,7 @@ async def test_redis_clear_path_with_colon_in_path(
     Colons are legal in URL paths and must not be confused with the Redis
     key-prefix separator.
     """
-    value = ETagContent(etag="test-etag", content=b"test-content")
+    value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     # Simulate keys created by default_key_builder for colon-containing paths
     await async_redis_backend.set("GET|||localhost:8000|||/gitlab:template|||", value)
     await async_redis_backend.set(
@@ -537,11 +537,11 @@ async def test_redis_set_get_with_bytes_content(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
     """Cover bytes content serialization round-trip."""
-    value = ETagContent(etag="e", content=b"hello")
+    value = CacheEntry(fingerprint="e", content=b"hello")
     await async_redis_backend.set("bytes-key", value)
     out = await async_redis_backend.get("bytes-key")
     assert out is not None
-    assert out.etag == value.etag
+    assert out.fingerprint == value.fingerprint
     assert out.content == b"hello"
 
 
@@ -570,7 +570,7 @@ async def test_redis_get_all_keys_with_entries(
     key2 = "POST|||localhost|||/users"
     key3 = "GET|||localhost|||/posts"
 
-    value = ETagContent(etag="test_etag", content=b"test_value")
+    value = CacheEntry(fingerprint="test_etag", content=b"test_value")
 
     await async_redis_backend.set(key1, value)
     await async_redis_backend.set(key2, value)
@@ -613,8 +613,8 @@ async def test_redis_get_cache_data_with_entries(
 
     key1 = "GET|||localhost|||/users"
     key2 = "POST|||localhost|||/users"
-    value1 = ETagContent(etag="etag1", content=b"value1")
-    value2 = ETagContent(etag="etag2", content=b"value2")
+    value1 = CacheEntry(fingerprint="etag1", content=b"value1")
+    value2 = CacheEntry(fingerprint="etag2", content=b"value2")
 
     await async_redis_backend.set(key1, value1)
     await async_redis_backend.set(key2, value2)
