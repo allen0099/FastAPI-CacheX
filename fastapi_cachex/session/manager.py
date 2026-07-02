@@ -449,7 +449,9 @@ class SessionManager:
             ttl = max(ttl, 1)  # Ensure at least 1 second
 
         fingerprint = self.security.hash_data(value.decode("utf-8"))
-        await self.backend.set(key, CacheEntry(fingerprint=fingerprint, content=value), ttl=ttl)
+        await self.backend.set(
+            key, CacheEntry(fingerprint=fingerprint, content=value), ttl=ttl
+        )
         logger.debug("Session saved; id=%s ttl=%s", session.session_id, ttl)
 
     async def _load_session(self, session_id: str) -> Session | None:

@@ -129,7 +129,9 @@ async def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsRespon
         if method:  # Valid cache key
             # Check if cache entry is expired
             is_expired = expiry is not None and expiry <= now
-            ttl_remaining = max(0.0, round(expiry - now, 2)) if expiry is not None else None
+            ttl_remaining = (
+                max(0.0, round(expiry - now, 2)) if expiry is not None else None
+            )
 
             cached_hits.append(
                 CacheHitRecord(
@@ -188,7 +190,9 @@ async def _get_cached_records_handler(
             content = entry.content
             content_size = len(content) if isinstance(content, (bytes, str)) else 0
 
-            ttl_remaining = max(0.0, round(expiry - now, 2)) if expiry is not None else None
+            ttl_remaining = (
+                max(0.0, round(expiry - now, 2)) if expiry is not None else None
+            )
 
             content_preview = (
                 content[:100].decode("utf-8", errors="ignore")

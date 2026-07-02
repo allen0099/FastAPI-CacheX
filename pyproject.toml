@@ -111,10 +111,12 @@ keep-runtime-typing = true
 ]
 "fastapi_cachex/cache.py" = [
     "PLR0913", "PLR0915", "PLR0911", "PLR0912", # Many arguments/statements/returns/branches needed for flexible caching logic
+    "S101", # Internal invariant guard, not a validation shortcut
 ]
 "fastapi_cachex/backends/memcached.py" = ["PLC0415"]  # Optional dependency
 "fastapi_cachex/backends/redis.py" = ["PLR0913", "PLC0415"]  # Optional dependency, Redis config
 "fastapi_cachex/proxy.py" = ["PLW0603"]  # Global backend management by design
+"fastapi_cachex/session/manager.py" = ["PLR0915"]  # Session/security validation branches needed
 
 [tool.ruff.format]
 docstring-code-format = true
