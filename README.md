@@ -110,6 +110,44 @@ async def remove_cache(cache: CacheBackend):
     await cache.clear_pattern("/path/to/clear/*")  # Clear cache for a specific pattern
 ```
 
+### Application-Level Caching (Manual Get/Set)
+
+Beyond HTTP response caching via `@cache`, you can cache arbitrary JSON-serializable
+Python values directly in your business logic using `CacheManager`. It's a thin,
+namespaced wrapper around whichever backend is configured via `BackendProxy`.
+
+```python
+from fastapi_cachex import AppCache, CacheManager
+
+@app.get("/expensive")
+async def expensive_operation(cache: AppCache):
+    result = await cache.get("expensive:result")
+    if result is None:
+        result = perform_expensive_calculation()
+        await cache.set("expensive:result", result, ttl=300)
+    return result
+
+
+# Or instantiate directly, e.g. outside of a request:
+manager = CacheManager(key_prefix="myapp:", default_ttl=60)
+await manager.set("user:42", {"name": "Alice"})
+user = await manager.get("user:42")  # {"name": "Alice"}
+await manager.delete("user:42")
+await manager.clear_prefix()  # clear everything under "myapp:"
+```
+
+`CacheManager.get()` returns `None` (or a supplied `default=`) on a cache miss —
+it never raises for missing or corrupted entries. `CacheManager` keys live under
+their own `cache:`-prefixed namespace by default, separate from the HTTP route
+cache and OAuth state, so `clear()`/`clear_prefix()` never touch unrelated cache
+entries.
+
+**Note**: `clear()`/`clear_prefix()` are implemented via the backend's
+`get_all_keys()`. Since Memcached doesn't support key enumeration (see
+[Memcached limitations](#memcached)), these two methods are no-ops on a
+Memcached backend — `get()`/`set()`/`delete()`/`has()` work normally. Use
+Redis or the in-memory backend if you need bulk clearing.
+
 ## Backend Configuration
 
 FastAPI-CacheX supports multiple caching backends. You can easily switch between them using the `BackendProxy`.
@@ -129,6 +167,8 @@ This ensures that:
 - The same endpoint with different parameters can be cached independently
 
 All backends automatically namespace keys with a prefix (e.g., `fastapi_cachex:`) to avoid conflicts with other applications.
+
+`CacheManager` (see [Application-Level Caching](#application-level-caching-manual-getset)) uses a separate, simpler `cache:`-prefixed key namespace instead of this `|||`-separated format, since its keys aren't tied to HTTP requests.
 
 ### Cache Hit Behavior
 
