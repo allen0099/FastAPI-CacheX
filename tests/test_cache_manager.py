@@ -312,6 +312,24 @@ async def test_clear_removes_all_manager_keys(memory_backend: MemoryBackend) -> 
     assert await memory_backend.get("oauth_state:untouched") is not None
 
 
+@pytest.mark.asyncio
+async def test_clear_pattern_delegates_to_backend_within_namespace(
+    memory_backend: MemoryBackend,
+) -> None:
+    """clear_pattern() matches glob patterns relative to the manager's key_prefix."""
+    manager = CacheManager(backend=memory_backend, key_prefix="cache:")
+    await manager.set("user:1", "alice")
+    await manager.set("user:2", "bob")
+    await manager.set("post:1", "hello")
+
+    removed = await manager.clear_pattern("user:*")
+
+    assert removed == 2
+    assert await manager.get("user:1") is None
+    assert await manager.get("user:2") is None
+    assert await manager.get("post:1") == "hello"
+
+
 # --- Serialization errors ----------------------------------------------------
 
 
