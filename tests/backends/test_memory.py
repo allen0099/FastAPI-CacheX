@@ -258,6 +258,29 @@ async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
 
 
 @pytest.mark.asyncio
+async def test_memory_backend_clear_pattern_separator_less_keys(
+    memory_backend: MemoryBackend,
+):
+    """clear_pattern must also match keys with no method|||host|||path format,
+    e.g. CacheManager ("cache:...") or StateManager ("oauth_state:...") keys.
+    """
+    value1 = CacheEntry(fingerprint="e1", content=b"v1")
+    value2 = CacheEntry(fingerprint="e2", content=b"v2")
+    value3 = CacheEntry(fingerprint="e3", content=b"v3")
+
+    await memory_backend.set("cache:user:123", value1)
+    await memory_backend.set("cache:user:456", value2)
+    await memory_backend.set("cache:post:789", value3)
+
+    cleared = await memory_backend.clear_pattern("cache:user:*")
+    assert cleared == 2
+
+    assert await memory_backend.get("cache:user:123") is None
+    assert await memory_backend.get("cache:user:456") is None
+    assert await memory_backend.get("cache:post:789") == value3
+
+
+@pytest.mark.asyncio
 async def test_memory_backend_clear_path_with_colon_in_path(
     memory_backend: MemoryBackend,
 ) -> None:

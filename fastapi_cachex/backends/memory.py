@@ -183,6 +183,11 @@ class MemoryBackend(BaseCacheBackend):
                     if fnmatch.fnmatch(cache_path, pattern):
                         keys_to_delete.append(key)
                         cleared_count += 1
+                elif fnmatch.fnmatch(key, pattern):
+                    # Non-HTTP-cache key (no separators, e.g. CacheManager/
+                    # StateManager keys) - match against the raw key.
+                    keys_to_delete.append(key)
+                    cleared_count += 1
 
             for key in keys_to_delete:
                 del self.cache[key]
