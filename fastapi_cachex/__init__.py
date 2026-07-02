@@ -4,8 +4,12 @@ import logging
 
 from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
+from .dependencies import AppCache as AppCache
 from .dependencies import CacheBackend as CacheBackend
+from .dependencies import get_app_cache as get_app_cache
 from .dependencies import get_cache_backend as get_cache_backend
+from .manager import CacheManager as CacheManager
+from .manager_proxy import CacheManagerProxy as CacheManagerProxy
 from .proxy import BackendProxy as BackendProxy
 from .routes import add_routes as add_routes
 from .session import Session as Session
@@ -38,9 +42,12 @@ _package_logger.addHandler(
 )  # Attach a NullHandler to avoid "No handler found" warnings in user applications.
 
 __all__ = [
+    "AppCache",
     "BackendProxy",
     "CacheBackend",
     "CacheKeyBuilder",
+    "CacheManager",
+    "CacheManagerProxy",
     "InvalidStateError",
     "Session",
     "SessionConfig",
@@ -62,6 +69,7 @@ __all__ = [
     "add_routes",
     "cache",
     "default_key_builder",
+    "get_app_cache",
     "get_cache_backend",
     "get_optional_session",
     "get_session",
