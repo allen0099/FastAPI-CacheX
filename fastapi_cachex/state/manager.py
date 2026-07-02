@@ -125,7 +125,9 @@ class StateManager:
         fingerprint = hashlib.sha256(json_content.encode()).hexdigest()
 
         cache_key = f"{self.key_prefix}{state}"
-        entry = CacheEntry(fingerprint=fingerprint, content=json_content.encode("utf-8"))
+        entry = CacheEntry(
+            fingerprint=fingerprint, content=json_content.encode("utf-8")
+        )
         await self.backend.set(cache_key, entry, ttl=effective_ttl)
 
         logger.debug("OAuth state created; state=%s ttl=%s", state, effective_ttl)

@@ -177,7 +177,9 @@ class MemcachedBackend(BaseCacheBackend):
         # Try to delete the prefixed key (exact match only)
         prefixed_key = self._make_key(path)
         try:
-            result = await asyncio.to_thread(self.client.delete, prefixed_key, False)
+            result = await asyncio.to_thread(
+                self.client.delete, prefixed_key, noreply=False
+            )
         except Exception:  # noqa: BLE001
             return 0
         else:

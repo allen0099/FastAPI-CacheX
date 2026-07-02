@@ -320,9 +320,7 @@ def cache(
                         # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
                         current_response.headers["Cache-Control"] = cache_control
                         return current_response
-                    current_etag = (
-                        f'W/"{hashlib.md5(current_body).hexdigest()}"'  # noqa: S324
-                    )
+                    current_etag = f'W/"{hashlib.md5(current_body).hexdigest()}"'  # noqa: S324
 
                     if client_etag == current_etag:
                         # For no-cache, compare fresh data with client's ETag
@@ -381,7 +379,9 @@ def cache(
 
             # Update cache if needed
             if not cached_data or cached_data.fingerprint != current_etag:
-                assert current_body is not None  # guaranteed by early-return guards above
+                assert (
+                    current_body is not None
+                )  # guaranteed by early-return guards above
                 # Store in cache if data changed
                 await cache_backend.set(
                     cache_key,
