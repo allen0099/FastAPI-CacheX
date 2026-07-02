@@ -61,6 +61,44 @@ def default_key_builder(request: Request) -> str:
     return key
 
 
+async def invalidate(
+    request: Request,
+    key_builder: CacheKeyBuilder | None = None,
+) -> bool:
+    """Invalidate the cache entry a ``@cache``-decorated route would use.
+
+    Builds the same cache key the ``@cache`` decorator would build for
+    ``request`` (via ``key_builder`` or ``default_key_builder``) and deletes
+    it from the configured backend. Use this after a mutation to bust the
+    cache for a specific cached route response.
+
+    Args:
+        request: The request whose cache key should be invalidated. Typically
+            a request to the same route/method as the cached one (e.g. build
+            it via ``request.app.url_path_for(...)`` for a GET route).
+        key_builder: Custom key builder used by the target route's ``@cache``
+            decorator, if any. If None, uses ``default_key_builder``.
+
+    Returns:
+        True if a cache entry existed and was deleted, False otherwise.
+    """
+    builder = key_builder or default_key_builder
+    cache_key = builder(request)
+
+    try:
+        cache_backend = BackendProxy.get()
+    except BackendNotFoundError:
+        return False
+
+    existing = await cache_backend.get(cache_key)
+    if existing is None:
+        return False
+
+    await cache_backend.delete(cache_key)
+    logger.debug("Cache INVALIDATE; key=%s", cache_key)
+    return True
+
+
 class CacheControl:
     """Manages Cache-Control header directives."""
 

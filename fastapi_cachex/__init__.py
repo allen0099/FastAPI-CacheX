@@ -4,6 +4,7 @@ import logging
 
 from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
+from .cache import invalidate as invalidate
 from .dependencies import AppCache as AppCache
 from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_app_cache as get_app_cache
@@ -34,6 +35,9 @@ from .state import StateDataError as StateDataError
 from .state import StateError as StateError
 from .state import StateExpiredError as StateExpiredError
 from .state import StateManager as StateManager
+from .state import StateManagerDep as StateManagerDep
+from .state import StateManagerProxy as StateManagerProxy
+from .state import get_state_manager as get_state_manager
 from .types import CacheKeyBuilder as CacheKeyBuilder
 
 _package_logger = logging.getLogger("fastapi_cachex")
@@ -66,6 +70,8 @@ __all__ = [
     "StateError",
     "StateExpiredError",
     "StateManager",
+    "StateManagerDep",
+    "StateManagerProxy",
     "add_routes",
     "cache",
     "default_key_builder",
@@ -74,5 +80,7 @@ __all__ = [
     "get_optional_session",
     "get_session",
     "get_session_manager",
+    "get_state_manager",
+    "invalidate",
     "require_session",
 ]

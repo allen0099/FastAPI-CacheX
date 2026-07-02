@@ -21,7 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 class SessionMiddleware(BaseHTTPMiddleware):
-    """Middleware to handle session loading and cookie management."""
+    """Middleware to handle session loading and token extraction.
+
+    Extracts the session token from the request (via a custom header and/or
+    an ``Authorization: Bearer`` header, per ``SessionConfig.token_source_priority``)
+    and loads the corresponding session into ``request.state``. Cookie-based
+    token transport is not currently supported.
+    """
 
     def __init__(
         self,

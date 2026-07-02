@@ -117,6 +117,28 @@ class CacheManager:
         """
         return await self.backend.get(self._cache_key(key)) is not None
 
+    async def clear_pattern(self, pattern: str) -> int:
+        """Clear all keys under this manager's namespace matching a glob pattern.
+
+        Delegates to the backend's native ``clear_pattern`` (e.g. Redis ``SCAN``),
+        which can be more efficient than ``clear_prefix``'s full key-space scan.
+        Note that backends without key-enumeration support (e.g. Memcached)
+        cannot honor this and will return 0 with a ``RuntimeWarning``.
+
+        Args:
+            pattern: Glob pattern (relative to ``self.key_prefix``) to match
+                against, e.g. ``"user:*"``.
+
+        Returns:
+            Number of cache entries cleared.
+        """
+        match_pattern = self._cache_key(pattern)
+        cleared = await self.backend.clear_pattern(match_pattern)
+        logger.debug(
+            "Cache CLEAR_PATTERN; pattern=%s removed=%s", match_pattern, cleared
+        )
+        return cleared
+
     async def clear_prefix(self, prefix: str | None = None) -> int:
         """Clear all keys under this manager's namespace matching a sub-prefix.
 

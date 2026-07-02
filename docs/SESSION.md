@@ -152,7 +152,6 @@ config = SessionConfig(
     sliding_threshold=0.5,
     ip_binding=True,  # 啟用 IP 綁定
     user_agent_binding=False,  # UA 綁定（可選）
-    regenerate_on_login=True,
 )
 
 session_manager = SessionManager(backend, config)
@@ -299,13 +298,9 @@ SessionConfig(
     secret_key="...",              # 必須：至少 32 字元
     ip_binding=False,              # IP 綁定
     user_agent_binding=False,      # User-Agent 綁定
-    regenerate_on_login=True,      # 登入後重新生成 ID
 
     # 後端設定
     backend_key_prefix="session:",
-
-    # CSRF（可選，目前未完整實作）
-    enable_csrf=False,
 )
 ```
 
@@ -409,8 +404,10 @@ async def get_session(
     token_string: str,
     ip_address: str | None = None,
     user_agent: str | None = None,
-) -> Session:
+) -> tuple[Session, str | None]:
 ```
+
+Returns a tuple of `(session, renewed_token)`. `renewed_token` is non-`None` only when sliding expiration triggered a token renewal; the caller should propagate it to the client (e.g. via a response header).
 
 #### update_session()
 ```python
