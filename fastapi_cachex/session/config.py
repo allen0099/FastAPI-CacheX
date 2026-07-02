@@ -3,12 +3,15 @@
 from typing import Literal
 
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
 
 
 class SessionConfig(BaseModel):
     """Session configuration settings."""
+
+    model_config = ConfigDict(extra="forbid")
 
     # Session lifetime
     session_ttl: int = Field(
