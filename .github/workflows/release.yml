@@ -47,15 +47,17 @@ jobs:
             # Exclude "chore: bump version" and commits created by GitHub Action
             if [ -z "$last_tag_commit" ]; then
               # No tag exists, check all commits
-              real_commits=$(git log --oneline --no-merges \
-                --author-not="GitHub Action <action@github.com>" \
-                --grep="^chore: bump version" --invert-grep)
+              commit_range=""
             else
               # Tag exists, check commits since last tag
-              real_commits=$(git log $last_tag_commit..HEAD --oneline --no-merges \
-                --author-not="GitHub Action <action@github.com>" \
-                --grep="^chore: bump version" --invert-grep)
+              commit_range="$last_tag_commit..HEAD"
             fi
+
+            # git log has no --author-not flag, so filter the author out with awk instead
+            real_commits=$(git log $commit_range --no-merges \
+              --grep="^chore: bump version" --invert-grep \
+              --pretty=format:"%h|%an|%s" | \
+              awk -F'|' '$2 != "GitHub Action" { print $1, $3 }')
 
             if [ -n "$real_commits" ]; then
               echo "has_new_commits=true" >> $GITHUB_OUTPUT
