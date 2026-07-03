@@ -157,6 +157,96 @@ async def test_get_missing_key_returns_custom_default(
     assert await cache_manager.get("nope", default="fallback") == "fallback"
 
 
+# --- get_or_set -----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_or_set_hit_does_not_call_factory(
+    cache_manager: CacheManager,
+) -> None:
+    """get_or_set() returns the cached value without invoking factory on a hit."""
+    await cache_manager.set("key", "existing")
+    calls = 0
+
+    def factory() -> str:
+        nonlocal calls
+        calls += 1
+        return "from_factory"
+
+    result = await cache_manager.get_or_set("key", factory)
+
+    assert result == "existing"
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_get_or_set_miss_calls_sync_factory_and_caches(
+    cache_manager: CacheManager,
+) -> None:
+    """get_or_set() calls a sync factory on a miss and caches the result."""
+    calls = 0
+
+    def factory() -> dict[str, int]:
+        nonlocal calls
+        calls += 1
+        return {"computed": 1}
+
+    result = await cache_manager.get_or_set("nope", factory)
+
+    assert result == {"computed": 1}
+    assert calls == 1
+    assert await cache_manager.get("nope") == {"computed": 1}
+
+
+@pytest.mark.asyncio
+async def test_get_or_set_miss_calls_async_factory_and_caches(
+    cache_manager: CacheManager,
+) -> None:
+    """get_or_set() calls an async factory on a miss and caches the result."""
+    calls = 0
+
+    async def factory() -> str:
+        nonlocal calls
+        calls += 1
+        return "async_value"
+
+    result = await cache_manager.get_or_set("nope", factory)
+
+    assert result == "async_value"
+    assert calls == 1
+    assert await cache_manager.get("nope") == "async_value"
+
+
+@pytest.mark.asyncio
+async def test_get_or_set_honors_ttl_on_created_value(
+    cache_manager: CacheManager,
+) -> None:
+    """get_or_set() applies the given ttl to a newly created value."""
+    result = await cache_manager.get_or_set("key", lambda: "value", ttl=1)
+    assert result == "value"
+    assert await cache_manager.get("key") == "value"
+
+    await asyncio.sleep(1.2)
+
+    assert await cache_manager.get("key") is None
+
+
+@pytest.mark.asyncio
+async def test_get_or_set_treats_corrupted_content_as_miss(
+    memory_backend: MemoryBackend,
+) -> None:
+    """get_or_set() calls factory when stored content can't be decoded."""
+    manager = CacheManager(backend=memory_backend)
+    cache_key = f"{manager.key_prefix}bad"
+    entry = CacheEntry(fingerprint="x", content=b"not valid json")
+    await memory_backend.set(cache_key, entry, ttl=60)
+
+    result = await manager.get_or_set("bad", lambda: "repaired")
+
+    assert result == "repaired"
+    assert await manager.get("bad") == "repaired"
+
+
 # --- delete / has ---------------------------------------------------------------
 
 

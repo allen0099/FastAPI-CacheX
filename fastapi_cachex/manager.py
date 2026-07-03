@@ -1,8 +1,11 @@
 """Generic application-level cache manager for FastAPI-CacheX."""
 
 import hashlib
+import inspect
 import json
 import logging
+from collections.abc import Awaitable
+from collections.abc import Callable
 from typing import Any
 
 from .backends.base import BaseCacheBackend
@@ -116,6 +119,45 @@ class CacheManager:
             True if the key exists and has not expired.
         """
         return await self.backend.get(self._cache_key(key)) is not None
+
+    async def get_or_set(
+        self,
+        key: str,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        ttl: int | None = None,
+    ) -> Any:
+        """Get a cached value, computing and storing it via ``factory`` on a miss.
+
+        ``factory`` is only invoked when ``key`` is missing, expired, or its
+        stored content cannot be decoded; on a hit the cached value is
+        returned directly. This method does not provide stampede protection:
+        concurrent misses for the same key may each invoke ``factory``.
+
+        Args:
+            key: Logical cache key (without the manager's prefix).
+            factory: Zero-argument callable (sync or async) that produces the
+                JSON-serializable value to cache on a miss.
+            ttl: Time-to-live in seconds for a newly created value. If None,
+                uses ``self.default_ttl``.
+
+        Returns:
+            The cached value (existing or newly created).
+
+        Raises:
+            TypeError: If the value produced by ``factory`` is not JSON-serializable.
+        """
+        sentinel = object()
+        cached = await self.get(key, default=sentinel)
+        if cached is not sentinel:
+            return cached
+
+        if inspect.iscoroutinefunction(factory):
+            value = await factory()
+        else:
+            value = factory()
+
+        await self.set(key, value, ttl=ttl)
+        return value
 
     async def clear_pattern(self, pattern: str) -> int:
         """Clear all keys under this manager's namespace matching a glob pattern.
