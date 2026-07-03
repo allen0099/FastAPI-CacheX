@@ -1,0 +1,47 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended"],
+  dependencyDashboard: true,
+  semanticCommits: "enabled",
+  semanticCommitType: "chore",
+  semanticCommitScope: "deps",
+  labels: ["dependencies"],
+  prConcurrentLimit: 10,
+  "pre-commit": {
+    enabled: true,
+  },
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 6am on monday"],
+  },
+  packageRules: [
+    {
+      description: "Group all GitHub Actions updates into a single PR",
+      matchManagers: ["github-actions"],
+      groupName: "github-actions",
+    },
+    {
+      description: "Group all pre-commit hook updates into a single PR",
+      matchManagers: ["pre-commit"],
+      groupName: "pre-commit hooks",
+    },
+    {
+      description: "Group all Python dependency updates into a single PR",
+      matchManagers: ["pep621"],
+      groupName: "python dependencies",
+    },
+    {
+      description: "Automerge non-major updates once CI passes",
+      matchUpdateTypes: ["minor", "patch", "pin", "digest"],
+      automerge: true,
+      automergeType: "pr",
+      platformAutomerge: true,
+    },
+    {
+      description: "Major updates always require manual review",
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "major-update"],
+    },
+  ],
+}
