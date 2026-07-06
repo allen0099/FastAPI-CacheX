@@ -76,7 +76,7 @@ class SessionManager:
         user: SessionUser,
         ip_address: str | None = None,
         user_agent: str | None = None,
-        **extra_data: dict[str, object],
+        **extra_data: object,
     ) -> tuple[Session, str]:
         """Create a new session for an authenticated user.
 
@@ -100,7 +100,7 @@ class SessionManager:
         self,
         ip_address: str | None = None,
         user_agent: str | None = None,
-        **extra_data: dict[str, object],
+        **extra_data: object,
     ) -> tuple[Session, str]:
         """Create a new session without user information."""
         return await self._create_session(
@@ -115,7 +115,7 @@ class SessionManager:
         user: SessionUser | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
-        **extra_data: dict[str, object],
+        **extra_data: object,
     ) -> tuple[Session, str]:
         """Internal helper to create and persist a session."""
         session = Session(
