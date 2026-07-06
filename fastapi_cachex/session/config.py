@@ -7,6 +7,8 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
 
+SameSitePolicy = Literal["lax", "strict", "none"]
+
 
 class SessionConfig(BaseModel):
     """Session configuration settings."""
@@ -89,4 +91,34 @@ class SessionConfig(BaseModel):
     backend_key_prefix: str = Field(
         default="session:",
         description="Prefix for session keys in backend storage",
+    )
+
+    # Cookie settings (StarletteSessionMiddleware only)
+    cookie_name: str = Field(
+        default="session",
+        description="Name of the cookie used to store the session token "
+        "(StarletteSessionMiddleware only)",
+    )
+    cookie_max_age: int | None = Field(
+        default=14 * 24 * 60 * 60,
+        description="Max-Age (seconds) for the session cookie; None disables "
+        "Max-Age/Expires (session cookie deleted when browser closes)",
+    )
+    cookie_path: str = Field(
+        default="/",
+        description="Path attribute for the session cookie",
+    )
+    cookie_same_site: SameSitePolicy = Field(
+        default="lax",
+        description="SameSite attribute for the session cookie",
+    )
+    cookie_https_only: bool = Field(
+        default=False,
+        description="Whether to set the Secure flag on the session cookie "
+        "(cookie only sent over HTTPS)",
+    )
+    cookie_domain: str | None = Field(
+        default=None,
+        description="Domain attribute for the session cookie; None omits the "
+        "Domain attribute",
     )

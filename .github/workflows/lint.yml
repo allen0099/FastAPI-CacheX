@@ -30,7 +30,7 @@ jobs:
       uses: astral-sh/setup-uv@v8.3.0
 
     - name: Sync dependencies
-      run: uv sync --group dev --extra jwt
+      run: uv sync --group dev --extra jwt --extra starlette
 
     - name: Ruff check
       run: uv run ruff check fastapi_cachex

@@ -58,6 +58,7 @@ dev = [
 memcache = ["pymemcache"]
 redis = ["redis[hiredis]>=5.3.0", "orjson"]
 jwt = ["PyJWT>=2.9.0"]
+starlette = ["itsdangerous"]
 
 [build-system]
 requires = ["uv_build>=0.11.26,<0.12"]
@@ -117,6 +118,7 @@ keep-runtime-typing = true
 "fastapi_cachex/backends/redis.py" = ["PLR0913", "PLC0415"]  # Optional dependency, Redis config
 "fastapi_cachex/proxy.py" = ["PLW0603"]  # Global backend management by design
 "fastapi_cachex/session/manager.py" = ["PLR0915"]  # Session/security validation branches needed
+"fastapi_cachex/session/middleware.py" = ["PLC0415"]  # Optional dependency (itsdangerous)
 
 [tool.ruff.format]
 docstring-code-format = true
