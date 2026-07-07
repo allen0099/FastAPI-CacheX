@@ -93,11 +93,11 @@ class SessionConfig(BaseModel):
         description="Prefix for session keys in backend storage",
     )
 
-    # Cookie settings (StarletteSessionMiddleware only)
+    # Cookie settings (FastAPICacheXSessionMiddleware only)
     cookie_name: str = Field(
         default="session",
         description="Name of the cookie used to store the session token "
-        "(StarletteSessionMiddleware only)",
+        "(FastAPICacheXSessionMiddleware only)",
     )
     cookie_max_age: int | None = Field(
         default=14 * 24 * 60 * 60,

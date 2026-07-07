@@ -1,7 +1,7 @@
 """Tests for the Starlette-aligned, backend-backed session middleware.
 
 These tests require itsdangerous (fastapi-cachex[starlette]) since
-StarletteSessionMiddleware reuses starlette.middleware.sessions.Session for
+FastAPICacheXSessionMiddleware reuses starlette.middleware.sessions.Session for
 its dict-like scope["session"] interface, and that module unconditionally
 imports itsdangerous.
 """
@@ -22,8 +22,8 @@ from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.dependencies import get_session
 from fastapi_cachex.session.exceptions import SessionNotFoundError
 from fastapi_cachex.session.manager import SessionManager
+from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session.middleware import SessionMiddleware
-from fastapi_cachex.session.middleware import StarletteSessionMiddleware
 from fastapi_cachex.session.models import SessionUser
 
 pytest.importorskip("itsdangerous")
@@ -58,7 +58,7 @@ def test_middleware_initialization(
     async def app(scope, receive, send):
         pass
 
-    middleware = StarletteSessionMiddleware(app, manager, config)
+    middleware = FastAPICacheXSessionMiddleware(app, manager, config)
 
     assert middleware.session_manager is manager
     assert middleware.config is config
@@ -72,7 +72,7 @@ def test_middleware_initialization_uses_manager_config(
     async def app(scope, receive, send):
         pass
 
-    middleware = StarletteSessionMiddleware(app, manager)
+    middleware = FastAPICacheXSessionMiddleware(app, manager)
 
     assert middleware.config is manager.config
 
@@ -100,7 +100,7 @@ def test_set_cookie_header_includes_secure_and_domain_flags(
     )
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/set")
@@ -127,7 +127,7 @@ async def test_call_passes_through_non_http_scope() -> None:
     async def app(scope, receive, send) -> None:
         calls.append(scope["type"])
 
-    middleware = StarletteSessionMiddleware(app, manager, config)
+    middleware = FastAPICacheXSessionMiddleware(app, manager, config)
 
     await middleware({"type": "lifespan"}, None, None)  # type: ignore[arg-type]
 
@@ -142,7 +142,7 @@ def test_get_session_manager_di_stashed_once_across_requests(
 
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/manager")
@@ -165,7 +165,7 @@ def test_no_cookie_dict_untouched_no_set_cookie(
     """No cookie + handler never touches request.session -> no Set-Cookie."""
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/test")
@@ -186,7 +186,7 @@ async def test_no_cookie_dict_mutated_creates_session(
     """No cookie + handler writes request.session -> new session persisted."""
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/set")
@@ -216,7 +216,7 @@ def test_no_cookie_dict_mutated_then_cleared_no_set_cookie(
     """
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/roundtrip")
@@ -239,7 +239,7 @@ async def test_valid_cookie_dict_mutated_merges_data(
     """Existing session + mutation -> merged data persisted and re-sent."""
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/add")
@@ -269,7 +269,7 @@ async def test_valid_cookie_sliding_expiration_refreshes_cookie_without_mutation
     """Sliding expiration renewal must refresh Set-Cookie even without a data change."""
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/noop")
@@ -311,7 +311,7 @@ async def test_valid_cookie_cleared_deletes_backend_session(
     """Clearing a non-empty session must delete the backend record and expire the cookie."""
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/clear")
@@ -341,7 +341,7 @@ def test_invalid_cookie_starts_fresh_session(
     """A garbage/invalid token must not leak errors and behaves like no cookie at all."""
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/set")
@@ -365,7 +365,7 @@ async def test_expired_cookie_starts_fresh_session(
     """An expired session token must be discarded, not surfaced as an error."""
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/test")
@@ -396,7 +396,7 @@ async def test_ip_binding_mismatch_starts_fresh_session(
 
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/test")
@@ -479,15 +479,15 @@ def test_get_client_ip_none() -> None:
 async def test_get_session_dependency_works_under_starlette_middleware(
     manager: SessionManager, config: SessionConfig
 ) -> None:
-    """get_session must resolve the loaded Session under StarletteSessionMiddleware.
+    """get_session must resolve the loaded Session under FastAPICacheXSessionMiddleware.
 
     Guards the request.state.__fastapi_cachex_session write added to
-    StarletteSessionMiddleware.__call__: without it, get_session (which reads
+    FastAPICacheXSessionMiddleware.__call__: without it, get_session (which reads
     that state key) would always 401, even with a valid session cookie.
     """
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/me")
@@ -514,7 +514,7 @@ async def test_get_session_dependency_works_under_starlette_middleware(
 async def test_header_token_takes_priority_under_starlette_middleware(
     manager: SessionManager, config: SessionConfig
 ) -> None:
-    """StarletteSessionMiddleware must accept the X-Session-Token header first.
+    """FastAPICacheXSessionMiddleware must accept the X-Session-Token header first.
 
     Guards the header-first-then-cookie token resolution: a token supplied via
     the configured header (config.header_name) must authenticate even with no
@@ -522,7 +522,7 @@ async def test_header_token_takes_priority_under_starlette_middleware(
     """
     app = FastAPI()
     app.add_middleware(
-        StarletteSessionMiddleware, session_manager=manager, config=config
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
     )
 
     @app.get("/me")
@@ -549,10 +549,10 @@ async def test_header_token_takes_priority_under_starlette_middleware(
 def test_session_middleware_construction_is_deprecated(
     manager: SessionManager, config: SessionConfig
 ) -> None:
-    """SessionMiddleware is deprecated in favor of StarletteSessionMiddleware."""
+    """SessionMiddleware is deprecated in favor of FastAPICacheXSessionMiddleware."""
 
     async def app(scope, receive, send):
         pass
 
-    with pytest.warns(DeprecationWarning, match="StarletteSessionMiddleware"):
+    with pytest.warns(DeprecationWarning, match="FastAPICacheXSessionMiddleware"):
         SessionMiddleware(app, manager, config)
