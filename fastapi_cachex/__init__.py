@@ -19,6 +19,7 @@ from .session import SessionManager as SessionManager
 from .session import SessionManagerProxy as SessionManagerProxy
 from .session import SessionMiddleware as SessionMiddleware
 from .session import SessionUser as SessionUser
+from .session import StarletteSessionMiddleware as StarletteSessionMiddleware
 from .session import get_optional_session as get_optional_session
 from .session import get_session as get_session
 from .session import get_session_manager as get_session_manager
@@ -65,6 +66,7 @@ __all__ = [
     "SessionSecurityError",
     "SessionTokenError",
     "SessionUser",
+    "StarletteSessionMiddleware",
     "StateData",
     "StateDataError",
     "StateError",

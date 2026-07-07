@@ -12,14 +12,17 @@ from datetime import timezone
 from typing import Any
 
 import pytest
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.testclient import TestClient
 
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
+from fastapi_cachex.session.dependencies import get_session
 from fastapi_cachex.session.exceptions import SessionNotFoundError
 from fastapi_cachex.session.manager import SessionManager
+from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.middleware import StarletteSessionMiddleware
 from fastapi_cachex.session.models import SessionUser
 
@@ -470,3 +473,50 @@ def test_get_client_ip_none() -> None:
     connection = HTTPConnection(scope)
 
     assert _get_client_ip(connection) is None
+
+
+@pytest.mark.asyncio
+async def test_get_session_dependency_works_under_starlette_middleware(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """get_session must resolve the loaded Session under StarletteSessionMiddleware.
+
+    Guards the request.state.__fastapi_cachex_session write added to
+    StarletteSessionMiddleware.__call__: without it, get_session (which reads
+    that state key) would always 401, even with a valid session cookie.
+    """
+    app = FastAPI()
+    app.add_middleware(
+        StarletteSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/me")
+    async def me_route(session=Depends(get_session)):
+        return {"user_id": session.user.user_id}
+
+    user = SessionUser(user_id="cookie-user")
+    _session, token = await manager.create_session(user=user)
+
+    client = TestClient(app)
+
+    # Without the cookie, the dependency has nothing to resolve -> 401.
+    unauthenticated = client.get("/me")
+    assert unauthenticated.status_code == 401
+
+    # With a valid session cookie, the dependency must resolve the Session.
+    client.cookies.set(config.cookie_name, token)
+    authenticated = client.get("/me")
+    assert authenticated.status_code == 200
+    assert authenticated.json() == {"user_id": "cookie-user"}
+
+
+def test_session_middleware_construction_is_deprecated(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """SessionMiddleware is deprecated in favor of StarletteSessionMiddleware."""
+
+    async def app(scope, receive, send):
+        pass
+
+    with pytest.warns(DeprecationWarning, match="StarletteSessionMiddleware"):
+        SessionMiddleware(app, manager, config)

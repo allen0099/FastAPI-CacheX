@@ -1,6 +1,7 @@
 """Session middleware for FastAPI."""
 
 import logging
+import warnings
 from typing import TYPE_CHECKING
 
 from fastapi import Request
@@ -71,6 +72,10 @@ class SessionMiddleware(BaseHTTPMiddleware):
     an ``Authorization: Bearer`` header, per ``SessionConfig.token_source_priority``)
     and loads the corresponding session into ``request.state``. Cookie-based
     token transport is not currently supported.
+
+    .. deprecated:: 0.3.1
+        Use :class:`StarletteSessionMiddleware` instead. Will be removed in
+        version 0.3.5.
     """
 
     def __init__(
@@ -86,6 +91,12 @@ class SessionMiddleware(BaseHTTPMiddleware):
             session_manager: Session manager instance
             config: Session configuration
         """
+        warnings.warn(
+            "SessionMiddleware is deprecated, use StarletteSessionMiddleware. "
+            "Will be removed in version 0.3.5.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(app)
         self.session_manager = session_manager or SessionManagerProxy.get()
 
@@ -294,6 +305,8 @@ class StarletteSessionMiddleware:
                 scope["session"] = self._session_cls()
         else:
             scope["session"] = self._session_cls()
+
+        scope.setdefault("state", {})["__fastapi_cachex_session"] = backend_session
 
         async def send_wrapper(message: Message) -> None:
             nonlocal backend_session, loaded_token
