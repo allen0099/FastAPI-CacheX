@@ -13,13 +13,13 @@ from .manager import CacheManager as CacheManager
 from .manager_proxy import CacheManagerProxy as CacheManagerProxy
 from .proxy import BackendProxy as BackendProxy
 from .routes import add_routes as add_routes
+from .session import FastAPICacheXSessionMiddleware as FastAPICacheXSessionMiddleware
 from .session import Session as Session
 from .session import SessionConfig as SessionConfig
 from .session import SessionManager as SessionManager
 from .session import SessionManagerProxy as SessionManagerProxy
 from .session import SessionMiddleware as SessionMiddleware
 from .session import SessionUser as SessionUser
-from .session import StarletteSessionMiddleware as StarletteSessionMiddleware
 from .session import get_optional_session as get_optional_session
 from .session import get_session as get_session
 from .session import get_session_manager as get_session_manager
@@ -53,6 +53,7 @@ __all__ = [
     "CacheKeyBuilder",
     "CacheManager",
     "CacheManagerProxy",
+    "FastAPICacheXSessionMiddleware",
     "InvalidStateError",
     "Session",
     "SessionConfig",
@@ -66,7 +67,6 @@ __all__ = [
     "SessionSecurityError",
     "SessionTokenError",
     "SessionUser",
-    "StarletteSessionMiddleware",
     "StateData",
     "StateDataError",
     "StateError",
