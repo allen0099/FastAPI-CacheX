@@ -65,6 +65,42 @@ def _get_client_ip(connection: HTTPConnection) -> str | None:
     return None
 
 
+def _extract_header_token(
+    connection: HTTPConnection, config: SessionConfig
+) -> str | None:
+    """Extract a session token from request headers.
+
+    Honours ``SessionConfig.token_source_priority``: checks the configured
+    custom header (``config.header_name``) and/or an ``Authorization: Bearer``
+    token. This is the header/bearer transport shared with ``SessionMiddleware``.
+
+    Args:
+        connection: Incoming HTTP connection (or a `Request`, which IS-A
+            `HTTPConnection`)
+        config: Session configuration
+
+    Returns:
+        Session token or None
+    """
+    for source in config.token_source_priority:
+        if source == "header":
+            token = connection.headers.get(config.header_name)
+            if token:
+                logger.debug("Token extracted from header")
+                return token
+
+        elif source == "bearer":
+            if config.use_bearer_token:
+                auth_header = connection.headers.get("authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    bearer_prefix_len = 7
+                    token_value = auth_header[bearer_prefix_len:]
+                    logger.debug("Token extracted from bearer auth")
+                    return token_value
+
+    return None
+
+
 class SessionMiddleware(BaseHTTPMiddleware):
     """Middleware to handle session loading and token extraction.
 
@@ -176,23 +212,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         Returns:
             Session token or None
         """
-        for source in self.config.token_source_priority:
-            if source == "header":
-                token = request.headers.get(self.config.header_name)
-                if token:
-                    logger.debug("Token extracted from header")
-                    return token
-
-            elif source == "bearer":
-                if self.config.use_bearer_token:
-                    auth_header = request.headers.get("authorization")
-                    if auth_header and auth_header.startswith("Bearer "):
-                        bearer_prefix_len = 7
-                        token_value = auth_header[bearer_prefix_len:]
-                        logger.debug("Token extracted from bearer auth")
-                        return token_value
-
-        return None
+        return _extract_header_token(request, self.config)
 
     def _get_client_ip(self, request: Request) -> str | None:
         """Get client IP address from request.
@@ -284,17 +304,22 @@ class StarletteSessionMiddleware:
         renewed_token: str | None = None
         backend_session: Session | None = None
 
-        cookie_value = connection.cookies.get(self.config.cookie_name)
-        if cookie_value:
+        # Resolve the incoming session token: prefer the header/bearer transport
+        # (e.g. X-Session-Token, as used by SessionMiddleware) and fall back to
+        # the session cookie, so header-based clients authenticate here too.
+        token_value = _extract_header_token(
+            connection, self.config
+        ) or connection.cookies.get(self.config.cookie_name)
+        if token_value:
             try:
                 ip_address = _get_client_ip(connection)
                 user_agent = connection.headers.get("user-agent")
                 backend_session, renewed_token = await self.session_manager.get_session(
-                    cookie_value,
+                    token_value,
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
-                loaded_token = renewed_token or cookie_value
+                loaded_token = renewed_token or token_value
                 scope["session"] = self._session_cls(backend_session.data)
                 initial_session_was_empty = not backend_session.data
             except SessionError:

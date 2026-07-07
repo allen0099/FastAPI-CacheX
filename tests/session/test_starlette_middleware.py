@@ -510,6 +510,42 @@ async def test_get_session_dependency_works_under_starlette_middleware(
     assert authenticated.json() == {"user_id": "cookie-user"}
 
 
+@pytest.mark.asyncio
+async def test_header_token_takes_priority_under_starlette_middleware(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """StarletteSessionMiddleware must accept the X-Session-Token header first.
+
+    Guards the header-first-then-cookie token resolution: a token supplied via
+    the configured header (config.header_name) must authenticate even with no
+    cookie, and must win over an invalid session cookie.
+    """
+    app = FastAPI()
+    app.add_middleware(
+        StarletteSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/me")
+    async def me_route(session=Depends(get_session)):
+        return {"user_id": session.user.user_id}
+
+    user = SessionUser(user_id="header-user")
+    _session, token = await manager.create_session(user=user)
+
+    client = TestClient(app)
+
+    # Token via header, no cookie -> resolves the Session.
+    header_only = client.get("/me", headers={config.header_name: token})
+    assert header_only.status_code == 200
+    assert header_only.json() == {"user_id": "header-user"}
+
+    # Header must take priority over a bogus cookie.
+    client.cookies.set(config.cookie_name, "not-a-valid-token")
+    header_wins = client.get("/me", headers={config.header_name: token})
+    assert header_wins.status_code == 200
+    assert header_wins.json() == {"user_id": "header-user"}
+
+
 def test_session_middleware_construction_is_deprecated(
     manager: SessionManager, config: SessionConfig
 ) -> None:
