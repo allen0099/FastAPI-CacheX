@@ -283,6 +283,9 @@ def get_user_roles(username: str) -> list[str]:
   `SessionMiddleware` 相容，透過 Cookie（預設 cookie 名稱 `session`）傳遞
   已簽名的 Session Token，Session 內容則儲存於後端（`SessionManager`
   對應的 cache backend），而非如 Starlette 原生做法般編碼進 Cookie 本身。
+  Token 解析採「Header 優先、Cookie 其次」：會先讀取自訂 Header（預設
+  `X-Session-Token`）與/或 `Authorization: Bearer`，找不到才回退到 Cookie，
+  因此原本使用 `SessionMiddleware` 之 `X-Session-Token` 的客戶端可直接沿用。
 
 兩者都會將已載入的 `Session` 物件放進 `request.state`，因此既有的
 Session 依賴項 `get_session`、`get_optional_session`、`require_session`
