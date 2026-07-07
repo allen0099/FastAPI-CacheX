@@ -270,6 +270,35 @@ def get_user_roles(username: str) -> list[str]:
     return ["user"] if username != "admin" else ["admin", "user"]
 ```
 
+## Migration: SessionMiddleware → StarletteSessionMiddleware
+
+`SessionMiddleware` 已自 0.3.1 版本起標記為 deprecated（建構時會發出
+`DeprecationWarning`），並將在 0.3.5 版本移除，請改用
+`StarletteSessionMiddleware`：
+
+- **`SessionMiddleware`**（`BaseHTTPMiddleware`）：透過自訂 Header（預設
+  `X-Session-Token`）與/或 `Authorization: Bearer` 傳遞 Token，適用於
+  API-first、由客戶端管理 Token 的架構。不支援 Cookie 傳輸。
+- **`StarletteSessionMiddleware`**：與 Starlette 內建的
+  `SessionMiddleware` 相容，透過 Cookie（預設 cookie 名稱 `session`）傳遞
+  已簽名的 Session Token，Session 內容則儲存於後端（`SessionManager`
+  對應的 cache backend），而非如 Starlette 原生做法般編碼進 Cookie 本身。
+
+兩者都會將已載入的 `Session` 物件放進 `request.state`，因此既有的
+Session 依賴項 `get_session`、`get_optional_session`、`require_session`
+在兩種 Middleware 下皆可正常運作，無需額外調整：
+
+```python
+from fastapi_cachex.session import StarletteSessionMiddleware, get_session
+
+app.add_middleware(StarletteSessionMiddleware, session_manager=manager, config=config)
+
+
+@app.get("/me")
+async def me(session=Depends(get_session)):
+    return {"user_id": session.user.user_id}
+```
+
 ## 配置選項
 
 ### SessionConfig
