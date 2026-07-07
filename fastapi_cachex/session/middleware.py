@@ -3,6 +3,7 @@
 import logging
 import warnings
 from typing import TYPE_CHECKING
+from typing import Any
 
 from fastapi import Request
 from fastapi import Response
@@ -99,6 +100,20 @@ def _extract_header_token(
                     return token_value
 
     return None
+
+
+def _stash_session_manager(app: Any, manager: SessionManager) -> None:
+    """Register the session manager on ``app.state`` for dependency injection.
+
+    Stored under a private key on the first request only; ``get_session_manager``
+    reads it back.
+
+    Args:
+        app: The Starlette application (``scope["app"]`` / ``request.app``)
+        manager: Session manager to register
+    """
+    if not hasattr(app.state, "__fastapi_cachex_session_manager"):
+        setattr(app.state, "__fastapi_cachex_session_manager", manager)
 
 
 class SessionMiddleware(BaseHTTPMiddleware):
@@ -290,13 +305,7 @@ class FastAPICacheXSessionMiddleware:
             return
 
         # Store session manager in app state for dependency injection (first request only)
-        app = scope["app"]
-        if not hasattr(app.state, "__fastapi_cachex_session_manager"):
-            setattr(
-                app.state,
-                "__fastapi_cachex_session_manager",
-                self.session_manager,
-            )
+        _stash_session_manager(scope["app"], self.session_manager)
 
         connection = HTTPConnection(scope)
         initial_session_was_empty = True
@@ -307,9 +316,11 @@ class FastAPICacheXSessionMiddleware:
         # Resolve the incoming session token: prefer the header/bearer transport
         # (e.g. X-Session-Token, as used by SessionMiddleware) and fall back to
         # the session cookie, so header-based clients authenticate here too.
-        token_value = _extract_header_token(
-            connection, self.config
-        ) or connection.cookies.get(self.config.cookie_name)
+        # `header_token` is captured so the response is routed by transport: a
+        # header-sourced token is echoed back via the response header, otherwise
+        # via Set-Cookie (see send_wrapper).
+        header_token = _extract_header_token(connection, self.config)
+        token_value = header_token or connection.cookies.get(self.config.cookie_name)
         if token_value:
             try:
                 ip_address = _get_client_ip(connection)
@@ -333,9 +344,12 @@ class FastAPICacheXSessionMiddleware:
 
         scope.setdefault("state", {})["__fastapi_cachex_session"] = backend_session
 
-        async def send_wrapper(message: Message) -> None:
-            nonlocal backend_session, loaded_token
+        # Route the response by how the token arrived: header-sourced tokens are
+        # echoed back via the response header (no cookies); cookie-sourced (or
+        # brand-new) sessions use Set-Cookie.
+        from_header = header_token is not None
 
+        async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
                 session: StarletteSession = scope["session"]
                 headers = MutableHeaders(scope=message)
@@ -344,46 +358,97 @@ class FastAPICacheXSessionMiddleware:
                     headers.add_vary_header("Cookie")
 
                 if session.modified and session:
-                    # Dict has content -> persist (create or update) and set cookie.
-                    if backend_session is None:
-                        (
-                            backend_session,
-                            loaded_token,
-                        ) = await self.session_manager.create_anonymous_session(
-                            ip_address=_get_client_ip(connection),
-                            user_agent=connection.headers.get("user-agent"),
-                        )
-                    else:
-                        # backend_session and loaded_token are always set together
-                        # (either just above, or after a successful get_session()
-                        # call before this closure was defined).
-                        assert loaded_token is not None  # noqa: S101
-                    backend_session.data = dict(session)
-                    await self.session_manager.update_session(backend_session)
-
-                    headers.append(
-                        "Set-Cookie", self._build_set_cookie_header(loaded_token)
+                    cookie_token, new_token = await self._write_session(
+                        session,
+                        connection,
+                        backend_session,
+                        loaded_token,
+                        renewed_token,
                     )
+                    # Header clients only need a genuinely new/renewed token (an
+                    # unchanged one is already held); cookie clients always get a
+                    # refreshed cookie.
+                    token_to_emit = new_token if from_header else cookie_token
+                    if token_to_emit is not None:
+                        self._emit_token(
+                            headers, token_to_emit, from_header=from_header
+                        )
                 elif session.modified and not initial_session_was_empty:
-                    # Cleared -> delete backend session, expire cookie.
-                    # backend_session is always set when initial_session_was_empty
-                    # is False (both are only set together, after a successful
-                    # get_session() call above).
+                    # Cleared -> delete backend session. backend_session is always
+                    # set when initial_session_was_empty is False (both are only set
+                    # together, after a successful get_session() call above).
                     assert backend_session is not None  # noqa: S101
                     await self.session_manager.delete_session(
                         backend_session.session_id
                     )
-                    headers.append("Set-Cookie", self._build_clear_cookie_header())
+                    if not from_header:
+                        # Cookie transport: expire the cookie. A header-based client
+                        # simply drops its now-dangling token (record is deleted).
+                        headers.append("Set-Cookie", self._build_clear_cookie_header())
                 elif renewed_token is not None:
                     # Sliding expiration renewed the token even though the dict
-                    # itself was untouched; the cookie must still be refreshed.
-                    headers.append(
-                        "Set-Cookie", self._build_set_cookie_header(renewed_token)
-                    )
+                    # itself was untouched; propagate it via the same transport.
+                    self._emit_token(headers, renewed_token, from_header=from_header)
 
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+    def _emit_token(
+        self, headers: MutableHeaders, token: str, *, from_header: bool
+    ) -> None:
+        """Send a session token to the client via its transport.
+
+        Args:
+            headers: Mutable response headers to write to
+            token: Session token string to deliver
+            from_header: If True, echo via the configured response header;
+                otherwise (re)set it as a Set-Cookie header.
+        """
+        if from_header:
+            headers.append(self.config.header_name, token)
+        else:
+            headers.append("Set-Cookie", self._build_set_cookie_header(token))
+
+    async def _write_session(
+        self,
+        session: "StarletteSession",
+        connection: HTTPConnection,
+        backend_session: "Session | None",
+        loaded_token: str | None,
+        renewed_token: str | None,
+    ) -> tuple[str, str | None]:
+        """Create-or-update the backend session for a modified, non-empty dict.
+
+        Args:
+            session: The Starlette session dict for this request
+            connection: Incoming HTTP connection (for IP / User-Agent binding)
+            backend_session: Loaded backend session, or None for a new session
+            loaded_token: Token for the loaded session (None when creating anew)
+            renewed_token: Sliding-expiration renewed token, if any
+
+        Returns:
+            ``(cookie_token, new_token)`` where ``cookie_token`` is the token to
+            (re)set as a cookie, and ``new_token`` is a genuinely new/renewed token
+            to hand a header-based client (``None`` when the token is unchanged).
+        """
+        if backend_session is None:
+            (
+                backend_session,
+                loaded_token,
+            ) = await self.session_manager.create_anonymous_session(
+                ip_address=_get_client_ip(connection),
+                user_agent=connection.headers.get("user-agent"),
+            )
+            new_token: str | None = loaded_token
+        else:
+            # backend_session and loaded_token are always set together (after a
+            # successful get_session() call).
+            assert loaded_token is not None  # noqa: S101
+            new_token = renewed_token
+        backend_session.data = dict(session)
+        await self.session_manager.update_session(backend_session)
+        return loaded_token, new_token
 
     def _build_set_cookie_header(self, token: str) -> str:
         """Build a `Set-Cookie` header value carrying the session token.

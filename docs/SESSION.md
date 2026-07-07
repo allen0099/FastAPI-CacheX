@@ -286,6 +286,9 @@ def get_user_roles(username: str) -> list[str]:
   Token 解析採「Header 優先、Cookie 其次」：會先讀取自訂 Header（預設
   `X-Session-Token`）與/或 `Authorization: Bearer`，找不到才回退到 Cookie，
   因此原本使用 `SessionMiddleware` 之 `X-Session-Token` 的客戶端可直接沿用。
+  回應側也依來源分流：以 Header 帶入的 Token，其續期後的新 Token 會透過同一個
+  回應 Header 回送、且不發送 `Set-Cookie`；以 Cookie 帶入（或全新的匿名
+  Session）則沿用 `Set-Cookie`。
 
 兩者都會將已載入的 `Session` 物件放進 `request.state`，因此既有的
 Session 依賴項 `get_session`、`get_optional_session`、`require_session`

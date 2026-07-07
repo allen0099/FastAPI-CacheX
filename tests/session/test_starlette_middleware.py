@@ -546,6 +546,103 @@ async def test_header_token_takes_priority_under_starlette_middleware(
     assert header_wins.json() == {"user_id": "header-user"}
 
 
+@pytest.mark.asyncio
+async def test_header_source_renewal_uses_response_header_not_cookie(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """A header-sourced token that gets sliding-renewed must be echoed via the
+    response header, never as a Set-Cookie."""
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/noop")
+    async def noop_route() -> dict[str, bool]:
+        return {"ok": True}
+
+    user = SessionUser(user_id="slide-header-user")
+    session, token = await manager.create_session(user=user)
+
+    # Shorten expiry so time_remaining < sliding threshold (< 50% of session_ttl).
+    shortened_expiry = datetime.now(timezone.utc) + timedelta(seconds=100)
+    session.expires_at = shortened_expiry
+    await manager._save_session(session)
+
+    client = TestClient(app)
+    response = client.get("/noop", headers={config.header_name: token})
+
+    assert response.status_code == 200
+    # Renewal must be delivered via the response header, and no cookie is set.
+    assert "set-cookie" not in response.headers
+    renewed_token = response.headers.get(config.header_name)
+    assert renewed_token is not None
+
+    renewed, _ = await manager.get_session(renewed_token)
+    assert renewed.expires_at is not None
+    assert renewed.expires_at > shortened_expiry
+
+
+@pytest.mark.asyncio
+async def test_header_source_modify_persists_without_cookie(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """Modifying a header-sourced session persists the data but emits neither a
+    Set-Cookie nor a redundant token header (the token is unchanged)."""
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/add")
+    async def add_route(request: Request) -> dict[str, bool]:
+        request.session["b"] = 2
+        return {"ok": True}
+
+    user = SessionUser(user_id="mod-header-user")
+    _session, token = await manager.create_session(user=user, a=1)
+
+    client = TestClient(app)
+    response = client.get("/add", headers={config.header_name: token})
+
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    # Token is unchanged, so nothing needs to be handed back via the header.
+    assert config.header_name not in response.headers
+
+    # The data change is still persisted under the same token.
+    reloaded, _ = await manager.get_session(token)
+    assert reloaded.data == {"a": 1, "b": 2}
+
+
+@pytest.mark.asyncio
+async def test_header_source_invalid_token_new_session_via_header(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """An invalid header token that leads to a new session must return the new
+    token via the response header, not a Set-Cookie."""
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/set")
+    async def set_route(request: Request) -> dict[str, bool]:
+        request.session["k"] = "v"
+        return {"ok": True}
+
+    client = TestClient(app)
+    response = client.get("/set", headers={config.header_name: "not-a-real-token"})
+
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    new_token = response.headers.get(config.header_name)
+    assert new_token is not None
+
+    created, _ = await manager.get_session(new_token)
+    assert created.data == {"k": "v"}
+
+
 def test_session_middleware_construction_is_deprecated(
     manager: SessionManager, config: SessionConfig
 ) -> None:
