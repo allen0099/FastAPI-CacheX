@@ -155,7 +155,7 @@ async def get_response(
     # getattr with a fallback handles both without importing the internal class.
     response_class: type[Response] = cast(
         "type[Response]",
-        getattr(route.response_class, "value", route.response_class),
+        getattr(__request.app.router, "default_response_class", route.response_class),
     )
 
     # Convert non-Response result to Response using appropriate response_class
