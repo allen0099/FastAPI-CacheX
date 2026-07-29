@@ -151,11 +151,21 @@ async def get_response(
         msg = "Route not found in request scope"
         raise CacheXError(msg)
 
-    # FastAPI may store a DefaultPlaceholder here; its value is the configured
-    # application default. Otherwise this is the route's explicit response class.
+    # A placeholder means this route uses the application default. Unwrap the
+    # application value instead of calling the route's DefaultPlaceholder.
+    route_response_class = route.response_class
+    application_default_response_class = __request.app.router.default_response_class
     response_class: type[Response] = cast(
         "type[Response]",
-        getattr(route.response_class, "value", route.response_class),
+        (
+            getattr(
+                application_default_response_class,
+                "value",
+                application_default_response_class,
+            )
+            if hasattr(route_response_class, "value")
+            else route_response_class
+        ),
     )
 
     # Convert non-Response result to Response using appropriate response_class
