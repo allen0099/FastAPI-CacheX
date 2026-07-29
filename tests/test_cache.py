@@ -315,6 +315,19 @@ def test_use_default_response_class():
     assert response.headers["content-type"] == "application/json"
 
 
+def test_use_configured_default_response_class():
+    custom_app = FastAPI(default_response_class=PlainTextResponse)
+
+    @custom_app.get("/")
+    @cache()
+    async def configured_default_response_class_endpoint():
+        return "This endpoint uses the configured default response class"
+
+    response = TestClient(custom_app).get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+
+
 def test_response_class_html():
     @app.get("/html", response_class=HTMLResponse)
     @cache(ttl=60)
@@ -618,8 +631,12 @@ def test_stale_client_etag_with_changed_cache():
     # We bypass the async interface to avoid cross-event-loop issues in a sync test.
     # TestClient uses "testserver" as the default Host header.
     cache_key = "GET|||testserver|||/etag-mismatch|||"
-    new_entry = CacheEntry(fingerprint='W/"newetag"', content=b"changed", media_type="text/plain")
-    etag_backend.cache[cache_key] = CacheItem(value=new_entry, expiry=time.time() + 3600)
+    new_entry = CacheEntry(
+        fingerprint='W/"newetag"', content=b"changed", media_type="text/plain"
+    )
+    etag_backend.cache[cache_key] = CacheItem(
+        value=new_entry, expiry=time.time() + 3600
+    )
 
     # Client sends old ETag, but cache now has a different ETag — must get 200 with new content
     r2 = etag_client.get("/etag-mismatch", headers={"If-None-Match": original_etag})
