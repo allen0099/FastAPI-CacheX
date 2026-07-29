@@ -151,8 +151,8 @@ async def get_response(
         msg = "Route not found in request scope"
         raise CacheXError(msg)
 
-    # FastAPI <= 0.136.x stores a DefaultPlaceholder; >= 0.137.0 stores the class directly.
-    # getattr with a fallback handles both without importing the internal class.
+    # FastAPI may store a DefaultPlaceholder here; its value is the configured
+    # application default. Otherwise this is the route's explicit response class.
     response_class: type[Response] = cast(
         "type[Response]",
         getattr(route.response_class, "value", route.response_class),
