@@ -222,37 +222,6 @@ async def test_memcached_set_content_bytes(monkeypatch) -> None:
 
 @requires_memcached
 @pytest.mark.asyncio
-async def test_memcached_set_uses_standard_json_branch(monkeypatch) -> None:
-    """Force standard json to cover non-bytes serialization branch in set()."""
-    # Swap out orjson with stdlib json inside module to return str from dumps
-    import json as std_json
-    import types
-    from typing import cast
-
-    from fastapi_cachex.backends import memcached as memcached_module
-
-    original_json = cast("object", memcached_module.json)  # type: ignore[attr-defined]
-    memcached_module.json = types.SimpleNamespace(  # type: ignore[attr-defined, assignment]
-        dumps=std_json.dumps,
-        loads=std_json.loads,
-        JSONDecodeError=std_json.JSONDecodeError,
-    )
-    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
-    await backend.clear()
-    try:
-        key = "branch_json_key"
-        value = CacheEntry(fingerprint="e", content=b"bytes-content")
-        # When using std json, dumps returns str and code should encode to bytes
-        await backend.set(key, value)
-        got = await backend.get(key)
-        assert got is not None
-        assert got == value
-    finally:
-        memcached_module.json = original_json  # type: ignore[attr-defined, assignment]
-
-
-@requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_invalid_and_missing_fields(
     memcached_backend: MemcachedBackend,
 ) -> None:

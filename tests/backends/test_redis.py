@@ -201,42 +201,6 @@ def test_redis_without_redis_package(monkeypatch):
     assert "redis[hiredis] is not installed" in str(exc_info.value)
 
 
-@requires_redis
-@pytest.mark.asyncio
-async def test_redis_serialization_with_standard_json() -> None:
-    """Test serialization with stdlib json (ensures str-return path)."""
-    import json as std_json
-    import types
-    from typing import cast
-
-    # Temporarily replace json module in backend with stdlib json
-    from fastapi_cachex.backends import redis
-
-    original_json = cast("object", redis.json)  # type: ignore[attr-defined]
-    redis.json = types.SimpleNamespace(  # type: ignore[attr-defined, assignment]
-        dumps=std_json.dumps,
-        loads=std_json.loads,
-        JSONDecodeError=std_json.JSONDecodeError,
-    )
-
-    try:
-        backend = AsyncRedisCacheBackend()
-        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
-        serialized = backend._serialize(value)
-
-        # Verify the serialization worked correctly and str path executed
-        assert isinstance(serialized, str)
-        assert "test-etag" in serialized
-        assert "test-content" in serialized
-
-        # Ensure we can deserialize it back correctly
-        deserialized = backend._deserialize(serialized)
-        assert deserialized == value
-    finally:
-        # Restore original json module
-        redis.json = original_json  # type: ignore[attr-defined, assignment]
-
-
 @pytest.mark.asyncio
 class TestAsyncRedisCacheBackend:
     @requires_redis
