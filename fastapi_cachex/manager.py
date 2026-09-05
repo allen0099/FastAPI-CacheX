@@ -191,13 +191,11 @@ class CacheManager:
         """
         match_prefix = self._cache_key(prefix or "")
         keys = await self.backend.get_all_keys()
-        matching_keys = [key for key in keys if key.startswith(match_prefix)]
-        for key in matching_keys:
-            await self.backend.delete(key)
-        logger.debug(
-            "Cache CLEAR_PREFIX; prefix=%s removed=%s", match_prefix, len(matching_keys)
+        removed = await self.backend.delete_many(
+            key for key in keys if key.startswith(match_prefix)
         )
-        return len(matching_keys)
+        logger.debug("Cache CLEAR_PREFIX; prefix=%s removed=%s", match_prefix, removed)
+        return removed
 
     async def clear(self) -> int:
         """Clear all keys under this manager's namespace.

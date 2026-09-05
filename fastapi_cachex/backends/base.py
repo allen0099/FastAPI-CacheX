@@ -2,6 +2,7 @@
 
 from abc import ABC
 from abc import abstractmethod
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi_cachex.types import CacheEntry
@@ -23,6 +24,20 @@ class BaseCacheBackend(ABC):
     @abstractmethod
     async def delete(self, key: str) -> None:
         """Remove a response from the cache."""
+
+    async def delete_many(self, keys: Iterable[str]) -> int:
+        """Remove every key in ``keys``; returns how many were removed.
+
+        The base implementation deletes one key at a time and reports how
+        many were attempted, since ``delete`` does not say whether the key
+        existed. The built-in backends override it with a single batched
+        operation that counts what was actually removed.
+        """
+        count = 0
+        for key in keys:
+            await self.delete(key)
+            count += 1
+        return count
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry.

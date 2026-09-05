@@ -1,6 +1,7 @@
 """Redis cache backend implementation."""
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
@@ -173,6 +174,12 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Remove a response from the cache."""
         await self.client.delete(self._make_key(key))
         logger.debug("Redis DELETE; key=%s", key)
+
+    async def delete_many(self, keys: Iterable[str]) -> int:
+        """Remove every key in ``keys`` with batched DELs; returns how many existed."""
+        removed = await self._delete_keys([self._make_key(key) for key in keys])
+        logger.debug("Redis DELETE_MANY; removed=%s", removed)
+        return removed
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry (see base class).

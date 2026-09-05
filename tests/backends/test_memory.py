@@ -599,3 +599,16 @@ async def test_memory_backend_get_and_delete_has_exactly_one_winner(
 
     assert results.count(value) == 1
     assert results.count(None) == 19
+
+
+@pytest.mark.asyncio
+async def test_memory_delete_many_counts_only_existing_keys(
+    memory_backend: MemoryBackend,
+):
+    await memory_backend.set("a", CacheEntry(fingerprint="e", content=b"1"))
+    await memory_backend.set("b", CacheEntry(fingerprint="e", content=b"2"))
+    await memory_backend.set("keep", CacheEntry(fingerprint="e", content=b"3"))
+
+    assert await memory_backend.delete_many(["a", "b", "missing"]) == 2
+    assert await memory_backend.get("a") is None
+    assert await memory_backend.get("keep") is not None
