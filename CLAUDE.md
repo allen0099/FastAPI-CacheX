@@ -80,7 +80,7 @@ The library has four independent subsystems:
 All backends implement `BaseCacheBackend` (abstract base in `backends/base.py`):
 - `MemoryBackend`: In-process dict with background cleanup task. Not suitable for multi-process production use.
 - `AsyncRedisCacheBackend` (`backends/redis.py`): Fully async; uses `SCAN` (not `KEYS`) for pattern operations. Requires `redis[hiredis]` and `orjson` extras.
-- `MemcachedBackend` (`backends/memcached.py`): `clear_pattern`/`get_all_keys` are no-ops (return `0`/`[]` with a `RuntimeWarning`) since the Memcached protocol has no key enumeration. Runs the sync pymemcache client in worker threads with connection pooling (`use_pooling=True`), so concurrent calls never share a socket. Requires `pymemcache` extra.
+- `MemcachedBackend` (`backends/memcached.py`): `clear_pattern`/`get_all_keys` are no-ops (return `0`/`[]` with a `RuntimeWarning`) since the Memcached protocol has no key enumeration. Runs the sync pymemcache client in worker threads with connection pooling (`use_pooling=True`, `default_noreply=False`), so concurrent calls never share a socket and every write is acknowledged before the next call on another socket can observe it. Requires `pymemcache` extra.
 
 Backend keys are namespaced automatically (default prefix: `fastapi_cachex:`).
 

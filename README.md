@@ -247,7 +247,9 @@ BackendProxy.set(backend)
 - Consider using Redis backend if you need pattern-based cache clearing
 
 The synchronous pymemcache client runs in worker threads and is connection-pooled,
-so concurrent requests never share a socket.
+so concurrent requests never share a socket. Writes wait for the server's
+acknowledgement (`default_noreply=False`), which keeps a value readable from
+any pooled connection as soon as `set()` returns.
 
 ### Redis
 

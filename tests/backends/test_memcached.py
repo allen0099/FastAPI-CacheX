@@ -60,6 +60,15 @@ async def memcached_backend():
 
 
 @requires_memcached
+def test_memcached_client_waits_for_write_acknowledgements() -> None:
+    # With pooling, an unacknowledged write on one socket can still be in flight
+    # while a read on another socket is served; every command must be replied to.
+    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    assert backend.client.use_pooling is True
+    assert backend.client.default_kwargs["default_noreply"] is False
+
+
+@requires_memcached
 @pytest.mark.asyncio
 async def test_memcached_set_get(memcached_backend: MemcachedBackend):
     key = "test_key"
