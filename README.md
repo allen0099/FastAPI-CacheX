@@ -143,7 +143,7 @@ cache and OAuth state, so `clear()`/`clear_prefix()` never touch unrelated cache
 entries.
 
 **Note**: `clear()`/`clear_prefix()` are implemented via the backend's
-`get_all_keys()`. Since Memcached doesn't support key enumeration (see
+`get_all_keys()` and `delete_many()` (one batched `DEL` on Redis). Since Memcached doesn't support key enumeration (see
 [Memcached limitations](#memcached)), these two methods are no-ops on a
 Memcached backend — `get()`/`set()`/`delete()`/`has()` work normally. Use
 Redis or the in-memory backend if you need bulk clearing.
