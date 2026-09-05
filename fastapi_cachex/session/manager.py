@@ -1,6 +1,7 @@
 """Session manager for CRUD operations."""
 
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -24,6 +25,10 @@ from .token_serializers import SimpleTokenSerializer
 from .token_serializers import TokenSerializer
 
 logger = logging.getLogger(__name__)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class SessionManager:
@@ -125,9 +130,7 @@ class SessionManager:
 
         # Set expiry
         if self.config.session_ttl:
-            session.expires_at = datetime.now(timezone.utc) + timedelta(
-                seconds=self.config.session_ttl,
-            )
+            session.expires_at = _now() + timedelta(seconds=self.config.session_ttl)
 
         # Bind IP and User-Agent if configured
         if self.config.ip_binding:
@@ -222,27 +225,19 @@ class SessionManager:
             raise SessionInvalidError(msg)
 
         if session.is_expired():
-            session.status = SessionStatus.EXPIRED
-            await self._save_session(session)
-            msg = "Session has expired"
             logger.debug("Session expired; id=%s", session.session_id)
-            raise SessionExpiredError(msg)
+            await self._expire(session, "Session has expired")
 
         # Check absolute timeout (hard cap regardless of sliding expiration)
-        if self.config.absolute_timeout is not None:
-            absolute_expires_at = session.created_at + timedelta(
-                seconds=self.config.absolute_timeout,
+        if self.config.absolute_timeout is not None and _now() >= (
+            session.created_at + timedelta(seconds=self.config.absolute_timeout)
+        ):
+            logger.debug(
+                "Session absolute timeout exceeded; id=%s created_at=%s",
+                session.session_id,
+                session.created_at,
             )
-            if datetime.now(timezone.utc) >= absolute_expires_at:
-                session.status = SessionStatus.EXPIRED
-                await self._save_session(session)
-                msg = "Session has exceeded absolute timeout"
-                logger.debug(
-                    "Session absolute timeout exceeded; id=%s created_at=%s",
-                    session.session_id,
-                    session.created_at,
-                )
-                raise SessionExpiredError(msg)
+            await self._expire(session, "Session has exceeded absolute timeout")
 
         # Security checks
         if self.config.ip_binding and not self.security.check_ip_match(
@@ -276,9 +271,7 @@ class SessionManager:
 
         renewed_token: str | None = None
         if self.config.sliding_expiration and session.expires_at:
-            time_remaining = (
-                session.expires_at - datetime.now(timezone.utc)
-            ).total_seconds()
+            time_remaining = (session.expires_at - _now()).total_seconds()
             threshold = self.config.session_ttl * self.config.sliding_threshold
 
             if time_remaining < threshold:
@@ -366,20 +359,11 @@ class SessionManager:
         Returns:
             Number of sessions deleted
         """
-        # This requires scanning all session keys
         count = 0
-
-        try:
-            all_keys = await self.backend.get_all_keys()
-            for key in all_keys:
-                if key.startswith(self.config.backend_key_prefix):
-                    session = await self._load_session_by_key(key)
-                    if session and session.user and session.user.user_id == user_id:
-                        await self.backend.delete(key)
-                        count += 1
-        except NotImplementedError:  # pragma: no cover
-            # Backend doesn't support get_all_keys, can't delete by user
-            pass
+        async for key, session in self._iter_sessions():
+            if session.user and session.user.user_id == user_id:
+                await self.backend.delete(key)
+                count += 1
 
         logger.debug("User sessions deleted; user_id=%s count=%s", user_id, count)
         return count
@@ -391,21 +375,36 @@ class SessionManager:
             Number of sessions cleared
         """
         count = 0
-
-        try:
-            all_keys = await self.backend.get_all_keys()
-            for key in all_keys:
-                if key.startswith(self.config.backend_key_prefix):
-                    session = await self._load_session_by_key(key)
-                    if session and session.is_expired():
-                        await self.backend.delete(key)
-                        count += 1
-        except NotImplementedError:  # pragma: no cover
-            # Backend doesn't support get_all_keys
-            pass
+        async for key, session in self._iter_sessions():
+            if session.is_expired():
+                await self.backend.delete(key)
+                count += 1
 
         logger.debug("Expired sessions cleared; count=%s", count)
         return count
+
+    async def _iter_sessions(self) -> AsyncIterator[tuple[str, Session]]:
+        """Yield every readable session under this manager's prefix with its key.
+
+        Backends without key enumeration (which raise NotImplementedError)
+        simply yield nothing.
+        """
+        try:
+            all_keys = await self.backend.get_all_keys()
+        except NotImplementedError:  # pragma: no cover
+            return
+        for key in all_keys:
+            if not key.startswith(self.config.backend_key_prefix):
+                continue
+            session = await self._load_session_by_key(key)
+            if session is not None:
+                yield key, session
+
+    async def _expire(self, session: Session, reason: str) -> None:
+        """Persist ``session`` as expired and raise SessionExpiredError."""
+        session.status = SessionStatus.EXPIRED
+        await self._save_session(session)
+        raise SessionExpiredError(reason)
 
     def _create_token(
         self,
@@ -439,18 +438,20 @@ class SessionManager:
         Args:
             session: Session to save
         """
-        key = self._get_backend_key(session.session_id)
-        value = session.model_dump_json().encode("utf-8")
+        payload = session.model_dump_json()
 
         # Calculate TTL
         ttl = None
         if session.expires_at:
-            ttl = int((session.expires_at - datetime.now(timezone.utc)).total_seconds())
+            ttl = int((session.expires_at - _now()).total_seconds())
             ttl = max(ttl, 1)  # Ensure at least 1 second
 
-        fingerprint = self.security.hash_data(value.decode("utf-8"))
+        entry = CacheEntry(
+            fingerprint=self.security.hash_data(payload),
+            content=payload.encode("utf-8"),
+        )
         await self.backend.set(
-            key, CacheEntry(fingerprint=fingerprint, content=value), ttl=ttl
+            self._get_backend_key(session.session_id), entry, ttl=ttl
         )
         logger.debug("Session saved; id=%s ttl=%s", session.session_id, ttl)
 
@@ -463,8 +464,7 @@ class SessionManager:
         Returns:
             Session object or None if not found
         """
-        key = self._get_backend_key(session_id)
-        return await self._load_session_by_key(key)
+        return await self._load_session_by_key(self._get_backend_key(session_id))
 
     async def _load_session_by_key(self, key: str) -> Session | None:
         """Load session from backend by key.
