@@ -529,3 +529,35 @@ class TestExpiredEntryMonitoring:
         assert len(expired_records) == 1
         assert expired_records[0]["is_expired"] is True
         assert expired_records[0]["ttl_remaining"] <= 0
+
+
+class TestMonitoringEdgeCases:
+    """Entries that are not route responses, and a proxy with no backend at all."""
+
+    def test_non_route_keys_are_skipped(self, app, client, setup_cache):
+        """A CacheManager/state key has no method|||host|||path shape and must not be listed."""
+        add_routes(app)
+        setup_cache.cache["cache:plain-value"] = CacheItem(
+            value=CacheEntry(fingerprint="x", content=b"1"), expiry=None
+        )
+        setup_cache.cache["GET|||testserver|||/route|||"] = CacheItem(
+            value=CacheEntry(fingerprint="y", content=b"2"), expiry=None
+        )
+
+        hits = client.get("/cached-hits").json()
+        records = client.get("/cached-records").json()
+
+        assert [h["path"] for h in hits["cached_hits"]] == ["/route"]
+        assert [r["path"] for r in records["cached_records"]] == ["/route"]
+
+    def test_routes_answer_empty_when_no_backend_is_configured(self, app, client):
+        add_routes(app)
+        BackendProxy.set(None)
+
+        hits = client.get("/cached-hits").json()
+        records = client.get("/cached-records").json()
+
+        assert hits["total_hits"] == 0
+        assert hits["summary"]["cached_paths"] == []
+        assert records["total_records"] == 0
+        assert records["summary"]["estimated_cache_size_kb"] == 0.0
