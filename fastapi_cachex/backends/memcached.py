@@ -95,6 +95,27 @@ class MemcachedBackend(BaseCacheBackend):
         )
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
 
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        """Atomically retrieve and remove a cached entry (see base class).
+
+        Memcached has no combined primitive, but DELETE is atomic: the value is
+        returned only when this call is the one that removed it, so exactly one
+        concurrent caller wins.
+        """
+        prefixed_key = self._make_key(key)
+        raw = await asyncio.to_thread(self.client.get, prefixed_key)
+        if raw is None:
+            logger.debug("Memcached GET_AND_DELETE MISS; key=%s", key)
+            return None
+        deleted = await asyncio.to_thread(
+            self.client.delete, prefixed_key, noreply=False
+        )
+        if not deleted:
+            logger.debug("Memcached GET_AND_DELETE LOST RACE; key=%s", key)
+            return None
+        logger.debug("Memcached GET_AND_DELETE HIT; key=%s", key)
+        return decode_entry(raw)
+
     def _add_delta(self, prefixed_key: str, delta: int) -> int | None:
         """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist."""
         if delta < 0:

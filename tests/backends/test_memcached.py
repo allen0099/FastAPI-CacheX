@@ -385,3 +385,43 @@ async def test_memcached_increment_is_atomic_under_concurrency(
     )
 
     assert sorted(results) == list(range(1, 31))
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_returns_then_removes(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once", media_type="text/plain")
+    await memcached_backend.set("once", value, 60)
+
+    assert await memcached_backend.get_and_delete("once") == value
+    assert await memcached_backend.get_and_delete("once") is None
+    assert await memcached_backend.get("once") is None
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_loses_the_race_when_delete_fails(
+    memcached_backend: MemcachedBackend, monkeypatch
+) -> None:
+    await memcached_backend.set("once", CacheEntry(fingerprint="e", content=b"x"), 60)
+    monkeypatch.setattr(memcached_backend.client, "delete", lambda *a, **kw: False)
+
+    assert await memcached_backend.get_and_delete("once") is None
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_has_exactly_one_winner(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once")
+    await memcached_backend.set("once", value, 60)
+
+    results = await asyncio.gather(
+        *(memcached_backend.get_and_delete("once") for _ in range(20))
+    )
+
+    assert results.count(value) == 1
+    assert results.count(None) == 19

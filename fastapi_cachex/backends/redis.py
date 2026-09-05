@@ -174,6 +174,15 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         await self.client.delete(self._make_key(key))
         logger.debug("Redis DELETE; key=%s", key)
 
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        """Atomically retrieve and remove a cached entry (see base class).
+
+        Uses GETDEL, which requires Redis server 6.2 or newer.
+        """
+        value = decode_entry(await self.client.getdel(self._make_key(key)))
+        logger.debug("Redis GETDEL %s; key=%s", "HIT" if value else "MISS", key)
+        return value
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 

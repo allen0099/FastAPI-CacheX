@@ -90,11 +90,8 @@ async def invalidate(
     except BackendNotFoundError:
         return False
 
-    existing = await cache_backend.get(cache_key)
-    if existing is None:
+    if await cache_backend.get_and_delete(cache_key) is None:
         return False
-
-    await cache_backend.delete(cache_key)
     logger.debug("Cache INVALIDATE; key=%s", cache_key)
     return True
 

@@ -24,6 +24,25 @@ class BaseCacheBackend(ABC):
     async def delete(self, key: str) -> None:
         """Remove a response from the cache."""
 
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        """Atomically retrieve and remove a cached entry.
+
+        Use this for one-shot values (OAuth states, grants, invalidation) where
+        exactly one of several concurrent callers may win: every other caller
+        sees ``None``.
+
+        The base implementation is a best-effort, NON-atomic get-then-delete
+        fallback for third-party backends; the built-in backends override it
+        with an atomic implementation.
+
+        Returns:
+            The entry that was stored under ``key``, or ``None`` if there was none
+        """
+        value = await self.get(key)
+        if value is not None:
+            await self.delete(key)
+        return value
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the integer counter stored at ``key``.
 
