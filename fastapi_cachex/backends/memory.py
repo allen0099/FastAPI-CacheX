@@ -4,6 +4,7 @@ import asyncio
 import fnmatch
 import logging
 import time
+from collections.abc import Callable
 
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
@@ -13,11 +14,27 @@ from .base import BaseCacheBackend
 
 logger = logging.getLogger(__name__)
 
-# Cache keys are formatted as: method|||host|||path|||query_params
-# Minimum parts required to extract path component
-_MIN_KEY_PARTS = 3
-# Maximum parts to split (method, host, path, query_params)
-_MAX_KEY_PARTS = 3
+# HTTP cache keys are formatted as: method|||host|||path|||query_params
+_PATH_INDEX = 2
+_QUERY_INDEX = 3
+
+
+def _split_http_key(key: str) -> tuple[str, bool] | None:
+    """Return ``(path, has_query_params)`` for an HTTP cache key, else ``None``.
+
+    Keys without separators (CacheManager/StateManager keys or custom key
+    builders) are not HTTP keys and are matched on their raw value instead.
+    """
+    parts = key.split(CACHE_KEY_SEPARATOR, _QUERY_INDEX)
+    if len(parts) <= _PATH_INDEX:
+        return None
+    has_params = len(parts) > _QUERY_INDEX and bool(parts[_QUERY_INDEX])
+    return parts[_PATH_INDEX], has_params
+
+
+def _is_live(item: CacheItem, now: float) -> bool:
+    """Whether ``item`` has not expired at ``now``."""
+    return item.expiry is None or item.expiry > now
 
 
 class MemoryBackend(BaseCacheBackend):
@@ -78,16 +95,16 @@ class MemoryBackend(BaseCacheBackend):
 
         async with self.lock:
             cached_item = self.cache.get(key)
-            if cached_item:
-                if cached_item.expiry is None or cached_item.expiry > time.time():
-                    logger.debug("Memory cache HIT; key=%s", key)
-                    return cached_item.value
+            if cached_item is None:
+                logger.debug("Memory cache MISS; key=%s", key)
+                return None
+            if not _is_live(cached_item, time.time()):
                 # Entry has expired; clean it up
                 del self.cache[key]
                 logger.debug("Memory cache EXPIRED; key=%s removed", key)
                 return None
-            logger.debug("Memory cache MISS; key=%s", key)
-            return None
+            logger.debug("Memory cache HIT; key=%s", key)
+            return cached_item.value
 
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Store a response in the cache.
@@ -114,6 +131,14 @@ class MemoryBackend(BaseCacheBackend):
             self.cache.clear()
             logger.debug("Memory cache CLEAR; all entries removed")
 
+    async def _evict(self, matches: Callable[[str], bool]) -> int:
+        """Remove every entry whose key satisfies ``matches``; returns the count."""
+        async with self.lock:
+            doomed = [key for key in self.cache if matches(key)]
+            for key in doomed:
+                del self.cache[key]
+        return len(doomed)
+
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
 
@@ -128,30 +153,16 @@ class MemoryBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        cleared_count = 0
-        async with self.lock:
-            keys_to_delete = []
-            for key in self.cache:
-                # Keys are formatted as: method|||host|||path|||query_params
-                parts = key.split(CACHE_KEY_SEPARATOR, _MAX_KEY_PARTS)
-                if len(parts) >= _MIN_KEY_PARTS:
-                    cache_path = parts[2]
-                    # A key always has 4 parts (method|||host|||path|||query);
-                    # an empty query string means no real query params.
-                    has_params = len(parts) > _MIN_KEY_PARTS and bool(
-                        parts[_MIN_KEY_PARTS]
-                    )
-                    if cache_path == path and (include_params or not has_params):
-                        keys_to_delete.append(key)
-                        cleared_count += 1
-                elif key == path:
-                    # Direct key match (custom key format without separators)
-                    keys_to_delete.append(key)
-                    cleared_count += 1
 
-            for key in keys_to_delete:
-                del self.cache[key]
+        def matches(key: str) -> bool:
+            parsed = _split_http_key(key)
+            if parsed is None:
+                # Direct key match (custom key format without separators)
+                return key == path
+            cache_path, has_params = parsed
+            return cache_path == path and (include_params or not has_params)
 
+        cleared_count = await self._evict(matches)
         logger.debug(
             "Memory cache CLEAR_PATH; path=%s include_params=%s removed=%s",
             path,
@@ -172,26 +183,13 @@ class MemoryBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        cleared_count = 0
-        async with self.lock:
-            keys_to_delete = []
-            for key in self.cache:
-                # Extract path component (method|||host|||path|||query_params)
-                parts = key.split(CACHE_KEY_SEPARATOR, _MAX_KEY_PARTS)
-                if len(parts) >= _MIN_KEY_PARTS:
-                    cache_path = parts[2]
-                    if fnmatch.fnmatch(cache_path, pattern):
-                        keys_to_delete.append(key)
-                        cleared_count += 1
-                elif fnmatch.fnmatch(key, pattern):
-                    # Non-HTTP-cache key (no separators, e.g. CacheManager/
-                    # StateManager keys) - match against the raw key.
-                    keys_to_delete.append(key)
-                    cleared_count += 1
 
-            for key in keys_to_delete:
-                del self.cache[key]
+        def matches(key: str) -> bool:
+            parsed = _split_http_key(key)
+            subject = key if parsed is None else parsed[0]
+            return fnmatch.fnmatch(subject, pattern)
 
+        cleared_count = await self._evict(matches)
         logger.debug(
             "Memory cache CLEAR_PATTERN; pattern=%s removed=%s", pattern, cleared_count
         )
@@ -228,13 +226,9 @@ class MemoryBackend(BaseCacheBackend):
         """Remove expired cache entries from memory."""
         async with self.lock:
             now = time.time()
-            expired_keys = [
-                k
-                for k, v in self.cache.items()
-                if v.expiry is not None and v.expiry <= now
-            ]
+            expired_keys = [k for k, v in self.cache.items() if not _is_live(v, now)]
             for key in expired_keys:
-                self.cache.pop(key, None)
+                del self.cache[key]
             if expired_keys:
                 logger.debug(
                     "Memory cache CLEANUP; expired removed=%s", len(expired_keys)

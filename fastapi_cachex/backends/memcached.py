@@ -4,16 +4,12 @@ import asyncio
 import logging
 import warnings
 
+from fastapi_cachex.backends.codec import decode_entry
+from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
-
-try:
-    import orjson as json
-
-except ImportError:  # pragma: no cover
-    import json  # type: ignore[no-redef]  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -72,24 +68,15 @@ class MemcachedBackend(BaseCacheBackend):
         Returns:
             Cached entry if found, None otherwise
         """
-        prefixed_key = self._make_key(key)
-        value = await asyncio.to_thread(self.client.get, prefixed_key)
-        if value is None:
+        raw = await asyncio.to_thread(self.client.get, self._make_key(key))
+        value = decode_entry(raw)
+        if raw is None:
             logger.debug("Memcached MISS; key=%s", key)
-            return None
-
-        # Memcached stores data as bytes; deserialize from JSON
-        try:
-            data = json.loads(value)
-            logger.debug("Memcached HIT; key=%s", key)
-            return CacheEntry(
-                fingerprint=data["fingerprint"],
-                content=data["content"].encode("latin-1"),
-                media_type=data.get("media_type"),
-            )
-        except (json.JSONDecodeError, KeyError, ValueError):
+        elif value is None:
             logger.debug("Memcached DESERIALIZE ERROR; key=%s", key)
-            return None
+        else:
+            logger.debug("Memcached HIT; key=%s", key)
+        return value
 
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Set value in cache.
@@ -99,28 +86,10 @@ class MemcachedBackend(BaseCacheBackend):
             value: CacheEntry instance to store
             ttl: Time to live in seconds
         """
-        prefixed_key = self._make_key(key)
-
-        # Use latin-1 to round-trip arbitrary bytes through JSON storage
-        content = value.content.decode("latin-1")
-
-        serialized_data: str | bytes = json.dumps(
-            {
-                "fingerprint": value.fingerprint,
-                "content": content,
-                "media_type": value.media_type,
-            },
-        )
-
-        # orjson returns bytes, stdlib json returns str
-        serialized_bytes = (
-            serialized_data
-            if isinstance(serialized_data, bytes)
-            else serialized_data.encode("utf-8")
-        )
-
         expire = ttl if ttl is not None else 0
-        await asyncio.to_thread(self.client.set, prefixed_key, serialized_bytes, expire)
+        await asyncio.to_thread(
+            self.client.set, self._make_key(key), encode_entry(value), expire
+        )
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> None:
