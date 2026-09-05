@@ -53,8 +53,16 @@ class MemcachedBackend(BaseCacheBackend):
             msg = "pymemcache is not installed. Please install it with 'pip install pymemcache'"
             raise CacheXError(msg)
 
+        # Pooled connections have no ordering guarantee between each other, so
+        # every write waits for the server's acknowledgement; otherwise a
+        # ``set`` on one socket may still be in flight when a ``get`` on another
+        # socket is served, and the caller would miss its own write.
         self.client = HashClient(
-            servers, connect_timeout=5, timeout=5, use_pooling=True
+            servers,
+            connect_timeout=5,
+            timeout=5,
+            use_pooling=True,
+            default_noreply=False,
         )
         self.key_prefix = key_prefix
 
