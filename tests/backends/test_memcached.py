@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import sys
 
@@ -306,3 +307,20 @@ async def test_memcached_get_cache_data_warning(
     ):
         cache_data = await memcached_backend.get_cache_data()
         assert cache_data == {}
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_concurrent_calls_do_not_share_a_socket(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """Every call runs in a worker thread; the client must be thread-safe."""
+    entries = {
+        f"k{i}": CacheEntry(fingerprint=f"e{i}", content=f"v{i}".encode())
+        for i in range(40)
+    }
+
+    await asyncio.gather(*(memcached_backend.set(k, v, 60) for k, v in entries.items()))
+    results = await asyncio.gather(*(memcached_backend.get(k) for k in entries))
+
+    assert results == list(entries.values())
