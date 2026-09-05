@@ -17,8 +17,8 @@ from fastapi_cachex.session.exceptions import SessionTokenError
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.models import SessionUser
-from fastapi_cachex.types import CacheItem
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import CacheItem
 
 
 @pytest.fixture
