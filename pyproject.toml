@@ -84,6 +84,8 @@ ignore = [
     "FBT001", "FBT002", # Boolean arguments are part of Cache-Control API design
     "S105", # false-positive on token_format strings
     "C901", # allow slightly complex session flow
+    "CPY001", # no copyright header convention in this project (stabilized in ruff 0.16)
+    "PLR0917", # backend constructors take many positional options; keyword-only would break the API
 ]
 preview = true
 explicit-preview-rules = true
