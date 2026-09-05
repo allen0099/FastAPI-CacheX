@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 # SCAN page size and DEL batch size; keeps individual commands small.
 _BATCH_SIZE = 100
 
+# INCRBY that attaches a TTL only when it creates the key, so a counter lives in
+# a fixed window. KEYS[1] = key, ARGV[1] = delta, ARGV[2] = ttl (0 = none).
+_INCREMENT_SCRIPT = """
+local created = redis.call('EXISTS', KEYS[1]) == 0
+local value = redis.call('INCRBY', KEYS[1], ARGV[1])
+if created and tonumber(ARGV[2]) > 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return value
+"""
+
 
 class AsyncRedisCacheBackend(BaseCacheBackend):
     """Async Redis cache backend implementation.
@@ -94,6 +105,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             **kwargs,
         )
         self.key_prefix = key_prefix
+        # Registered once so every call is an EVALSHA (redis-py reloads the
+        # script transparently if the server has flushed it).
+        self._increment_script = self.client.register_script(_INCREMENT_SCRIPT)
 
     @staticmethod
     def load_from_config(config: RedisConfig) -> "AsyncRedisCacheBackend":
@@ -159,6 +173,26 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Remove a response from the cache."""
         await self.client.delete(self._make_key(key))
         logger.debug("Redis DELETE; key=%s", key)
+
+    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+        """Atomically add ``delta`` to the counter at ``key`` (see base class).
+
+        A short Lua script makes the increment and the expiry one server-side
+        operation; the key is stored as a plain Redis integer.
+        """
+        from redis.exceptions import ResponseError
+
+        try:
+            value = await self._increment_script(
+                keys=[self._make_key(key)], args=[delta, ttl or 0]
+            )
+        except ResponseError as e:
+            if "not an integer" not in str(e):
+                raise
+            msg = "Cache key holds a value that is not a counter"
+            raise CacheXError(msg) from e
+        logger.debug("Redis INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
+        return int(value)
 
     async def clear(self) -> None:
         """Clear all cached responses for this namespace.

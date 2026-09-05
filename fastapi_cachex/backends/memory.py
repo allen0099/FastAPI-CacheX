@@ -9,6 +9,8 @@ from collections.abc import Callable
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import CacheItem
+from fastapi_cachex.types import counter_entry
+from fastapi_cachex.types import counter_value
 
 from .base import BaseCacheBackend
 
@@ -124,6 +126,27 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             self.cache.pop(key, None)
             logger.debug("Memory cache DELETE; key=%s", key)
+
+    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+        """Atomically add ``delta`` to the counter at ``key`` (see base class).
+
+        The read-modify-write happens under the backend lock, so concurrent
+        callers on the same event loop never lose an increment.
+        """
+        self._ensure_cleanup_started()
+
+        async with self.lock:
+            now = time.time()
+            item = self.cache.get(key)
+            if item is not None and _is_live(item, now):
+                value = counter_value(item.value) + delta
+                item.value = counter_entry(value)
+            else:
+                value = delta
+                expiry = now + ttl if ttl is not None else None
+                self.cache[key] = CacheItem(value=counter_entry(value), expiry=expiry)
+            logger.debug("Memory cache INCREMENT; key=%s value=%s", key, value)
+            return value
 
     async def clear(self) -> None:
         """Clear all cached responses."""
