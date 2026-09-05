@@ -63,8 +63,7 @@ class CacheManager:
             return default
 
         try:
-            json_content = cached.content.decode("utf-8")
-            return json.loads(json_content)
+            return json.loads(cached.content)
         except _DECODE_ERRORS:
             logger.warning("Failed to decode cached value; key=%s", key)
             return default
