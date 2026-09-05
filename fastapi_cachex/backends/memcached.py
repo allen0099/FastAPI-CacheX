@@ -20,10 +20,11 @@ DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
 class MemcachedBackend(BaseCacheBackend):
     """Memcached backend implementation.
 
-    Note: This implementation uses synchronous pymemcache client but wraps it
-    in async methods. For blocking concerns, consider using aiomcache for
-    true async Memcached operations. Keys are namespaced with 'fastapi_cachex:'
-    by default to avoid conflicts with other applications.
+    Note: This implementation uses the synchronous pymemcache client and runs
+    each call in a worker thread. The client is connection-pooled so concurrent
+    calls never share a socket. For true async Memcached operations consider
+    aiomcache. Keys are namespaced with 'fastapi_cachex:' by default to avoid
+    conflicts with other applications.
 
     Limitations:
     - Pattern-based clearing (clear_pattern) is not supported by Memcached protocol
@@ -52,7 +53,9 @@ class MemcachedBackend(BaseCacheBackend):
             msg = "pymemcache is not installed. Please install it with 'pip install pymemcache'"
             raise CacheXError(msg)
 
-        self.client = HashClient(servers, connect_timeout=5, timeout=5)
+        self.client = HashClient(
+            servers, connect_timeout=5, timeout=5, use_pooling=True
+        )
         self.key_prefix = key_prefix
 
     def _make_key(self, key: str) -> str:
