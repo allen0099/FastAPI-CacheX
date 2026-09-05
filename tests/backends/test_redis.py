@@ -707,3 +707,17 @@ async def test_redis_get_and_delete_has_exactly_one_winner(
 
     assert results.count(value) == 1
     assert results.count(None) == 19
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_delete_many_counts_only_existing_keys(
+    async_redis_backend: AsyncRedisCacheBackend,
+):
+    await async_redis_backend.set("dm-a", CacheEntry(fingerprint="e", content=b"1"))
+    await async_redis_backend.set("dm-b", CacheEntry(fingerprint="e", content=b"2"))
+    await async_redis_backend.set("dm-keep", CacheEntry(fingerprint="e", content=b"3"))
+
+    assert await async_redis_backend.delete_many(["dm-a", "dm-b", "dm-missing"]) == 2
+    assert await async_redis_backend.get("dm-a") is None
+    assert await async_redis_backend.get("dm-keep") is not None

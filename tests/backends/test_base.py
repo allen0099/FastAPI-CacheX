@@ -77,3 +77,12 @@ async def test_get_and_delete_fallback_returns_then_removes(
     assert await backend.get_and_delete("once") == value
     assert "once" not in backend.store
     assert await backend.get_and_delete("once") is None
+
+
+@pytest.mark.asyncio
+async def test_delete_many_fallback_deletes_one_by_one(backend: DictBackend) -> None:
+    await backend.set("a", CacheEntry(fingerprint="e", content=b"1"))
+    await backend.set("b", CacheEntry(fingerprint="e", content=b"2"))
+
+    assert await backend.delete_many(["a", "b", "missing"]) == 3
+    assert backend.store == {}

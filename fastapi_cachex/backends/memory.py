@@ -5,6 +5,7 @@ import fnmatch
 import logging
 import time
 from collections.abc import Callable
+from collections.abc import Iterable
 
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
@@ -126,6 +127,15 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             self.cache.pop(key, None)
             logger.debug("Memory cache DELETE; key=%s", key)
+
+    async def delete_many(self, keys: Iterable[str]) -> int:
+        """Remove every key in ``keys`` under one lock; returns how many existed."""
+        doomed = set(keys)
+        removed = await self._evict(doomed.__contains__)
+        logger.debug(
+            "Memory cache DELETE_MANY; requested=%s removed=%s", len(doomed), removed
+        )
+        return removed
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry (see base class)."""
