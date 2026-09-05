@@ -95,6 +95,41 @@ class MemcachedBackend(BaseCacheBackend):
         )
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
 
+    def _add_delta(self, prefixed_key: str, delta: int) -> int | None:
+        """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist."""
+        if delta < 0:
+            result = self.client.decr(prefixed_key, -delta, noreply=False)
+        else:
+            result = self.client.incr(prefixed_key, delta, noreply=False)
+        return None if result is None else int(result)
+
+    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+        """Atomically add ``delta`` to the counter at ``key`` (see base class).
+
+        Memcached counters are unsigned, so a negative ``delta`` uses DECR,
+        which stops at 0 instead of going negative.
+        """
+        from pymemcache.exceptions import MemcacheClientError
+
+        prefixed_key = self._make_key(key)
+        try:
+            value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
+            if value is None:
+                # No counter yet: ADD is atomic and a no-op when a concurrent
+                # call created it first, so the retry always finds a counter.
+                await asyncio.to_thread(
+                    self.client.add, prefixed_key, b"0", ttl or 0, noreply=False
+                )
+                value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
+        except MemcacheClientError as e:
+            msg = "Cache key holds a value that is not a counter"
+            raise CacheXError(msg) from e
+        if value is None:  # pragma: no cover - the counter expired mid-call
+            msg = "Counter vanished between ADD and INCR"
+            raise CacheXError(msg)
+        logger.debug("Memcached INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
+        return value
+
     async def delete(self, key: str) -> None:
         """Delete value from cache.
 

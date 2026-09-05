@@ -5,7 +5,10 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex.backends.memory import MemoryBackend
+from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.types import COUNTER_FINGERPRINT
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import counter_entry
 
 
 @pytest_asyncio.fixture
@@ -488,3 +491,73 @@ def test_ensure_cleanup_started_without_event_loop() -> None:
         no_task_created = executor.submit(run_in_thread).result()
 
     assert no_task_created
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_increment_creates_then_adds(
+    memory_backend: MemoryBackend,
+):
+    assert await memory_backend.increment("hits") == 1
+    assert await memory_backend.increment("hits") == 2
+    assert await memory_backend.increment("hits", 5) == 7
+    assert await memory_backend.increment("hits", -3) == 4
+
+    entry = await memory_backend.get("hits")
+    assert entry == counter_entry(4)
+    assert entry is not None
+    assert entry.fingerprint == COUNTER_FINGERPRINT
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_increment_applies_ttl_only_on_creation(
+    memory_backend: MemoryBackend,
+):
+    await memory_backend.increment("window", ttl=60)
+    first_expiry = memory_backend.cache["window"].expiry
+    assert first_expiry is not None
+
+    await memory_backend.increment("window", ttl=3600)
+
+    assert memory_backend.cache["window"].expiry == first_expiry
+    assert memory_backend.cache["window"].value == counter_entry(2)
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_increment_without_ttl_never_expires(
+    memory_backend: MemoryBackend,
+):
+    await memory_backend.increment("forever")
+
+    assert memory_backend.cache["forever"].expiry is None
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_increment_restarts_an_expired_counter(
+    memory_backend: MemoryBackend,
+):
+    await memory_backend.increment("stale", 9, ttl=60)
+    memory_backend.cache["stale"].expiry = time.time() - 1
+
+    assert await memory_backend.increment("stale", ttl=60) == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_increment_rejects_a_cached_response(
+    memory_backend: MemoryBackend,
+):
+    await memory_backend.set("page", CacheEntry(fingerprint="e", content=b"<html>"))
+
+    with pytest.raises(CacheXError, match="not a counter"):
+        await memory_backend.increment("page")
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_increment_is_atomic_under_concurrency(
+    memory_backend: MemoryBackend,
+):
+    results = await asyncio.gather(
+        *(memory_backend.increment("race", ttl=60) for _ in range(100))
+    )
+
+    assert sorted(results) == list(range(1, 101))
+    assert await memory_backend.get("race") == counter_entry(100)

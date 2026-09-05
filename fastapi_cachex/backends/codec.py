@@ -5,6 +5,7 @@ it is installed and the standard library ``json`` module otherwise.
 """
 
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import counter_entry
 
 try:
     import orjson as json
@@ -35,15 +36,28 @@ def encode_entry(entry: CacheEntry) -> bytes:
     return serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
 
 
-def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
-    """Rebuild a ``CacheEntry`` from a stored document.
+def _as_counter(raw: str | bytes) -> int | None:
+    """The integer a bare counter value holds, or ``None`` for anything else."""
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
-    Returns ``None`` for a missing value and for anything that is not a document
+
+def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
+    """Rebuild a ``CacheEntry`` from a stored value.
+
+    A bare integer (what the server-side ``INCR`` family leaves behind for
+    ``increment``) becomes a counter entry. Anything else that is not a document
     written by ``encode_entry`` (corrupt JSON, missing fields, non-string
-    content), so callers can treat every malformed value as a cache miss.
+    content) yields ``None``, so callers can treat every malformed value as a
+    cache miss.
     """
     if raw is None:
         return None
+    counter = _as_counter(raw)
+    if counter is not None:
+        return counter_entry(counter)
     try:
         data = json.loads(raw)
         return CacheEntry(

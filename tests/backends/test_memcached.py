@@ -8,6 +8,7 @@ import pytest_asyncio
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import counter_entry
 
 
 def is_memcached_running(host: str = "127.0.0.1", port: int = 11211) -> bool:
@@ -324,3 +325,63 @@ async def test_memcached_concurrent_calls_do_not_share_a_socket(
     results = await asyncio.gather(*(memcached_backend.get(k) for k in entries))
 
     assert results == list(entries.values())
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_creates_then_adds(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    assert await memcached_backend.increment("hits") == 1
+    assert await memcached_backend.increment("hits") == 2
+    assert await memcached_backend.increment("hits", 5) == 7
+    assert await memcached_backend.increment("hits", -3) == 4
+
+    assert await memcached_backend.get("hits") == counter_entry(4)
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_decrement_stops_at_zero(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    await memcached_backend.increment("floor", 2)
+
+    assert await memcached_backend.increment("floor", -5) == 0
+    assert await memcached_backend.increment("missing", -5) == 0
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_honors_ttl(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    await memcached_backend.increment("window", ttl=1)
+    await memcached_backend.increment("window", ttl=3600)
+    await asyncio.sleep(2)
+
+    assert await memcached_backend.get("window") is None
+    assert await memcached_backend.increment("window", ttl=1) == 1
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_rejects_a_cached_response(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    await memcached_backend.set("page", CacheEntry(fingerprint="e", content=b"<html>"))
+
+    with pytest.raises(CacheXError, match="not a counter"):
+        await memcached_backend.increment("page")
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_is_atomic_under_concurrency(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    results = await asyncio.gather(
+        *(memcached_backend.increment("race", ttl=60) for _ in range(30))
+    )
+
+    assert sorted(results) == list(range(1, 31))

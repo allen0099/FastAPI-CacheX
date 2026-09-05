@@ -7,6 +7,7 @@ import pytest
 
 from fastapi_cachex.backends import codec
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import counter_entry
 
 
 @pytest.fixture
@@ -52,3 +53,12 @@ def test_decode_entry_none_is_a_miss():
 )
 def test_decode_entry_treats_malformed_documents_as_a_miss(raw):
     assert codec.decode_entry(raw) is None
+
+
+@pytest.mark.parametrize("raw", ["7", b"7", b"7   ", " 7\n"])
+def test_decode_entry_reads_a_bare_integer_as_a_counter(raw):
+    assert codec.decode_entry(raw) == counter_entry(7)
+
+
+def test_decode_entry_reads_a_negative_counter():
+    assert codec.decode_entry("-2") == counter_entry(-2)
