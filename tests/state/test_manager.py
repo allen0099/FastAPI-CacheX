@@ -820,3 +820,24 @@ async def test_consume_state_past_wall_clock_expiry_removes_the_entry(
 
     assert await state_manager.backend.get(cache_key) is None
     assert await state_manager.validate_state(state) is False
+
+
+@pytest.mark.asyncio
+async def test_peeking_a_state_past_its_wall_clock_expiry_treats_it_as_gone(
+    state_manager: StateManager,
+) -> None:
+    """A stored entry whose expires_at already passed neither validates nor yields metadata."""
+    state = "stale_state"
+    state_data_obj = StateData(
+        state=state,
+        metadata={"test": "data"},
+        expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    content = state_data_obj.model_dump_json().encode("utf-8")
+    entry = CacheEntry(fingerprint=hashlib.sha256(content).hexdigest(), content=content)
+    await state_manager.backend.set(
+        f"{state_manager.key_prefix}{state}", entry, ttl=600
+    )
+
+    assert await state_manager.validate_state(state) is False
+    assert await state_manager.get_state_metadata(state) is None
