@@ -101,11 +101,8 @@ class CacheManager:
         Returns:
             True if the key existed and was deleted, False otherwise.
         """
-        cache_key = self._cache_key(key)
-        existing = await self.backend.get(cache_key)
-        if existing is None:
+        if await self.backend.get_and_delete(self._cache_key(key)) is None:
             return False
-        await self.backend.delete(cache_key)
         logger.debug("Cache DELETE; key=%s", key)
         return True
 

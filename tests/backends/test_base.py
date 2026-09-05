@@ -65,3 +65,15 @@ async def test_increment_fallback_rejects_a_cached_response(
 
     with pytest.raises(CacheXError, match="not a counter"):
         await backend.increment("page")
+
+
+@pytest.mark.asyncio
+async def test_get_and_delete_fallback_returns_then_removes(
+    backend: DictBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once")
+    await backend.set("once", value)
+
+    assert await backend.get_and_delete("once") == value
+    assert "once" not in backend.store
+    assert await backend.get_and_delete("once") is None

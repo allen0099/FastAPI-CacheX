@@ -149,8 +149,11 @@ class StateManager:
         """
         cache_key = f"{self.key_prefix}{state}"
 
-        # Retrieve state data from backend
-        cached = await self.backend.get(cache_key)
+        # Take the state out of the backend atomically: of several concurrent
+        # callers presenting the same state exactly one gets the entry, so a
+        # replayed callback can never be accepted twice. An entry that turns
+        # out to be malformed or past its wall-clock expiry is gone as well.
+        cached = await self.backend.get_and_delete(cache_key)
         if cached is None:
             logger.warning("OAuth state not found or expired; state=%s", state)
             msg = "Invalid or expired state"
@@ -159,16 +162,12 @@ class StateManager:
         json_content = self._extract_json_content(cached)
         state_data = self._parse_state_data(json_content, state)
 
-        # Verify expiry
         if datetime.now(timezone.utc) > state_data.expires_at:
             logger.warning("OAuth state expired; state=%s", state)
             msg = "State has expired"
             raise StateExpiredError(msg)
 
-        # Delete the state from backend to prevent reuse
-        await self.backend.delete(cache_key)
         logger.debug("OAuth state consumed and deleted; state=%s", state)
-
         return state_data
 
     async def validate_state(self, state: str) -> bool:
@@ -241,11 +240,8 @@ class StateManager:
             True if state was deleted, False if it didn't exist
         """
         cache_key = f"{self.key_prefix}{state}"
-        # Check existence before deleting to return accurate result
-        existing = await self.backend.get(cache_key)
-        if existing is None:
+        if await self.backend.get_and_delete(cache_key) is None:
             logger.debug("OAuth state not found for deletion; state=%s", state)
             return False
-        await self.backend.delete(cache_key)
         logger.debug("OAuth state deleted; state=%s", state)
         return True

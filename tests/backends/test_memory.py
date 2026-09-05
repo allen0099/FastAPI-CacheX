@@ -561,3 +561,41 @@ async def test_memory_backend_increment_is_atomic_under_concurrency(
 
     assert sorted(results) == list(range(1, 101))
     assert await memory_backend.get("race") == counter_entry(100)
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_get_and_delete_returns_then_removes(
+    memory_backend: MemoryBackend,
+):
+    value = CacheEntry(fingerprint="e", content=b"once")
+    await memory_backend.set("once", value, 60)
+
+    assert await memory_backend.get_and_delete("once") == value
+    assert await memory_backend.get_and_delete("once") is None
+    assert await memory_backend.get("once") is None
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_get_and_delete_drops_an_expired_entry(
+    memory_backend: MemoryBackend,
+):
+    await memory_backend.set("stale", CacheEntry(fingerprint="e", content=b"x"), 60)
+    memory_backend.cache["stale"].expiry = time.time() - 1
+
+    assert await memory_backend.get_and_delete("stale") is None
+    assert "stale" not in memory_backend.cache
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_get_and_delete_has_exactly_one_winner(
+    memory_backend: MemoryBackend,
+):
+    value = CacheEntry(fingerprint="e", content=b"once")
+    await memory_backend.set("once", value, 60)
+
+    results = await asyncio.gather(
+        *(memory_backend.get_and_delete("once") for _ in range(20))
+    )
+
+    assert results.count(value) == 1
+    assert results.count(None) == 19

@@ -767,3 +767,56 @@ def test_state_manager_raises_when_no_backend_configured() -> None:
     finally:
         # Restore a backend so the autouse fixture teardown works correctly
         BackendProxy.set(MemoryBackend())
+
+
+@pytest.mark.asyncio
+async def test_consume_state_has_exactly_one_winner_under_concurrency(
+    state_manager: StateManager,
+) -> None:
+    """A replayed callback racing the real one must not be accepted twice."""
+    import asyncio
+
+    state = await state_manager.create_state(metadata={"n": 1})
+
+    results = await asyncio.gather(
+        *(state_manager.consume_state(state) for _ in range(10)),
+        return_exceptions=True,
+    )
+
+    winners = [r for r in results if isinstance(r, StateData)]
+    losers = [r for r in results if isinstance(r, InvalidStateError)]
+    assert len(winners) == 1
+    assert len(losers) == 9
+    assert winners[0].metadata == {"n": 1}
+
+
+@pytest.mark.asyncio
+async def test_consume_state_past_wall_clock_expiry_removes_the_entry(
+    state_manager: StateManager,
+) -> None:
+    """An entry whose expires_at passed before the backend TTL is gone after consume."""
+    from datetime import datetime
+    from datetime import timedelta
+    from datetime import timezone
+
+    from fastapi_cachex.state.exceptions import StateExpiredError
+
+    state = await state_manager.create_state(ttl=60)
+    cache_key = f"{state_manager.key_prefix}{state}"
+    cached = await state_manager.backend.get(cache_key)
+    assert cached is not None
+    stale = json.loads(cached.content.decode())
+    stale["expires_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    ).isoformat()
+    await state_manager.backend.set(
+        cache_key,
+        CacheEntry(fingerprint="stale", content=json.dumps(stale).encode()),
+        ttl=60,
+    )
+
+    with pytest.raises(StateExpiredError):
+        await state_manager.consume_state(state)
+
+    assert await state_manager.backend.get(cache_key) is None
+    assert await state_manager.validate_state(state) is False

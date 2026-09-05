@@ -127,6 +127,18 @@ class MemoryBackend(BaseCacheBackend):
             self.cache.pop(key, None)
             logger.debug("Memory cache DELETE; key=%s", key)
 
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        """Atomically retrieve and remove a cached entry (see base class)."""
+        self._ensure_cleanup_started()
+
+        async with self.lock:
+            item = self.cache.pop(key, None)
+            if item is None or not _is_live(item, time.time()):
+                logger.debug("Memory cache GET_AND_DELETE MISS; key=%s", key)
+                return None
+            logger.debug("Memory cache GET_AND_DELETE HIT; key=%s", key)
+            return item.value
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 

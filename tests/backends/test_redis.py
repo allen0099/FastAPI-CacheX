@@ -678,3 +678,32 @@ async def test_redis_increment_is_atomic_under_concurrency(
 
     assert sorted(results) == list(range(1, 51))
     assert await async_redis_backend.get("race") == counter_entry(50)
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_and_delete_returns_then_removes(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once", media_type="text/plain")
+    await async_redis_backend.set("once", value, 60)
+
+    assert await async_redis_backend.get_and_delete("once") == value
+    assert await async_redis_backend.get_and_delete("once") is None
+    assert await async_redis_backend.get("once") is None
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_and_delete_has_exactly_one_winner(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once")
+    await async_redis_backend.set("once", value, 60)
+
+    results = await asyncio.gather(
+        *(async_redis_backend.get_and_delete("once") for _ in range(20))
+    )
+
+    assert results.count(value) == 1
+    assert results.count(None) == 19
