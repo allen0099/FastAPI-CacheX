@@ -617,3 +617,22 @@ async def test_user_agent_binding_with_none_ua_emits_warning(
     assert token
     assert session.user_agent is None
     assert any("user_agent_binding" in msg for msg in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_session_scans_ignore_keys_outside_the_session_prefix(
+    backend: MemoryBackend,
+) -> None:
+    """Route-cache or CacheManager keys sharing the backend are never read or deleted."""
+    config = SessionConfig(secret_key="a" * 32, session_ttl=1)
+    manager = SessionManager(backend, config)
+    await backend.set("cache:unrelated", CacheEntry(fingerprint="x", content=b"1"))
+    session, _ = await manager.create_session(
+        user=SessionUser(user_id="1", username="user1")
+    )
+    session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await manager.update_session(session)
+
+    assert await manager.clear_expired_sessions() == 1
+    assert await manager.delete_user_sessions("1") == 0
+    assert await backend.get("cache:unrelated") is not None
