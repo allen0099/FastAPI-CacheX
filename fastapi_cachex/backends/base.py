@@ -2,9 +2,12 @@
 
 from abc import ABC
 from abc import abstractmethod
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import counter_entry
+from fastapi_cachex.types import counter_value
 
 
 class BaseCacheBackend(ABC):
@@ -21,6 +24,70 @@ class BaseCacheBackend(ABC):
     @abstractmethod
     async def delete(self, key: str) -> None:
         """Remove a response from the cache."""
+
+    async def delete_many(self, keys: Iterable[str]) -> int:
+        """Remove every key in ``keys``; returns how many were removed.
+
+        The base implementation deletes one key at a time and reports how
+        many were attempted, since ``delete`` does not say whether the key
+        existed. The built-in backends override it with a single batched
+        operation that counts what was actually removed.
+        """
+        count = 0
+        for key in keys:
+            await self.delete(key)
+            count += 1
+        return count
+
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        """Atomically retrieve and remove a cached entry.
+
+        Use this for one-shot values (OAuth states, grants, invalidation) where
+        exactly one of several concurrent callers may win: every other caller
+        sees ``None``.
+
+        The base implementation is a best-effort, NON-atomic get-then-delete
+        fallback for third-party backends; the built-in backends override it
+        with an atomic implementation.
+
+        Returns:
+            The entry that was stored under ``key``, or ``None`` if there was none
+        """
+        value = await self.get(key)
+        if value is not None:
+            await self.delete(key)
+        return value
+
+    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+        """Atomically add ``delta`` to the integer counter stored at ``key``.
+
+        A missing key counts as 0: the first call creates the counter with the
+        value ``delta`` and applies ``ttl`` (seconds; ``None`` = never expires).
+        Later calls keep the existing expiry, so the counter lives in a fixed
+        window that starts when it is created - the shape rate limiters need.
+        The counter is readable through ``get()`` as a ``CacheEntry`` whose
+        fingerprint is ``COUNTER_FINGERPRINT`` and whose content is the decimal
+        value; ``delete``/``clear*`` treat it like any other entry.
+
+        The base implementation is a best-effort, NON-atomic read-modify-write
+        fallback for third-party backends and re-applies ``ttl`` on every call.
+        The built-in backends override it with a single server-side operation.
+
+        Args:
+            key: Cache key of the counter
+            delta: Amount to add (may be negative)
+            ttl: Time to live in seconds, applied when the counter is created
+
+        Returns:
+            The counter value after the increment
+
+        Raises:
+            CacheXError: If ``key`` holds a cached response instead of a counter
+        """
+        current = await self.get(key)
+        value = delta if current is None else counter_value(current) + delta
+        await self.set(key, counter_entry(value), ttl=ttl)
+        return value
 
     @abstractmethod
     async def clear(self) -> None:

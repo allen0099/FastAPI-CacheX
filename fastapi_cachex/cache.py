@@ -39,6 +39,8 @@ AsyncResponseCallable = Callable[..., Awaitable[Response]]
 
 logger = logging.getLogger(__name__)
 
+_NO_STORE = DirectiveType.NO_STORE.value
+
 
 def default_key_builder(request: Request) -> str:
     """Default cache key builder function.
@@ -90,11 +92,8 @@ async def invalidate(
     except BackendNotFoundError:
         return False
 
-    existing = await cache_backend.get(cache_key)
-    if existing is None:
+    if await cache_backend.get_and_delete(cache_key) is None:
         return False
-
-    await cache_backend.delete(cache_key)
     logger.debug("Cache INVALIDATE; key=%s", cache_key)
     return True
 
@@ -126,6 +125,31 @@ class CacheControl:
 def _get_response_body(response: Response) -> bytes | None:
     """Return response body bytes, or None for streaming/file responses."""
     return getattr(response, "body", None)
+
+
+def _etag_for(body: bytes) -> str:
+    return f'W/"{hashlib.md5(body).hexdigest()}"'  # noqa: S324
+
+
+def _not_modified(etag: str, cache_control: str) -> Response:
+    return Response(
+        status_code=HTTP_304_NOT_MODIFIED,
+        headers={"ETag": etag, "Cache-Control": cache_control},
+    )
+
+
+def _with_cache_control(response: Response, cache_control: str) -> Response:
+    response.headers["Cache-Control"] = cache_control
+    return response
+
+
+async def _render(
+    func: HandlerCallable, request: Request, /, *args: Any, **kwargs: Any
+) -> tuple[Response, bytes | None, str | None]:
+    """Run the handler; the body and ETag are None for streaming/file responses."""
+    response = await get_response(func, request, *args, **kwargs)
+    body = _get_response_body(response)
+    return response, body, None if body is None else _etag_for(body)
 
 
 async def get_response(
@@ -240,38 +264,43 @@ def cache(
         else:
             request_name = found_request.name
 
-        def get_cache_control(cache_control: CacheControl) -> str:
-            # Set Cache-Control headers
+        def build_cache_control() -> str:
+            cache_control = CacheControl()
             if no_cache:
                 cache_control.add(DirectiveType.NO_CACHE)
                 if must_revalidate:
                     cache_control.add(DirectiveType.MUST_REVALIDATE)
-            else:
-                # 1. Access scope (public/private)
-                if public:
-                    cache_control.add(DirectiveType.PUBLIC)
-                elif private:
-                    cache_control.add(DirectiveType.PRIVATE)
+                return str(cache_control)
 
-                # 2. Cache time settings
-                if ttl is not None:
-                    cache_control.add(DirectiveType.MAX_AGE, ttl)
+            # 1. Access scope (public/private)
+            if public:
+                cache_control.add(DirectiveType.PUBLIC)
+            elif private:
+                cache_control.add(DirectiveType.PRIVATE)
 
-                # 3. Validation related
-                if must_revalidate:
-                    cache_control.add(DirectiveType.MUST_REVALIDATE)
+            # 2. Cache time settings
+            if ttl is not None:
+                cache_control.add(DirectiveType.MAX_AGE, ttl)
 
-                # 4. Stale response handling (stale_ttl is validated at decoration time)
-                if stale == "revalidate":
-                    cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
-                elif stale == "error":
-                    cache_control.add(DirectiveType.STALE_IF_ERROR, stale_ttl)
+            # 3. Validation related
+            if must_revalidate:
+                cache_control.add(DirectiveType.MUST_REVALIDATE)
 
-                # 5. Special flags
-                if immutable:
-                    cache_control.add(DirectiveType.IMMUTABLE)
+            # 4. Stale response handling (stale_ttl is validated at decoration time)
+            if stale == "revalidate":
+                cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
+            elif stale == "error":
+                cache_control.add(DirectiveType.STALE_IF_ERROR, stale_ttl)
+
+            # 5. Special flags
+            if immutable:
+                cache_control.add(DirectiveType.IMMUTABLE)
 
             return str(cache_control)
+
+        # The header only depends on the decorator arguments, so build it once.
+        cache_control = build_cache_control()
+        builder = key_builder or default_key_builder
 
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:
@@ -299,69 +328,46 @@ def cache(
                 )
                 return await get_response(func, req, *args, **kwargs)
 
-            # Generate cache key using custom builder or default
-            builder = key_builder or default_key_builder
             cache_key = builder(req)
-            client_etag = req.headers.get("if-none-match")
-            cache_control = get_cache_control(CacheControl())
 
             # Handle special case: no-store (highest priority)
             if no_store:
                 response = await get_response(func, req, *args, **kwargs)
-                cc = CacheControl()
-                cc.add(DirectiveType.NO_STORE)
-                response.headers["Cache-Control"] = str(cc)
                 logger.debug("no-store active; bypassed cache for key=%s", cache_key)
-                return response
+                return _with_cache_control(response, _NO_STORE)
 
-            # Check cache and handle ETag validation
+            client_etag = req.headers.get("if-none-match")
             cached_data = await cache_backend.get(cache_key)
 
             current_response: Response | None = None
-            current_etag: str | None = None
             current_body: bytes | None = None
+            current_etag: str | None = None
 
             if client_etag:
                 if no_cache:
                     # Get fresh response first if using no-cache
-                    current_response = await get_response(func, req, *args, **kwargs)
-                    current_body = _get_response_body(current_response)
-                    if current_body is None:
+                    current_response, current_body, current_etag = await _render(
+                        func, req, *args, **kwargs
+                    )
+                    if current_etag is None:
                         # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
-                        current_response.headers["Cache-Control"] = cache_control
-                        return current_response
-                    current_etag = f'W/"{hashlib.md5(current_body).hexdigest()}"'  # noqa: S324
+                        return _with_cache_control(current_response, cache_control)
 
                     if client_etag == current_etag:
                         # For no-cache, compare fresh data with client's ETag
                         logger.debug("304 Not Modified via no-cache; key=%s", cache_key)
-                        return Response(
-                            status_code=HTTP_304_NOT_MODIFIED,
-                            headers={
-                                "ETag": current_etag,
-                                "Cache-Control": cache_control,
-                            },
-                        )
+                        return _not_modified(current_etag, cache_control)
 
                 # Compare with cached ETag - if match, return 304
                 elif cached_data and client_etag == cached_data.fingerprint:
-                    # Cache hit with matching ETag: return 304 Not Modified
                     logger.debug(
                         "304 Not Modified (cached ETag match); key=%s", cache_key
                     )
-                    return Response(
-                        status_code=HTTP_304_NOT_MODIFIED,
-                        headers={
-                            "ETag": cached_data.fingerprint,
-                            "Cache-Control": cache_control,
-                        },
-                    )
+                    return _not_modified(cached_data.fingerprint, cache_control)
 
             # If we don't have If-None-Match header, check if we have a valid cached copy
             # and can serve it directly (cache hit without ETag comparison)
             if cached_data and not no_cache and ttl is not None:
-                # We have a cached entry and TTL-based caching is enabled
-                # Return the cached content directly with 200 OK without revalidation
                 logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
                 return Response(
                     content=cached_data.content,
@@ -373,18 +379,16 @@ def cache(
                     },
                 )
 
-            if not current_response or not current_etag:
+            if current_response is None or current_etag is None:
                 # Retrieve the current response if not already done
-                current_response = await get_response(func, req, *args, **kwargs)
-                current_body = _get_response_body(current_response)
-                if current_body is None:
+                current_response, current_body, current_etag = await _render(
+                    func, req, *args, **kwargs
+                )
+                if current_etag is None:
                     # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
-                    current_response.headers["Cache-Control"] = cache_control
-                    return current_response
-                current_etag = f'W/"{hashlib.md5(current_body).hexdigest()}"'  # noqa: S324
+                    return _with_cache_control(current_response, cache_control)
                 logger.debug("Cache MISS; computed fresh ETag for key=%s", cache_key)
 
-            # Set ETag header
             current_response.headers["ETag"] = current_etag
 
             # Update cache if needed
@@ -392,7 +396,6 @@ def cache(
                 assert (
                     current_body is not None
                 )  # guaranteed by early-return guards above
-                # Store in cache if data changed
                 await cache_backend.set(
                     cache_key,
                     CacheEntry(
@@ -404,8 +407,7 @@ def cache(
                 )
                 logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
 
-            current_response.headers["Cache-Control"] = cache_control
-            return current_response
+            return _with_cache_control(current_response, cache_control)
 
         # Update the wrapper with the new signature
         update_wrapper(wrapper, func)

@@ -1,13 +1,14 @@
 """Redis cache backend implementation."""
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 
-from fastapi_cachex.backends.config import (
-    DEFAULT_REDIS_PREFIX as DEFAULT_REDIS_PREFIX,  # noqa: PLC0414
-)
+from fastapi_cachex.backends.codec import decode_entry
+from fastapi_cachex.backends.codec import encode_entry
+from fastapi_cachex.backends.config import DEFAULT_REDIS_PREFIX as DEFAULT_REDIS_PREFIX  # noqa: PLC0414
 from fastapi_cachex.backends.config import RedisConfig
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
@@ -18,15 +19,21 @@ from .base import BaseCacheBackend
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
-try:
-    import orjson as json
-
-except ImportError:  # pragma: no cover
-    import json  # type: ignore[no-redef]  # pragma: no cover
-
 logger = logging.getLogger(__name__)
 
-# Default Redis key prefix for fastapi-cachex — re-exported from config for convenience
+# SCAN page size and DEL batch size; keeps individual commands small.
+_BATCH_SIZE = 100
+
+# INCRBY that attaches a TTL only when it creates the key, so a counter lives in
+# a fixed window. KEYS[1] = key, ARGV[1] = delta, ARGV[2] = ttl (0 = none).
+_INCREMENT_SCRIPT = """
+local created = redis.call('EXISTS', KEYS[1]) == 0
+local value = redis.call('INCRBY', KEYS[1], ARGV[1])
+if created and tonumber(ARGV[2]) > 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return value
+"""
 
 
 class AsyncRedisCacheBackend(BaseCacheBackend):
@@ -97,6 +104,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             **kwargs,
         )
         self.key_prefix = key_prefix
+        # Registered once so every call is an EVALSHA (redis-py reloads the
+        # script transparently if the server has flushed it).
+        self._increment_script = self.client.register_script(_INCREMENT_SCRIPT)
 
     @staticmethod
     def load_from_config(config: RedisConfig) -> "AsyncRedisCacheBackend":
@@ -125,53 +135,37 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Add prefix to cache key."""
         return f"{self.key_prefix}{key}"
 
-    def _serialize(self, value: CacheEntry) -> str:
-        """Serialize CacheEntry to JSON string."""
-        # Use latin-1 to round-trip arbitrary bytes through JSON/UTF-8 Redis storage
-        content = value.content.decode("latin-1")
+    async def _scan_keys(self, pattern: str) -> list[str]:
+        """Collect every key matching ``pattern`` (a full, prefixed glob).
 
-        serialized: str | bytes = json.dumps(
-            {
-                "fingerprint": value.fingerprint,
-                "content": content,
-                "media_type": value.media_type,
-            },
-        )
-
-        # orjson returns bytes, stdlib json returns str
-        return serialized.decode() if isinstance(serialized, bytes) else serialized
-
-    def _deserialize(self, value: str | None) -> CacheEntry | None:
-        """Deserialize JSON string to CacheEntry.
-
-        Converts string content back to bytes to maintain consistency with
-        other backends and standard Response.body type (bytes).
+        Uses SCAN instead of KEYS so the server is never blocked.
         """
-        if value is None:
-            return None
-        try:
-            data = json.loads(value)
-            logger.debug("Content type in JSON: %s", type(data["content"]))
-            return CacheEntry(
-                fingerprint=data["fingerprint"],
-                content=data["content"].encode("latin-1"),
-                media_type=data.get("media_type"),
+        cursor = 0
+        keys: list[str] = []
+        while True:
+            cursor, page = await self.client.scan(
+                cursor, match=pattern, count=_BATCH_SIZE
             )
-        except (json.JSONDecodeError, KeyError, AttributeError):
-            return None
+            keys.extend(page)
+            if cursor == 0:
+                return keys
+
+    async def _delete_keys(self, keys: list[str]) -> int:
+        """Delete prefixed keys in batches; returns how many existed."""
+        deleted = 0
+        for i in range(0, len(keys), _BATCH_SIZE):
+            deleted += await self.client.delete(*keys[i : i + _BATCH_SIZE])
+        return deleted
 
     async def get(self, key: str) -> CacheEntry | None:
         """Retrieve a cached response."""
-        result = await self.client.get(self._make_key(key))
-        value = self._deserialize(result)
+        value = decode_entry(await self.client.get(self._make_key(key)))
         logger.debug("Redis %s; key=%s", "HIT" if value else "MISS", key)
         return value
 
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Store a response in the cache."""
-        serialized = self._serialize(value)
-        prefixed_key = self._make_key(key)
-        await self.client.set(prefixed_key, serialized, ex=ttl)
+        await self.client.set(self._make_key(key), encode_entry(value), ex=ttl)
         logger.debug("Redis SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> None:
@@ -179,41 +173,51 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         await self.client.delete(self._make_key(key))
         logger.debug("Redis DELETE; key=%s", key)
 
+    async def delete_many(self, keys: Iterable[str]) -> int:
+        """Remove every key in ``keys`` with batched DELs; returns how many existed."""
+        removed = await self._delete_keys([self._make_key(key) for key in keys])
+        logger.debug("Redis DELETE_MANY; removed=%s", removed)
+        return removed
+
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        """Atomically retrieve and remove a cached entry (see base class).
+
+        Uses GETDEL, which requires Redis server 6.2 or newer.
+        """
+        value = decode_entry(await self.client.getdel(self._make_key(key)))
+        logger.debug("Redis GETDEL %s; key=%s", "HIT" if value else "MISS", key)
+        return value
+
+    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+        """Atomically add ``delta`` to the counter at ``key`` (see base class).
+
+        A short Lua script makes the increment and the expiry one server-side
+        operation; the key is stored as a plain Redis integer.
+        """
+        from redis.exceptions import ResponseError
+
+        try:
+            value = await self._increment_script(
+                keys=[self._make_key(key)], args=[delta, ttl or 0]
+            )
+        except ResponseError as e:
+            if "not an integer" not in str(e):
+                raise
+            msg = "Cache key holds a value that is not a counter"
+            raise CacheXError(msg) from e
+        logger.debug("Redis INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
+        return int(value)
+
     async def clear(self) -> None:
         """Clear all cached responses for this namespace.
 
-        Uses SCAN instead of KEYS to avoid blocking in production.
         Only deletes keys within this backend's prefix.
         """
-        pattern = f"{self.key_prefix}*"
-        cursor = 0
-        batch_size = 100
-        keys_to_delete: list[str] = []
-
-        # Use SCAN to iterate through keys without blocking
-        while True:
-            cursor, keys = await self.client.scan(
-                cursor,
-                match=pattern,
-                count=batch_size,
-            )
-            if keys:
-                keys_to_delete.extend(keys)
-            if cursor == 0:
-                break
-
-        # Delete all collected keys in batches to avoid huge command size
-        if keys_to_delete:
-            for i in range(0, len(keys_to_delete), batch_size):
-                batch = keys_to_delete[i : i + batch_size]
-                if batch:
-                    await self.client.delete(*batch)
-        logger.debug("Redis CLEAR; removed=%s", len(keys_to_delete))
+        removed = await self._delete_keys(await self._scan_keys(f"{self.key_prefix}*"))
+        logger.debug("Redis CLEAR; removed=%s", removed)
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
-
-        Uses SCAN instead of KEYS to avoid blocking in production.
 
         Args:
             path: The path to clear cache for
@@ -222,52 +226,20 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        # Pattern includes the HTTP method, host, and path components
-        if include_params:
-            # Clear all variations: *|||path|||*
-            pattern = (
-                f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}{CACHE_KEY_SEPARATOR}*"
-            )
-        else:
-            # Clear only exact path (no query params): *|||path|||
-            # The trailing separator is required because default_key_builder
-            # always appends a separator after the path (before query_params),
-            # so keys with empty query params end with "|||".
-            pattern = (
-                f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}{CACHE_KEY_SEPARATOR}"
-            )
-
-        cursor = 0
-        batch_size = 100
-        cleared_count = 0
-        keys_to_delete: list[str] = []
-
-        # Use SCAN to iterate through keys without blocking
-        while True:
-            cursor, keys = await self.client.scan(
-                cursor,
-                match=pattern,
-                count=batch_size,
-            )
-            if keys:
-                keys_to_delete.extend(keys)
-            if cursor == 0:
-                break
+        # Keys are method|||host|||path|||query. Without include_params only the
+        # exact path is matched: default_key_builder always appends a separator
+        # after the path, so keys with no query params end with "|||".
+        suffix = "*" if include_params else ""
+        pattern = f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}{CACHE_KEY_SEPARATOR}{suffix}"
+        keys = await self._scan_keys(pattern)
 
         # Also match direct keys (custom key formats without separators)
         # e.g. key_prefix + "gitlab:template" stored directly via backend.set()
         direct_key = self._make_key(path)
         if await self.client.exists(direct_key):
-            keys_to_delete.append(direct_key)
+            keys.append(direct_key)
 
-        # Delete all collected keys in batches
-        if keys_to_delete:
-            for i in range(0, len(keys_to_delete), batch_size):
-                batch = keys_to_delete[i : i + batch_size]
-                if batch:
-                    deleted = await self.client.delete(*batch)
-                    cleared_count += deleted
-
+        cleared_count = await self._delete_keys(keys)
         logger.debug(
             "Redis CLEAR_PATH; path=%s include_params=%s removed=%s",
             path,
@@ -279,45 +251,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
     async def clear_pattern(self, pattern: str) -> int:
         """Clear cached responses matching a pattern.
 
-        Uses SCAN instead of KEYS to avoid blocking in production.
-
         Args:
             pattern: A glob pattern to match cache keys against
 
         Returns:
             Number of cache entries cleared
         """
-        # Ensure pattern includes the key prefix
-        if not pattern.startswith(self.key_prefix):
-            full_pattern = f"{self.key_prefix}{pattern}"
-        else:
-            full_pattern = pattern
-
-        cursor = 0
-        batch_size = 100
-        cleared_count = 0
-        keys_to_delete: list[str] = []
-
-        # Use SCAN to iterate through keys without blocking
-        while True:
-            cursor, keys = await self.client.scan(
-                cursor,
-                match=full_pattern,
-                count=batch_size,
-            )
-            if keys:
-                keys_to_delete.extend(keys)
-            if cursor == 0:
-                break
-
-        # Delete all collected keys in batches
-        if keys_to_delete:
-            for i in range(0, len(keys_to_delete), batch_size):
-                batch = keys_to_delete[i : i + batch_size]
-                if batch:
-                    deleted = await self.client.delete(*batch)
-                    cleared_count += deleted
-
+        full_pattern = (
+            pattern if pattern.startswith(self.key_prefix) else self._make_key(pattern)
+        )
+        cleared_count = await self._delete_keys(await self._scan_keys(full_pattern))
         logger.debug(
             "Redis CLEAR_PATTERN; pattern=%s removed=%s", full_pattern, cleared_count
         )
@@ -329,24 +272,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         Returns:
             List of logical cache keys (without the backend key prefix)
         """
-        pattern = f"{self.key_prefix}*"
-        cursor = 0
-        batch_size = 100
-        all_keys: list[str] = []
-
-        # Use SCAN to iterate through keys without blocking
-        while True:
-            cursor, keys = await self.client.scan(
-                cursor,
-                match=pattern,
-                count=batch_size,
-            )
-            if keys:
-                all_keys.extend(keys)
-            if cursor == 0:
-                break
-
-        logical_keys = [k.removeprefix(self.key_prefix) for k in all_keys]
+        keys = await self._scan_keys(f"{self.key_prefix}*")
+        logical_keys = [k.removeprefix(self.key_prefix) for k in keys]
         logger.debug("Redis GET_ALL_KEYS; count=%s", len(logical_keys))
         return logical_keys
 
@@ -371,7 +298,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         raw_values: list[str | None] = await pipe.execute()
 
         for key, raw in zip(all_keys, raw_values, strict=False):
-            value = self._deserialize(raw)
+            value = decode_entry(raw)
             if value is not None:
                 cache_data[key] = (value, None)
 

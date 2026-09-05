@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import sys
 
@@ -7,6 +8,7 @@ import pytest_asyncio
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import counter_entry
 
 
 def is_memcached_running(host: str = "127.0.0.1", port: int = 11211) -> bool:
@@ -55,6 +57,15 @@ async def memcached_backend():
     backend = MemcachedBackend(servers=["127.0.0.1:11211"])
     await backend.clear()
     return backend
+
+
+@requires_memcached
+def test_memcached_client_waits_for_write_acknowledgements() -> None:
+    # With pooling, an unacknowledged write on one socket can still be in flight
+    # while a read on another socket is served; every command must be replied to.
+    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    assert backend.client.use_pooling is True
+    assert backend.client.default_kwargs["default_noreply"] is False
 
 
 @requires_memcached
@@ -222,37 +233,6 @@ async def test_memcached_set_content_bytes(monkeypatch) -> None:
 
 @requires_memcached
 @pytest.mark.asyncio
-async def test_memcached_set_uses_standard_json_branch(monkeypatch) -> None:
-    """Force standard json to cover non-bytes serialization branch in set()."""
-    # Swap out orjson with stdlib json inside module to return str from dumps
-    import json as std_json
-    import types
-    from typing import cast
-
-    from fastapi_cachex.backends import memcached as memcached_module
-
-    original_json = cast("object", memcached_module.json)  # type: ignore[attr-defined]
-    memcached_module.json = types.SimpleNamespace(  # type: ignore[attr-defined, assignment]
-        dumps=std_json.dumps,
-        loads=std_json.loads,
-        JSONDecodeError=std_json.JSONDecodeError,
-    )
-    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
-    await backend.clear()
-    try:
-        key = "branch_json_key"
-        value = CacheEntry(fingerprint="e", content=b"bytes-content")
-        # When using std json, dumps returns str and code should encode to bytes
-        await backend.set(key, value)
-        got = await backend.get(key)
-        assert got is not None
-        assert got == value
-    finally:
-        memcached_module.json = original_json  # type: ignore[attr-defined, assignment]
-
-
-@requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_invalid_and_missing_fields(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -337,3 +317,120 @@ async def test_memcached_get_cache_data_warning(
     ):
         cache_data = await memcached_backend.get_cache_data()
         assert cache_data == {}
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_concurrent_calls_do_not_share_a_socket(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """Every call runs in a worker thread; the client must be thread-safe."""
+    entries = {
+        f"k{i}": CacheEntry(fingerprint=f"e{i}", content=f"v{i}".encode())
+        for i in range(40)
+    }
+
+    await asyncio.gather(*(memcached_backend.set(k, v, 60) for k, v in entries.items()))
+    results = await asyncio.gather(*(memcached_backend.get(k) for k in entries))
+
+    assert results == list(entries.values())
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_creates_then_adds(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    assert await memcached_backend.increment("hits") == 1
+    assert await memcached_backend.increment("hits") == 2
+    assert await memcached_backend.increment("hits", 5) == 7
+    assert await memcached_backend.increment("hits", -3) == 4
+
+    assert await memcached_backend.get("hits") == counter_entry(4)
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_decrement_stops_at_zero(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    await memcached_backend.increment("floor", 2)
+
+    assert await memcached_backend.increment("floor", -5) == 0
+    assert await memcached_backend.increment("missing", -5) == 0
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_honors_ttl(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    await memcached_backend.increment("window", ttl=1)
+    await memcached_backend.increment("window", ttl=3600)
+    await asyncio.sleep(2)
+
+    assert await memcached_backend.get("window") is None
+    assert await memcached_backend.increment("window", ttl=1) == 1
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_rejects_a_cached_response(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    await memcached_backend.set("page", CacheEntry(fingerprint="e", content=b"<html>"))
+
+    with pytest.raises(CacheXError, match="not a counter"):
+        await memcached_backend.increment("page")
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_increment_is_atomic_under_concurrency(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    results = await asyncio.gather(
+        *(memcached_backend.increment("race", ttl=60) for _ in range(30))
+    )
+
+    assert sorted(results) == list(range(1, 31))
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_returns_then_removes(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once", media_type="text/plain")
+    await memcached_backend.set("once", value, 60)
+
+    assert await memcached_backend.get_and_delete("once") == value
+    assert await memcached_backend.get_and_delete("once") is None
+    assert await memcached_backend.get("once") is None
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_loses_the_race_when_delete_fails(
+    memcached_backend: MemcachedBackend, monkeypatch
+) -> None:
+    await memcached_backend.set("once", CacheEntry(fingerprint="e", content=b"x"), 60)
+    monkeypatch.setattr(memcached_backend.client, "delete", lambda *a, **kw: False)
+
+    assert await memcached_backend.get_and_delete("once") is None
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_has_exactly_one_winner(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once")
+    await memcached_backend.set("once", value, 60)
+
+    results = await asyncio.gather(
+        *(memcached_backend.get_and_delete("once") for _ in range(20))
+    )
+
+    assert results.count(value) == 1
+    assert results.count(None) == 19

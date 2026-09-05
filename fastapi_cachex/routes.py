@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing import Any
 
-from .backends import BaseCacheBackend
 from .exceptions import BackendNotFoundError
 from .proxy import BackendProxy
 from .types import CACHE_KEY_SEPARATOR
+from .types import CacheEntry
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 # Constants
 CACHE_KEY_MIN_PARTS = 3
 CACHE_KEY_MAX_PARTS = 3
+_PREVIEW_BYTES = 100
 
 
 @dataclass
@@ -110,45 +111,72 @@ def _parse_cache_key(cache_key: str) -> tuple[str, str, str, str]:
     return "", "", "", ""
 
 
-async def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsResponse:
-    """Handle the cached hits request.
+@dataclass
+class _Entry:
+    """One parsed backend entry, shared by both monitoring views."""
 
-    Args:
-        backend: The cache backend instance
+    cache_key: str
+    method: str
+    host: str
+    path: str
+    query_params: str
+    entry: CacheEntry
+    is_expired: bool
+    ttl_remaining: float | None
 
-    Returns:
-        CacheHitsResponse
-    """
-    cache_data = await backend.get_cache_data()
 
+def _parse_entries(
+    cache_data: dict[str, tuple[CacheEntry, float | None]],
+) -> list[_Entry]:
+    """Parse the backend dump into entries, skipping keys that are not route keys."""
     now = time.time()
-    cached_hits: list[CacheHitRecord] = []
-
+    entries: list[_Entry] = []
     for cache_key, (entry, expiry) in cache_data.items():
         method, host, path, query_params = _parse_cache_key(cache_key)
-        if method:  # Valid cache key
-            # Check if cache entry is expired
-            is_expired = expiry is not None and expiry <= now
-            ttl_remaining = (
-                max(0.0, round(expiry - now, 2)) if expiry is not None else None
+        if not method:
+            continue
+        entries.append(
+            _Entry(
+                cache_key=cache_key,
+                method=method,
+                host=host,
+                path=path,
+                query_params=query_params,
+                entry=entry,
+                is_expired=expiry is not None and expiry <= now,
+                ttl_remaining=(
+                    max(0.0, round(expiry - now, 2)) if expiry is not None else None
+                ),
             )
+        )
+    return entries
 
-            cached_hits.append(
-                CacheHitRecord(
-                    cache_key=cache_key,
-                    method=method,
-                    host=host,
-                    path=path,
-                    query_params=query_params,
-                    etag=entry.fingerprint,
-                    is_expired=is_expired,
-                    ttl_remaining=ttl_remaining,
-                )
-            )
 
-    # Calculate summary statistics
-    valid_hits: list[CacheHitRecord] = [h for h in cached_hits if not h.is_expired]
-    routes_hit: set[str] = {h.path for h in valid_hits}
+async def _cache_data() -> dict[str, tuple[CacheEntry, float | None]]:
+    """The configured backend's dump, or nothing when no backend is configured."""
+    try:
+        backend = BackendProxy.get()
+    except BackendNotFoundError:
+        return {}
+    return await backend.get_cache_data()
+
+
+def _cached_hits(entries: list[_Entry]) -> CacheHitsResponse:
+    cached_hits = [
+        CacheHitRecord(
+            cache_key=e.cache_key,
+            method=e.method,
+            host=e.host,
+            path=e.path,
+            query_params=e.query_params,
+            etag=e.entry.fingerprint,
+            is_expired=e.is_expired,
+            ttl_remaining=e.ttl_remaining,
+        )
+        for e in entries
+    ]
+    valid_hits = [h for h in cached_hits if not h.is_expired]
+    routes_hit = {h.path for h in valid_hits}
 
     return CacheHitsResponse(
         cached_hits=cached_hits,
@@ -164,59 +192,25 @@ async def _get_cached_hits_handler(backend: BaseCacheBackend) -> CacheHitsRespon
     )
 
 
-async def _get_cached_records_handler(
-    backend: BaseCacheBackend,
-) -> CachedRecordsResponse:
-    """Handle the cached records request.
-
-    Args:
-        backend: The cache backend instance
-
-    Returns:
-        CachedRecordsResponse
-    """
-    cache_data = await backend.get_cache_data()
-
-    now = time.time()
-    cached_records: list[CachedRecord] = []
-
-    for cache_key, (entry, expiry) in cache_data.items():
-        method, host, path, query_params = _parse_cache_key(cache_key)
-        if method:  # Valid cache key
-            # Check if cache entry is expired
-            is_expired = expiry is not None and expiry <= now
-
-            # Get content size
-            content = entry.content
-            content_size = len(content) if isinstance(content, (bytes, str)) else 0
-
-            ttl_remaining = (
-                max(0.0, round(expiry - now, 2)) if expiry is not None else None
-            )
-
-            content_preview = (
-                content[:100].decode("utf-8", errors="ignore")
-                if isinstance(content, bytes)
-                else str(content)[:100]
-            )
-
-            cached_records.append(
-                CachedRecord(
-                    cache_key=cache_key,
-                    method=method,
-                    host=host,
-                    path=path,
-                    query_params=query_params,
-                    etag=entry.fingerprint,
-                    content_type=type(content).__name__,
-                    content_size=content_size,
-                    is_expired=is_expired,
-                    ttl_remaining=ttl_remaining,
-                    content_preview=content_preview,
-                )
-            )
-
-    # Count active records and total size
+def _cached_records(entries: list[_Entry]) -> CachedRecordsResponse:
+    cached_records = [
+        CachedRecord(
+            cache_key=e.cache_key,
+            method=e.method,
+            host=e.host,
+            path=e.path,
+            query_params=e.query_params,
+            etag=e.entry.fingerprint,
+            content_type="bytes",
+            content_size=len(e.entry.content),
+            is_expired=e.is_expired,
+            ttl_remaining=e.ttl_remaining,
+            content_preview=e.entry.content[:_PREVIEW_BYTES].decode(
+                "utf-8", errors="ignore"
+            ),
+        )
+        for e in entries
+    ]
     active_records = sum(1 for r in cached_records if not r.is_expired)
     total_size = sum(r.content_size for r in cached_records)
 
@@ -282,23 +276,7 @@ def add_routes(
         Returns:
             CacheHitsResponse containing cache hit records and statistics
         """
-        try:
-            backend: BaseCacheBackend = BackendProxy.get()
-        except BackendNotFoundError:
-            return CacheHitsResponse(
-                cached_hits=[],
-                total_hits=0,
-                valid_hits=0,
-                expired_hits=0,
-                unique_routes=0,
-                summary=CacheHitSummary(
-                    total_cached_entries=0,
-                    active_entries=0,
-                    cached_paths=[],
-                ),
-            )
-
-        return await _get_cached_hits_handler(backend)
+        return _cached_hits(_parse_entries(await _cache_data()))
 
     @app.get(
         f"{prefix}/cached-records",
@@ -314,20 +292,4 @@ def add_routes(
         Returns:
             CachedRecordsResponse containing cached records and statistics
         """
-        try:
-            backend: BaseCacheBackend = BackendProxy.get()
-        except BackendNotFoundError:
-            return CachedRecordsResponse(
-                cached_records=[],
-                total_records=0,
-                active_records=0,
-                expired_records=0,
-                total_cache_size_bytes=0,
-                summary=CacheSummary(
-                    total_entries=0,
-                    valid_entries=0,
-                    estimated_cache_size_kb=0.0,
-                ),
-            )
-
-        return await _get_cached_records_handler(backend)
+        return _cached_records(_parse_entries(await _cache_data()))

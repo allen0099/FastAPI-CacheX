@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_STATE_TTL = 600
 
 
+def _is_past(moment: datetime) -> bool:
+    return datetime.now(timezone.utc) > moment
+
+
 class StateManager:
     """Manages OAuth state and session state lifecycle and storage."""
 
@@ -44,37 +48,29 @@ class StateManager:
         self.key_prefix = key_prefix
         self.default_ttl = default_ttl
 
-    def _extract_json_content(self, cached: CacheEntry) -> str:
-        """Extract JSON string from a cached CacheEntry.
+    def _cache_key(self, state: str) -> str:
+        return f"{self.key_prefix}{state}"
+
+    def _decode_state(self, cached: CacheEntry, state: str) -> StateData:
+        """Turn a backend entry into a StateData model.
 
         Args:
             cached: The CacheEntry retrieved from backend
-
-        Returns:
-            JSON string
-
-        Raises:
-            StateDataError: If the content cannot be decoded as UTF-8 text
-        """
-        try:
-            return cached.content.decode("utf-8")
-        except (AttributeError, UnicodeDecodeError) as e:
-            msg = "Unexpected state data format"
-            raise StateDataError(msg) from e
-
-    def _parse_state_data(self, json_content: str, state: str) -> StateData:
-        """Parse JSON content into a StateData model.
-
-        Args:
-            json_content: JSON string to parse
             state: State string (used for logging)
 
         Returns:
             StateData instance
 
         Raises:
-            StateDataError: If parsing or validation fails
+            StateDataError: If the content is not UTF-8 text, not JSON, or does
+                not fit the StateData model
         """
+        try:
+            json_content = cached.content.decode("utf-8")
+        except (AttributeError, UnicodeDecodeError) as e:
+            msg = "Unexpected state data format"
+            raise StateDataError(msg) from e
+
         try:
             state_dict: dict[str, Any] = json.loads(json_content)
         except json.JSONDecodeError as e:
@@ -88,6 +84,25 @@ class StateManager:
             msg = f"Invalid state data structure: {e}"
             logger.exception("Failed to create StateData model; state=%s", state)
             raise StateDataError(msg) from e
+
+    async def _peek_state(self, state: str) -> StateData | None:
+        """Load a state without consuming it; None when missing, malformed or expired."""
+        cached = await self.backend.get(self._cache_key(state))
+        if cached is None:
+            logger.debug("State not found; state=%s", state)
+            return None
+
+        try:
+            state_data = self._decode_state(cached, state)
+        except StateDataError:
+            logger.exception("Failed to parse or validate state data; state=%s", state)
+            return None
+
+        if _is_past(state_data.expires_at):
+            logger.debug("State expired; state=%s", state)
+            return None
+
+        return state_data
 
     async def create_state(
         self,
@@ -119,16 +134,11 @@ class StateManager:
             metadata=metadata or {},
         )
 
-        # Serialize to JSON
-        json_content = json.dumps(state_data.model_dump(mode="json"))
-
-        fingerprint = hashlib.sha256(json_content.encode()).hexdigest()
-
-        cache_key = f"{self.key_prefix}{state}"
+        content = state_data.model_dump_json().encode("utf-8")
         entry = CacheEntry(
-            fingerprint=fingerprint, content=json_content.encode("utf-8")
+            fingerprint=hashlib.sha256(content).hexdigest(), content=content
         )
-        await self.backend.set(cache_key, entry, ttl=effective_ttl)
+        await self.backend.set(self._cache_key(state), entry, ttl=effective_ttl)
 
         logger.debug("OAuth state created; state=%s ttl=%s", state, effective_ttl)
         return state
@@ -147,28 +157,24 @@ class StateManager:
             StateExpiredError: If state has expired
             StateDataError: If state data format is invalid
         """
-        cache_key = f"{self.key_prefix}{state}"
-
-        # Retrieve state data from backend
-        cached = await self.backend.get(cache_key)
+        # Take the state out of the backend atomically: of several concurrent
+        # callers presenting the same state exactly one gets the entry, so a
+        # replayed callback can never be accepted twice. An entry that turns
+        # out to be malformed or past its wall-clock expiry is gone as well.
+        cached = await self.backend.get_and_delete(self._cache_key(state))
         if cached is None:
             logger.warning("OAuth state not found or expired; state=%s", state)
             msg = "Invalid or expired state"
             raise InvalidStateError(msg)
 
-        json_content = self._extract_json_content(cached)
-        state_data = self._parse_state_data(json_content, state)
+        state_data = self._decode_state(cached, state)
 
-        # Verify expiry
-        if datetime.now(timezone.utc) > state_data.expires_at:
+        if _is_past(state_data.expires_at):
             logger.warning("OAuth state expired; state=%s", state)
             msg = "State has expired"
             raise StateExpiredError(msg)
 
-        # Delete the state from backend to prevent reuse
-        await self.backend.delete(cache_key)
         logger.debug("OAuth state consumed and deleted; state=%s", state)
-
         return state_data
 
     async def validate_state(self, state: str) -> bool:
@@ -180,29 +186,7 @@ class StateManager:
         Returns:
             True if state is valid and not expired, False otherwise
         """
-        cache_key = f"{self.key_prefix}{state}"
-
-        cached = await self.backend.get(cache_key)
-        if cached is None:
-            logger.debug("State validation failed - not found; state=%s", state)
-            return False
-
-        try:
-            json_content = self._extract_json_content(cached)
-            state_data = self._parse_state_data(json_content, state)
-        except StateDataError:
-            logger.exception(
-                "Failed to parse or validate state data; state=%s",
-                state,
-            )
-            return False
-
-        if datetime.now(timezone.utc) > state_data.expires_at:
-            logger.debug("State validation failed - expired; state=%s", state)
-            return False
-
-        logger.debug("State validation succeeded; state=%s", state)
-        return True
+        return await self._peek_state(state) is not None
 
     async def get_state_metadata(self, state: str) -> dict[str, Any] | None:
         """Retrieve metadata for a state without consuming it.
@@ -213,23 +197,8 @@ class StateManager:
         Returns:
             Metadata dictionary if state exists and is valid, None otherwise
         """
-        cache_key = f"{self.key_prefix}{state}"
-
-        cached = await self.backend.get(cache_key)
-        if cached is None:
-            return None
-
-        try:
-            json_content = self._extract_json_content(cached)
-            state_data = self._parse_state_data(json_content, state)
-        except StateDataError:
-            logger.exception("Failed to parse or validate state data; state=%s", state)
-            return None
-
-        if datetime.now(timezone.utc) > state_data.expires_at:
-            return None
-
-        return state_data.metadata
+        state_data = await self._peek_state(state)
+        return None if state_data is None else state_data.metadata
 
     async def delete_state(self, state: str) -> bool:
         """Manually delete a state from storage.
@@ -240,12 +209,8 @@ class StateManager:
         Returns:
             True if state was deleted, False if it didn't exist
         """
-        cache_key = f"{self.key_prefix}{state}"
-        # Check existence before deleting to return accurate result
-        existing = await self.backend.get(cache_key)
-        if existing is None:
+        if await self.backend.get_and_delete(self._cache_key(state)) is None:
             logger.debug("OAuth state not found for deletion; state=%s", state)
             return False
-        await self.backend.delete(cache_key)
         logger.debug("OAuth state deleted; state=%s", state)
         return True

@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-cachex"
-version = "0.3.2"
+version = "0.3.3"
 description = "A caching library for FastAPI with support for Cache-Control, ETag, and multiple backends."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -84,6 +84,8 @@ ignore = [
     "FBT001", "FBT002", # Boolean arguments are part of Cache-Control API design
     "S105", # false-positive on token_format strings
     "C901", # allow slightly complex session flow
+    "CPY001", # no copyright header convention in this project (stabilized in ruff 0.16)
+    "PLR0917", # backend constructors take many positional options; keyword-only would break the API
 ]
 preview = true
 explicit-preview-rules = true

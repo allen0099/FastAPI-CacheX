@@ -4,16 +4,12 @@ import asyncio
 import logging
 import warnings
 
+from fastapi_cachex.backends.codec import decode_entry
+from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
-
-try:
-    import orjson as json
-
-except ImportError:  # pragma: no cover
-    import json  # type: ignore[no-redef]  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +20,11 @@ DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
 class MemcachedBackend(BaseCacheBackend):
     """Memcached backend implementation.
 
-    Note: This implementation uses synchronous pymemcache client but wraps it
-    in async methods. For blocking concerns, consider using aiomcache for
-    true async Memcached operations. Keys are namespaced with 'fastapi_cachex:'
-    by default to avoid conflicts with other applications.
+    Note: This implementation uses the synchronous pymemcache client and runs
+    each call in a worker thread. The client is connection-pooled so concurrent
+    calls never share a socket. For true async Memcached operations consider
+    aiomcache. Keys are namespaced with 'fastapi_cachex:' by default to avoid
+    conflicts with other applications.
 
     Limitations:
     - Pattern-based clearing (clear_pattern) is not supported by Memcached protocol
@@ -56,7 +53,17 @@ class MemcachedBackend(BaseCacheBackend):
             msg = "pymemcache is not installed. Please install it with 'pip install pymemcache'"
             raise CacheXError(msg)
 
-        self.client = HashClient(servers, connect_timeout=5, timeout=5)
+        # Pooled connections have no ordering guarantee between each other, so
+        # every write waits for the server's acknowledgement; otherwise a
+        # ``set`` on one socket may still be in flight when a ``get`` on another
+        # socket is served, and the caller would miss its own write.
+        self.client = HashClient(
+            servers,
+            connect_timeout=5,
+            timeout=5,
+            use_pooling=True,
+            default_noreply=False,
+        )
         self.key_prefix = key_prefix
 
     def _make_key(self, key: str) -> str:
@@ -72,24 +79,15 @@ class MemcachedBackend(BaseCacheBackend):
         Returns:
             Cached entry if found, None otherwise
         """
-        prefixed_key = self._make_key(key)
-        value = await asyncio.to_thread(self.client.get, prefixed_key)
-        if value is None:
+        raw = await asyncio.to_thread(self.client.get, self._make_key(key))
+        value = decode_entry(raw)
+        if raw is None:
             logger.debug("Memcached MISS; key=%s", key)
-            return None
-
-        # Memcached stores data as bytes; deserialize from JSON
-        try:
-            data = json.loads(value)
-            logger.debug("Memcached HIT; key=%s", key)
-            return CacheEntry(
-                fingerprint=data["fingerprint"],
-                content=data["content"].encode("latin-1"),
-                media_type=data.get("media_type"),
-            )
-        except (json.JSONDecodeError, KeyError, ValueError):
+        elif value is None:
             logger.debug("Memcached DESERIALIZE ERROR; key=%s", key)
-            return None
+        else:
+            logger.debug("Memcached HIT; key=%s", key)
+        return value
 
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Set value in cache.
@@ -99,29 +97,67 @@ class MemcachedBackend(BaseCacheBackend):
             value: CacheEntry instance to store
             ttl: Time to live in seconds
         """
-        prefixed_key = self._make_key(key)
-
-        # Use latin-1 to round-trip arbitrary bytes through JSON storage
-        content = value.content.decode("latin-1")
-
-        serialized_data: str | bytes = json.dumps(
-            {
-                "fingerprint": value.fingerprint,
-                "content": content,
-                "media_type": value.media_type,
-            },
-        )
-
-        # orjson returns bytes, stdlib json returns str
-        serialized_bytes = (
-            serialized_data
-            if isinstance(serialized_data, bytes)
-            else serialized_data.encode("utf-8")
-        )
-
         expire = ttl if ttl is not None else 0
-        await asyncio.to_thread(self.client.set, prefixed_key, serialized_bytes, expire)
+        await asyncio.to_thread(
+            self.client.set, self._make_key(key), encode_entry(value), expire
+        )
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
+
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        """Atomically retrieve and remove a cached entry (see base class).
+
+        Memcached has no combined primitive, but DELETE is atomic: the value is
+        returned only when this call is the one that removed it, so exactly one
+        concurrent caller wins.
+        """
+        prefixed_key = self._make_key(key)
+        raw = await asyncio.to_thread(self.client.get, prefixed_key)
+        if raw is None:
+            logger.debug("Memcached GET_AND_DELETE MISS; key=%s", key)
+            return None
+        deleted = await asyncio.to_thread(
+            self.client.delete, prefixed_key, noreply=False
+        )
+        if not deleted:
+            logger.debug("Memcached GET_AND_DELETE LOST RACE; key=%s", key)
+            return None
+        logger.debug("Memcached GET_AND_DELETE HIT; key=%s", key)
+        return decode_entry(raw)
+
+    def _add_delta(self, prefixed_key: str, delta: int) -> int | None:
+        """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist."""
+        if delta < 0:
+            result = self.client.decr(prefixed_key, -delta, noreply=False)
+        else:
+            result = self.client.incr(prefixed_key, delta, noreply=False)
+        return None if result is None else int(result)
+
+    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+        """Atomically add ``delta`` to the counter at ``key`` (see base class).
+
+        Memcached counters are unsigned, so a negative ``delta`` uses DECR,
+        which stops at 0 instead of going negative.
+        """
+        from pymemcache.exceptions import MemcacheClientError
+
+        prefixed_key = self._make_key(key)
+        try:
+            value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
+            if value is None:
+                # No counter yet: ADD is atomic and a no-op when a concurrent
+                # call created it first, so the retry always finds a counter.
+                await asyncio.to_thread(
+                    self.client.add, prefixed_key, b"0", ttl or 0, noreply=False
+                )
+                value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
+        except MemcacheClientError as e:
+            msg = "Cache key holds a value that is not a counter"
+            raise CacheXError(msg) from e
+        if value is None:  # pragma: no cover - the counter expired mid-call
+            msg = "Counter vanished between ADD and INCR"
+            raise CacheXError(msg)
+        logger.debug("Memcached INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
+        return value
 
     async def delete(self, key: str) -> None:
         """Delete value from cache.

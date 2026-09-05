@@ -10,6 +10,7 @@ import pytest_asyncio
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import counter_entry
 
 
 def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
@@ -199,42 +200,6 @@ def test_redis_without_redis_package(monkeypatch):
     with pytest.raises(CacheXError) as exc_info:
         AsyncRedisCacheBackend()
     assert "redis[hiredis] is not installed" in str(exc_info.value)
-
-
-@requires_redis
-@pytest.mark.asyncio
-async def test_redis_serialization_with_standard_json() -> None:
-    """Test serialization with stdlib json (ensures str-return path)."""
-    import json as std_json
-    import types
-    from typing import cast
-
-    # Temporarily replace json module in backend with stdlib json
-    from fastapi_cachex.backends import redis
-
-    original_json = cast("object", redis.json)  # type: ignore[attr-defined]
-    redis.json = types.SimpleNamespace(  # type: ignore[attr-defined, assignment]
-        dumps=std_json.dumps,
-        loads=std_json.loads,
-        JSONDecodeError=std_json.JSONDecodeError,
-    )
-
-    try:
-        backend = AsyncRedisCacheBackend()
-        value = CacheEntry(fingerprint="test-etag", content=b"test-content")
-        serialized = backend._serialize(value)
-
-        # Verify the serialization worked correctly and str path executed
-        assert isinstance(serialized, str)
-        assert "test-etag" in serialized
-        assert "test-content" in serialized
-
-        # Ensure we can deserialize it back correctly
-        deserialized = backend._deserialize(serialized)
-        assert deserialized == value
-    finally:
-        # Restore original json module
-        redis.json = original_json  # type: ignore[attr-defined, assignment]
 
 
 @pytest.mark.asyncio
@@ -636,3 +601,123 @@ async def test_redis_get_cache_data_with_entries(
 
     # Clean up
     await async_redis_backend.clear()
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_increment_creates_then_adds(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    assert await async_redis_backend.increment("hits") == 1
+    assert await async_redis_backend.increment("hits") == 2
+    assert await async_redis_backend.increment("hits", 5) == 7
+    assert await async_redis_backend.increment("hits", -3) == 4
+
+    assert await async_redis_backend.get("hits") == counter_entry(4)
+    assert "hits" in await async_redis_backend.get_all_keys()
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_increment_applies_ttl_only_on_creation(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    prefixed = async_redis_backend._make_key("window")
+
+    await async_redis_backend.increment("window", ttl=60)
+    assert 0 < await async_redis_backend.client.ttl(prefixed) <= 60
+
+    await async_redis_backend.increment("window", ttl=3600)
+    assert 0 < await async_redis_backend.client.ttl(prefixed) <= 60
+
+    await async_redis_backend.increment("forever")
+    assert (
+        await async_redis_backend.client.ttl(async_redis_backend._make_key("forever"))
+        == -1
+    )
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_increment_rejects_a_cached_response(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    await async_redis_backend.set(
+        "page", CacheEntry(fingerprint="e", content=b"<html>")
+    )
+
+    with pytest.raises(CacheXError, match="not a counter"):
+        await async_redis_backend.increment("page")
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_increment_reraises_other_response_errors(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    from redis.exceptions import ResponseError
+
+    async def boom(**kwargs):
+        msg = "READONLY You can't write against a read only replica."
+        raise ResponseError(msg)
+
+    async_redis_backend._increment_script = boom  # type: ignore[assignment]
+
+    with pytest.raises(ResponseError, match="READONLY"):
+        await async_redis_backend.increment("hits")
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_increment_is_atomic_under_concurrency(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    results = await asyncio.gather(
+        *(async_redis_backend.increment("race", ttl=60) for _ in range(50))
+    )
+
+    assert sorted(results) == list(range(1, 51))
+    assert await async_redis_backend.get("race") == counter_entry(50)
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_and_delete_returns_then_removes(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once", media_type="text/plain")
+    await async_redis_backend.set("once", value, 60)
+
+    assert await async_redis_backend.get_and_delete("once") == value
+    assert await async_redis_backend.get_and_delete("once") is None
+    assert await async_redis_backend.get("once") is None
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_and_delete_has_exactly_one_winner(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    value = CacheEntry(fingerprint="e", content=b"once")
+    await async_redis_backend.set("once", value, 60)
+
+    results = await asyncio.gather(
+        *(async_redis_backend.get_and_delete("once") for _ in range(20))
+    )
+
+    assert results.count(value) == 1
+    assert results.count(None) == 19
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_delete_many_counts_only_existing_keys(
+    async_redis_backend: AsyncRedisCacheBackend,
+):
+    await async_redis_backend.set("dm-a", CacheEntry(fingerprint="e", content=b"1"))
+    await async_redis_backend.set("dm-b", CacheEntry(fingerprint="e", content=b"2"))
+    await async_redis_backend.set("dm-keep", CacheEntry(fingerprint="e", content=b"3"))
+
+    assert await async_redis_backend.delete_many(["dm-a", "dm-b", "dm-missing"]) == 2
+    assert await async_redis_backend.get("dm-a") is None
+    assert await async_redis_backend.get("dm-keep") is not None

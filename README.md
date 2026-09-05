@@ -143,7 +143,7 @@ cache and OAuth state, so `clear()`/`clear_prefix()` never touch unrelated cache
 entries.
 
 **Note**: `clear()`/`clear_prefix()` are implemented via the backend's
-`get_all_keys()`. Since Memcached doesn't support key enumeration (see
+`get_all_keys()` and `delete_many()` (one batched `DEL` on Redis). Since Memcached doesn't support key enumeration (see
 [Memcached limitations](#memcached)), these two methods are no-ops on a
 Memcached backend — `get()`/`set()`/`delete()`/`has()` work normally. Use
 Redis or the in-memory backend if you need bulk clearing.
@@ -179,6 +179,41 @@ When a cached entry is valid (within TTL):
 
 This means **cached hits are extremely fast** - the endpoint handler function is never executed.
 
+### Atomic backend primitives
+
+Every backend exposes two atomic operations on top of `get`/`set`/`delete`, for
+values that are read and written by many concurrent requests:
+
+```python
+from fastapi_cachex import BackendProxy
+
+backend = BackendProxy.get()
+
+# Fixed-window counter: created on first use, `ttl` applies only then.
+hits = await backend.increment(f"resend:{user_id}", ttl=86400)
+if hits > 3:
+    raise TooManyRequests()
+
+# One-shot value: of several concurrent callers exactly one gets the entry.
+grant = await backend.get_and_delete(f"grant:{token}")
+```
+
+- `increment(key, delta=1, ttl=None) -> int` — Memory does the read-modify-write
+  under its lock, Redis runs a Lua script (`EXISTS` + `INCRBY` + `EXPIRE`) and
+  Memcached uses `ADD` + `INCR`/`DECR` (Memcached counters stop at 0). The
+  counter is visible through `get()` as a `CacheEntry` with fingerprint
+  `COUNTER_FINGERPRINT` and the decimal value as content, so `delete`/`clear*`
+  and the monitoring routes treat it like any other entry. Incrementing a key
+  that holds a cached response raises `CacheXError`.
+- `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis
+  uses `GETDEL` (server 6.2+) and Memcached returns the value only when its own
+  `DELETE` won. `StateManager.consume_state`, `CacheManager.delete` and
+  `invalidate()` are built on it.
+
+Both have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
+that only implements the abstract methods keeps working; override them to get
+real atomicity.
+
 ### In-Memory Cache (default)
 
 If you don't specify a backend, FastAPI-CacheX will use the in-memory cache by default.
@@ -210,6 +245,11 @@ BackendProxy.set(backend)
 - Pattern-based key clearing (`clear_pattern`) is not supported by the Memcached protocol
 - Keys are namespaced with `fastapi_cachex:` prefix to avoid conflicts
 - Consider using Redis backend if you need pattern-based cache clearing
+
+The synchronous pymemcache client runs in worker threads and is connection-pooled,
+so concurrent requests never share a socket. Writes wait for the server's
+acknowledgement (`default_noreply=False`), which keeps a value readable from
+any pooled connection as soon as `set()` returns.
 
 ### Redis
 

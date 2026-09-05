@@ -61,7 +61,7 @@ The library has four independent subsystems:
 - Keys live under their own `cache:`-prefixed namespace by default (configurable via `key_prefix`), separate from HTTP route keys and `oauth_state:`.
 - `get()` never raises — returns `default` (`None` unless overridden) on a miss or decode failure. `set()` lets `TypeError` propagate for non-JSON-serializable values.
 - `CacheManagerProxy` mirrors `BackendProxy`/`SessionManagerProxy`. The `AppCache` FastAPI dependency (`get_app_cache`, in `dependencies.py`) lazily creates and registers a default `CacheManager` on first use.
-- `clear()`/`clear_prefix()` are built on `backend.get_all_keys()`, so they are no-ops on the Memcached backend (see below).
+- `clear()`/`clear_prefix()` are built on `backend.get_all_keys()` + `backend.delete_many()`, so they are no-ops on the Memcached backend (see below).
 
 **3. Session Management (`fastapi_cachex/session/`)**
 - Optional subsystem, activated via `SessionMiddleware` and `SessionManagerProxy`.
@@ -80,9 +80,17 @@ The library has four independent subsystems:
 All backends implement `BaseCacheBackend` (abstract base in `backends/base.py`):
 - `MemoryBackend`: In-process dict with background cleanup task. Not suitable for multi-process production use.
 - `AsyncRedisCacheBackend` (`backends/redis.py`): Fully async; uses `SCAN` (not `KEYS`) for pattern operations. Requires `redis[hiredis]` and `orjson` extras.
-- `MemcachedBackend` (`backends/memcached.py`): `clear_pattern`/`get_all_keys` are no-ops (return `0`/`[]` with a `RuntimeWarning`) since the Memcached protocol has no key enumeration. Requires `pymemcache` extra.
+- `MemcachedBackend` (`backends/memcached.py`): `clear_pattern`/`get_all_keys` are no-ops (return `0`/`[]` with a `RuntimeWarning`) since the Memcached protocol has no key enumeration. Runs the sync pymemcache client in worker threads with connection pooling (`use_pooling=True`, `default_noreply=False`), so concurrent calls never share a socket and every write is acknowledged before the next call on another socket can observe it. Requires `pymemcache` extra.
 
 Backend keys are namespaced automatically (default prefix: `fastapi_cachex:`).
+
+Two non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see README "Atomic backend primitives"):
+- `increment(key, delta=1, ttl=None) -> int`: fixed-window counter; `ttl` applies only when the counter is created. Redis runs a registered Lua script, Memcached uses `ADD` + `INCR`/`DECR`, memory works under its lock. A counter reads back through `get()` as a `CacheEntry` with `COUNTER_FINGERPRINT` (`types.py`).
+- `get_and_delete(key) -> CacheEntry | None`: one-shot retrieval (Redis `GETDEL`, Memcached get + `delete(noreply=False)` winner check). `StateManager.consume_state`, `delete_state`, `CacheManager.delete` and `invalidate()` use it. `delete()` keeps returning `None` for 0.3.x compatibility.
+
+`delete_many(keys) -> int` is the third non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock).
+
+`backends/codec.py` holds the JSON `CacheEntry` codec shared by Redis and Memcached; `decode_entry` maps a bare integer to a counter entry and every malformed value to `None`.
 
 ### Test Setup
 

@@ -63,8 +63,7 @@ class CacheManager:
             return default
 
         try:
-            json_content = cached.content.decode("utf-8")
-            return json.loads(json_content)
+            return json.loads(cached.content)
         except _DECODE_ERRORS:
             logger.warning("Failed to decode cached value; key=%s", key)
             return default
@@ -101,11 +100,8 @@ class CacheManager:
         Returns:
             True if the key existed and was deleted, False otherwise.
         """
-        cache_key = self._cache_key(key)
-        existing = await self.backend.get(cache_key)
-        if existing is None:
+        if await self.backend.get_and_delete(self._cache_key(key)) is None:
             return False
-        await self.backend.delete(cache_key)
         logger.debug("Cache DELETE; key=%s", key)
         return True
 
@@ -194,13 +190,11 @@ class CacheManager:
         """
         match_prefix = self._cache_key(prefix or "")
         keys = await self.backend.get_all_keys()
-        matching_keys = [key for key in keys if key.startswith(match_prefix)]
-        for key in matching_keys:
-            await self.backend.delete(key)
-        logger.debug(
-            "Cache CLEAR_PREFIX; prefix=%s removed=%s", match_prefix, len(matching_keys)
+        removed = await self.backend.delete_many(
+            key for key in keys if key.startswith(match_prefix)
         )
-        return len(matching_keys)
+        logger.debug("Cache CLEAR_PREFIX; prefix=%s removed=%s", match_prefix, removed)
+        return removed
 
     async def clear(self) -> int:
         """Clear all keys under this manager's namespace.
