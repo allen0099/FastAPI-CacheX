@@ -8,9 +8,7 @@ from typing import Literal
 
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
-from fastapi_cachex.backends.config import (
-    DEFAULT_REDIS_PREFIX as DEFAULT_REDIS_PREFIX,  # noqa: PLC0414
-)
+from fastapi_cachex.backends.config import DEFAULT_REDIS_PREFIX as DEFAULT_REDIS_PREFIX  # noqa: PLC0414
 from fastapi_cachex.backends.config import RedisConfig
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
