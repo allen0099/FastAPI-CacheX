@@ -5,6 +5,7 @@ import inspect
 import logging
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Mapping
 from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
@@ -166,6 +167,23 @@ def _cacheable_headers(response: Response) -> dict[str, str] | None:
     return headers or None
 
 
+# Fields RFC 9110 §15.4.5 asks a 304 to repeat from the 200 it stands in for.
+# ``Date`` comes from Starlette, ``ETag`` and ``Cache-Control`` are set on the
+# 304 directly, which leaves these three to be carried over.
+_REVALIDATION_HEADERS = frozenset({"content-location", "expires", "vary"})
+
+
+def _revalidation_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
+    """The subset of a response's headers that a 304 must repeat."""
+    if not headers:
+        return {}
+    return {
+        key: value
+        for key, value in headers.items()
+        if key.lower() in _REVALIDATION_HEADERS
+    }
+
+
 def _media_type_of(response: Response) -> str | None:
     """The response media type, falling back to a directly-set Content-Type."""
     if response.media_type is not None:
@@ -182,10 +200,54 @@ def _etag_for(body: bytes) -> str:
     return f'W/"{hashlib.md5(body).hexdigest()}"'  # noqa: S324
 
 
-def _not_modified(etag: str, cache_control: str) -> Response:
+def _weak_etag(etag: str) -> str:
+    """An ETag reduced to its opaque tag, so weak and strong forms compare equal."""
+    tag = etag.strip()
+    if tag[:2].upper() == "W/":
+        tag = tag[2:]
+    return tag.strip('"')
+
+
+def _etag_matches(if_none_match: str | None, etag: str) -> bool:
+    """Whether an ``If-None-Match`` header selects ``etag`` (RFC 9110 §8.8.3.2).
+
+    If-None-Match uses the weak comparison function, so the ``W/`` prefix is
+    ignored on both sides, and it may list several validators. ``*`` matches
+    whenever the resource exists, which every caller has already established
+    before asking.
+
+    Candidates are split on commas. That misreads an opaque-tag containing a
+    literal comma, which this library never generates and RFC 9110 treats as
+    pathological; the simpler split is worth the edge case.
+    """
+    if not if_none_match:
+        return False
+
+    header = if_none_match.strip()
+    if header == "*":
+        return True
+
+    target = _weak_etag(etag)
+    return any(_weak_etag(candidate) == target for candidate in header.split(","))
+
+
+def _not_modified(
+    etag: str, cache_control: str, headers: Mapping[str, str] | None = None
+) -> Response:
+    """Build the 304 for a successful revalidation.
+
+    ``headers`` is what the 200 for this resource would have carried; RFC 9110
+    §15.4.5 requires the fields that steer caching to be repeated on the 304,
+    otherwise a cache that stored the 200 would drop them on refresh. ``Date``
+    is added by Starlette and the other two are set here.
+    """
     return Response(
         status_code=HTTP_304_NOT_MODIFIED,
-        headers={"ETag": etag, "Cache-Control": cache_control},
+        headers={
+            **_revalidation_headers(headers),
+            "ETag": etag,
+            "Cache-Control": cache_control,
+        },
     )
 
 
@@ -401,9 +463,9 @@ def cache(
                 if etag is None:
                     # StreamingResponse/FileResponse — cannot compute ETag
                     return _with_cache_control(response, cache_control)
-                if client_etag == etag:
+                if _etag_matches(client_etag, etag):
                     logger.debug("304 Not Modified (private); key=%s", cache_key)
-                    return _not_modified(etag, cache_control)
+                    return _not_modified(etag, cache_control, response.headers)
                 response.headers["ETag"] = etag
                 logger.debug("Private response; bypassed shared cache")
                 return _with_cache_control(response, cache_control)
@@ -433,17 +495,23 @@ def cache(
                         # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
                         return _with_cache_control(current_response, cache_control)
 
-                    if client_etag == current_etag:
+                    if _etag_matches(client_etag, current_etag):
                         # For no-cache, compare fresh data with client's ETag
                         logger.debug("304 Not Modified via no-cache; key=%s", cache_key)
-                        return _not_modified(current_etag, cache_control)
+                        return _not_modified(
+                            current_etag, cache_control, current_response.headers
+                        )
 
                 # Compare with cached ETag - if match, return 304
-                elif cached_data and client_etag == cached_data.fingerprint:
+                elif cached_data and _etag_matches(
+                    client_etag, cached_data.fingerprint
+                ):
                     logger.debug(
                         "304 Not Modified (cached ETag match); key=%s", cache_key
                     )
-                    return _not_modified(cached_data.fingerprint, cache_control)
+                    return _not_modified(
+                        cached_data.fingerprint, cache_control, cached_data.headers
+                    )
 
             # If we don't have If-None-Match header, check if we have a valid cached copy
             # and can serve it directly (cache hit without ETag comparison)
