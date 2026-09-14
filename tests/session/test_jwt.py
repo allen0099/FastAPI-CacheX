@@ -95,7 +95,9 @@ async def test_jwt_expiration_enforced() -> None:
 @pytest.mark.asyncio
 async def test_jwt_sliding_renewal_returns_new_token_with_updated_exp() -> None:
     """Sliding renewal must extend the session's expires_at back to a full TTL."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime
+    from datetime import timedelta
+    from datetime import timezone
 
     backend = MemoryBackend()
     config = SessionConfig(
