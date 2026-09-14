@@ -113,44 +113,67 @@ def test_extract_token_none(manager: SessionManager, config: SessionConfig) -> N
     assert token is None
 
 
-def test_get_client_ip_from_x_forwarded_for(
+def test_get_client_ip_ignores_forwarded_headers_by_default(
     manager: SessionManager,
     config: SessionConfig,
 ) -> None:
-    """Test getting client IP from X-Forwarded-For header."""
+    """Forwarded headers are spoofable, so an untrusted peer's are ignored."""
 
     async def app(scope, receive, send):
         pass
 
     middleware = SessionMiddleware(app, manager, config)
 
-    # Create a mock request
+    request = MagicMock(spec=Request)
+    request.headers = {
+        "x-forwarded-for": "1.2.3.4",
+        "x-real-ip": "5.6.7.8",
+    }
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
+
+    assert middleware._get_client_ip(request) == "10.0.0.9"
+
+
+def test_get_client_ip_from_x_forwarded_for_behind_trusted_proxy(
+    manager: SessionManager,
+) -> None:
+    """A proxy the app vouches for may report the real client address."""
+
+    async def app(scope, receive, send):
+        pass
+
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
+    middleware = SessionMiddleware(app, manager, config)
+
     request = MagicMock(spec=Request)
     request.headers = {"x-forwarded-for": "192.168.1.1, 10.0.0.1"}
-    request.client = None
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
 
-    ip = middleware._get_client_ip(request)
-    assert ip == "192.168.1.1"
+    assert middleware._get_client_ip(request) == "192.168.1.1"
 
 
-def test_get_client_ip_from_real_ip(
+def test_get_client_ip_from_real_ip_behind_trusted_proxy(
     manager: SessionManager,
-    config: SessionConfig,
 ) -> None:
-    """Test getting client IP from X-Real-IP header."""
+    """X-Real-IP is the fallback once the peer is trusted."""
 
     async def app(scope, receive, send):
         pass
 
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
     middleware = SessionMiddleware(app, manager, config)
 
-    # Create a mock request
     request = MagicMock(spec=Request)
     request.headers = {"x-real-ip": "192.168.1.1"}
-    request.client = None
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
 
-    ip = middleware._get_client_ip(request)
-    assert ip == "192.168.1.1"
+    assert middleware._get_client_ip(request) == "192.168.1.1"
 
 
 def test_get_client_ip_from_client(
@@ -442,7 +465,9 @@ async def test_dispatch_with_session_error(
 @pytest.mark.asyncio
 async def test_dispatch_sets_renewed_token_header_on_sliding_expiration() -> None:
     """Middleware must write the refreshed token to the response header and extend expires_at."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime
+    from datetime import timedelta
+    from datetime import timezone
 
     from fastapi.responses import JSONResponse
 
@@ -476,7 +501,9 @@ async def test_dispatch_sets_renewed_token_header_on_sliding_expiration() -> Non
     assert response.status_code == 200
     renewed = response.headers.get(slide_config.header_name)
     # Middleware must write a new token to the response header
-    assert renewed is not None, "Middleware must set renewed token header on sliding renewal"
+    assert renewed is not None, (
+        "Middleware must set renewed token header on sliding renewal"
+    )
 
     # The renewed session must have an extended expires_at (> the shortened value we set)
     renewed_session, _ = await mgr.get_session(renewed)

@@ -6,8 +6,29 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
+from pydantic import field_validator
 
 SameSitePolicy = Literal["lax", "strict", "none"]
+
+# Signing algorithms accepted for JWT session tokens. `none` is deliberately
+# absent: an unsigned token would make every session forgeable.
+JWT_ALGORITHMS = frozenset(
+    {
+        "HS256",
+        "HS384",
+        "HS512",
+        "RS256",
+        "RS384",
+        "RS512",
+        "ES256",
+        "ES384",
+        "ES512",
+        "PS256",
+        "PS384",
+        "PS512",
+        "EdDSA",
+    }
+)
 
 
 class SessionConfig(BaseModel):
@@ -69,7 +90,8 @@ class SessionConfig(BaseModel):
     jwt_leeway: int = Field(
         default=0,
         ge=0,
-        description="Leeway in seconds for exp/nbf/iat validation",
+        description="Leeway in seconds for exp/iat validation (nbf is not "
+        "issued or verified; see docs/JWT_CLAIMS.md)",
     )
 
     # Security settings
@@ -81,6 +103,12 @@ class SessionConfig(BaseModel):
     ip_binding: bool = Field(
         default=False,
         description="Whether to bind session to client IP address",
+    )
+    trusted_proxies: list[str] = Field(
+        default_factory=list,
+        description="Peer addresses whose X-Forwarded-For / X-Real-IP headers "
+        "may be believed. Empty (the default) ignores those headers and uses "
+        "the direct peer address, since anyone can send them.",
     )
     user_agent_binding: bool = Field(
         default=False,
@@ -122,3 +150,13 @@ class SessionConfig(BaseModel):
         description="Domain attribute for the session cookie; None omits the "
         "Domain attribute",
     )
+
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def _check_jwt_algorithm(cls, value: str) -> str:
+        """Reject signing algorithms that are unsupported or unsafe."""
+        if value not in JWT_ALGORITHMS:
+            supported = ", ".join(sorted(JWT_ALGORITHMS))
+            msg = f"jwt_algorithm must be one of: {supported}"
+            raise ValueError(msg)
+        return value

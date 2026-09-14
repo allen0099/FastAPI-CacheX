@@ -34,36 +34,44 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_client_ip(connection: HTTPConnection) -> str | None:
-    """Get client IP address from an HTTP connection.
+def _get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | None:
+    """Get the client IP address from an HTTP connection.
+
+    `X-Forwarded-For` and `X-Real-IP` are believed only when the request
+    actually arrived from one of `config.trusted_proxies`. Anyone can send
+    those headers, so trusting them unconditionally would let a caller holding
+    a stolen token satisfy `ip_binding` simply by naming the right address.
+    With the default empty list they are ignored entirely.
 
     Args:
         connection: Incoming HTTP connection (or a `Request`, which IS-A
             `HTTPConnection`)
+        config: Session configuration carrying the trusted proxy list
 
     Returns:
         Client IP address or None
     """
-    # Check X-Forwarded-For header (for proxied requests)
-    forwarded_for = connection.headers.get("x-forwarded-for")
-    if forwarded_for:
-        # Get first IP from comma-separated list
-        ip = forwarded_for.split(",")[0].strip()
-        logger.debug("Client IP from X-Forwarded-For: %s", ip)
-        return ip
+    peer = connection.client.host if connection.client else None
 
-    # Check X-Real-IP header
-    real_ip = connection.headers.get("x-real-ip")
-    if real_ip:
-        logger.debug("Client IP from X-Real-IP: %s", real_ip)
-        return real_ip
+    if peer is not None and peer in config.trusted_proxies:
+        # Check X-Forwarded-For header (for proxied requests)
+        forwarded_for = connection.headers.get("x-forwarded-for")
+        if forwarded_for:
+            # Get first IP from comma-separated list
+            ip = forwarded_for.split(",")[0].strip()
+            logger.debug("Client IP from X-Forwarded-For: %s", ip)
+            return ip
 
-    # Fallback to direct client IP
-    if connection.client:
-        logger.debug("Client IP from connection: %s", connection.client.host)
-        return connection.client.host
+        # Check X-Real-IP header
+        real_ip = connection.headers.get("x-real-ip")
+        if real_ip:
+            logger.debug("Client IP from X-Real-IP: %s", real_ip)
+            return real_ip
 
-    return None
+    if peer is not None:
+        logger.debug("Client IP from connection: %s", peer)
+
+    return peer
 
 
 def _extract_header_token(
@@ -238,7 +246,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         Returns:
             Client IP address or None
         """
-        return _get_client_ip(request)
+        return _get_client_ip(request, self.config)
 
 
 class FastAPICacheXSessionMiddleware:
@@ -323,7 +331,7 @@ class FastAPICacheXSessionMiddleware:
         token_value = header_token or connection.cookies.get(self.config.cookie_name)
         if token_value:
             try:
-                ip_address = _get_client_ip(connection)
+                ip_address = _get_client_ip(connection, self.config)
                 user_agent = connection.headers.get("user-agent")
                 backend_session, renewed_token = await self.session_manager.get_session(
                     token_value,
@@ -437,7 +445,7 @@ class FastAPICacheXSessionMiddleware:
                 backend_session,
                 loaded_token,
             ) = await self.session_manager.create_anonymous_session(
-                ip_address=_get_client_ip(connection),
+                ip_address=_get_client_ip(connection, self.config),
                 user_agent=connection.headers.get("user-agent"),
             )
             new_token: str | None = loaded_token
