@@ -1,6 +1,8 @@
 """FastAPI-CacheX: A powerful and flexible caching extension for FastAPI."""
 
 import logging
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version
 
 from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
@@ -41,6 +43,12 @@ from .state import StateManagerProxy as StateManagerProxy
 from .state import get_state_manager as get_state_manager
 from .types import CacheKeyBuilder as CacheKeyBuilder
 
+try:
+    __version__ = version("fastapi-cachex")
+except PackageNotFoundError:  # pragma: no cover - only when running from a
+    # source tree that was never installed, where there is no metadata to read.
+    __version__ = "0.0.0.dev0"
+
 _package_logger = logging.getLogger("fastapi_cachex")
 _package_logger.addHandler(
     logging.NullHandler()
@@ -74,6 +82,7 @@ __all__ = [
     "StateManager",
     "StateManagerDep",
     "StateManagerProxy",
+    "__version__",
     "add_routes",
     "cache",
     "default_key_builder",
