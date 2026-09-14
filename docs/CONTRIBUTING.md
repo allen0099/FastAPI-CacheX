@@ -32,8 +32,8 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
 1. Update the README.md with details of changes to the interface, if applicable
 2. Add an entry to the `## [Unreleased]` section of
    [CHANGELOG.md](../CHANGELOG.md) if your change alters behaviour, adds public
-   API, or fixes something a user could have hit. That section is published
-   verbatim as the release notes and a release refuses to run on an empty one,
+   API, or fixes something a user could have hit. That section is what the
+   release notes are built from, and a release refuses to run on an empty one,
    so an omission surfaces — but only at release time, and only as "somebody
    forgot", never as which PR it was
 3. Update the documentation with any new dependencies, features, or changes
