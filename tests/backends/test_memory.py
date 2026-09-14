@@ -258,7 +258,8 @@ async def test_memory_backend_clear_pattern_needs_a_whole_key_glob(
     value = CacheEntry(fingerprint="e1", content=b"v1")
     await memory_backend.set("GET|||localhost|||/users/123|||", value)
 
-    assert await memory_backend.clear_pattern("/users/*") == 0
+    with pytest.warns(RuntimeWarning, match="clear_path"):
+        assert await memory_backend.clear_pattern("/users/*") == 0
     assert await memory_backend.get("GET|||localhost|||/users/123|||") == value
 
     assert await memory_backend.clear_path("/users/123") == 1
@@ -616,3 +617,25 @@ async def test_memory_delete_many_counts_only_existing_keys(
     assert await memory_backend.delete_many(["a", "b", "missing"]) == 2
     assert await memory_backend.get("a") is None
     assert await memory_backend.get("keep") is not None
+
+
+@pytest.mark.asyncio
+async def test_write_only_use_starts_the_cleanup_task():
+    """A backend that is only written to still needs its sweeper running.
+
+    Only `get` used to start it, so a write-mostly caller — `StateManager`
+    creates states without ever reading them back through `get` — accumulated
+    expired entries with nothing to remove them.
+    """
+    backend = MemoryBackend()
+    before = backend._cleanup_task
+
+    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), 60)
+    after = backend._cleanup_task
+
+    try:
+        assert before is None
+        assert after is not None
+        assert not after.done()
+    finally:
+        backend.stop_cleanup()

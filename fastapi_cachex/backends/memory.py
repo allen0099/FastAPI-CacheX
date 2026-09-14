@@ -113,11 +113,18 @@ class MemoryBackend(BaseCacheBackend):
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Store a response in the cache.
 
+        Starting the sweeper here as well as in ``get`` matters for a
+        write-mostly user — `StateManager.create_state` only writes, say — who
+        would otherwise accumulate expired entries forever, since nothing else
+        ever starts it.
+
         Args:
             key: Cache key
             value: Content to cache
             ttl: Time to live in seconds (None = never expires)
         """
+        self._ensure_cleanup_started()
+
         async with self.lock:
             expiry = time.time() + ttl if ttl is not None else None
             self.cache[key] = CacheItem(value=value, expiry=expiry)

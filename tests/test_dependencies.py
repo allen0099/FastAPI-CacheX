@@ -36,3 +36,46 @@ async def test_get_cache_backend_with_memory_backend():
     response = client.get("/test-backend")
     assert response.status_code == 200
     assert response.json() == {"backend_type": "MemoryBackend"}
+
+
+@pytest.mark.asyncio
+async def test_get_app_cache_falls_back_to_memory_without_a_backend():
+    """`AppCache` must work on its own, like `@cache` already does.
+
+    Building the manager without a backend raised `BackendNotFoundError` out of
+    its constructor, so the dependency returned a 500 unless a `@cache` route
+    happened to have installed the fallback backend first.
+    """
+    from fastapi_cachex.backends.memory import MemoryBackend as _MemoryBackend
+    from fastapi_cachex.dependencies import get_app_cache
+    from fastapi_cachex.manager_proxy import CacheManagerProxy
+    from fastapi_cachex.proxy import BackendProxy as _BackendProxy
+
+    CacheManagerProxy.set(None)
+    _BackendProxy.set(None)
+
+    manager = get_app_cache()
+
+    assert isinstance(manager.backend, _MemoryBackend)
+    # The fallback is registered, so `@cache` and `AppCache` share one backend.
+    assert _BackendProxy.get() is manager.backend
+    assert CacheManagerProxy.get() is manager
+
+    CacheManagerProxy.set(None)
+
+
+@pytest.mark.asyncio
+async def test_get_app_cache_uses_the_configured_backend():
+    """A configured backend must not be replaced by the fallback."""
+    from fastapi_cachex.dependencies import get_app_cache
+    from fastapi_cachex.manager_proxy import CacheManagerProxy
+
+    CacheManagerProxy.set(None)
+    backend = MemoryBackend()
+    BackendProxy.set(backend)
+
+    manager = get_app_cache()
+
+    assert manager.backend is backend
+
+    CacheManagerProxy.set(None)
