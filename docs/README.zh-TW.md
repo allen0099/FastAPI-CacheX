@@ -261,6 +261,8 @@ async def expensive_operation():
 
 - [快取流程說明](CACHE_FLOW.md)
 - [開發指南](DEVELOPMENT.md)
+- [已知限制與待辦](BACKLOG.md)
+- [變更紀錄](../CHANGELOG.md)
 - [貢獻指南](CONTRIBUTING.md)
 - [Session 管理指南](SESSION.md) - 完整的 Session 功能使用指南
 - [State 管理指南](STATE.md) - OAuth／CSRF 一次性 state token

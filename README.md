@@ -501,6 +501,8 @@ async def expensive_operation():
 
 - [Cache Flow Explanation](docs/CACHE_FLOW.md)
 - [Development Guide](docs/DEVELOPMENT.md)
+- [Known Limitations and Planned Work](docs/BACKLOG.md)
+- [Changelog](CHANGELOG.md)
 - [Contributing Guidelines](docs/CONTRIBUTING.md)
 - [Session Management Guide](docs/SESSION.md) - Complete guide for session features
 - [State Management Guide](docs/STATE.md) - One-shot OAuth/CSRF state tokens
