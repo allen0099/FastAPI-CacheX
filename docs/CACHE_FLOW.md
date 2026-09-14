@@ -197,7 +197,7 @@ If-None-Match: *                  → 資源存在即相符 → 304
 }
 
 # 特點：
-# - 儲存於進程內記憶體，不跨進程共享
+# - 儲存於行程內記憶體，不跨行程共享
 # - 背景清理任務每 cleanup_interval 秒（預設 60）掃掉過期項目
 # - 清理任務在第一次 get/set/increment/get_and_delete 時延遲啟動
 # - get() 讀到過期項目時會就地刪除並回報 miss，不等清理任務
@@ -219,7 +219,7 @@ Redis 與 Memcached 共用同一份 JSON 編解碼；裝了 `orjson` 就用它�
 
 - `content` 走的是 **latin-1 round-trip**，不是 base64：latin-1 與位元組一一對應，
   所以任何位元組都能安全地放進 JSON 文字再原樣取回。
-- 舊版寫入、沒有 `status_code`/`headers` 欄位的文件仍可讀，會解成 `200` 且無額外標頭。
+- 舊版寫入、沒有 `status_code`/`headers` 欄位的條目仍可讀，會解成 `200` 且無額外標頭。
 - 解碼失敗（JSON 壞掉、欄位缺漏、型別不對）一律當成 **cache miss** 回 `None`，不丟例外。
 - `increment()` 留下的是**裸整數**（Redis/Memcached 的 INCR 家族所寫），解碼時會轉成
   fingerprint 為 `counter` 的 `CacheEntry`。
@@ -228,7 +228,7 @@ Redis 與 Memcached 共用同一份 JSON 編解碼；裝了 `orjson` 就用它�
 
 ```
 key:   "fastapi_cachex:GET|||example.com|||/api/users|||"
-value: 上述 JSON 文件
+value: 上述 JSON 內容
 
 # 特點：
 # - 金鑰含空白/控制字元或超過 250 bytes 時，整段金鑰改存 SHA-256 十六進位摘要
@@ -243,7 +243,7 @@ value: 上述 JSON 文件
 
 ```
 key:   "fastapi_cachex:GET|||example.com|||/api/users|||"
-value: 上述 JSON 文件
+value: 上述 JSON 內容
 
 # 特點：
 # - 以 SETEX 設定到期（ttl 為 None 時用 SET）
@@ -304,7 +304,7 @@ removed = await invalidate(request, key_builder=my_key_builder)  # 路由有自�
 
 回傳值代表「原本是否存在該條目」。未設定後端時回 `False` 而不拋例外。
 
-## 性能優化
+## 效能最佳化
 
 ### 快取命中路徑
 
@@ -324,7 +324,7 @@ removed = await invalidate(request, key_builder=my_key_builder)  # 路由有自�
 | 開發測試 | MemoryBackend | 快速、無依賴 |
 | 分散式系統 | Redis | 非同步、高效、支援模式清除 |
 | 簡單快取 | Memcached | 穩定、成熟 |
-| 多進程部署 | Redis | 共享快取、一致性 |
+| 多行程部署 | Redis | 共享快取、一致性 |
 
 ## 快取失效場景
 
@@ -368,7 +368,7 @@ class CacheItem:
 計數器（`backend.increment()`）也以 `CacheEntry` 呈現：fingerprint 固定為 `counter`，
 `content` 是十進位數字的位元組，因此刪除、清除與監控都能一視同仁地處理。
 
-### 請求流程代碼示例
+### 請求流程程式碼範例
 
 裝飾器內部的實際順序見上面〈3. 快取查詢〉的決策邏輯；使用端只需要：
 
@@ -395,8 +395,8 @@ A: `@cache` 只對 GET 生效，其餘方法一律直接執行處理器（仍會
 A: 因為快取金鑰包含查詢參數，而且**不會排序**。`/users?page=1` 和 `/users?page=2`
 是不同的快取；`?a=1&b=2` 與 `?b=2&a=1` 也是。
 
-**Q: MemoryBackend 如何在多進程中工作？**
-A: 不工作。每個進程有獨立快取，推薦生產環境使用 Redis。
+**Q: MemoryBackend 如何在多行程中工作？**
+A: 不工作。每個行程有獨立快取，推薦生產環境使用 Redis。
 
 **Q: 快取清除是同步還是非同步？**
 A: 異步操作。`await cache.clear_path(...)` 或 `await cache.clear_pattern(...)`。

@@ -268,4 +268,4 @@ async def expensive_operation():
 
 ## 授權條款
 
-本專案採用 Apache License 2.0 授權條款 - 查看 [LICENSE](../LICENSE) 文件了解更多細節。
+本專案採用 Apache License 2.0 授權條款 - 查看 [LICENSE](../LICENSE) 檔案了解更多細節。
