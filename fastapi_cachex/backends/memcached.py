@@ -1,7 +1,9 @@
 """Memcached cache backend implementation."""
 
 import asyncio
+import hashlib
 import logging
+import time
 import warnings
 
 from fastapi_cachex.backends.codec import decode_entry
@@ -15,6 +17,30 @@ logger = logging.getLogger(__name__)
 
 # Default Memcached key prefix for fastapi-cachex
 DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
+
+# Memcached accepts keys of at most 250 bytes, and pymemcache rejects any key
+# containing whitespace, control characters or non-ASCII bytes. What is left is
+# the printable ASCII range with the space removed.
+_MAX_KEY_BYTES = 250
+_LEGAL_KEY_BYTES = frozenset(range(0x21, 0x7F))
+
+# An exptime above 30 days is read by Memcached as an absolute Unix timestamp,
+# not as a duration, so a longer TTL has to be converted before it is sent.
+_MAX_RELATIVE_TTL = 30 * 24 * 60 * 60
+
+
+def _expiry(ttl: int | None) -> int:
+    """Convert a TTL in seconds to the exptime Memcached expects.
+
+    Anything past the 30-day boundary is sent as an absolute timestamp;
+    passing it through as a duration would have Memcached read it as a moment
+    in 1970 and expire the entry immediately. ``None`` means no expiry.
+    """
+    if ttl is None:
+        return 0
+    if ttl > _MAX_RELATIVE_TTL:
+        return int(time.time()) + ttl
+    return ttl
 
 
 class MemcachedBackend(BaseCacheBackend):
@@ -67,8 +93,26 @@ class MemcachedBackend(BaseCacheBackend):
         self.key_prefix = key_prefix
 
     def _make_key(self, key: str) -> str:
-        """Add prefix to cache key."""
-        return f"{self.key_prefix}{key}"
+        """Namespace a cache key, hashing it when Memcached would refuse it.
+
+        pymemcache raises ``MemcacheIllegalInputError`` for a key over 250
+        bytes or carrying whitespace, control characters or non-ASCII bytes,
+        and nothing catches it on the way out — so ordinary traffic could turn
+        into a 500. ASGI percent-decodes the path, so `/foo%20bar` alone builds
+        a key with a literal space in it, and a long query string easily runs
+        past 250 bytes.
+
+        A key Memcached would accept is returned byte-for-byte, which keeps
+        entries written by earlier versions readable; only the rest collapse to
+        a SHA-256 digest of the whole namespaced key.
+        """
+        prefixed = f"{self.key_prefix}{key}"
+        encoded = prefixed.encode("utf-8")
+        if len(encoded) <= _MAX_KEY_BYTES and _LEGAL_KEY_BYTES.issuperset(encoded):
+            return prefixed
+        digest = hashlib.sha256(encoded).hexdigest()
+        logger.debug("Memcached key hashed; key=%s digest=%s", key, digest)
+        return f"{self.key_prefix}{digest}"
 
     async def get(self, key: str) -> CacheEntry | None:
         """Get value from cache.
@@ -97,9 +141,8 @@ class MemcachedBackend(BaseCacheBackend):
             value: CacheEntry instance to store
             ttl: Time to live in seconds
         """
-        expire = ttl if ttl is not None else 0
         await asyncio.to_thread(
-            self.client.set, self._make_key(key), encode_entry(value), expire
+            self.client.set, self._make_key(key), encode_entry(value), _expiry(ttl)
         )
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
 
@@ -147,7 +190,7 @@ class MemcachedBackend(BaseCacheBackend):
                 # No counter yet: ADD is atomic and a no-op when a concurrent
                 # call created it first, so the retry always finds a counter.
                 await asyncio.to_thread(
-                    self.client.add, prefixed_key, b"0", ttl or 0, noreply=False
+                    self.client.add, prefixed_key, b"0", _expiry(ttl), noreply=False
                 )
                 value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
         except MemcacheClientError as e:

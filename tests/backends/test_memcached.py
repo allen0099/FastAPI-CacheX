@@ -443,3 +443,127 @@ async def test_memcached_get_and_delete_has_exactly_one_winner(
 
     assert results.count(value) == 1
     assert results.count(None) == 19
+
+
+def test_legal_keys_are_left_alone() -> None:
+    """Entries written by earlier versions must stay readable."""
+    backend = MemcachedBackend.__new__(MemcachedBackend)
+    backend.key_prefix = "fastapi_cachex:"
+
+    assert backend._make_key("GET|||localhost|||/users/1|||") == (
+        "fastapi_cachex:GET|||localhost|||/users/1|||"
+    )
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "GET|||localhost|||/foo bar|||",  # ASGI percent-decodes the path
+        "GET|||localhost|||/café|||",  # non-ASCII path
+        "GET|||localhost|||/x|||\n",  # control character
+        "GET|||localhost|||/search|||q=" + "a" * 400,  # over 250 bytes
+    ],
+)
+def test_keys_memcached_would_refuse_are_hashed(key: str) -> None:
+    """A key Memcached rejects becomes a digest instead of an exception."""
+    backend = MemcachedBackend.__new__(MemcachedBackend)
+    backend.key_prefix = "fastapi_cachex:"
+
+    made = backend._make_key(key)
+
+    assert made != f"fastapi_cachex:{key}"
+    assert made.startswith("fastapi_cachex:")
+    encoded = made.encode("utf-8")
+    assert len(encoded) <= 250
+    assert all(0x21 <= byte < 0x7F for byte in encoded)
+
+
+@requires_memcached
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key",
+    [
+        "GET|||localhost|||/foo bar|||",
+        "GET|||localhost|||/café|||",
+        "GET|||localhost|||/search|||q=" + "a" * 1024,
+    ],
+)
+async def test_illegal_keys_round_trip_through_the_server(
+    memcached_backend: MemcachedBackend, key: str
+) -> None:
+    """These used to raise MemcacheIllegalInputError straight out of `@cache`."""
+    value = CacheEntry(fingerprint="e", content=b"content")
+
+    await memcached_backend.set(key, value, 60)
+    retrieved = await memcached_backend.get(key)
+
+    assert retrieved is not None
+    assert retrieved.content == b"content"
+
+    await memcached_backend.delete(key)
+    assert await memcached_backend.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_ttl_beyond_thirty_days_is_sent_as_an_absolute_timestamp() -> None:
+    """Memcached reads an exptime over 30 days as a Unix timestamp, not a duration."""
+    import time
+    from unittest.mock import MagicMock
+
+    backend = MemcachedBackend.__new__(MemcachedBackend)
+    backend.key_prefix = "fastapi_cachex:"
+    backend.client = MagicMock()
+
+    sixty_days = 60 * 24 * 60 * 60
+    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), sixty_days)
+
+    expire = backend.client.set.call_args[0][2]
+    now = int(time.time())
+    assert now < expire <= now + sixty_days + 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ttl", "expected"), [(None, 0), (0, 0), (60, 60)])
+async def test_short_ttls_stay_relative(ttl: int | None, expected: int) -> None:
+    """Durations inside the boundary are passed straight through."""
+    from unittest.mock import MagicMock
+
+    backend = MemcachedBackend.__new__(MemcachedBackend)
+    backend.key_prefix = "fastapi_cachex:"
+    backend.client = MagicMock()
+
+    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), ttl)
+
+    assert backend.client.set.call_args[0][2] == expected
+
+
+@requires_memcached
+def test_cached_route_with_a_space_in_the_path_is_served() -> None:
+    """End to end: the decoded path builds a key Memcached would have refused."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from fastapi_cachex.cache import cache
+    from fastapi_cachex.proxy import BackendProxy
+
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
+    previous = BackendProxy.get()
+    BackendProxy.set(backend)
+    try:
+        app = FastAPI()
+
+        @app.get("/foo bar")
+        @cache(ttl=60)
+        async def spaced() -> dict[str, str]:
+            return {"ok": "yes"}
+
+        client = TestClient(app)
+
+        first = client.get("/foo%20bar")
+        second = client.get("/foo%20bar")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json() == {"ok": "yes"}
+    finally:
+        BackendProxy.set(previous)
