@@ -167,6 +167,13 @@ uv run mypy fastapi_cachex --strict
 
 ## Releasing
 
+Releasing is manual: run the `Release` workflow from the Actions tab. It bumps
+the **minor** version, so cutting a release is a decision about what the next
+version number should mean, not a formality. (It used to also run on a monthly
+cron, which meant the calendar picked the version: whatever had landed since the
+last tag went out as the next minor release, whether or not that was the right
+number for it.) `publish.yml` is the manual patch-release path.
+
 `release.yml` bumps the version, tags it and writes the GitHub release notes
 from `git log --pretty=format:"- %s (%h)"`. It does **not** read
 `CHANGELOG.md`, and that is deliberate: the release notes answer "what commits

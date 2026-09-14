@@ -1,8 +1,10 @@
-name: Weekly Release
+name: Release
 
+# Manual only. This workflow bumps the minor version, tags it and publishes to
+# PyPI, so it must be an explicit decision: it previously ran on a monthly cron
+# and would have released whatever had accumulated, turning the calendar into
+# the thing that chooses a version number.
 on:
-  schedule:
-    - cron: "0 0 1 * *" # 每月的第一天執行
   workflow_dispatch:
 
 permissions:
