@@ -11,9 +11,13 @@ from functools import wraps
 from inspect import Parameter
 from inspect import Signature
 from typing import TYPE_CHECKING
+from typing import Annotated
 from typing import Any
 from typing import Literal
 from typing import cast
+from typing import get_args
+from typing import get_origin
+from typing import get_type_hints
 
 from fastapi import Request
 from fastapi import Response
@@ -191,6 +195,40 @@ def _media_type_of(response: Response) -> str | None:
     return response.headers.get("content-type")
 
 
+def _is_request_annotation(annotation: Any) -> bool:
+    """Whether an annotation asks for a ``Request`` (or a subclass of one)."""
+    if get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    return isinstance(annotation, type) and issubclass(annotation, Request)
+
+
+def _find_request_param(
+    func: HandlerCallable, params: list[Parameter]
+) -> Parameter | None:
+    """The handler's own ``Request`` parameter, if it declares one.
+
+    Annotations are resolved first, so a handler under ``from __future__ import
+    annotations`` (where the annotation is the string ``"Request"``),
+    ``Annotated[Request, ...]``, or a ``Request`` subclass is recognised
+    instead of being given a second, unused request parameter. Resolution can
+    fail on a forward reference that does not resolve in the handler's module,
+    which must not break decoration: the raw annotations are used instead.
+    """
+    try:
+        hints = get_type_hints(inspect.unwrap(func), include_extras=True)
+    except Exception:  # noqa: BLE001 - any resolution failure falls back
+        hints = {}
+
+    return next(
+        (
+            param
+            for param in params
+            if _is_request_annotation(hints.get(param.name, param.annotation))
+        ),
+        None,
+    )
+
+
 def _get_response_body(response: Response) -> bytes | None:
     """Return response body bytes, or None for streaming/file responses."""
     return getattr(response, "body", None)
@@ -357,10 +395,7 @@ def cache(
         params: list[Parameter] = list(sig.parameters.values())
 
         # Check if Request is already in the parameters
-        found_request: Parameter | None = next(
-            (param for param in params if param.annotation == Request),
-            None,
-        )
+        found_request: Parameter | None = _find_request_param(func, params)
 
         # Add Request parameter if it's not present
         if not found_request:
@@ -372,7 +407,24 @@ def cache(
                 annotation=Request,
             )
 
-            sig = sig.replace(parameters=[*params, request_param])
+            # A keyword-only parameter must precede **kwargs; appending it
+            # after one makes `Signature.replace` raise at decoration time,
+            # so a handler taking **kwargs could not be cached at all.
+            insert_at = next(
+                (
+                    index
+                    for index, param in enumerate(params)
+                    if param.kind is Parameter.VAR_KEYWORD
+                ),
+                len(params),
+            )
+            sig = sig.replace(
+                parameters=[
+                    *params[:insert_at],
+                    request_param,
+                    *params[insert_at:],
+                ]
+            )
 
         else:
             request_name = found_request.name
