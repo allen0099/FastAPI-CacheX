@@ -107,10 +107,21 @@ class BaseCacheBackend(ABC):
 
     @abstractmethod
     async def clear_pattern(self, pattern: str) -> int:
-        """Clear cached responses matching a pattern.
+        """Clear cached entries whose key matches a glob pattern.
+
+        The pattern is matched against the whole logical key — the key as the
+        caller sees it, without whatever prefix the backend adds internally.
+        HTTP cache keys are ``method|||host|||path|||query``, so matching a
+        path means writing the other components out::
+
+            await backend.clear_pattern("GET|||*|||/users/*")
+            await backend.clear_pattern("cache:user:*")  # a CacheManager key
+
+        To clear by path, prefer ``clear_path(path, include_params=...)``: it
+        is built for exactly that and needs no knowledge of the key layout.
 
         Args:
-            pattern: A glob pattern to match cache keys against (e.g., "/users/*")
+            pattern: A glob pattern to match whole cache keys against
 
         Returns:
             Number of cache entries cleared

@@ -238,8 +238,9 @@ async def cleanup_task():
 # 清除特定路徑
 await cache.clear_path("/api/users")  # 移除所有 host/method/params 組合
 
-# 清除模式
-await cache.clear_pattern("/api/users/*")  # 移除所有 /api/users/... 的項目
+# 清除模式：比對的是完整金鑰 method|||host|||path|||query
+await cache.clear_pattern("GET|||*|||/api/users/*")  # 移除 /api/users/... 的 GET 項目
+await cache.clear_pattern("cache:user:*")  # 自己組的金鑰（如 CacheManager）直接比對
 
 # 清除全部
 await cache.clear()  # 移除所有快取項目

@@ -100,8 +100,13 @@ async def non_store_endpoint():
 @app.get("/clear_cache")
 async def remove_cache(cache: CacheBackend):
     await cache.clear_path("/path/to/clear")  # 清除特定路徑的快取
-    await cache.clear_pattern("/path/to/clear/*")  # 清除符合特定模式的快取
+    # 模式比對的對象是完整金鑰，不是只有路徑
+    await cache.clear_pattern("GET|||*|||/path/to/clear/*")
 ```
+
+`clear_pattern` 以 glob 比對**完整邏輯金鑰**。HTTP 快取金鑰的形狀是
+`method|||host|||path|||query`，所以只寫路徑的模式一個都比不到——要按路徑清除請用
+`clear_path(path, include_params=True)`，`clear_pattern` 留給你自己組出來的金鑰。
 
 ## 後端設定
 

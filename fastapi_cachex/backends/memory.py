@@ -217,24 +217,19 @@ class MemoryBackend(BaseCacheBackend):
         return cleared_count
 
     async def clear_pattern(self, pattern: str) -> int:
-        """Clear cached responses matching a pattern.
+        """Clear cached entries whose key matches a glob pattern (see base class).
 
-        Uses fnmatch for glob-style pattern matching against the path component
-        of cache keys.
+        Matches ``fnmatch`` against the whole key, which is what the Redis
+        backend's SCAN does. Matching only the path component, as this used to,
+        made the same call clear different things on different backends.
 
         Args:
-            pattern: A glob pattern to match against paths (e.g., "/users/*")
+            pattern: A glob pattern to match whole cache keys against
 
         Returns:
             Number of cache entries cleared
         """
-
-        def matches(key: str) -> bool:
-            parsed = _split_http_key(key)
-            subject = key if parsed is None else parsed[0]
-            return fnmatch.fnmatch(subject, pattern)
-
-        cleared_count = await self._evict(matches)
+        cleared_count = await self._evict(lambda key: fnmatch.fnmatch(key, pattern))
         logger.debug(
             "Memory cache CLEAR_PATTERN; pattern=%s removed=%s", pattern, cleared_count
         )

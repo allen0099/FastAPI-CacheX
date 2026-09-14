@@ -21,10 +21,8 @@ async def test_memory_backend_set_get(memory_backend: MemoryBackend):
     key = "test_key"
     value = CacheEntry(
         fingerprint="test_etag",
-        content={
-            "response": b"test_value",
-            "media_type": "application/json",
-        },
+        content=b"test_value",
+        media_type="application/json",
     )
     ttl = 60
 
@@ -47,10 +45,8 @@ async def test_memory_backend_delete(memory_backend: MemoryBackend):
     key = "test_key"
     value = CacheEntry(
         fingerprint="test_etag",
-        content={
-            "response": b"test_value",
-            "media_type": "application/json",
-        },
+        content=b"test_value",
+        media_type="application/json",
     )
     ttl = 60
 
@@ -66,18 +62,14 @@ async def test_memory_backend_clear(memory_backend: MemoryBackend):
     key1 = "test_key1"
     value1 = CacheEntry(
         fingerprint="test_etag1",
-        content={
-            "response": b"test_value1",
-            "media_type": "application/json",
-        },
+        content=b"test_value1",
+        media_type="application/json",
     )
     key2 = "test_key2"
     value2 = CacheEntry(
         fingerprint="test_etag2",
-        content={
-            "response": b"test_value2",
-            "media_type": "application/json",
-        },
+        content=b"test_value2",
+        media_type="application/json",
     )
     ttl = 60
 
@@ -97,10 +89,8 @@ async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend):
     key = "test_key"
     value = CacheEntry(
         fingerprint="test_etag",
-        content={
-            "response": b"test_value",
-            "media_type": "application/json",
-        },
+        content=b"test_value",
+        media_type="application/json",
     )
     ttl = 1
 
@@ -116,19 +106,15 @@ async def test_memory_backend_cleanup(memory_backend: MemoryBackend):
     key1 = "test_key1"
     value1 = CacheEntry(
         fingerprint="test_etag1",
-        content={
-            "response": b"test_value1",
-            "media_type": "application/json",
-        },
+        content=b"test_value1",
+        media_type="application/json",
     )
     ttl1 = 1
     key2 = "test_key2"
     value2 = CacheEntry(
         fingerprint="test_etag2",
-        content={
-            "response": b"test_value2",
-            "media_type": "application/json",
-        },
+        content=b"test_value2",
+        media_type="application/json",
     )
     ttl2 = 60
 
@@ -251,13 +237,31 @@ async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
     await memory_backend.set("POST|||localhost|||/users/456|||", value2)
     await memory_backend.set("GET|||localhost|||/posts/789|||", value3)
 
-    # Test clearing with pattern
-    cleared = await memory_backend.clear_pattern("/users/*")
+    # The pattern matches whole keys, so the method and host must be written out
+    cleared = await memory_backend.clear_pattern("*|||localhost|||/users/*")
     assert cleared == 2  # Should clear both user entries
 
     # Verify the posts data still exists
     posts_value = await memory_backend.get("GET|||localhost|||/posts/789|||")
     assert posts_value == value3
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_pattern_needs_a_whole_key_glob(
+    memory_backend: MemoryBackend,
+):
+    """A path-only pattern matches nothing, exactly as it does on Redis.
+
+    This used to clear the entry, because the pattern was matched against the
+    path component alone. `clear_path` is the method for clearing by path.
+    """
+    value = CacheEntry(fingerprint="e1", content=b"v1")
+    await memory_backend.set("GET|||localhost|||/users/123|||", value)
+
+    assert await memory_backend.clear_pattern("/users/*") == 0
+    assert await memory_backend.get("GET|||localhost|||/users/123|||") == value
+
+    assert await memory_backend.clear_path("/users/123") == 1
 
 
 @pytest.mark.asyncio

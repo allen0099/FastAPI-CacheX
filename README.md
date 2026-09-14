@@ -107,8 +107,14 @@ async def non_store_endpoint():
 @app.get("/clear_cache")
 async def remove_cache(cache: CacheBackend):
     await cache.clear_path("/path/to/clear")  # Clear cache for a specific path
-    await cache.clear_pattern("/path/to/clear/*")  # Clear cache for a specific pattern
+    # Patterns match the whole key, not just the path
+    await cache.clear_pattern("GET|||*|||/path/to/clear/*")
 ```
+
+`clear_pattern` globs the whole logical key. HTTP cache keys look like
+`method|||host|||path|||query`, so a pattern that is only a path matches
+nothing — use `clear_path(path, include_params=True)` when the path is what you
+mean, and keep `clear_pattern` for keys you built yourself.
 
 ### Application-Level Caching (Manual Get/Set)
 
