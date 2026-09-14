@@ -16,6 +16,9 @@ from typing import cast
 
 from fastapi import Request
 from fastapi import Response
+from starlette.status import HTTP_200_OK
+from starlette.status import HTTP_206_PARTIAL_CONTENT
+from starlette.status import HTTP_300_MULTIPLE_CHOICES
 from starlette.status import HTTP_304_NOT_MODIFIED
 
 from .backends import MemoryBackend
@@ -120,6 +123,54 @@ class CacheControl:
     def __str__(self) -> str:
         """Return the Cache-Control header value as a string."""
         return ", ".join(self.directives)
+
+
+# Headers that must never be replayed from cache. ``set-cookie`` carries
+# per-user state, ``content-type`` is already held by ``CacheEntry.media_type``
+# (storing both would emit the header twice), and the rest are either
+# connection-scoped or rebuilt for every response.
+_UNCACHEABLE_HEADERS = frozenset(
+    {
+        "set-cookie",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "date",
+        "etag",
+        "cache-control",
+        "content-type",
+    }
+)
+
+
+def _is_cacheable_status(status_code: int) -> bool:
+    """Whether a response with this status may be stored and replayed.
+
+    Only successful responses are cacheable here. ``206 Partial Content`` is
+    excluded because its body is meaningful only for the ``Range`` request that
+    produced it, so replaying it to another request would corrupt the response.
+    """
+    return (
+        HTTP_200_OK <= status_code < HTTP_300_MULTIPLE_CHOICES
+        and status_code != HTTP_206_PARTIAL_CONTENT
+    )
+
+
+def _cacheable_headers(response: Response) -> dict[str, str] | None:
+    """The handler's own headers worth storing, or None when there are none."""
+    headers = {
+        key: value
+        for key, value in response.headers.items()
+        if key.lower() not in _UNCACHEABLE_HEADERS
+    }
+    return headers or None
+
+
+def _media_type_of(response: Response) -> str | None:
+    """The response media type, falling back to a directly-set Content-Type."""
+    if response.media_type is not None:
+        return response.media_type
+    return response.headers.get("content-type")
 
 
 def _get_response_body(response: Response) -> bytes | None:
@@ -349,6 +400,15 @@ def cache(
                     current_response, current_body, current_etag = await _render(
                         func, req, *args, **kwargs
                     )
+                    if not _is_cacheable_status(current_response.status_code):
+                        # Error responses carry no validator: never answer 304.
+                        logger.debug(
+                            "Uncacheable status %s; serving as-is for key=%s",
+                            current_response.status_code,
+                            cache_key,
+                        )
+                        return current_response
+
                     if current_etag is None:
                         # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
                         return _with_cache_control(current_response, cache_control)
@@ -371,9 +431,10 @@ def cache(
                 logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
                 return Response(
                     content=cached_data.content,
-                    status_code=200,
+                    status_code=cached_data.status_code,
                     media_type=cached_data.media_type,
                     headers={
+                        **(cached_data.headers or {}),
                         "ETag": cached_data.fingerprint,
                         "Cache-Control": cache_control,
                     },
@@ -384,6 +445,16 @@ def cache(
                 current_response, current_body, current_etag = await _render(
                     func, req, *args, **kwargs
                 )
+                if not _is_cacheable_status(current_response.status_code):
+                    # Leave any existing entry alone: a transient error must not
+                    # evict or overwrite the last good response.
+                    logger.debug(
+                        "Uncacheable status %s; not storing key=%s",
+                        current_response.status_code,
+                        cache_key,
+                    )
+                    return current_response
+
                 if current_etag is None:
                     # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
                     return _with_cache_control(current_response, cache_control)
@@ -401,7 +472,9 @@ def cache(
                     CacheEntry(
                         fingerprint=current_etag,
                         content=current_body,
-                        media_type=current_response.media_type,
+                        media_type=_media_type_of(current_response),
+                        status_code=current_response.status_code,
+                        headers=_cacheable_headers(current_response),
                     ),
                     ttl=ttl,
                 )

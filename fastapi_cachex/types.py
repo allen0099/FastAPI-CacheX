@@ -14,13 +14,24 @@ CACHE_KEY_SEPARATOR = "|||"
 CacheKeyBuilder = Callable[[Request], str]
 
 
+# Status replayed for entries stored before ``CacheEntry`` carried a status code.
+DEFAULT_STATUS_CODE = 200
+
+
 @dataclass
 class CacheEntry:
-    """Cache entry storing a fingerprint, raw content bytes, and an optional media type."""
+    """A cached response: fingerprint, raw body bytes, and how to replay it.
+
+    ``status_code`` and ``headers`` default to a plain ``200`` with no extra
+    headers, so entries built by older callers (and documents written by older
+    releases) keep their previous behaviour.
+    """
 
     fingerprint: str
     content: bytes
     media_type: str | None = None
+    status_code: int = DEFAULT_STATUS_CODE
+    headers: dict[str, str] | None = None
 
 
 @dataclass
