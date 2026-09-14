@@ -32,11 +32,18 @@ jobs:
     - name: Sync dependencies
       run: uv sync --group dev --extra jwt --extra starlette
 
+    # `tests` is linted here too. pre-commit only sees staged files, so test
+    # code that was never touched again drifts; that is how the suite came to
+    # have unsorted imports, three unformatted files and six type errors that
+    # nobody saw. Strict mypy stays package-only, matching CLAUDE.md.
     - name: Ruff check
-      run: uv run ruff check fastapi_cachex
+      run: uv run ruff check fastapi_cachex tests
 
     - name: Ruff format check
-      run: uv run ruff format --check fastapi_cachex
+      run: uv run ruff format --check fastapi_cachex tests
 
     - name: Mypy strict
       run: uv run mypy fastapi_cachex --strict
+
+    - name: Mypy (tests)
+      run: uv run mypy tests
