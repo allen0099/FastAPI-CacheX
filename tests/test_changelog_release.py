@@ -255,3 +255,14 @@ def test_main_reports_a_missing_file(
 
     assert exit_code == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_a_second_release_cannot_open_a_second_unreleased():
+    """Running the promotion twice is refused, not quietly duplicated."""
+    rewritten, _ = promote(CHANGELOG, "0.3.5", "2026-09-14")
+
+    assert rewritten.count("## [Unreleased]") == 1
+    assert rewritten.count("[Unreleased]: ") == 1
+
+    with pytest.raises(ChangelogError, match="is empty"):
+        promote(rewritten, "0.3.6", "2026-09-15")
