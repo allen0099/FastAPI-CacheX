@@ -17,12 +17,11 @@ from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.cache import cache
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
-
-from .backends.test_memcached import MEMCACHED_SERVER
-from .backends.test_memcached import requires_memcached
-from .backends.test_redis import REDIS_HOST
-from .backends.test_redis import REDIS_PORT
-from .backends.test_redis import requires_redis
+from tests.live_servers import MEMCACHED_SERVER
+from tests.live_servers import REDIS_HOST
+from tests.live_servers import REDIS_PORT
+from tests.live_servers import requires_memcached
+from tests.live_servers import requires_redis
 
 
 def _key(path: str) -> str:

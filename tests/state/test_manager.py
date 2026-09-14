@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import socket
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from datetime import timedelta
@@ -20,29 +19,12 @@ from fastapi_cachex.state.exceptions import StateDataError
 from fastapi_cachex.state.manager import StateManager
 from fastapi_cachex.state.models import StateData
 from fastapi_cachex.types import CacheEntry
-
-
-def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
-    """Check if Redis server is running."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.0)
-        s.connect((host, port))
-        s.close()
-    except (TimeoutError, ConnectionRefusedError, OSError):
-        return False
-    else:
-        return True
-
-
-def has_redis_package() -> bool:
-    """Return True if the redis package is importable."""
-    try:
-        import redis.asyncio  # type: ignore[unused-ignore]  # noqa: F401
-
-    except Exception:
-        return False
-    return True
+from tests.live_servers import REDIS_HOST
+from tests.live_servers import REDIS_PORT
+from tests.live_servers import has_redis_package
+from tests.live_servers import redis_skip_reason
+from tests.live_servers import requires_redis
+from tests.live_servers import requires_redis_package
 
 
 @pytest_asyncio.fixture
@@ -57,14 +39,17 @@ async def memory_backend_for_state() -> AsyncGenerator[BaseCacheBackend, Any]:
 @pytest_asyncio.fixture
 async def redis_backend_for_state() -> AsyncGenerator[BaseCacheBackend, Any]:
     """Create a Redis backend instance if Redis is available."""
-    if not is_redis_running() or not has_redis_package():
-        pytest.skip("Redis server is not running or redis package not installed")
+    reason = redis_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
+    if not has_redis_package():
+        pytest.skip("redis package is not installed")
 
     from fastapi_cachex.backends import AsyncRedisCacheBackend
 
     backend = AsyncRedisCacheBackend(
-        host="127.0.0.1",
-        port=6379,
+        host=REDIS_HOST,
+        port=REDIS_PORT,
         socket_timeout=1.0,
         socket_connect_timeout=1.0,
         key_prefix="test_state:",
@@ -79,10 +64,7 @@ async def redis_backend_for_state() -> AsyncGenerator[BaseCacheBackend, Any]:
         pytest.param(
             "redis",
             id="RedisBackend",
-            marks=pytest.mark.skipif(
-                not (is_redis_running() and has_redis_package()),
-                reason="Redis not available",
-            ),
+            marks=[requires_redis, requires_redis_package],
         ),
     ]
 )
@@ -105,8 +87,8 @@ async def state_manager(
         from fastapi_cachex.backends import AsyncRedisCacheBackend
 
         backend = AsyncRedisCacheBackend(
-            host="127.0.0.1",
-            port=6379,
+            host=REDIS_HOST,
+            port=REDIS_PORT,
             socket_timeout=1.0,
             socket_connect_timeout=1.0,
             key_prefix="test_state:",

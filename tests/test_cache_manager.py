@@ -1,7 +1,6 @@
 """Tests for CacheManager application-level caching."""
 
 import asyncio
-import socket
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 from typing import Any
@@ -16,32 +15,13 @@ from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
+from tests.live_servers import REDIS_HOST
+from tests.live_servers import REDIS_PORT
+from tests.live_servers import requires_redis
+from tests.live_servers import requires_redis_package
 
 if TYPE_CHECKING:
     from fastapi_cachex.backends.base import BaseCacheBackend
-
-
-def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
-    """Check if Redis server is running."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.0)
-        s.connect((host, port))
-        s.close()
-    except (TimeoutError, ConnectionRefusedError, OSError):
-        return False
-    else:
-        return True
-
-
-def has_redis_package() -> bool:
-    """Return True if the redis package is importable."""
-    try:
-        import redis.asyncio  # type: ignore[unused-ignore]  # noqa: F401
-
-    except Exception:
-        return False
-    return True
 
 
 @pytest_asyncio.fixture(
@@ -50,10 +30,7 @@ def has_redis_package() -> bool:
         pytest.param(
             "redis",
             id="RedisBackend",
-            marks=pytest.mark.skipif(
-                not (is_redis_running() and has_redis_package()),
-                reason="Redis not available",
-            ),
+            marks=[requires_redis, requires_redis_package],
         ),
     ]
 )
@@ -73,8 +50,8 @@ async def cache_manager(request: Any) -> AsyncGenerator[CacheManager, Any]:
         from fastapi_cachex.backends import AsyncRedisCacheBackend
 
         backend = AsyncRedisCacheBackend(
-            host="127.0.0.1",
-            port=6379,
+            host=REDIS_HOST,
+            port=REDIS_PORT,
             socket_timeout=1.0,
             socket_connect_timeout=1.0,
             key_prefix="test_cache_manager:",

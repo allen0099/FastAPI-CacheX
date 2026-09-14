@@ -17,10 +17,9 @@ from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.types import CacheEntry
-
-from .test_redis import REDIS_HOST
-from .test_redis import REDIS_PORT
-from .test_redis import is_redis_running
+from tests.live_servers import REDIS_HOST
+from tests.live_servers import REDIS_PORT
+from tests.live_servers import redis_skip_reason
 
 KEYS = (
     "GET|||localhost|||/users/1|||",
@@ -43,8 +42,9 @@ async def memory() -> AsyncGenerator[MemoryBackend, Any]:
 @pytest_asyncio.fixture
 async def redis() -> AsyncGenerator[AsyncRedisCacheBackend, Any]:
     """A Redis backend, or a skip when no server is reachable."""
-    if not is_redis_running():
-        pytest.skip("Redis server is not running")
+    reason = redis_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
 
     backend = AsyncRedisCacheBackend(
         host=REDIS_HOST,

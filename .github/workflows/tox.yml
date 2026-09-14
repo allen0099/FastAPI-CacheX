@@ -47,3 +47,9 @@ jobs:
 
     - name: Test with tox
       run: uv run tox
+      env:
+        # The suites that talk to a real server are opt-in: they wipe what they
+        # connect to, so they skip unless a port is named. These are the service
+        # containers above, which exist only for this job.
+        CACHEX_TEST_REDIS_PORT: 6379
+        CACHEX_TEST_MEMCACHED_PORT: 11211

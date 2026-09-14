@@ -1,6 +1,4 @@
 import asyncio
-import os
-import socket
 import sys
 from unittest.mock import MagicMock
 
@@ -11,33 +9,8 @@ from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
-
-# Point the suite at a throwaway server instead of whatever happens to occupy
-# the default port on a developer machine.
-MEMCACHED_HOST = os.environ.get("CACHEX_TEST_MEMCACHED_HOST", "127.0.0.1")
-MEMCACHED_PORT = int(os.environ.get("CACHEX_TEST_MEMCACHED_PORT", "11211"))
-MEMCACHED_SERVER = f"{MEMCACHED_HOST}:{MEMCACHED_PORT}"
-
-
-def is_memcached_running(
-    host: str = MEMCACHED_HOST, port: int = MEMCACHED_PORT
-) -> bool:
-    """Check if memcached is running."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect((host, port))
-    except (OSError, ConnectionRefusedError):
-        return False
-    else:
-        return True
-    finally:
-        sock.close()
-
-
-requires_memcached = pytest.mark.skipif(
-    not is_memcached_running(),
-    reason="Memcached server is not running",
-)
+from tests.live_servers import MEMCACHED_SERVER
+from tests.live_servers import requires_memcached
 
 
 def stubbed_backend() -> MemcachedBackend:

@@ -1,6 +1,4 @@
 import asyncio
-import os
-import socket
 import sys
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -13,48 +11,15 @@ from fastapi_cachex.backends.redis import _BATCH_SIZE
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
-
-# Point the suite at a throwaway server instead of whatever happens to occupy
-# the default port on a developer machine.
-REDIS_HOST = os.environ.get("CACHEX_TEST_REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.environ.get("CACHEX_TEST_REDIS_PORT", "6379"))
-
-
-def is_redis_running(host: str = REDIS_HOST, port: int = REDIS_PORT) -> bool:
-    """Check if Redis server is running."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.0)
-        s.connect((host, port))
-        s.close()
-    except OSError:
-        # Covers a refused connection as well as a timeout: with nothing
-        # listening the suite must skip, not fail during collection.
-        return False
-    else:
-        return True
+from tests.live_servers import REDIS_HOST
+from tests.live_servers import REDIS_PORT
+from tests.live_servers import UNCONNECTED_PORT
+from tests.live_servers import redis_skip_reason
+from tests.live_servers import requires_redis
+from tests.live_servers import requires_redis_package
 
 
-requires_redis = pytest.mark.skipif(
-    not is_redis_running(),
-    reason="Redis server is not running",
-)
-
-
-def has_redis_package() -> bool:
-    """Return True if the `redis` package is importable."""
-    try:
-        import redis.asyncio  # type: ignore[unused-ignore]  # noqa: F401
-
-    except Exception:
-        return False
-    return True
-
-
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_load_from_config_initializes_client_and_prefix() -> None:
     """Ensure `load_from_config` builds a backend with expected settings."""
     from pydantic import SecretStr
@@ -83,10 +48,7 @@ def test_redis_load_from_config_initializes_client_and_prefix() -> None:
         assert hasattr(backend.client, "connection_pool")
 
 
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_load_from_config_passes_all_fields() -> None:
     """load_from_config must forward all RedisConfig fields to the backend."""
     from pydantic import SecretStr
@@ -119,10 +81,7 @@ def test_redis_load_from_config_passes_all_fields() -> None:
         assert kwargs.get("socket_connect_timeout") == 1.5
 
 
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_config_defaults() -> None:
     """RedisConfig must expose the new fields with sensible defaults."""
     from fastapi_cachex.backends.config import DEFAULT_REDIS_PREFIX
@@ -137,17 +96,14 @@ def test_redis_config_defaults() -> None:
     assert cfg.protocol == 2
 
 
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_protocol_default_is_resp2() -> None:
     """AsyncRedisCacheBackend must default to protocol=2 (RESP2) for Redis 8.0+ compat.
 
     Redis 8.0 can negotiate RESP3, but hiredis < 3.0 does not support RESP3.
     Defaulting to RESP2 avoids protocol-negotiation failures on Redis 8.0.
     """
-    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=REDIS_PORT)
+    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
     pool = backend.client.connection_pool
     kwargs = getattr(pool, "connection_kwargs", {})
     if kwargs:
@@ -156,10 +112,7 @@ def test_redis_protocol_default_is_resp2() -> None:
         assert hasattr(backend.client, "connection_pool")
 
 
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_load_from_config_forwards_protocol() -> None:
     """load_from_config must forward the protocol field from RedisConfig."""
     from fastapi_cachex.backends.config import RedisConfig
@@ -178,8 +131,9 @@ def test_redis_load_from_config_forwards_protocol() -> None:
 @pytest_asyncio.fixture
 async def async_redis_backend() -> AsyncGenerator[AsyncRedisCacheBackend, Any]:
     """Fixture for async Redis cache backend."""
-    if not is_redis_running():
-        pytest.skip("Redis server is not running")
+    reason = redis_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
 
     backend = AsyncRedisCacheBackend(
         host=REDIS_HOST,

@@ -28,6 +28,39 @@ uv run pytest
 uv run pytest --cov=fastapi_cachex --cov-report=term-missing
 ```
 
+### Redis and Memcached tests are opt-in
+
+`uv run pytest` skips every test that needs a real Redis or Memcached. That is
+deliberate, and the reason matters: those suites are **destructive**. Their
+fixtures call `backend.clear()` around each test, which deletes every
+`fastapi_cachex:`-prefixed key on the Redis they connect to, and — since the
+Memcached protocol has no key enumeration — issues `flush_all` on the Memcached
+they connect to, wiping the entire server.
+
+So there is no default port. If the ports defaulted to 6379 and 11211, running
+the suite on a machine that happens to have either service up would silently
+destroy the developer's own data, and a developer who runs Redis locally *and*
+has this library checked out is exactly the person whose `fastapi_cachex:` keys
+are their own application's cache.
+
+Start throwaway servers and name their ports to opt in:
+
+```bash
+./scripts/start-redis-server.sh        # 6380
+./scripts/start-memcache-server.sh     # 11212
+
+CACHEX_TEST_REDIS_PORT=6380 CACHEX_TEST_MEMCACHED_PORT=11212 uv run pytest
+```
+
+`CACHEX_TEST_REDIS_HOST` and `CACHEX_TEST_MEMCACHED_HOST` default to
+`127.0.0.1`. Setting a port is you stating that the server on it is disposable —
+so do not point these at anything you care about. When a port is set but nothing
+is listening, the suites skip and say so.
+
+Note that the coverage gate (`fail_under = 90`) is only met with both services
+opted in; a skipped run leaves the network backends uncovered. CI sets both
+variables against its own service containers.
+
 ## Using tox
 
 tox ensures the code works across different Python versions (3.10-3.13).

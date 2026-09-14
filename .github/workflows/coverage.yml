@@ -52,6 +52,12 @@ jobs:
         uv run coverage report
         uv run coverage xml
         uv tool run --from genbadge[coverage] genbadge coverage -i coverage.xml -o coverage.svg
+      env:
+        # The suites that talk to a real server are opt-in: they wipe what they
+        # connect to, so they skip unless a port is named. These are the service
+        # containers above, which exist only for this job.
+        CACHEX_TEST_REDIS_PORT: 6379
+        CACHEX_TEST_MEMCACHED_PORT: 11211
 
     - name: Upload coverage badge
       uses: JamesIves/github-pages-deploy-action@v4
