@@ -1,13 +1,38 @@
 """Base cache backend interface and abstract implementation."""
 
+import warnings
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Iterable
 from typing import Any
 
+from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
+
+
+def warn_if_path_shaped(pattern: str, cleared: int) -> None:
+    """Warn when a ``clear_pattern`` that cleared nothing was written as a path.
+
+    Matching happens against the whole key, so a pattern like ``/users/*``
+    cannot match an HTTP cache entry and the call quietly reports zero cleared
+    — indistinguishable from a cache that was already empty, which is exactly
+    the outcome the caller was trying to avoid. Only the combination of "looks
+    like a bare path" and "matched nothing" warns, so keys that really are
+    paths (stored directly through ``set``) stay silent when they work.
+    """
+    if cleared == 0 and pattern.startswith("/") and CACHE_KEY_SEPARATOR not in pattern:
+        warnings.warn(
+            f"clear_pattern({pattern!r}) cleared nothing. Patterns match whole "
+            f"cache keys, which look like 'method{CACHE_KEY_SEPARATOR}host"
+            f"{CACHE_KEY_SEPARATOR}path{CACHE_KEY_SEPARATOR}query', so a bare "
+            "path matches no HTTP cache entry. Use clear_path(path, "
+            "include_params=True) to clear by path, or write the whole key out "
+            f"as 'GET{CACHE_KEY_SEPARATOR}*{CACHE_KEY_SEPARATOR}{pattern}'.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
 
 class BaseCacheBackend(ABC):
@@ -119,6 +144,8 @@ class BaseCacheBackend(ABC):
 
         To clear by path, prefer ``clear_path(path, include_params=...)``: it
         is built for exactly that and needs no knowledge of the key layout.
+        Implementations report a path written here through
+        ``warn_if_path_shaped`` rather than silently clearing nothing.
 
         Args:
             pattern: A glob pattern to match whole cache keys against

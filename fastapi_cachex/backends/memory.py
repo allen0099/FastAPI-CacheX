@@ -14,6 +14,7 @@ from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
 
 from .base import BaseCacheBackend
+from .base import warn_if_path_shaped
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +231,7 @@ class MemoryBackend(BaseCacheBackend):
             Number of cache entries cleared
         """
         cleared_count = await self._evict(lambda key: fnmatch.fnmatch(key, pattern))
+        warn_if_path_shaped(pattern, cleared_count)
         logger.debug(
             "Memory cache CLEAR_PATTERN; pattern=%s removed=%s", pattern, cleared_count
         )

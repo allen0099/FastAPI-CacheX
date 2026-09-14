@@ -5,6 +5,7 @@ Redis globbed the whole key, so `clear_pattern("/users/*")` cleared entries in
 development and silently cleared nothing in production.
 """
 
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -75,7 +76,6 @@ async def _populate(backend: BaseCacheBackend) -> None:
         ("*|||localhost|||/users/*", 3),
         ("cache:*", 2),
         ("cache:user:*", 1),
-        ("/users/*", 0),
         # `*` is an unrestricted glob on both backends: it spans the separator,
         # so this reaches the host component too.
         ("*|||/users/*", 3),
@@ -91,6 +91,41 @@ async def test_clear_pattern_globs_the_whole_key(
 
     assert removed == expected_removed
     assert len(await backend.get_all_keys()) == len(KEYS) - expected_removed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
+async def test_a_bare_path_pattern_warns_instead_of_clearing_nothing(
+    backend: BaseCacheBackend,
+) -> None:
+    """Zero cleared is indistinguishable from an empty cache, so say something."""
+    await _populate(backend)
+
+    with pytest.warns(RuntimeWarning, match="clear_path"):
+        removed = await backend.clear_pattern("/users/*")
+
+    assert removed == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
+@pytest.mark.parametrize(
+    "pattern", ["GET|||*|||/users/*", "cache:user:*", "*", "user:*", "/users/*"]
+)
+async def test_patterns_that_clear_something_do_not_warn(
+    backend: BaseCacheBackend, pattern: str
+) -> None:
+    """A pattern that did its job is not worth warning about.
+
+    That includes a path-shaped one: keys stored directly through `set` really
+    can be paths, and `clear_path` matches those too.
+    """
+    await _populate(backend)
+    await backend.set("/users/1", CacheEntry(fingerprint="e", content=b"v"))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        await backend.clear_pattern(pattern)
 
 
 @pytest.mark.asyncio

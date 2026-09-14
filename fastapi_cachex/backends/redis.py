@@ -15,6 +15,7 @@ from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
+from .base import warn_if_path_shaped
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
@@ -261,6 +262,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             pattern if pattern.startswith(self.key_prefix) else self._make_key(pattern)
         )
         cleared_count = await self._delete_keys(await self._scan_keys(full_pattern))
+        warn_if_path_shaped(pattern, cleared_count)
         logger.debug(
             "Redis CLEAR_PATTERN; pattern=%s removed=%s", full_pattern, cleared_count
         )
