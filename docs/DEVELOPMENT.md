@@ -167,32 +167,66 @@ uv run mypy fastapi_cachex --strict
 
 ## Releasing
 
-Releasing is manual: run the `Release` workflow from the Actions tab. It bumps
-the **minor** version, so cutting a release is a decision about what the next
-version number should mean, not a formality. (It used to also run on a monthly
-cron, which meant the calendar picked the version: whatever had landed since the
-last tag went out as the next minor release, whether or not that was the right
-number for it.) `publish.yml` is the manual patch-release path.
+Releasing is manual: run the **Release** workflow from the Actions tab and
+choose which part of the version to move (`patch`, `minor` or `major`), or give
+it an exact version to override that choice. There is one release path — there
+used to be two workflows, `release.yml` for minor releases and `publish.yml`
+for patch releases, which meant the part of the version a release moved was
+decided by whichever Actions page you happened to open. (`release.yml` also
+once ran on a monthly cron, which let the calendar pick the version: whatever
+had landed since the last tag went out as the next minor release, whether or
+not that was the right number for it.)
 
-`release.yml` bumps the version, tags it and writes the GitHub release notes
-from `git log --pretty=format:"- %s (%h)"`. It does **not** read
-`CHANGELOG.md`, and that is deliberate: the release notes answer "what commits
-landed", while the changelog answers "what does this mean for me" — a
-behaviour change under an unchanged API, such as forwarded IP headers no longer
-being trusted, reads as one ordinary `fix:` subject in a commit list. Wiring the
-workflow to publish the changelog instead would either lose the commit list or
-make a release fail on a documentation omission, and neither is worth it for a
-project this size.
+The workflow runs in this order:
 
-The consequence is that **`CHANGELOG.md` is maintained by hand and nothing
-enforces it**. When cutting a release:
+1. **The gate.** ruff, all three mypy invocations, and the full test suite
+   against real Redis and Memcached service containers with
+   `CACHEX_REQUIRE_LIVE_SERVERS=1`. A release is the one run where a red test
+   result arrives too late to be useful, so it happens before anything is
+   written.
+2. **The version.** `uv version` applies the bump or the exact version. If
+   `vX.Y.Z` is already tagged, locally or on the remote, the run stops here.
+3. **The changelog.** `scripts/changelog_release.py` renames `## [Unreleased]`
+   to `## [X.Y.Z] - YYYY-MM-DD`, opens a fresh empty `## [Unreleased]` above
+   it, rewrites the compare links at the bottom, and writes the promoted
+   section out to be used as the release body.
+4. **The permanent part**, kept together at the end: commit the version bump
+   and the promoted changelog, push it, tag, push the tag by refspec, create
+   the GitHub release from the promoted section, publish to PyPI.
 
-1. Rename the `## [Unreleased]` heading to `## [x.y.z] - YYYY-MM-DD`.
-2. Add a fresh empty `## [Unreleased]` above it.
-3. Update the link definitions at the bottom: point `[Unreleased]` at
-   `vx.y.z...HEAD` and add a `[x.y.z]` compare link against the previous
-   *released* tag (0.3.3 was never released, so 0.3.4 compares against 0.3.2).
+### The changelog is part of the release now
+
+`CHANGELOG.md` used to be maintained entirely by hand and nothing enforced it:
+the release notes came from `git log --pretty=format:"- %s (%h)"`, so a release
+happened whether or not anyone had written down what it meant. That is no
+longer true. The release body **is** the `## [Unreleased]` section, and an
+empty one fails the run — for a hand-maintained file, "nobody wrote it down" is
+far more likely than "nothing changed". The commit list has not been lost: the
+release body ends with a compare link against the previous tag.
+
+Two details of the promotion are worth knowing, because both have bitten this
+project:
+
+- The previous version is read from the headings already in the file, never
+  derived by subtracting one. 0.3.3 was never released, so `[0.3.4]` compares
+  against `v0.3.2`; arithmetic would produce a link to a tag that does not
+  exist.
+- Only headings and link definitions are rewritten, so a version number
+  mentioned in prose — "will be removed in 0.3.5" — is left alone.
+
+To see what a release would publish without changing anything:
+
+```bash
+uv run python scripts/changelog_release.py --version 0.3.5 --dry-run
+```
+
+**Do not bump the version by hand.** The workflow bumps from whatever
+`pyproject.toml` says, so a version edited in advance is bumped *again*: hand
+it 0.3.5 and dispatch a patch release, and 0.3.6 goes out with 0.3.5 skipped.
+A hand-bump is also what broke the release on 2026-09-05, back when the commit
+step treated "nothing to commit" as a failure.
 
 When a pull request changes behaviour, adds public API, or fixes something a
-user could have hit, add the entry to `## [Unreleased]` in the same PR. That is
-the only thing keeping the file from going stale.
+user could have hit, add the entry to `## [Unreleased]` in the same PR. The
+release will fail on an empty section, but it cannot tell you *which* PR forgot
+its entry — only that somebody did.

@@ -5,10 +5,11 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-GitHub release notes are generated from commit subjects; this file records what
-changed for users of the library, in particular behaviour that changed under an
-unchanged API. It is maintained by hand — see
-[Releasing](docs/DEVELOPMENT.md#releasing) for what to do at release time.
+This file records what changed for users of the library, in particular
+behaviour that changed under an unchanged API. The `## [Unreleased]` section is
+what the Release workflow publishes as the GitHub release notes, and a release
+with an empty one fails — so entries are added by hand, in the pull request
+that earns them. See [Releasing](docs/DEVELOPMENT.md#releasing).
 
 Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
@@ -108,6 +109,21 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   live-server suite fail the run. Opting in kept a stray `pytest` from wiping a
   developer's data, but it also meant a mistyped port silently dropped those
   suites while coverage stayed near 97% and the job went green.
+
+### Release process
+
+- Releases are cut by one workflow instead of two. `publish.yml` (patch) and
+  `release.yml` (minor) were the same steps twice over, so which part of the
+  version a release moved depended on which Actions page was opened; `Release`
+  now takes the bump as an input, with an exact version as an override.
+- The GitHub release notes are this file's `## [Unreleased]` section, promoted
+  by `scripts/changelog_release.py`, rather than a list of commit subjects. A
+  release with an empty `## [Unreleased]` stops instead of publishing notes
+  that say nothing; the commit list is still reachable through the compare
+  link at the end of the notes.
+- The release runs the full test suite — including the Redis and Memcached
+  suites, which cannot skip there — before it writes, tags or publishes
+  anything, and refuses a version that is already tagged.
 
 ## [0.3.4] - 2026-09-05
 
