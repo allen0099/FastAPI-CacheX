@@ -100,6 +100,7 @@ force-single-line = true
 keep-runtime-typing = true
 
 [tool.ruff.lint.per-file-ignores]
+"scripts/**" = ["INP001"]  # Standalone tooling, not an importable package
 "tests/**" = [
     "D",
     "S101",
@@ -134,7 +135,7 @@ exclude = [
 convention = "google"
 
 [tool.coverage.run]
-source = ["fastapi_cachex"]
+source = ["fastapi_cachex", "scripts"]
 omit = ["tests/*"]
 branch = true
 

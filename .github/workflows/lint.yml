@@ -37,13 +37,16 @@ jobs:
     # have unsorted imports, three unformatted files and six type errors that
     # nobody saw. Strict mypy stays package-only, matching CLAUDE.md.
     - name: Ruff check
-      run: uv run ruff check fastapi_cachex tests
+      run: uv run ruff check fastapi_cachex tests scripts
 
     - name: Ruff format check
-      run: uv run ruff format --check fastapi_cachex tests
+      run: uv run ruff format --check fastapi_cachex tests scripts
 
     - name: Mypy strict
       run: uv run mypy fastapi_cachex --strict
 
     - name: Mypy (tests)
       run: uv run mypy tests
+
+    - name: Mypy (scripts)
+      run: uv run mypy scripts
