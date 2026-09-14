@@ -20,7 +20,7 @@ def test_session_config_rejects_unknown_fields() -> None:
     instead of surfacing a startup-time error.
     """
     with pytest.raises(ValidationError):
-        SessionConfig(secret_key="a" * 32, regenerate_on_login=True)
+        SessionConfig(secret_key="a" * 32, regenerate_on_login=True)  # type: ignore[call-arg]
 
     with pytest.raises(ValidationError):
-        SessionConfig(secret_key="a" * 32, enable_csrf=True)
+        SessionConfig(secret_key="a" * 32, enable_csrf=True)  # type: ignore[call-arg]
