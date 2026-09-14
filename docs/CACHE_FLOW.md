@@ -61,12 +61,25 @@ cache_key = f"{req.method}:{host}:{req.url.path}:{query_params}"
 @cache(no_store=True)     # 不儲存任何內容
 
 # 正常快取行為
-@cache(ttl=3600)          # 快取 1 小時
-@cache(max_age=300)       # 快取 5 分鐘
+@cache(ttl=3600)          # 快取 1 小時（同時作為 max-age 的值）
 @cache(public=True)       # 允許共享快取
-@cache(private=True)      # 僅私有快取
+@cache(private=True)      # 僅私有快取，不進共享後端
 @cache(immutable=True)    # 內容永不變更
 ```
+
+> [!WARNING]
+> **預設快取金鑰不含使用者身分**，而後端是所有 worker、所有使用者共用的。
+> 直接對需要驗證的端點使用 `@cache(ttl=...)`，會把 A 使用者的回應供應給下一
+> 個請求同一路徑的 B 使用者。
+>
+> 需要依請求者而異的端點，擇一處理：
+>
+> 1. `private=True` — 完全不讀寫共享後端。仍會輸出 `Cache-Control: private`
+>    讓使用者自己的瀏覽器快取，`If-None-Match` 也仍以即時算出的內容比對。
+> 2. 自訂含身分的 `key_builder` — 當你確實想要「每位使用者一份」的伺服器端快取。
+>
+> 身分請取自可信來源（已驗簽的 token claim、依賴注入的使用者物件），
+> 不要直接採信未經檢查的客戶端標頭。
 
 ### 3. 快取查詢
 
@@ -158,12 +171,8 @@ else:
 
 ```python
 {
-    'cache_key_1': CacheItem(
-        etag='"abc123"',
-        content=b'...',
-        expires_at=1702650600.5
-    ),
-    'cache_key_2': { ... }
+    "cache_key_1": CacheItem(etag='"abc123"', content=b"...", expires_at=1702650600.5),
+    "cache_key_2": {...},
 }
 
 # 特點：
@@ -216,6 +225,7 @@ async def cleanup_task():
     while True:
         await asyncio.sleep(60)
         # 移除 expires_at < now 的所有項目
+
 
 # Redis/Memcached: TTL 機制
 # 使用後端的內置 TTL (SETEX, expire)
@@ -273,8 +283,8 @@ await cache.clear()  # 移除所有快取項目
 
 ```python
 class CacheItem(TypedDict):
-    etag: str                    # ETag 標籤 (MD5 哈希)
-    content: bytes               # 回應內容
+    etag: str  # ETag 標籤 (MD5 哈希)
+    content: bytes  # 回應內容
     expires_at: Optional[float]  # 過期時間戳 (秒)
 ```
 

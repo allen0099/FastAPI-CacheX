@@ -388,6 +388,26 @@ def cache(
                 return _with_cache_control(response, _NO_STORE)
 
             client_etag = req.headers.get("if-none-match")
+
+            # A private response belongs to exactly one user, so it must never
+            # be read from or written to the shared backend — the default cache
+            # key carries no identity, so a stored copy would be served to the
+            # next caller. ETag revalidation still works: it compares the
+            # client's validator against freshly rendered content.
+            if private:
+                response, _, etag = await _render(func, req, *args, **kwargs)
+                if not _is_cacheable_status(response.status_code):
+                    return response
+                if etag is None:
+                    # StreamingResponse/FileResponse — cannot compute ETag
+                    return _with_cache_control(response, cache_control)
+                if client_etag == etag:
+                    logger.debug("304 Not Modified (private); key=%s", cache_key)
+                    return _not_modified(etag, cache_control)
+                response.headers["ETag"] = etag
+                logger.debug("Private response; bypassed shared cache")
+                return _with_cache_control(response, cache_control)
+
             cached_data = await cache_backend.get(cache_key)
 
             current_response: Response | None = None

@@ -119,6 +119,7 @@ namespaced wrapper around whichever backend is configured via `BackendProxy`.
 ```python
 from fastapi_cachex import AppCache, CacheManager
 
+
 @app.get("/expensive")
 async def expensive_operation(cache: AppCache):
     result = await cache.get("expensive:result")
@@ -170,14 +171,69 @@ All backends automatically namespace keys with a prefix (e.g., `fastapi_cachex:`
 
 `CacheManager` (see [Application-Level Caching](#application-level-caching-manual-getset)) uses a separate, simpler `cache:`-prefixed key namespace instead of this `|||`-separated format, since its keys aren't tied to HTTP requests.
 
+> [!WARNING]
+> **The default cache key carries no user identity.** The backend is shared by
+> every worker and every caller, so caching an authenticated endpoint with the
+> default key builder will serve one user's response to the next user who hits
+> the same path.
+>
+> For any endpoint whose response depends on who is asking, do one of:
+>
+> 1. **`private=True`** — the response is never read from or written to the
+>    shared backend. `Cache-Control: private` still lets the user's own browser
+>    cache it, and `If-None-Match` revalidation still works against freshly
+>    rendered content.
+> 2. **A key builder that includes the caller's identity** — use this when you
+>    do want a server-side cache per user.
+
+```python
+from fastapi_cachex import cache
+from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+
+
+# 1. Keep it out of the shared cache entirely.
+@app.get("/me/profile")
+@cache(ttl=60, private=True)
+async def my_profile(user: CurrentUser):
+    return user.profile
+
+
+# 2. Or give each user their own entry.
+def per_user_key(request: Request) -> str:
+    user_id = request.headers.get("x-user-id", "anonymous")
+    return (
+        f"{request.method}{CACHE_KEY_SEPARATOR}"
+        f"{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}"
+        f"{request.url.path}{CACHE_KEY_SEPARATOR}"
+        f"{request.query_params}{CACHE_KEY_SEPARATOR}{user_id}"
+    )
+
+
+@app.get("/me/dashboard")
+@cache(ttl=60, private=True, key_builder=per_user_key)
+async def my_dashboard(user: CurrentUser):
+    return build_dashboard(user)
+```
+
+Derive the identity from something you trust (a verified token claim, a
+dependency-injected user), not from a client-supplied header you never check.
+
 ### Cache Hit Behavior
 
 When a cached entry is valid (within TTL):
-- **Default behavior**: Returns the cached content with HTTP 200 status code directly without re-executing the endpoint handler
+- **Default behavior**: Returns the cached content directly, with the status code and headers the handler originally produced, without re-executing the endpoint handler
 - **With `If-None-Match` header**: Returns HTTP 304 Not Modified if the ETag matches
 - **With `no-cache` directive**: Forces revalidation with fresh content before deciding on 304
+- **With `private=True`**: Nothing is read from or written to the shared backend; the handler runs every time and only `If-None-Match` revalidation applies
 
 This means **cached hits are extremely fast** - the endpoint handler function is never executed.
+
+Only successful responses are stored. A response the handler *returns* with a
+non-2xx status (for example `Response(..., status_code=404)`) is passed straight
+through and never cached, so a transient error cannot replace or poison the last
+good entry. `206 Partial Content` is excluded as well, since its body is only
+meaningful for the `Range` request that produced it. `Set-Cookie` is never
+stored or replayed.
 
 ### Atomic backend primitives
 
