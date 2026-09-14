@@ -94,6 +94,10 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   connect to, so they skip unless `CACHEX_TEST_REDIS_PORT` /
   `CACHEX_TEST_MEMCACHED_PORT` names one. Contributors must point them at a
   throwaway server; see `docs/DEVELOPMENT.md`.
+- `CACHEX_REQUIRE_LIVE_SERVERS=1`, set by every CI workflow, makes a skipped
+  live-server suite fail the run. Opting in kept a stray `pytest` from wiping a
+  developer's data, but it also meant a mistyped port silently dropped those
+  suites while coverage stayed near 97% and the job went green.
 
 ## [0.3.4] - 2026-09-05
 

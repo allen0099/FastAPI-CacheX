@@ -24,6 +24,14 @@ To run these suites, point them at a throwaway container::
 Without those variables the suites skip, which keeps ``uv run pytest`` safe to
 run anywhere but means coverage of the network backends comes only from the
 runs that opt in (CI sets both variables).
+
+A skip is green, though, so anywhere the servers are *guaranteed* -- every CI
+workflow, where the services are started by the workflow itself -- also sets
+``CACHEX_REQUIRE_LIVE_SERVERS=1``. That turns "these suites would be skipped"
+into a failing test instead (see ``tests/test_live_server_gate.py``), so a
+mistyped port or a service container that never came up cannot pass as a green
+run. The two settings are deliberately separate: the port says *which* server
+is disposable, the flag says *whether* skipping is acceptable at all.
 """
 
 import os
@@ -35,6 +43,7 @@ REDIS_PORT_ENV = "CACHEX_TEST_REDIS_PORT"
 REDIS_HOST_ENV = "CACHEX_TEST_REDIS_HOST"
 MEMCACHED_PORT_ENV = "CACHEX_TEST_MEMCACHED_PORT"
 MEMCACHED_HOST_ENV = "CACHEX_TEST_MEMCACHED_HOST"
+REQUIRE_LIVE_SERVERS_ENV = "CACHEX_REQUIRE_LIVE_SERVERS"
 
 
 def _explicit_port(env_var: str) -> int | None:
@@ -50,6 +59,10 @@ def _explicit_port(env_var: str) -> int | None:
 # port at construction time, and a few tests only build a client and never
 # connect) while any connection attempt goes nowhere instead of to 6379/11211.
 UNCONNECTED_PORT = 1
+
+# Values of CACHEX_REQUIRE_LIVE_SERVERS that mean "not set". A bare `=0` in a
+# workflow should switch the requirement off, not read as a truthy string.
+_NOT_SET = frozenset({"", "0", "false", "no", "off"})
 
 REDIS_HOST = os.environ.get(REDIS_HOST_ENV, "127.0.0.1")
 MEMCACHED_HOST = os.environ.get(MEMCACHED_HOST_ENV, "127.0.0.1")
@@ -138,8 +151,47 @@ def memcached_skip_reason() -> str | None:
     )
 
 
+def redis_package_skip_reason() -> str | None:
+    """Return why the Redis suites must be skipped, or None to run them.
+
+    Kept apart from `redis_skip_reason` because it is a different failure: the
+    server is fine, the client library was never installed.
+    """
+    if has_redis_package():
+        return None
+    return "the redis package is not installed (`uv sync --extra redis`)"
+
+
+def live_servers_required() -> bool:
+    """Return True when skipping a live-server suite must fail the run.
+
+    Anything but unset/empty/`0`/`false`/`no`/`off` counts as set, so that the
+    usual `=1`, `=true` and `=yes` all mean the same thing.
+    """
+    raw = os.environ.get(REQUIRE_LIVE_SERVERS_ENV, "").strip().lower()
+    return raw not in _NOT_SET
+
+
+def live_server_gate_failures() -> list[str]:
+    """Return every reason a live-server suite would not run, newest check last.
+
+    Re-derived on each call rather than read from the module-level constants, so
+    the gate test can drive it.
+    """
+    return [
+        reason
+        for reason in (
+            redis_package_skip_reason(),
+            redis_skip_reason(),
+            memcached_skip_reason(),
+        )
+        if reason is not None
+    ]
+
+
 _REDIS_REASON = redis_skip_reason()
 _MEMCACHED_REASON = memcached_skip_reason()
+_REDIS_PACKAGE_REASON = redis_package_skip_reason()
 
 requires_redis = pytest.mark.skipif(
     _REDIS_REASON is not None,
@@ -150,6 +202,6 @@ requires_memcached = pytest.mark.skipif(
     reason=_MEMCACHED_REASON or "",
 )
 requires_redis_package = pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
+    _REDIS_PACKAGE_REASON is not None,
+    reason=_REDIS_PACKAGE_REASON or "",
 )

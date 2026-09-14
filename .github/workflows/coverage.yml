@@ -58,6 +58,11 @@ jobs:
         # containers above, which exist only for this job.
         CACHEX_TEST_REDIS_PORT: 6379
         CACHEX_TEST_MEMCACHED_PORT: 11211
+        # ...and here the services are this workflow's own responsibility, so a
+        # skipped suite is a broken job, not a safe default. Without this a
+        # wrong port silently drops those tests and the run is still green:
+        # coverage stays near 97%, well over the 90% gate.
+        CACHEX_REQUIRE_LIVE_SERVERS: 1
 
     - name: Upload coverage badge
       uses: JamesIves/github-pages-deploy-action@v4

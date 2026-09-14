@@ -63,6 +63,25 @@ alone drops to roughly 29%. The margin is thin, so the first place an untested
 line shows up as a failure is a local opted-out run, not CI, which sets both
 variables against its own service containers and sees 99.95%.
 
+#### `CACHEX_REQUIRE_LIVE_SERVERS`: where skipping is not acceptable
+
+Opting in protects your data, but it also means a mistyped port or a service
+container that never started turns those suites into *skips* — and a skip is
+green. Coverage will not catch it: with only the Memcached suite skipped the run
+still reports about 96.9%, well over the 90% gate. That threshold cannot be the
+backstop here.
+
+So every CI workflow, where the servers are started by the workflow itself and
+are therefore guaranteed, also sets `CACHEX_REQUIRE_LIVE_SERVERS=1`.
+`tests/test_live_server_gate.py` then turns "these suites would be skipped" into
+a failure naming the reason — a missing port, a port with nothing behind it, or
+a `redis` package that was never installed.
+
+Keep the two settings separate when you add a workflow: the port says *which*
+server is disposable, the flag says *whether* skipping is acceptable at all.
+Never set the flag in a shell where the ports point at a server you care about —
+it makes the run louder, not safer.
+
 ### Checking that a test can fail
 
 Coverage says a line ran, not that anything checked what it did. A test that
