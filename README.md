@@ -200,7 +200,10 @@ async def my_profile(user: CurrentUser):
 
 # 2. Or give each user their own entry.
 def per_user_key(request: Request) -> str:
-    user_id = request.headers.get("x-user-id", "anonymous")
+    # `request.state.user_id` is populated by your authentication layer after
+    # it has verified the caller — never read the identity straight off an
+    # unverified request header (see the note below).
+    user_id = getattr(request.state, "user_id", "anonymous")
     return (
         f"{request.method}{CACHE_KEY_SEPARATOR}"
         f"{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}"
@@ -215,8 +218,19 @@ async def my_dashboard(user: CurrentUser):
     return build_dashboard(user)
 ```
 
-Derive the identity from something you trust (a verified token claim, a
-dependency-injected user), not from a client-supplied header you never check.
+> [!CAUTION]
+> The key builder decides who sees whose data, so the identity it reads must
+> come from something already verified — a claim from a checked token, a user
+> your dependency resolved, or a value your auth middleware wrote to
+> `request.state`.
+>
+> ```python
+> # ❌ Never do this: anyone can send this header.
+> user_id = request.headers.get("x-user-id", "anonymous")
+> ```
+>
+> A key built from a raw request header is a horizontal privilege escalation:
+> sending `X-User-Id: <someone-else>` returns that user's cached response.
 
 ### Cache Hit Behavior
 
