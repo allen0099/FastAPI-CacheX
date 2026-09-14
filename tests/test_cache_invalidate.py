@@ -1,6 +1,7 @@
 """Tests for the cache.invalidate() helper."""
 
 import asyncio
+from collections.abc import Generator
 
 import pytest
 from fastapi import FastAPI
@@ -27,7 +28,7 @@ async def invalidate_target() -> dict[str, int]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_state() -> None:
+def _reset_state() -> Generator[None, None, None]:
     call_count["value"] = 0
     BackendProxy.set(MemoryBackend())
     yield

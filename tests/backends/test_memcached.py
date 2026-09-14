@@ -1,6 +1,6 @@
 import asyncio
-import socket
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -9,25 +9,21 @@ from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
+from tests.live_servers import MEMCACHED_SERVER
+from tests.live_servers import requires_memcached
 
 
-def is_memcached_running(host: str = "127.0.0.1", port: int = 11211) -> bool:
-    """Check if memcached is running."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect((host, port))
-    except (OSError, ConnectionRefusedError):
-        return False
-    else:
-        return True
-    finally:
-        sock.close()
+def stubbed_backend() -> MemcachedBackend:
+    """A fully constructed backend whose client is a stub.
 
-
-requires_memcached = pytest.mark.skipif(
-    not is_memcached_running(),
-    reason="Memcached server is not running",
-)
+    `HashClient` opens no socket until it is used, so `__init__` runs without
+    a server. Going through the real constructor matters: bypassing it with
+    `__new__` and setting attributes by hand would leave these tests driving a
+    half-built object the moment `__init__` grows a new one.
+    """
+    backend = MemcachedBackend([MEMCACHED_SERVER])
+    backend.client = MagicMock()
+    return backend
 
 
 def test_memcached_without_pymemcache(monkeypatch):
@@ -54,7 +50,7 @@ def test_memcached_without_pymemcache(monkeypatch):
 
 @pytest_asyncio.fixture
 async def memcached_backend():
-    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
     await backend.clear()
     return backend
 
@@ -63,7 +59,7 @@ async def memcached_backend():
 def test_memcached_client_waits_for_write_acknowledgements() -> None:
     # With pooling, an unacknowledged write on one socket can still be in flight
     # while a read on another socket is served; every command must be replied to.
-    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
     assert backend.client.use_pooling is True
     assert backend.client.default_kwargs["default_noreply"] is False
 
@@ -220,7 +216,7 @@ async def test_memcached_clear_pattern_warning(memcached_backend: MemcachedBacke
 @pytest.mark.asyncio
 async def test_memcached_set_content_bytes(monkeypatch) -> None:
     """Test bytes content round-trip through set/get."""
-    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
     await backend.clear()
     value = CacheEntry(fingerprint="c", content=b"bytes-content")
 
@@ -434,3 +430,135 @@ async def test_memcached_get_and_delete_has_exactly_one_winner(
 
     assert results.count(value) == 1
     assert results.count(None) == 19
+
+
+def test_legal_keys_are_left_alone() -> None:
+    """Entries written by earlier versions must stay readable."""
+    backend = stubbed_backend()
+
+    assert backend._make_key("GET|||localhost|||/users/1|||") == (
+        "fastapi_cachex:GET|||localhost|||/users/1|||"
+    )
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "GET|||localhost|||/foo bar|||",  # ASGI percent-decodes the path
+        "GET|||localhost|||/café|||",  # non-ASCII path
+        "GET|||localhost|||/x|||\n",  # control character
+        "GET|||localhost|||/search|||q=" + "a" * 400,  # over 250 bytes
+    ],
+)
+def test_keys_memcached_would_refuse_are_hashed(key: str) -> None:
+    """A key Memcached rejects becomes a digest instead of an exception."""
+    backend = stubbed_backend()
+
+    made = backend._make_key(key)
+
+    assert made != f"fastapi_cachex:{key}"
+    assert made.startswith("fastapi_cachex:")
+    encoded = made.encode("utf-8")
+    assert len(encoded) <= 250
+    assert all(0x21 <= byte < 0x7F for byte in encoded)
+
+
+@requires_memcached
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key",
+    [
+        "GET|||localhost|||/foo bar|||",
+        "GET|||localhost|||/café|||",
+        "GET|||localhost|||/search|||q=" + "a" * 1024,
+    ],
+)
+async def test_illegal_keys_round_trip_through_the_server(
+    memcached_backend: MemcachedBackend, key: str
+) -> None:
+    """These used to raise MemcacheIllegalInputError straight out of `@cache`."""
+    value = CacheEntry(fingerprint="e", content=b"content")
+
+    await memcached_backend.set(key, value, 60)
+    retrieved = await memcached_backend.get(key)
+
+    assert retrieved is not None
+    assert retrieved.content == b"content"
+
+    await memcached_backend.delete(key)
+    assert await memcached_backend.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_ttl_beyond_thirty_days_is_sent_as_an_absolute_timestamp() -> None:
+    """Memcached reads an exptime over 30 days as a Unix timestamp, not a duration."""
+    import time
+
+    backend = stubbed_backend()
+
+    sixty_days = 60 * 24 * 60 * 60
+    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), sixty_days)
+
+    expire = backend.client.set.call_args[0][2]
+    now = int(time.time())
+    assert now < expire <= now + sixty_days + 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ttl", "expected"), [(None, 0), (0, 0), (60, 60)])
+async def test_short_ttls_stay_relative(ttl: int | None, expected: int) -> None:
+    """Durations inside the boundary are passed straight through."""
+    backend = stubbed_backend()
+
+    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), ttl)
+
+    assert backend.client.set.call_args[0][2] == expected
+
+
+@requires_memcached
+def test_cached_route_with_a_space_in_the_path_is_served() -> None:
+    """End to end: the decoded path builds a key Memcached would have refused."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from fastapi_cachex.cache import cache
+    from fastapi_cachex.proxy import BackendProxy
+
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
+    previous = BackendProxy.get()
+    BackendProxy.set(backend)
+    try:
+        app = FastAPI()
+
+        @app.get("/foo bar")
+        @cache(ttl=60)
+        async def spaced() -> dict[str, str]:
+            return {"ok": "yes"}
+
+        client = TestClient(app)
+
+        first = client.get("/foo%20bar")
+        second = client.get("/foo%20bar")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json() == {"ok": "yes"}
+    finally:
+        BackendProxy.set(previous)
+
+
+@pytest.mark.asyncio
+async def test_increment_reports_a_counter_that_vanished_mid_call() -> None:
+    """ADD then INCR is two round-trips; the entry can expire in between.
+
+    Memcached has no way to make the pair atomic, so `increment` has to
+    surface the loss instead of returning `None` as if it were a count.
+    """
+    backend = stubbed_backend()
+    # INCR keeps missing: the key is gone again by the time ADD's retry runs.
+    backend.client.incr.return_value = None
+
+    with pytest.raises(CacheXError, match="Counter vanished between ADD and INCR"):
+        await backend.increment("k")
+
+    assert backend.client.add.call_count == 1

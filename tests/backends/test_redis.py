@@ -1,5 +1,4 @@
 import asyncio
-import socket
 import sys
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -8,44 +7,19 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex.backends import AsyncRedisCacheBackend
+from fastapi_cachex.backends.redis import _BATCH_SIZE
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
+from tests.live_servers import REDIS_HOST
+from tests.live_servers import REDIS_PORT
+from tests.live_servers import UNCONNECTED_PORT
+from tests.live_servers import redis_skip_reason
+from tests.live_servers import requires_redis
+from tests.live_servers import requires_redis_package
 
 
-def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
-    """Check if Redis server is running."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.0)
-        s.connect((host, port))
-        s.close()
-    except TimeoutError:
-        return False
-    else:
-        return True
-
-
-requires_redis = pytest.mark.skipif(
-    not is_redis_running(),
-    reason="Redis server is not running",
-)
-
-
-def has_redis_package() -> bool:
-    """Return True if the `redis` package is importable."""
-    try:
-        import redis.asyncio  # type: ignore[unused-ignore]  # noqa: F401
-
-    except Exception:
-        return False
-    return True
-
-
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_load_from_config_initializes_client_and_prefix() -> None:
     """Ensure `load_from_config` builds a backend with expected settings."""
     from pydantic import SecretStr
@@ -74,10 +48,7 @@ def test_redis_load_from_config_initializes_client_and_prefix() -> None:
         assert hasattr(backend.client, "connection_pool")
 
 
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_load_from_config_passes_all_fields() -> None:
     """load_from_config must forward all RedisConfig fields to the backend."""
     from pydantic import SecretStr
@@ -110,10 +81,7 @@ def test_redis_load_from_config_passes_all_fields() -> None:
         assert kwargs.get("socket_connect_timeout") == 1.5
 
 
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_config_defaults() -> None:
     """RedisConfig must expose the new fields with sensible defaults."""
     from fastapi_cachex.backends.config import DEFAULT_REDIS_PREFIX
@@ -128,17 +96,14 @@ def test_redis_config_defaults() -> None:
     assert cfg.protocol == 2
 
 
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_protocol_default_is_resp2() -> None:
     """AsyncRedisCacheBackend must default to protocol=2 (RESP2) for Redis 8.0+ compat.
 
     Redis 8.0 can negotiate RESP3, but hiredis < 3.0 does not support RESP3.
     Defaulting to RESP2 avoids protocol-negotiation failures on Redis 8.0.
     """
-    backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379)
+    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
     pool = backend.client.connection_pool
     kwargs = getattr(pool, "connection_kwargs", {})
     if kwargs:
@@ -147,10 +112,7 @@ def test_redis_protocol_default_is_resp2() -> None:
         assert hasattr(backend.client, "connection_pool")
 
 
-@pytest.mark.skipif(
-    not has_redis_package(),
-    reason="redis package is not installed",
-)
+@requires_redis_package
 def test_redis_load_from_config_forwards_protocol() -> None:
     """load_from_config must forward the protocol field from RedisConfig."""
     from fastapi_cachex.backends.config import RedisConfig
@@ -169,15 +131,20 @@ def test_redis_load_from_config_forwards_protocol() -> None:
 @pytest_asyncio.fixture
 async def async_redis_backend() -> AsyncGenerator[AsyncRedisCacheBackend, Any]:
     """Fixture for async Redis cache backend."""
-    if not is_redis_running():
-        pytest.skip("Redis server is not running")
+    reason = redis_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
 
     backend = AsyncRedisCacheBackend(
-        host="127.0.0.1",
-        port=6379,
+        host=REDIS_HOST,
+        port=REDIS_PORT,
         socket_timeout=1.0,
         socket_connect_timeout=1.0,
     )
+    # Clear on the way in as well as out: a run that was interrupted (or a
+    # manual experiment) leaves keys under this prefix behind, and the tests
+    # here assert exact key counts over it.
+    await backend.clear()
     yield backend
     await backend.clear()
 
@@ -721,3 +688,43 @@ async def test_redis_delete_many_counts_only_existing_keys(
     assert await async_redis_backend.delete_many(["dm-a", "dm-b", "dm-missing"]) == 2
     assert await async_redis_backend.get("dm-a") is None
     assert await async_redis_backend.get("dm-keep") is not None
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_scan_walks_every_page(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """SCAN is paginated; a keyspace larger than one page must not be truncated.
+
+    Every other pattern test in this file fits in a single page, so the loop
+    that follows a non-zero cursor was never taken and a one-page-only
+    implementation would have passed them all.
+    """
+    total = _BATCH_SIZE * 3
+    for index in range(total):
+        await async_redis_backend.set(
+            f"page|||localhost|||/item/{index}|||",
+            CacheEntry(fingerprint="e", content=b"v"),
+        )
+
+    assert len(await async_redis_backend.get_all_keys()) == total
+    assert await async_redis_backend.clear_pattern("page|||*") == total
+    assert await async_redis_backend.get_all_keys() == []
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_cache_data_skips_undecodable_values(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """A value another writer put there must be reported as absent, not crash."""
+    await async_redis_backend.set("good", CacheEntry(fingerprint="e", content=b"v"))
+    await async_redis_backend.client.set(
+        async_redis_backend._make_key("junk"), "not json at all"
+    )
+
+    data = await async_redis_backend.get_cache_data()
+
+    assert "good" in data
+    assert "junk" not in data

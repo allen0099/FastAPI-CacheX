@@ -83,13 +83,13 @@ async def test_backend_cleanup():
     assert memory_backend._cleanup_task is None
 
     # Set test data
-    test_value = CacheEntry(fingerprint="test-etag", content="test_value")
+    test_value = CacheEntry(fingerprint="test-etag", content=b"test_value")
     await memory_backend.set("test_key", test_value, ttl=1)
 
     # Verify data is stored correctly
     cached_value = await memory_backend.get("test_key")
     assert cached_value is not None
-    assert cached_value.content == "test_value"
+    assert cached_value.content == b"test_value"
 
     # Wait for data to expire (1 second + extra time)
     await asyncio.sleep(1.1)
@@ -97,11 +97,38 @@ async def test_backend_cleanup():
     # Execute cleanup
     await memory_backend.cleanup()
 
-    # Verify data has been cleaned up
-    assert await memory_backend.get("test_key") is None
+    # Checked on the dictionary, not through `get`: `get` drops an expired
+    # entry itself, so reading it back would pass even if `cleanup` did
+    # nothing at all.
+    assert "test_key" not in memory_backend.cache
 
 
 def test_backend_proxy_cannot_be_instantiated():
     """Test that BackendProxy cannot be instantiated due to ProxyMeta."""
     with pytest.raises(TypeError, match="Proxy class cannot be instantiated"):
         BackendProxy()
+
+
+def test_get_backend_alias_warns_and_delegates():
+    """The 0.3.0 deprecation shims stay callable until 0.4.0 removes them."""
+    backend = MemoryBackend()
+    BackendProxy.set(backend)
+
+    with pytest.warns(DeprecationWarning, match="get_backend\\(\\) is deprecated"):
+        assert BackendProxy.get_backend() is backend
+
+
+def test_set_backend_alias_warns_and_delegates():
+    """Same for the setter, including clearing with `None`."""
+    backend = MemoryBackend()
+
+    with pytest.warns(DeprecationWarning, match="set_backend\\(\\) is deprecated"):
+        BackendProxy.set_backend(backend)
+
+    assert BackendProxy.get() is backend
+
+    with pytest.warns(DeprecationWarning, match="set_backend\\(\\) is deprecated"):
+        BackendProxy.set_backend(None)
+
+    with pytest.raises(BackendNotFoundError):
+        BackendProxy.get()

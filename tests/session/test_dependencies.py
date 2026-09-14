@@ -72,7 +72,9 @@ class TestRequireSessionAlias:
         manager = SessionManager(backend, config)
 
         dep_app = FastAPI()
-        dep_app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
+        dep_app.add_middleware(
+            SessionMiddleware, session_manager=manager, config=config
+        )
 
         @dep_app.get("/protected")
         async def protected(session=Depends(require_session)):
@@ -92,7 +94,9 @@ class TestRequireSessionAlias:
         manager = SessionManager(backend, config)
 
         dep_app = FastAPI()
-        dep_app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
+        dep_app.add_middleware(
+            SessionMiddleware, session_manager=manager, config=config
+        )
 
         @dep_app.get("/me")
         async def me(session=Depends(require_session)):

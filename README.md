@@ -34,7 +34,9 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 - Secure session management with HMAC-SHA256 token signing
 - Optional JWT token format for interoperability (install extra `jwt`)
 - IP address and User-Agent binding (optional security features)
-- Header and bearer token support (API-first architecture)
+- Header, bearer token and cookie transports (cookies via
+  `FastAPICacheXSessionMiddleware`; the older `SessionMiddleware` is deprecated
+  and removed in 0.3.5 — see [Session Management Guide](docs/SESSION.md))
 - Automatic session renewal (sliding expiration)
 - Flash messages for cross-request communication
 - Multiple backend support (Redis, Memcached, In-Memory)
@@ -64,11 +66,17 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 uv add fastapi-cachex
 ```
 
-To enable JWT token format support for sessions:
+Everything in the core package works with the in-memory backend. The other
+backends and the optional session transports ship as extras:
 
-```bash
-uv add "fastapi-cachex[jwt]"
-```
+| Extra | Install | Pulls in | Needed for |
+|-------|---------|----------|------------|
+| `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`, `orjson` | `AsyncRedisCacheBackend` |
+| `memcache` | `uv add "fastapi-cachex[memcache]"` | `pymemcache` | `MemcachedBackend` (note: `memcache`, not `memcached`) |
+| `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
+| `starlette` | `uv add "fastapi-cachex[starlette]"` | `itsdangerous` | `FastAPICacheXSessionMiddleware` |
+
+Extras combine: `uv add "fastapi-cachex[redis,jwt]"`.
 
 ### Development Installation
 
@@ -107,8 +115,87 @@ async def non_store_endpoint():
 @app.get("/clear_cache")
 async def remove_cache(cache: CacheBackend):
     await cache.clear_path("/path/to/clear")  # Clear cache for a specific path
-    await cache.clear_pattern("/path/to/clear/*")  # Clear cache for a specific pattern
+    # Patterns match the whole key, not just the path
+    await cache.clear_pattern("GET|||*|||/path/to/clear/*")
 ```
+
+`clear_pattern` globs the whole logical key. HTTP cache keys look like
+`method|||host|||path|||query`, so a pattern that is only a path matches
+nothing — use `clear_path(path, include_params=True)` when the path is what you
+mean, and keep `clear_pattern` for keys you built yourself.
+
+### Invalidating a Single Cached Route
+
+`clear_path`/`clear_pattern` work on ranges of keys. To drop exactly the entry a
+`@cache`-decorated route would use — typically right after a mutation — call
+`invalidate()`, which rebuilds that route's key with the same key builder and
+deletes it:
+
+```python
+from fastapi import Request
+from starlette.requests import Request as StarletteRequest
+
+from fastapi_cachex import cache, invalidate
+
+
+@app.get("/items/{item_id}")
+@cache(ttl=300)
+async def read_item(item_id: int):
+    return await load(item_id)
+
+
+@app.post("/items/{item_id}")
+async def update_item(item_id: int, request: Request):
+    await save(item_id)
+    # Build the key the cached GET would have used: same host and headers,
+    # GET method, the cached path, no query string.
+    scope = dict(request.scope)
+    scope["method"] = "GET"
+    scope["path"] = f"/items/{item_id}"
+    scope["query_string"] = b""
+    return {"invalidated": await invalidate(StarletteRequest(scope))}
+```
+
+`invalidate(request, key_builder=None)` returns `True` when an entry existed and
+was removed, `False` otherwise (including when no backend is configured — it
+never raises). The request you hand it must produce the cached route's key:
+same method, host, path and query string. If the cached route uses a custom
+`key_builder`, pass the same one here, or the key will not match.
+
+### Cache Monitoring Routes
+
+`add_routes()` mounts two read-only endpoints that report what is currently in
+the backend:
+
+```python
+from fastapi import Depends, FastAPI
+from fastapi_cachex import add_routes
+
+app = FastAPI()
+add_routes(
+    app,
+    prefix="/admin/cache",  # default "" -> /cached-hits, /cached-records
+    include_in_schema=False,  # default: hidden from OpenAPI
+    dependencies=[Depends(verify_admin)],
+)
+```
+
+- `GET {prefix}/cached-hits` — per-route hit counts and cache key information.
+- `GET {prefix}/cached-records` — every cached record with its size, expiry and
+  a preview of the cached content.
+
+> [!WARNING]
+> **These routes have no authentication of their own.** `include_in_schema=False`
+> only hides them from the OpenAPI document; anyone who guesses the path can read
+> them. `/cached-records` includes a preview of the cached content and exposes
+> your whole route structure. In production always pass
+> `dependencies=[Depends(your_auth)]`, or mount them on an internal-only app.
+
+> [!NOTE]
+> The `ttl_remaining` field is not available on the Redis backend.
+> `AsyncRedisCacheBackend.get_cache_data()` does not issue a per-key `TTL`
+> lookup, so Redis-backed entries are reported as never expiring. Expiry itself
+> still happens — only the monitoring view is blind to it.
 
 ### Application-Level Caching (Manual Get/Set)
 
@@ -118,6 +205,7 @@ namespaced wrapper around whichever backend is configured via `BackendProxy`.
 
 ```python
 from fastapi_cachex import AppCache, CacheManager
+
 
 @app.get("/expensive")
 async def expensive_operation(cache: AppCache):
@@ -134,9 +222,18 @@ await manager.set("user:42", {"name": "Alice"})
 user = await manager.get("user:42")  # {"name": "Alice"}
 await manager.delete("user:42")
 await manager.clear_prefix()  # clear everything under "myapp:"
+
+# Compute-on-miss: `factory` runs only when the key is missing, expired, or
+# undecodable. It may be sync or async.
+profile = await manager.get_or_set("user:42", lambda: load_user(42), ttl=300)
+
+# Glob over this manager's namespace, using the backend's native pattern
+# support (Redis SCAN) rather than enumerating every key.
+await manager.clear_pattern("user:*")  # matches "myapp:user:*"
 ```
 
-`CacheManager.get()` returns `None` (or a supplied `default=`) on a cache miss —
+`get_or_set()` provides no stampede protection: concurrent misses for the same
+key each run `factory`. `CacheManager.get()` returns `None` (or a supplied `default=`) on a cache miss —
 it never raises for missing or corrupted entries. `CacheManager` keys live under
 their own `cache:`-prefixed namespace by default, separate from the HTTP route
 cache and OAuth state, so `clear()`/`clear_prefix()` never touch unrelated cache
@@ -166,18 +263,90 @@ This ensures that:
 - Different query parameters get separate cache entries
 - The same endpoint with different parameters can be cached independently
 
+Query parameters are taken in the order the client sent them, without sorting, so
+`?a=1&b=2` and `?b=2&a=1` are two distinct cache entries for the same logical request.
+
 All backends automatically namespace keys with a prefix (e.g., `fastapi_cachex:`) to avoid conflicts with other applications.
 
 `CacheManager` (see [Application-Level Caching](#application-level-caching-manual-getset)) uses a separate, simpler `cache:`-prefixed key namespace instead of this `|||`-separated format, since its keys aren't tied to HTTP requests.
 
+> [!WARNING]
+> **The default cache key carries no user identity.** The backend is shared by
+> every worker and every caller, so caching an authenticated endpoint with the
+> default key builder will serve one user's response to the next user who hits
+> the same path.
+>
+> For any endpoint whose response depends on who is asking, do one of:
+>
+> 1. **`private=True`** — the response is never read from or written to the
+>    shared backend. `Cache-Control: private` still lets the user's own browser
+>    cache it, and `If-None-Match` revalidation still works against freshly
+>    rendered content.
+> 2. **A key builder that includes the caller's identity** — use this when you
+>    do want a server-side cache per user.
+
+```python
+from fastapi_cachex import cache
+from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+
+
+# 1. Keep it out of the shared cache entirely.
+@app.get("/me/profile")
+@cache(ttl=60, private=True)
+async def my_profile(user: CurrentUser):
+    return user.profile
+
+
+# 2. Or give each user their own entry.
+def per_user_key(request: Request) -> str:
+    # `request.state.user_id` is populated by your authentication layer after
+    # it has verified the caller — never read the identity straight off an
+    # unverified request header (see the note below).
+    user_id = getattr(request.state, "user_id", "anonymous")
+    return (
+        f"{request.method}{CACHE_KEY_SEPARATOR}"
+        f"{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}"
+        f"{request.url.path}{CACHE_KEY_SEPARATOR}"
+        f"{request.query_params}{CACHE_KEY_SEPARATOR}{user_id}"
+    )
+
+
+@app.get("/me/dashboard")
+@cache(ttl=60, private=True, key_builder=per_user_key)
+async def my_dashboard(user: CurrentUser):
+    return build_dashboard(user)
+```
+
+> [!CAUTION]
+> The key builder decides who sees whose data, so the identity it reads must
+> come from something already verified — a claim from a checked token, a user
+> your dependency resolved, or a value your auth middleware wrote to
+> `request.state`.
+>
+> ```python
+> # ❌ Never do this: anyone can send this header.
+> user_id = request.headers.get("x-user-id", "anonymous")
+> ```
+>
+> A key built from a raw request header is a horizontal privilege escalation:
+> sending `X-User-Id: <someone-else>` returns that user's cached response.
+
 ### Cache Hit Behavior
 
 When a cached entry is valid (within TTL):
-- **Default behavior**: Returns the cached content with HTTP 200 status code directly without re-executing the endpoint handler
+- **Default behavior**: Returns the cached content directly, with the status code and headers the handler originally produced, without re-executing the endpoint handler
 - **With `If-None-Match` header**: Returns HTTP 304 Not Modified if the ETag matches
 - **With `no-cache` directive**: Forces revalidation with fresh content before deciding on 304
+- **With `private=True`**: Nothing is read from or written to the shared backend; the handler runs every time and only `If-None-Match` revalidation applies
 
 This means **cached hits are extremely fast** - the endpoint handler function is never executed.
+
+Only successful responses are stored. A response the handler *returns* with a
+non-2xx status (for example `Response(..., status_code=404)`) is passed straight
+through and never cached, so a transient error cannot replace or poison the last
+good entry. `206 Partial Content` is excluded as well, since its body is only
+meaningful for the `Range` request that produced it. `Set-Cookie` is never
+stored or replayed.
 
 ### Atomic backend primitives
 
@@ -279,6 +448,33 @@ backend = AsyncRedisCacheBackend(
 BackendProxy.set(backend)
 ```
 
+**Configuring from a model**: `RedisConfig` is a pydantic model with the same
+settings and validation, which is handy when they come from environment
+variables or a settings file:
+
+```python
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+from fastapi_cachex.backends.config import RedisConfig
+
+config = RedisConfig(
+    host="127.0.0.1",
+    port=6379,
+    password=None,  # SecretStr | None
+    db=0,
+    encoding="utf-8",  # how the client decodes server responses
+    socket_timeout=1.0,  # seconds; applies to reads/writes
+    socket_connect_timeout=1.0,
+    key_prefix="fastapi_cachex:",
+    protocol=2,  # RESP version, 2 or 3
+)
+backend = AsyncRedisCacheBackend.load_from_config(config)
+BackendProxy.set(backend)
+```
+
+Keep `protocol=2` unless you need RESP3 features *and* your `hiredis` build
+supports it (RESP3 needs hiredis >= 3.0). Redis 8.0 speaks RESP3, but an older
+hiredis will fail to negotiate it.
+
 ## Performance Considerations
 
 ### Cache Hit Performance
@@ -305,8 +501,12 @@ async def expensive_operation():
 
 - [Cache Flow Explanation](docs/CACHE_FLOW.md)
 - [Development Guide](docs/DEVELOPMENT.md)
+- [Known Limitations and Planned Work](docs/BACKLOG.md)
+- [Changelog](CHANGELOG.md)
 - [Contributing Guidelines](docs/CONTRIBUTING.md)
 - [Session Management Guide](docs/SESSION.md) - Complete guide for session features
+- [State Management Guide](docs/STATE.md) - One-shot OAuth/CSRF state tokens
+- [JWT Claims Guide](docs/JWT_CLAIMS.md) - Claim design and extension points for JWT session tokens
 
 ## License
 

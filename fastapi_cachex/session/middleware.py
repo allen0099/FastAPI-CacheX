@@ -34,36 +34,50 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_client_ip(connection: HTTPConnection) -> str | None:
-    """Get client IP address from an HTTP connection.
+def _get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | None:
+    """Get the client IP address from an HTTP connection.
+
+    `X-Forwarded-For` and `X-Real-IP` are believed only when the request
+    actually arrived from one of `config.trusted_proxies`; with the default
+    empty list they are ignored entirely, because anyone can send them.
+
+    Even behind a trusted proxy the leftmost `X-Forwarded-For` entry is not the
+    client: proxies append, so a caller who sends the header themselves has
+    their value sitting in front of the address the proxy added. This walks the
+    chain from the right and takes the first address that is not a trusted
+    proxy — the closest hop nobody in the chain could have forged. If every
+    entry is a trusted proxy there is no client address to recover and the
+    direct peer is used.
 
     Args:
         connection: Incoming HTTP connection (or a `Request`, which IS-A
             `HTTPConnection`)
+        config: Session configuration carrying the trusted proxy list
 
     Returns:
         Client IP address or None
     """
-    # Check X-Forwarded-For header (for proxied requests)
-    forwarded_for = connection.headers.get("x-forwarded-for")
-    if forwarded_for:
-        # Get first IP from comma-separated list
-        ip = forwarded_for.split(",")[0].strip()
-        logger.debug("Client IP from X-Forwarded-For: %s", ip)
-        return ip
+    peer = connection.client.host if connection.client else None
 
-    # Check X-Real-IP header
-    real_ip = connection.headers.get("x-real-ip")
-    if real_ip:
-        logger.debug("Client IP from X-Real-IP: %s", real_ip)
-        return real_ip
+    if peer is not None and peer in config.trusted_proxies:
+        forwarded_for = connection.headers.get("x-forwarded-for")
+        if forwarded_for:
+            for entry in reversed(forwarded_for.split(",")):
+                candidate = entry.strip()
+                if candidate and candidate not in config.trusted_proxies:
+                    logger.debug("Client IP from X-Forwarded-For: %s", candidate)
+                    return candidate
 
-    # Fallback to direct client IP
-    if connection.client:
-        logger.debug("Client IP from connection: %s", connection.client.host)
-        return connection.client.host
+        # X-Real-IP is written by the proxy itself, so it has no chain to walk.
+        real_ip = connection.headers.get("x-real-ip")
+        if real_ip:
+            logger.debug("Client IP from X-Real-IP: %s", real_ip)
+            return real_ip
 
-    return None
+    if peer is not None:
+        logger.debug("Client IP from connection: %s", peer)
+
+    return peer
 
 
 def _extract_header_token(
@@ -83,6 +97,9 @@ def _extract_header_token(
     Returns:
         Session token or None
     """
+    # `token_source_priority` is a list of Literals, so pydantic has already
+    # rejected anything that is neither branch; the chain stays an `elif` so a
+    # source added later falls through instead of being read as a bearer token.
     for source in config.token_source_priority:
         if source == "header":
             token = connection.headers.get(config.header_name)
@@ -238,7 +255,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         Returns:
             Client IP address or None
         """
-        return _get_client_ip(request)
+        return _get_client_ip(request, self.config)
 
 
 class FastAPICacheXSessionMiddleware:
@@ -267,7 +284,7 @@ class FastAPICacheXSessionMiddleware:
         """
         try:
             from starlette.middleware.sessions import Session as _StarletteSession
-        except ImportError as e:  # pragma: no cover
+        except ImportError as e:
             msg = (
                 "FastAPICacheXSessionMiddleware requires itsdangerous; "
                 "install fastapi-cachex[starlette]"
@@ -323,7 +340,7 @@ class FastAPICacheXSessionMiddleware:
         token_value = header_token or connection.cookies.get(self.config.cookie_name)
         if token_value:
             try:
-                ip_address = _get_client_ip(connection)
+                ip_address = _get_client_ip(connection, self.config)
                 user_agent = connection.headers.get("user-agent")
                 backend_session, renewed_token = await self.session_manager.get_session(
                     token_value,
@@ -437,7 +454,7 @@ class FastAPICacheXSessionMiddleware:
                 backend_session,
                 loaded_token,
             ) = await self.session_manager.create_anonymous_session(
-                ip_address=_get_client_ip(connection),
+                ip_address=_get_client_ip(connection, self.config),
                 user_agent=connection.headers.get("user-agent"),
             )
             new_token: str | None = loaded_token

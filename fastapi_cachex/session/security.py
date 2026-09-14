@@ -53,8 +53,15 @@ class SecurityManager:
             True if signature is valid, False otherwise
         """
         expected_signature = self.sign_session_id(session_id)
-        # Use constant-time comparison to prevent timing attacks
-        valid = hmac.compare_digest(expected_signature, signature)
+        # Compare as bytes, in constant time. `compare_digest` refuses str
+        # arguments that are not ASCII-only, and the signature here comes
+        # straight off the wire — Starlette decodes header bytes as latin-1, so
+        # a token carrying a non-ASCII signature used to raise TypeError and
+        # escape the middleware's SessionError handler as a 500.
+        valid = hmac.compare_digest(
+            expected_signature.encode("utf-8"),
+            signature.encode("utf-8"),
+        )
 
         if not valid:
             logger.debug("Signature verification failed; id=%s", session_id)

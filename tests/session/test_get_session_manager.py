@@ -178,7 +178,7 @@ class TestSessionManagerProxy:
     def test_instantiation_raises_type_error(self) -> None:
         """SessionManagerProxy cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            SessionManagerProxy()  # type: ignore[call-arg]
+            SessionManagerProxy()
 
     def test_get_raises_when_not_set(self) -> None:
         """get() raises BackendNotFoundError when no manager has been set."""

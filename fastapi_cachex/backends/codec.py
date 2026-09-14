@@ -4,14 +4,17 @@ Both backends store a ``CacheEntry`` as a JSON document; ``orjson`` is used when
 it is installed and the standard library ``json`` module otherwise.
 """
 
+from fastapi_cachex.types import DEFAULT_STATUS_CODE
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 
 try:
     import orjson as json
 
-except ImportError:  # pragma: no cover
-    import json  # type: ignore[no-redef]  # pragma: no cover
+# Resolved once at import time; whichever branch this interpreter takes, the
+# other one cannot be reached again in the same process.
+except ImportError:  # pragma: no cover - import-time, environment dependent
+    import json  # type: ignore[no-redef]
 
 # ``json.loads`` (either implementation) raises ``ValueError`` subclasses for bad
 # JSON; ``KeyError``/``TypeError``/``AttributeError`` cover documents whose shape
@@ -30,6 +33,8 @@ def encode_entry(entry: CacheEntry) -> bytes:
             "fingerprint": entry.fingerprint,
             "content": entry.content.decode("latin-1"),
             "media_type": entry.media_type,
+            "status_code": entry.status_code,
+            "headers": entry.headers,
         },
     )
     # orjson returns bytes, stdlib json returns str
@@ -52,6 +57,9 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
     written by ``encode_entry`` (corrupt JSON, missing fields, non-string
     content) yields ``None``, so callers can treat every malformed value as a
     cache miss.
+
+    Documents written before entries carried a status code and headers simply
+    lack those keys and decode to a plain ``200`` with no extra headers.
     """
     if raw is None:
         return None
@@ -64,6 +72,8 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
             fingerprint=data["fingerprint"],
             content=data["content"].encode("latin-1"),
             media_type=data.get("media_type"),
+            status_code=data.get("status_code", DEFAULT_STATUS_CODE),
+            headers=data.get("headers"),
         )
     except _DECODE_ERRORS:
         return None

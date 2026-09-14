@@ -14,6 +14,7 @@ from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
 
 from .base import BaseCacheBackend
+from .base import warn_if_path_shaped
 
 logger = logging.getLogger(__name__)
 
@@ -112,11 +113,18 @@ class MemoryBackend(BaseCacheBackend):
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Store a response in the cache.
 
+        Starting the sweeper here as well as in ``get`` matters for a
+        write-mostly user — `StateManager.create_state` only writes, say — who
+        would otherwise accumulate expired entries forever, since nothing else
+        ever starts it.
+
         Args:
             key: Cache key
             value: Content to cache
             ttl: Time to live in seconds (None = never expires)
         """
+        self._ensure_cleanup_started()
+
         async with self.lock:
             expiry = time.time() + ttl if ttl is not None else None
             self.cache[key] = CacheItem(value=value, expiry=expiry)
@@ -217,24 +225,20 @@ class MemoryBackend(BaseCacheBackend):
         return cleared_count
 
     async def clear_pattern(self, pattern: str) -> int:
-        """Clear cached responses matching a pattern.
+        """Clear cached entries whose key matches a glob pattern (see base class).
 
-        Uses fnmatch for glob-style pattern matching against the path component
-        of cache keys.
+        Matches ``fnmatch`` against the whole key, which is what the Redis
+        backend's SCAN does. Matching only the path component, as this used to,
+        made the same call clear different things on different backends.
 
         Args:
-            pattern: A glob pattern to match against paths (e.g., "/users/*")
+            pattern: A glob pattern to match whole cache keys against
 
         Returns:
             Number of cache entries cleared
         """
-
-        def matches(key: str) -> bool:
-            parsed = _split_http_key(key)
-            subject = key if parsed is None else parsed[0]
-            return fnmatch.fnmatch(subject, pattern)
-
-        cleared_count = await self._evict(matches)
+        cleared_count = await self._evict(lambda key: fnmatch.fnmatch(key, pattern))
+        warn_if_path_shaped(pattern, cleared_count)
         logger.debug(
             "Memory cache CLEAR_PATTERN; pattern=%s removed=%s", pattern, cleared_count
         )
@@ -262,7 +266,7 @@ class MemoryBackend(BaseCacheBackend):
         try:
             while True:
                 await asyncio.sleep(self.cleanup_interval)
-                await self.cleanup()  # pragma: no cover
+                await self.cleanup()
         except asyncio.CancelledError:
             # Handle task cancellation gracefully
             pass

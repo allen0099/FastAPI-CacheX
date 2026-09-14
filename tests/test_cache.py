@@ -1,3 +1,5 @@
+from collections.abc import AsyncGenerator
+
 import pytest
 from fastapi import FastAPI
 from fastapi import Response
@@ -499,7 +501,7 @@ def test_streaming_response_not_cached():
     async def streaming_endpoint():
         call_count["n"] += 1
 
-        async def gen():
+        async def gen() -> AsyncGenerator[bytes, None]:
             yield b"chunk"
 
         return StreamingResponse(gen(), media_type="text/plain")
@@ -525,7 +527,7 @@ def test_streaming_response_with_no_cache_and_if_none_match():
     @stream_app2.get("/stream-nocache")
     @cache(no_cache=True)
     async def streaming_nocache():
-        async def gen():
+        async def gen() -> AsyncGenerator[bytes, None]:
             yield b"data"
 
         return StreamingResponse(gen(), media_type="text/plain")

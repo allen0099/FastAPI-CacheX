@@ -391,7 +391,7 @@ class SessionManager:
         """
         try:
             all_keys = await self.backend.get_all_keys()
-        except NotImplementedError:  # pragma: no cover
+        except NotImplementedError:
             return
         for key in all_keys:
             if not key.startswith(self.config.backend_key_prefix):

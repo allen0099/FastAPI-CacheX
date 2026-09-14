@@ -21,10 +21,8 @@ async def test_memory_backend_set_get(memory_backend: MemoryBackend):
     key = "test_key"
     value = CacheEntry(
         fingerprint="test_etag",
-        content={
-            "response": b"test_value",
-            "media_type": "application/json",
-        },
+        content=b"test_value",
+        media_type="application/json",
     )
     ttl = 60
 
@@ -47,10 +45,8 @@ async def test_memory_backend_delete(memory_backend: MemoryBackend):
     key = "test_key"
     value = CacheEntry(
         fingerprint="test_etag",
-        content={
-            "response": b"test_value",
-            "media_type": "application/json",
-        },
+        content=b"test_value",
+        media_type="application/json",
     )
     ttl = 60
 
@@ -66,18 +62,14 @@ async def test_memory_backend_clear(memory_backend: MemoryBackend):
     key1 = "test_key1"
     value1 = CacheEntry(
         fingerprint="test_etag1",
-        content={
-            "response": b"test_value1",
-            "media_type": "application/json",
-        },
+        content=b"test_value1",
+        media_type="application/json",
     )
     key2 = "test_key2"
     value2 = CacheEntry(
         fingerprint="test_etag2",
-        content={
-            "response": b"test_value2",
-            "media_type": "application/json",
-        },
+        content=b"test_value2",
+        media_type="application/json",
     )
     ttl = 60
 
@@ -97,10 +89,8 @@ async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend):
     key = "test_key"
     value = CacheEntry(
         fingerprint="test_etag",
-        content={
-            "response": b"test_value",
-            "media_type": "application/json",
-        },
+        content=b"test_value",
+        media_type="application/json",
     )
     ttl = 1
 
@@ -116,19 +106,15 @@ async def test_memory_backend_cleanup(memory_backend: MemoryBackend):
     key1 = "test_key1"
     value1 = CacheEntry(
         fingerprint="test_etag1",
-        content={
-            "response": b"test_value1",
-            "media_type": "application/json",
-        },
+        content=b"test_value1",
+        media_type="application/json",
     )
     ttl1 = 1
     key2 = "test_key2"
     value2 = CacheEntry(
         fingerprint="test_etag2",
-        content={
-            "response": b"test_value2",
-            "media_type": "application/json",
-        },
+        content=b"test_value2",
+        media_type="application/json",
     )
     ttl2 = 60
 
@@ -178,42 +164,30 @@ async def test_memory_backend_stop_cleanup_when_not_running(
 
 
 @pytest.mark.asyncio
-async def test_memory_backend_cleanup_task_impl(memory_backend: MemoryBackend):
-    """Test that the cleanup task actually runs and cleans up expired items."""
-    key1 = "test_key1"
-    value1 = CacheEntry(
-        fingerprint="test_etag1",
-        content=b"test_value1",
-    )
-    key2 = "test_key2"
-    value2 = CacheEntry(
-        fingerprint="test_etag2",
-        content=b"test_value2",
-    )
+async def test_memory_backend_cleanup_task_impl():
+    """The sweeper itself has to drop expired entries.
 
-    # Set shorter cleanup interval for testing
-    memory_backend.cleanup_interval = 1
+    Reading the keys back through `get` proves nothing about the sweeper:
+    `get` deletes an expired entry on its way to returning `None`, so that
+    assertion holds even if the background task never removes anything. The
+    dictionary is inspected directly instead, and neither key is ever read.
+    """
+    backend = MemoryBackend(cleanup_interval=1)
+    expiring = CacheEntry(fingerprint="test_etag1", content=b"test_value1")
+    surviving = CacheEntry(fingerprint="test_etag2", content=b"test_value2")
 
-    # Set items with different TTLs
-    await memory_backend.set(key1, value1, ttl=1)  # This should expire
-    await memory_backend.set(key2, value2, ttl=60)  # This should remain
+    await backend.set("expiring", expiring, ttl=1)
+    await backend.set("surviving", surviving, ttl=60)
+    backend.start_cleanup()
 
-    # Start the cleanup task
-    memory_backend.start_cleanup()
+    try:
+        # One full interval plus the entry's own TTL.
+        await asyncio.sleep(2)
 
-    # Wait for cleanup to run at least once
-    await asyncio.sleep(2)
-
-    # Get values after cleanup
-    value1_after = await memory_backend.get(key1)
-    value2_after = await memory_backend.get(key2)
-
-    # Stop the cleanup task
-    memory_backend.stop_cleanup()
-
-    # Assert that expired item was cleaned up
-    assert value1_after is None
-    assert value2_after == value2
+        assert "expiring" not in backend.cache
+        assert backend.cache["surviving"].value == surviving
+    finally:
+        backend.stop_cleanup()
 
 
 @pytest.mark.asyncio
@@ -251,13 +225,32 @@ async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
     await memory_backend.set("POST|||localhost|||/users/456|||", value2)
     await memory_backend.set("GET|||localhost|||/posts/789|||", value3)
 
-    # Test clearing with pattern
-    cleared = await memory_backend.clear_pattern("/users/*")
+    # The pattern matches whole keys, so the method and host must be written out
+    cleared = await memory_backend.clear_pattern("*|||localhost|||/users/*")
     assert cleared == 2  # Should clear both user entries
 
     # Verify the posts data still exists
     posts_value = await memory_backend.get("GET|||localhost|||/posts/789|||")
     assert posts_value == value3
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_pattern_needs_a_whole_key_glob(
+    memory_backend: MemoryBackend,
+):
+    """A path-only pattern matches nothing, exactly as it does on Redis.
+
+    This used to clear the entry, because the pattern was matched against the
+    path component alone. `clear_path` is the method for clearing by path.
+    """
+    value = CacheEntry(fingerprint="e1", content=b"v1")
+    await memory_backend.set("GET|||localhost|||/users/123|||", value)
+
+    with pytest.warns(RuntimeWarning, match="clear_path"):
+        assert await memory_backend.clear_pattern("/users/*") == 0
+    assert await memory_backend.get("GET|||localhost|||/users/123|||") == value
+
+    assert await memory_backend.clear_path("/users/123") == 1
 
 
 @pytest.mark.asyncio
@@ -612,3 +605,86 @@ async def test_memory_delete_many_counts_only_existing_keys(
     assert await memory_backend.delete_many(["a", "b", "missing"]) == 2
     assert await memory_backend.get("a") is None
     assert await memory_backend.get("keep") is not None
+
+
+@pytest.mark.asyncio
+async def test_write_only_use_starts_the_cleanup_task():
+    """A backend that is only written to still needs its sweeper running.
+
+    Only `get` used to start it, so a write-mostly caller — `StateManager`
+    creates states without ever reading them back through `get` — accumulated
+    expired entries with nothing to remove them.
+    """
+    backend = MemoryBackend(cleanup_interval=1)
+
+    await backend.set("gone", CacheEntry(fingerprint="e", content=b"v"), ttl=1)
+    await backend.set("stays", CacheEntry(fingerprint="e", content=b"v"), ttl=60)
+
+    try:
+        await asyncio.sleep(2)
+
+        # Nothing here ever calls `get`, so only the sweeper can have removed
+        # the expired key — a task that merely exists would leave it in place.
+        assert "gone" not in backend.cache
+        assert "stays" in backend.cache
+    finally:
+        backend.stop_cleanup()
+
+
+@pytest.mark.asyncio
+async def test_get_evicts_the_expired_entry_it_skips():
+    """A miss on an expired key must also free the memory it was holding.
+
+    Asserting that `get` returns `None` says nothing about this: it returns
+    `None` whether or not the entry is dropped. The dictionary is checked
+    directly, because between sweeps this is the only thing that reclaims an
+    expired entry the caller happened to ask for.
+    """
+    backend = MemoryBackend()
+    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), ttl=1)
+
+    try:
+        await asyncio.sleep(1.05)
+
+        assert await backend.get("k") is None
+        assert "k" not in backend.cache
+    finally:
+        backend.stop_cleanup()
+
+
+@pytest.mark.asyncio
+async def test_read_only_use_starts_the_cleanup_task():
+    """A read-mostly caller needs the sweeper too.
+
+    `set` starts it, but a process that only reads a cache another process
+    fills would never sweep its own copy of nothing -- and, more to the point,
+    a backend that is read before it is written must not be left without one.
+    """
+    backend = MemoryBackend()
+
+    before = backend._cleanup_task
+
+    try:
+        await backend.get("never-stored")
+        after = backend._cleanup_task
+
+        assert before is None
+        assert after is not None
+        assert not after.done()
+    finally:
+        backend.stop_cleanup()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_leaves_live_entries_alone():
+    """A sweep with nothing to do must not touch what is still valid."""
+    backend = MemoryBackend()
+    await backend.set("a", CacheEntry(fingerprint="e", content=b"1"), ttl=60)
+    await backend.set("b", CacheEntry(fingerprint="e", content=b"2"))
+
+    try:
+        await backend.cleanup()
+
+        assert sorted(backend.cache) == ["a", "b"]
+    finally:
+        backend.stop_cleanup()

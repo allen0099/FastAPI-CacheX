@@ -415,39 +415,81 @@ async def test_ip_binding_mismatch_starts_fresh_session(
     assert response.json() == {"has_data": False}
 
 
-def test_get_client_ip_from_x_forwarded_for() -> None:
-    """Shared _get_client_ip free function reads X-Forwarded-For first."""
+def test_get_client_ip_from_x_forwarded_for(config: SessionConfig) -> None:
+    """Shared _get_client_ip reads X-Forwarded-For behind a trusted proxy."""
     from starlette.requests import HTTPConnection
 
     from fastapi_cachex.session.middleware import _get_client_ip
 
+    trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9", "10.0.0.1"]})
     scope: dict[str, Any] = {
         "type": "http",
         "headers": [(b"x-forwarded-for", b"192.168.1.1, 10.0.0.1")],
-        "client": None,
+        "client": ("10.0.0.9", 12345),
     }
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection) == "192.168.1.1"
+    assert _get_client_ip(connection, trusting) == "192.168.1.1"
 
 
-def test_get_client_ip_from_real_ip() -> None:
-    """Shared _get_client_ip free function falls back to X-Real-IP."""
+def test_get_client_ip_takes_the_rightmost_untrusted_entry(
+    config: SessionConfig,
+) -> None:
+    """A caller-supplied entry sits to the left of the address the proxy added."""
+    from starlette.requests import HTTPConnection
+
+    from fastapi_cachex.session.middleware import _get_client_ip
+
+    trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9"]})
+    scope: dict[str, Any] = {
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"198.51.100.5, 203.0.113.99")],
+        "client": ("10.0.0.9", 12345),
+    }
+    connection = HTTPConnection(scope)
+
+    assert _get_client_ip(connection, trusting) == "203.0.113.99"
+
+
+def test_get_client_ip_from_real_ip(config: SessionConfig) -> None:
+    """Shared _get_client_ip falls back to X-Real-IP behind a trusted proxy."""
+    from starlette.requests import HTTPConnection
+
+    from fastapi_cachex.session.middleware import _get_client_ip
+
+    trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9"]})
+    scope: dict[str, Any] = {
+        "type": "http",
+        "headers": [(b"x-real-ip", b"192.168.1.1")],
+        "client": ("10.0.0.9", 12345),
+    }
+    connection = HTTPConnection(scope)
+
+    assert _get_client_ip(connection, trusting) == "192.168.1.1"
+
+
+def test_get_client_ip_ignores_forwarded_headers_from_untrusted_peer(
+    config: SessionConfig,
+) -> None:
+    """With no trusted proxies the headers are ignored entirely."""
     from starlette.requests import HTTPConnection
 
     from fastapi_cachex.session.middleware import _get_client_ip
 
     scope: dict[str, Any] = {
         "type": "http",
-        "headers": [(b"x-real-ip", b"192.168.1.1")],
-        "client": None,
+        "headers": [
+            (b"x-forwarded-for", b"1.2.3.4"),
+            (b"x-real-ip", b"5.6.7.8"),
+        ],
+        "client": ("10.0.0.9", 12345),
     }
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection) == "192.168.1.1"
+    assert _get_client_ip(connection, config) == "10.0.0.9"
 
 
-def test_get_client_ip_from_client() -> None:
+def test_get_client_ip_from_client(config: SessionConfig) -> None:
     """Shared _get_client_ip free function falls back to the raw client address."""
     from starlette.requests import HTTPConnection
 
@@ -460,10 +502,10 @@ def test_get_client_ip_from_client() -> None:
     }
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection) == "192.168.1.1"
+    assert _get_client_ip(connection, config) == "192.168.1.1"
 
 
-def test_get_client_ip_none() -> None:
+def test_get_client_ip_none(config: SessionConfig) -> None:
     """Shared _get_client_ip free function returns None when nothing is available."""
     from starlette.requests import HTTPConnection
 
@@ -472,7 +514,7 @@ def test_get_client_ip_none() -> None:
     scope: dict[str, Any] = {"type": "http", "headers": [], "client": None}
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection) is None
+    assert _get_client_ip(connection, config) is None
 
 
 @pytest.mark.asyncio
@@ -653,3 +695,60 @@ def test_session_middleware_construction_is_deprecated(
 
     with pytest.warns(DeprecationWarning, match="FastAPICacheXSessionMiddleware"):
         SessionMiddleware(app, manager, config)
+
+
+def test_missing_itsdangerous_explains_the_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The middleware borrows starlette's Session, which needs itsdangerous.
+
+    A `None` entry in `sys.modules` is what the import system treats as "this
+    module is not importable", which is the same failure a missing
+    itsdangerous produces inside starlette.
+    """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "starlette.middleware.sessions", None)
+
+    backend = MemoryBackend()
+    config = SessionConfig(secret_key="a" * 32)
+    manager = SessionManager(backend, config)
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        """Never reached; construction fails first."""
+
+    with pytest.raises(ImportError, match=r"fastapi-cachex\[starlette\]"):
+        FastAPICacheXSessionMiddleware(app, session_manager=manager, config=config)
+
+
+@pytest.mark.asyncio
+async def test_header_source_cleared_session_is_deleted_without_a_cookie(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """Clearing a header-sourced session deletes the record and sets no cookie.
+
+    The cookie transport answers a clear with an expiring `Set-Cookie`; a
+    header client has no cookie to expire and simply keeps a token that no
+    longer resolves. Only the cookie half of that branch was covered.
+    """
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/logout")
+    async def logout_route(request: Request) -> dict[str, bool]:
+        request.session.clear()
+        return {"ok": True}
+
+    _session, token = await manager.create_session(
+        user=SessionUser(user_id="header-logout-user"), data={"seen": True}
+    )
+
+    client = TestClient(app)
+    response = client.get("/logout", headers={config.header_name: token})
+
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(token)

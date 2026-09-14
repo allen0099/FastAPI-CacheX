@@ -16,6 +16,7 @@ from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import SessionMiddleware
+from fastapi_cachex.session.middleware import _extract_header_token
 from fastapi_cachex.session.models import SessionUser
 
 
@@ -113,44 +114,112 @@ def test_extract_token_none(manager: SessionManager, config: SessionConfig) -> N
     assert token is None
 
 
-def test_get_client_ip_from_x_forwarded_for(
+def test_get_client_ip_ignores_forwarded_headers_by_default(
     manager: SessionManager,
     config: SessionConfig,
 ) -> None:
-    """Test getting client IP from X-Forwarded-For header."""
+    """Forwarded headers are spoofable, so an untrusted peer's are ignored."""
 
     async def app(scope, receive, send):
         pass
 
     middleware = SessionMiddleware(app, manager, config)
 
-    # Create a mock request
+    request = MagicMock(spec=Request)
+    request.headers = {
+        "x-forwarded-for": "1.2.3.4",
+        "x-real-ip": "5.6.7.8",
+    }
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
+
+    assert middleware._get_client_ip(request) == "10.0.0.9"
+
+
+def test_get_client_ip_from_x_forwarded_for_behind_trusted_proxy(
+    manager: SessionManager,
+) -> None:
+    """A proxy the app vouches for may report the real client address."""
+
+    async def app(scope, receive, send):
+        pass
+
+    config = SessionConfig(
+        secret_key="a" * 32, trusted_proxies=["10.0.0.9", "10.0.0.1"]
+    )
+    middleware = SessionMiddleware(app, manager, config)
+
     request = MagicMock(spec=Request)
     request.headers = {"x-forwarded-for": "192.168.1.1, 10.0.0.1"}
-    request.client = None
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
 
-    ip = middleware._get_client_ip(request)
-    assert ip == "192.168.1.1"
+    assert middleware._get_client_ip(request) == "192.168.1.1"
 
 
-def test_get_client_ip_from_real_ip(
+def test_get_client_ip_ignores_a_prepended_forwarded_entry(
     manager: SessionManager,
-    config: SessionConfig,
 ) -> None:
-    """Test getting client IP from X-Real-IP header."""
+    """Proxies append, so the leftmost entry is whatever the caller sent."""
 
     async def app(scope, receive, send):
         pass
 
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
     middleware = SessionMiddleware(app, manager, config)
 
-    # Create a mock request
+    request = MagicMock(spec=Request)
+    # The attacker sent the first entry themselves; nginx appended the second.
+    request.headers = {"x-forwarded-for": "198.51.100.5, 203.0.113.99"}
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
+
+    assert middleware._get_client_ip(request) == "203.0.113.99"
+
+
+def test_get_client_ip_falls_back_when_every_hop_is_trusted(
+    manager: SessionManager,
+) -> None:
+    """With no untrusted entry left there is no client address to recover."""
+
+    async def app(scope, receive, send):
+        pass
+
+    config = SessionConfig(
+        secret_key="a" * 32, trusted_proxies=["10.0.0.9", "10.0.0.1"]
+    )
+    middleware = SessionMiddleware(app, manager, config)
+
+    request = MagicMock(spec=Request)
+    request.headers = {"x-forwarded-for": "10.0.0.1"}
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
+
+    assert middleware._get_client_ip(request) == "10.0.0.9"
+
+
+def test_get_client_ip_from_real_ip_behind_trusted_proxy(
+    manager: SessionManager,
+) -> None:
+    """X-Real-IP is the fallback once the peer is trusted."""
+
+    async def app(scope, receive, send):
+        pass
+
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
+    middleware = SessionMiddleware(app, manager, config)
+
     request = MagicMock(spec=Request)
     request.headers = {"x-real-ip": "192.168.1.1"}
-    request.client = None
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
 
-    ip = middleware._get_client_ip(request)
-    assert ip == "192.168.1.1"
+    assert middleware._get_client_ip(request) == "192.168.1.1"
 
 
 def test_get_client_ip_from_client(
@@ -442,7 +511,9 @@ async def test_dispatch_with_session_error(
 @pytest.mark.asyncio
 async def test_dispatch_sets_renewed_token_header_on_sliding_expiration() -> None:
     """Middleware must write the refreshed token to the response header and extend expires_at."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime
+    from datetime import timedelta
+    from datetime import timezone
 
     from fastapi.responses import JSONResponse
 
@@ -476,9 +547,69 @@ async def test_dispatch_sets_renewed_token_header_on_sliding_expiration() -> Non
     assert response.status_code == 200
     renewed = response.headers.get(slide_config.header_name)
     # Middleware must write a new token to the response header
-    assert renewed is not None, "Middleware must set renewed token header on sliding renewal"
+    assert renewed is not None, (
+        "Middleware must set renewed token header on sliding renewal"
+    )
 
     # The renewed session must have an extended expires_at (> the shortened value we set)
     renewed_session, _ = await mgr.get_session(renewed)
     assert renewed_session.expires_at is not None
     assert renewed_session.expires_at > shortened_expiry
+
+
+def _connection(headers: dict[str, str]) -> Request:
+    """A bare `Request` carrying only the headers under test."""
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
+        }
+    )
+
+
+def test_bearer_is_used_when_the_header_source_finds_nothing(
+    config: SessionConfig,
+) -> None:
+    """The priority list is a fallback chain, not a first-entry-only lookup.
+
+    Every other extraction test supplies the header it asks for first, so the
+    loop always returned on its first pass and an implementation that only
+    ever checked `token_source_priority[0]` would have passed them all.
+    """
+    token = _extract_header_token(
+        _connection({"Authorization": "Bearer from-bearer"}), config
+    )
+
+    assert token == "from-bearer"
+
+
+def test_header_wins_over_bearer_when_both_are_present(
+    config: SessionConfig,
+) -> None:
+    """Order in the list is the order that is honoured."""
+    token = _extract_header_token(
+        _connection(
+            {
+                config.header_name: "from-header",
+                "Authorization": "Bearer from-bearer",
+            }
+        ),
+        config,
+    )
+
+    assert token == "from-header"
+
+
+def test_bearer_source_is_skipped_when_bearer_tokens_are_disabled() -> None:
+    """`use_bearer_token=False` must win over the priority list."""
+    config = SessionConfig(secret_key="a" * 32, use_bearer_token=False)
+
+    token = _extract_header_token(
+        _connection({"Authorization": "Bearer from-bearer"}), config
+    )
+
+    assert token is None

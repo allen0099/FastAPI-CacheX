@@ -501,14 +501,20 @@ class TestExpiredEntryMonitoring:
         # Directly inject an already-expired entry into the backend's internal dict
         # TestClient sends Host: testserver by default
         cache_key = "GET|||testserver|||/expired-route|||"
-        expired_entry = CacheEntry(fingerprint='W/"expiredtag"', content=b"old data", media_type="text/plain")
-        setup_cache.cache[cache_key] = CacheItem(value=expired_entry, expiry=time.time() - 1.0)
+        expired_entry = CacheEntry(
+            fingerprint='W/"expiredtag"', content=b"old data", media_type="text/plain"
+        )
+        setup_cache.cache[cache_key] = CacheItem(
+            value=expired_entry, expiry=time.time() - 1.0
+        )
 
         response = client.get("/cached-hits")
         assert response.status_code == 200
         data = response.json()
 
-        expired_records = [r for r in data["cached_hits"] if r["path"] == "/expired-route"]
+        expired_records = [
+            r for r in data["cached_hits"] if r["path"] == "/expired-route"
+        ]
         assert len(expired_records) == 1
         assert expired_records[0]["is_expired"] is True
         assert expired_records[0]["ttl_remaining"] <= 0
@@ -518,14 +524,20 @@ class TestExpiredEntryMonitoring:
         add_routes(app)
 
         cache_key = "GET|||testserver|||/expired-data|||"
-        expired_entry = CacheEntry(fingerprint='W/"expireddata"', content=b"stale", media_type="text/plain")
-        setup_cache.cache[cache_key] = CacheItem(value=expired_entry, expiry=time.time() - 1.0)
+        expired_entry = CacheEntry(
+            fingerprint='W/"expireddata"', content=b"stale", media_type="text/plain"
+        )
+        setup_cache.cache[cache_key] = CacheItem(
+            value=expired_entry, expiry=time.time() - 1.0
+        )
 
         response = client.get("/cached-records")
         assert response.status_code == 200
         data = response.json()
 
-        expired_records = [r for r in data["cached_records"] if r["path"] == "/expired-data"]
+        expired_records = [
+            r for r in data["cached_records"] if r["path"] == "/expired-data"
+        ]
         assert len(expired_records) == 1
         assert expired_records[0]["is_expired"] is True
         assert expired_records[0]["ttl_remaining"] <= 0
