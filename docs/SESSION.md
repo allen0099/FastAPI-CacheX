@@ -81,7 +81,7 @@ config = SessionConfig(
 backend = MemoryBackend()
 session_manager = SessionManager(backend, config)
 
-# 添加 Session Middleware（SessionMiddleware 已 deprecated，將於 0.3.5 移除）
+# 新增 Session Middleware（SessionMiddleware 已 deprecated，將於 0.3.5 移除）
 app.add_middleware(
     FastAPICacheXSessionMiddleware,
     session_manager=session_manager,
@@ -209,7 +209,7 @@ async def login(username: str, password: str, request: Request):
         user_agent=user_agent,
     )
 
-    # 添加 flash message
+    # 新增 flash message
     session.add_flash_message("Login successful!", "success")
     await session_manager.update_session(session)
 
@@ -409,7 +409,7 @@ config = SessionConfig(
 - 解析時會驗證簽章與必要 claims（`sid/iat/exp`，以及設定的 `iss/aud`）
 - 建議在生產環境使用 HTTPS 與金鑰輪替策略（可使用 `kid` 與多把金鑰的進階方案，未來可擴展）
 
-**進階主題**：關於 JWT claims 的設計考量、為何沒有實作 `jti`/`nbf` 等可選 claims，以及如何擴展添加自訂 claims，請參考 **[JWT Claims 實作說明與擴展指南](JWT_CLAIMS.md)**。
+**進階主題**：關於 JWT claims 的設計考量、為何沒有實作 `jti`/`nbf` 等可選 claims，以及如何擴展新增自訂 claims，請參考 **[JWT Claims 實作說明與擴展指南](JWT_CLAIMS.md)**。
 
 ## 安全最佳實踐
 

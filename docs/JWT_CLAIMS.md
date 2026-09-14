@@ -6,7 +6,7 @@ FastAPI-CacheX 的 JWT token serializer 實作了基本的 JWT claims 以支援�
 
 1. 為什麼我們沒有實作完整的 JWT claims（如 `jti`、`nbf`）
 2. 當前實作的設計考量
-3. 如何擴展以添加自訂 claims
+3. 如何擴展以新增自訂 claims
 
 ## 當前實作的 JWT Claims
 
@@ -147,11 +147,11 @@ await session_manager.delete_session("session-abc123")
 - Session regeneration 時 `sid` 會改變，但 `user_id` 不變
 - 使用 `sid` 語意更清晰
 
-## 擴展指南：添加自訂 Claims
+## 擴展指南：新增自訂 Claims
 
 如果您的應用需要額外的 JWT claims，可以透過繼承 `JWTTokenSerializer` 來實作。
 
-### 範例 1：添加 `jti` 和 `nbf`
+### 範例 1：新增 `jti` 和 `nbf`
 
 ```python
 from __future__ import annotations
@@ -164,7 +164,7 @@ from fastapi_cachex.session.models import SessionToken
 
 
 class ExtendedJWTSerializer(JWTTokenSerializer):
-    """擴展 JWT serializer，添加 jti 和 nbf claims。"""
+    """擴展 JWT serializer，新增 jti 和 nbf claims。"""
 
     def to_string(self, token: SessionToken) -> str:
         """編碼 SessionToken 為 JWT，包含 jti 和 nbf。"""
@@ -176,7 +176,7 @@ class ExtendedJWTSerializer(JWTTokenSerializer):
             "iat": iat,
             "exp": exp,
             "jti": str(uuid.uuid4()),  # 唯一 token ID
-            "nbf": iat,                 # Not before = issued at
+            "nbf": iat,  # Not before = issued at
         }
 
         if self._issuer:
@@ -229,7 +229,7 @@ class ExtendedJWTSerializer(JWTTokenSerializer):
         return SessionToken(session_id=sid, signature="", issued_at=issued_at)
 ```
 
-### 範例 2：添加多租戶自訂 Claims
+### 範例 2：新增多租戶自訂 Claims
 
 ```python
 from __future__ import annotations
@@ -241,9 +241,11 @@ from fastapi_cachex.session.models import SessionToken
 
 
 class MultiTenantJWTSerializer(JWTTokenSerializer):
-    """多租戶 JWT serializer，添加 tenant_id 和 api_version。"""
+    """多租戶 JWT serializer，新增 tenant_id 和 api_version。"""
 
-    def __init__(self, config, tenant_id: str, api_version: str = "v1", jwt_module=None):
+    def __init__(
+        self, config, tenant_id: str, api_version: str = "v1", jwt_module=None
+    ):
         super().__init__(config, jwt_module)
         self.tenant_id = tenant_id
         self.api_version = api_version
@@ -347,7 +349,7 @@ custom_serializer = MultiTenantJWTSerializer(
 # 初始化 SessionManager
 manager = SessionManager(backend, config, custom_serializer)
 
-# 添加 middleware
+# 新增 middleware
 app.add_middleware(
     SessionMiddleware,
     session_manager=manager,
@@ -457,12 +459,12 @@ async def get_profile(session=Depends(get_session)):
 
 ### 1. Token 大小
 
-添加更多 claims 會增加 JWT 大小，影響：
+新增更多 claims 會增加 JWT 大小，影響：
 - 網路傳輸開銷
 - Cookie 大小限制（如果使用 cookie）
 - 效能
 
-**建議**：只添加必要的 claims，避免在 JWT 中包含大量資料。
+**建議**：只新增必要的 claims，避免在 JWT 中包含大量資料。
 
 ### 2. 敏感資料
 
@@ -497,7 +499,7 @@ class KeyRotationJWTSerializer(JWTTokenSerializer):
         self.key_id = key_id
 
     def to_string(self, token: SessionToken) -> str:
-        # 添加 kid 到 JWT header
+        # 新增 kid 到 JWT header
         encoded = self.jwt_encoder.encode(
             payload,
             self._secret,
@@ -520,12 +522,13 @@ class KeyRotationJWTSerializer(JWTTokenSerializer):
 
 ## 測試建議
 
-為自訂 serializer 添加測試：
+為自訂 serializer 新增測試：
 
 ```python
 import pytest
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session import SessionManager, SessionConfig, SessionUser
+
 
 @pytest.mark.asyncio
 async def test_custom_claims_included():
@@ -581,9 +584,9 @@ A: `jti` 主要用於 stateless JWT 的 token 撤銷（blacklist）。FastAPI-Ca
 
 A: 大多數情況下不需要。`nbf` 用於預先簽發但延遲生效的 token。如果您的應用需要這個功能，建議在應用邏輯層處理（例如在 session.data 中記錄生效時間），而不是在 JWT 層面。
 
-### Q: 能否在不修改程式碼的情況下添加 claims？
+### Q: 能否在不修改程式碼的情況下新增 claims？
 
-A: 目前需要透過繼承 `JWTTokenSerializer` 來添加自訂 claims。未來版本可能會考慮添加配置選項，例如：
+A: 目前需要透過繼承 `JWTTokenSerializer` 來新增自訂 claims。未來版本可能會考慮新增配置選項，例如：
 ```python
 SessionConfig(
     token_format="jwt",
@@ -599,7 +602,7 @@ A: 影響很小。JWT 編碼/解碼的效能主要取決於：
 2. Token 大小（更多 claims = 更大）
 3. 網路傳輸（更大的 token）
 
-只要不添加大量資料，影響可以忽略。
+只要不新增大量資料，影響可以忽略。
 
 ### Q: 如何在 JWT 中包含使用者權限？
 
@@ -631,6 +634,6 @@ FastAPI-CacheX 的 JWT 實作專注於 **stateful session** 場景，提供：
 
 ⚠️ **未實作**：jti, nbf, sub（這些在 stateful session 中不是必需的）
 
-🔧 **可擴展**：開發者可以輕鬆添加自訂 claims（見本文件範例）
+🔧 **可擴展**：開發者可以輕鬆新增自訂 claims（見本文件範例）
 
 這種設計在安全性、效能和靈活性之間取得了良好的平衡。如果您的應用有特殊需求，請參考本文件的擴展範例。
