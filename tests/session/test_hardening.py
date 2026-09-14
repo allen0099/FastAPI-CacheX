@@ -54,7 +54,12 @@ def test_non_ascii_token_does_not_crash_the_middleware(
 
     @app.get("/whoami")
     async def whoami(request: Request) -> dict[str, bool]:
-        return {"authenticated": bool(request.scope.get("session"))}
+        # `scope["session"]` is the dict of user-set values, which is empty for
+        # a session carrying only a user, so it says nothing about whether one
+        # was loaded. The backend session is attached only after every check
+        # passed, which is the signal this test needs.
+        loaded = request.scope["state"].get("__fastapi_cachex_session")
+        return {"authenticated": loaded is not None}
 
     client = TestClient(app)
     # Sent as raw bytes: Starlette decodes header bytes as latin-1, so a token
@@ -78,7 +83,9 @@ def test_forged_forwarded_header_cannot_satisfy_ip_binding(
 
     @app.get("/me")
     async def me(request: Request) -> dict[str, bool]:
-        return {"authenticated": bool(request.scope.get("session", {}))}
+        # The backend session is attached only once every binding check passed.
+        loaded = request.scope["state"].get("__fastapi_cachex_session")
+        return {"authenticated": loaded is not None}
 
     client = TestClient(app)
 
@@ -105,6 +112,20 @@ def test_forged_forwarded_header_cannot_satisfy_ip_binding(
     # the session is refused rather than honoured.
     assert response.status_code == 200
     assert response.json() == {"authenticated": False}
+
+    # Positive control: the same token bound to the address the request really
+    # comes from is honoured. Without this, an implementation that refused
+    # every session would pass the assertion above.
+    _, bound_token = asyncio.run(
+        manager.create_session(
+            user=SessionUser(user_id="u2"),
+            ip_address="testclient",
+        )
+    )
+
+    honoured = client.get("/me", headers={"X-Session-Token": bound_token})
+
+    assert honoured.json() == {"authenticated": True}
 
 
 def test_prepended_forwarded_entry_cannot_satisfy_ip_binding(manager: SessionManager):
