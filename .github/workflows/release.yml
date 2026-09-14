@@ -1,23 +1,67 @@
 name: Release
 
-# Manual only. This workflow bumps the minor version, tags it and publishes to
-# PyPI, so it must be an explicit decision: it previously ran on a monthly cron
-# and would have released whatever had accumulated, turning the calendar into
-# the thing that chooses a version number.
+# The only release path, and manual only. It bumps the version, promotes the
+# changelog, tags, publishes to PyPI and writes the GitHub release notes.
+#
+# There used to be two workflows: this one (minor bump) and `publish.yml`
+# (patch bump, with an optional exact version). They were the same eighty
+# lines twice over, and which part of the version you got was decided by which
+# Actions page you happened to open. It is one workflow with a `bump` input
+# now, so the choice is made in the dialog where it belongs.
+#
+# It also used to guess whether a release was warranted by counting commits
+# since the last tag, skipping every step when it found none. A dispatched
+# release is already someone saying "release this"; the guess only turned a
+# deliberate run into a silent no-op that looks identical to a successful one.
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Which part of the version to bump'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      version:
+        description: 'Exact version to release (e.g. 0.4.0). Overrides the bump choice.'
+        required: false
+        type: string
 
 permissions:
   contents: write
   id-token: write # Required for PyPI trusted publishing
 
+# Two releases at once would race on the tag and on PyPI.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  check-and-release:
+  release:
     runs-on: ubuntu-latest
+
+    services:
+      memcached:
+        image: memcached:1.6-alpine
+        ports:
+          - 11211:11211
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # Tags, for the "already released" check below
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -27,133 +71,150 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.1.0
 
-      - name: Get last release tag
-        id: last_tag
-        run: |
-          last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          echo "last_tag=$last_tag" >> $GITHUB_OUTPUT
-          if [ -z "$last_tag" ]; then
-            echo "last_tag_commit=$(git rev-list --max-parents=0 HEAD)" >> $GITHUB_OUTPUT
-          else
-            echo "last_tag_commit=$(git rev-list -n 1 $last_tag)" >> $GITHUB_OUTPUT
-          fi
+      # The extras are redundant — the dev group already pins redis, pymemcache,
+      # PyJWT and orjson — but they are named anyway. This is the one job where
+      # a missing backend package would turn the gate below into a formality,
+      # so it does not rely on a dev-group entry staying put.
+      - name: Sync dependencies
+        run: uv sync --group dev --extra jwt --extra redis --extra memcache
 
-      - name: Check for new commits
-        id: check_commits
-        run: |
-          last_tag_commit="${{ steps.last_tag.outputs.last_tag_commit }}"
-          current_commit=$(git rev-parse HEAD)
+      # The gate. A release is the one run where a red test result arrives too
+      # late to matter, so everything CI checks elsewhere is checked here too,
+      # before anything is written, tagged or published.
+      - name: Ruff check
+        run: uv run ruff check fastapi_cachex tests scripts
 
-          if [ "$last_tag_commit" != "$current_commit" ]; then
-            # Check for real commits excluding version bumps
-            # Exclude "chore: bump version" and commits created by GitHub Action
-            if [ -z "$last_tag_commit" ]; then
-              # No tag exists, check all commits
-              commit_range=""
-            else
-              # Tag exists, check commits since last tag
-              commit_range="$last_tag_commit..HEAD"
-            fi
+      - name: Ruff format check
+        run: uv run ruff format --check fastapi_cachex tests scripts
 
-            # git log has no --author-not flag, so filter the author out with awk instead
-            real_commits=$(git log $commit_range --no-merges \
-              --grep="^chore: bump version" --invert-grep \
-              --pretty=format:"%h|%an|%s" | \
-              awk -F'|' '$2 != "GitHub Action" { print $1, $3 }')
+      - name: Mypy strict
+        run: uv run mypy fastapi_cachex --strict
 
-            if [ -n "$real_commits" ]; then
-              echo "has_new_commits=true" >> $GITHUB_OUTPUT
-              commit_count=$(echo "$real_commits" | wc -l)
-              echo "commit_count=$commit_count" >> $GITHUB_OUTPUT
-              echo "Found $commit_count real commits since last release (excluding version bumps)"
-              echo "$real_commits"
-            else
-              echo "has_new_commits=false" >> $GITHUB_OUTPUT
-              echo "No real commits since last release (only version bump commits found)"
-            fi
-          else
-            echo "has_new_commits=false" >> $GITHUB_OUTPUT
-            echo "No new commits since last release"
-          fi
+      - name: Mypy (tests)
+        run: uv run mypy tests
 
-      - name: Bump minor version
-        if: steps.check_commits.outputs.has_new_commits == 'true'
+      - name: Mypy (scripts)
+        run: uv run mypy scripts
+
+      - name: Run tests
+        run: uv run coverage run -m pytest && uv run coverage report
+        env:
+          # The service containers above, which exist only for this job. The
+          # live-server suites are opt-in because they wipe what they connect
+          # to, and `CACHEX_REQUIRE_LIVE_SERVERS` makes skipping them a
+          # failure — releasing on a green run that quietly tested neither
+          # backend is exactly what this workflow must not do.
+          CACHEX_TEST_REDIS_PORT: 6379
+          CACHEX_TEST_MEMCACHED_PORT: 11211
+          CACHEX_REQUIRE_LIVE_SERVERS: 1
+
+      - name: Work out the version
         id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
         run: |
-          uv version --bump minor
-          new_version=$(uv version --short)
-          echo "new_version=$new_version" >> $GITHUB_OUTPUT
-          echo "Version bumped to $new_version"
+          set -euo pipefail
+          if [ -n "$VERSION" ]; then
+            uv version "$VERSION"
+          else
+            uv version --bump "$BUMP"
+          fi
+          uv lock
+          new_version="$(uv version --short)"
+          echo "version=$new_version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $new_version"
+
+      - name: Fail if the tag already exists
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null \
+            || git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::v$VERSION is already tagged. Pick another version." >&2
+            exit 1
+          fi
+
+      - name: Record the previous tag
+        id: previous
+        run: |
+          set -euo pipefail
+          echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+
+      # Promoting the changelog is part of cutting the release, not a chore to
+      # remember afterwards: the script fails when `## [Unreleased]` is empty,
+      # so a release with nothing written down stops here instead of shipping
+      # release notes that say nothing.
+      - name: Promote the changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv run python scripts/changelog_release.py \
+            --version "$VERSION" \
+            --release-notes release-notes.md
+
+      - name: Write the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo
+            echo '---'
+            echo
+            echo '### Installation'
+            echo
+            echo '```bash'
+            echo "uv add fastapi-cachex==$VERSION"
+            echo '```'
+            if [ -n "$PREVIOUS_TAG" ]; then
+              echo
+              echo "**Full commit log**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS_TAG}...v${VERSION}"
+            fi
+          } >> release-notes.md
+
+      - name: Build package
+        run: uv build
 
       - name: Configure git
-        if: steps.check_commits.outputs.has_new_commits == 'true'
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      - name: Commit version bump
-        if: steps.check_commits.outputs.has_new_commits == 'true'
+      # Everything above this line is reversible by cancelling the run.
+      # Everything below writes somewhere permanent, and the steps are kept
+      # adjacent so a `dry_run` input can guard them as one block later.
+      - name: Commit the release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ github.ref_name }}
         run: |
-          git add pyproject.toml uv.lock
+          set -euo pipefail
+          git add pyproject.toml uv.lock CHANGELOG.md
           if git diff --cached --quiet; then
-            echo "pyproject.toml already at ${{ steps.version.outputs.new_version }}; releasing HEAD as is"
+            echo "Nothing to commit; releasing HEAD as it is."
           else
-            git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
-            git push origin HEAD:main 2>/dev/null || git push origin HEAD:master
+            git commit -m "chore: release v$VERSION"
+            git push origin "HEAD:$BRANCH"
           fi
 
-      - name: Create and push tag
-        if: steps.check_commits.outputs.has_new_commits == 'true'
+      - name: Tag the release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
-          git push origin --tags
-
-      - name: Generate changelog
-        if: steps.check_commits.outputs.has_new_commits == 'true'
-        id: changelog
-        run: |
-          last_tag="${{ steps.last_tag.outputs.last_tag }}"
-          if [ -z "$last_tag" ]; then
-            changelog=$(git log --pretty=format:"- %s (%h)" --no-merges)
-          else
-            changelog=$(git log $last_tag..HEAD --pretty=format:"- %s (%h)" --no-merges)
-          fi
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$changelog" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          echo "release_date=$(date -u +"%Y-%m-%d")" >> $GITHUB_OUTPUT
-
-      - name: Build package
-        if: steps.check_commits.outputs.has_new_commits == 'true'
-        run: uv build
+          set -euo pipefail
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "refs/tags/v$VERSION"
 
       - name: Create GitHub Release
-        if: steps.check_commits.outputs.has_new_commits == 'true'
-        id: create_release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ steps.version.outputs.new_version }}
-          name: v${{ steps.version.outputs.new_version }}
-          body: |
-            ## 🚀 Release v${{ steps.version.outputs.new_version }}
-
-            Released on: ${{ steps.changelog.outputs.release_date }}.
-
-            ### Installation
-
-            ```bash
-            uv add fastapi-cachex==${{ steps.version.outputs.new_version }}
-            ```
-
-            **📊 Statistics:**
-            - New commits: ${{ steps.check_commits.outputs.commit_count }}
-            - Previous version: ${{ steps.last_tag.outputs.last_tag || 'Initial release' }}
-
-            **📝 Changelog:**
-            ${{ steps.changelog.outputs.changelog }}
-
-            ---
-            **Full Changelog**: https://github.com/allen0099/FastAPI-CacheX/compare/${{ steps.last_tag.outputs.last_tag }}...v${{ steps.version.outputs.new_version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
           draft: false
           prerelease: false
           make_latest: true
@@ -162,19 +223,17 @@ jobs:
             dist/*.tar.gz
 
       - name: Publish to PyPI
-        if: steps.check_commits.outputs.has_new_commits == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Summary
-        if: always()
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
         run: |
-          echo "### Weekly Release Summary" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.check_commits.outputs.has_new_commits }}" == "true" ]; then
-            echo "✅ New commits found: ${{ steps.check_commits.outputs.commit_count }}" >> $GITHUB_STEP_SUMMARY
-            echo "📦 Version bumped to: ${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
-            echo "🏷️ Release created: v${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
-            echo "🚀 Published to PyPI" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⏭️ No new commits since last release" >> $GITHUB_STEP_SUMMARY
-            echo "ℹ️ Current version: $(uv version --short)" >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            echo "### Released v$VERSION"
+            echo
+            echo "- Previous tag: ${PREVIOUS_TAG:-none}"
+            echo "- Changelog section promoted to \`## [$VERSION]\`"
+            echo "- Published to PyPI"
+          } >> "$GITHUB_STEP_SUMMARY"
