@@ -187,6 +187,10 @@ async def async_redis_backend() -> AsyncGenerator[AsyncRedisCacheBackend, Any]:
         socket_timeout=1.0,
         socket_connect_timeout=1.0,
     )
+    # Clear on the way in as well as out: a run that was interrupted (or a
+    # manual experiment) leaves keys under this prefix behind, and the tests
+    # here assert exact key counts over it.
+    await backend.clear()
     yield backend
     await backend.clear()
 
