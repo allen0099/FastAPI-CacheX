@@ -72,7 +72,9 @@ uv add fastapi-cachex
 | `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`、`orjson` | `AsyncRedisCacheBackend` |
 | `memcache` | `uv add "fastapi-cachex[memcache]"` | `pymemcache` | `MemcachedBackend`（注意是 `memcache` 不是 `memcached`） |
 | `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
-| `starlette` | `uv add "fastapi-cachex[starlette]"` | `itsdangerous` | `FastAPICacheXSessionMiddleware` |
+
+`starlette` extra 已移除：`itsdangerous` 改為基本依賴，`FastAPICacheXSessionMiddleware`
+在一般安裝下即可使用。
 
 可以合併安裝：`uv add "fastapi-cachex[redis,jwt]"`。
 

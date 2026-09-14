@@ -30,7 +30,7 @@ jobs:
       uses: astral-sh/setup-uv@v10.1.0
 
     - name: Sync dependencies
-      run: uv sync --group dev --extra jwt --extra starlette
+      run: uv sync --group dev --extra jwt
 
     # `tests` is linted here too. pre-commit only sees staged files, so test
     # code that was never touched again drifts; that is how the suite came to

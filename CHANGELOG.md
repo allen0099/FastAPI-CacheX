@@ -44,6 +44,16 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   subsystem (`StateManager`, one-shot `consume_state()`, the dependency
   injection helpers).
 
+### Removed
+
+- The `starlette` extra. `itsdangerous` is a base dependency now, so
+  `FastAPICacheXSessionMiddleware` works on a plain `pip install fastapi-cachex`.
+  It reuses `starlette.middleware.sessions.Session` for its dict-like
+  `scope["session"]`, and that module imports `itsdangerous` at module level, so
+  the middleware could never be constructed without it — the extra only moved
+  the failure to runtime. Installing `fastapi-cachex[starlette]` still resolves
+  (an unknown extra is a warning, not an error), it simply adds nothing.
+
 ### Changed
 
 - A cache hit now replays the status code and the headers the handler produced,

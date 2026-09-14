@@ -74,7 +74,9 @@ backends and the optional session transports ship as extras:
 | `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`, `orjson` | `AsyncRedisCacheBackend` |
 | `memcache` | `uv add "fastapi-cachex[memcache]"` | `pymemcache` | `MemcachedBackend` (note: `memcache`, not `memcached`) |
 | `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
-| `starlette` | `uv add "fastapi-cachex[starlette]"` | `itsdangerous` | `FastAPICacheXSessionMiddleware` |
+
+The `starlette` extra is gone: `itsdangerous` is a base dependency now, so
+`FastAPICacheXSessionMiddleware` works on a plain install.
 
 Extras combine: `uv add "fastapi-cachex[redis,jwt]"`.
 
