@@ -67,7 +67,7 @@ handling the combinations that conflict.
 
 ### `add_routes` content previews
 
-`/cached-records` includes the first 100 characters of every cached response.
+`/cached-records` includes the first 100 bytes of every cached response.
 The endpoints already carry a warning that they have no authentication, but an
 `include_content_preview` switch would let deployments keep the route while
 dropping the payload.

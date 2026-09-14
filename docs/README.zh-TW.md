@@ -153,7 +153,7 @@ FastAPI-CacheX 支援多種快取後端。你可以使用 `BackendProxy` 輕鬆�
 
 - **使用 `private=True`**：不讀也不寫共享後端，處理器每次都執行，只保留 `If-None-Match` 重新驗證
 
-這意味著**快取命中非常快速** - 端點處理器函數永遠不會被執行。
+這意味著**快取命中非常快速** - 端點處理器函式永遠不會被執行。
 
 只有成功的回應會被儲存。處理器**回傳**的非 2xx 回應（例如 `Response(..., status_code=404)`）
 會原樣送出且不寫入快取，因此暫時性錯誤不會覆蓋上一份好的條目；`206 Partial Content` 同樣不快取。
@@ -246,7 +246,7 @@ BackendProxy.set(backend)
 @cache(ttl=3600)  # 快取 1 小時
 async def expensive_operation():
     # 只在快取未命中時執行
-    # 快取命中時，此函數不會被呼叫
+    # 快取命中時，此函式不會被呼叫
     result = perform_expensive_calculation()
     return result
 ```

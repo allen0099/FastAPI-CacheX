@@ -375,7 +375,7 @@ class CacheItem:
 ```python
 @cache(ttl=3600)
 async def expensive_endpoint():
-    # 此函數只在快取未命中（或需要重新驗證）時執行
+    # 此函式只在快取未命中（或需要重新驗證）時執行
     return await perform_calculation()
 ```
 
@@ -399,6 +399,6 @@ A: 因為快取金鑰包含查詢參數，而且**不會排序**。`/users?page=
 A: 不工作。每個行程有獨立快取，推薦生產環境使用 Redis。
 
 **Q: 快取清除是同步還是非同步？**
-A: 異步操作。`await cache.clear_path(...)` 或 `await cache.clear_pattern(...)`。
+A: 非同步操作。`await cache.clear_path(...)` 或 `await cache.clear_pattern(...)`。
 注意 `clear_pattern()`（以及 `get_all_keys()`、`CacheManager.clear()`）在 Memcached
 後端是 no-op，因為 Memcached 協定沒有金鑰列舉能力。

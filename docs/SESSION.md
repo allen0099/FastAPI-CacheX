@@ -276,7 +276,7 @@ async def logout_all_devices(session=Depends(get_session)):
     return {"message": f"Logged out from {count} devices"}
 
 
-# 輔助函數（示意）
+# 輔助函式（示意）
 def authenticate_user(username: str, password: str) -> bool:
     # 實際應該查詢資料庫並驗證密碼雜湊
     return True
