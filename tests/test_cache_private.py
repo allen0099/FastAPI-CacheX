@@ -6,12 +6,16 @@ default cache key carries no user identity, so one caller's response was handed
 to the next.
 """
 
+from collections.abc import AsyncIterator
+
 import pytest
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi import Response
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
+from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.cache import cache
 from fastapi_cachex.proxy import BackendProxy
 
@@ -139,3 +143,35 @@ def test_no_store_still_wins_over_private():
         return Response(content="x", media_type="text/plain")
 
     assert client.get("/private-no-store").headers["Cache-Control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_private_streaming_response_is_not_stored_and_carries_no_etag():
+    """A streamed private body cannot be fingerprinted, and must still not be stored.
+
+    `_render` returns no ETag for a `StreamingResponse` because consuming the
+    iterator to hash it would also consume it for the client. The response
+    still has to leave with `Cache-Control: private` and leave the shared
+    backend empty — the point of `private`.
+    """
+    app = FastAPI()
+    client = TestClient(app)
+    backend = MemoryBackend()
+    BackendProxy.set(backend)
+
+    @app.get("/stream")
+    @cache(ttl=60, private=True)
+    async def stream(request: Request):
+        async def body() -> AsyncIterator[bytes]:
+            yield b"secret "
+            yield b"bytes"
+
+        return StreamingResponse(body(), media_type="text/plain")
+
+    response = client.get("/stream")
+
+    assert response.status_code == 200
+    assert response.text == "secret bytes"
+    assert response.headers["Cache-Control"] == "private, max-age=60"
+    assert "ETag" not in response.headers
+    assert backend.cache == {}

@@ -16,6 +16,7 @@ from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import SessionMiddleware
+from fastapi_cachex.session.middleware import _extract_header_token
 from fastapi_cachex.session.models import SessionUser
 
 
@@ -554,3 +555,61 @@ async def test_dispatch_sets_renewed_token_header_on_sliding_expiration() -> Non
     renewed_session, _ = await mgr.get_session(renewed)
     assert renewed_session.expires_at is not None
     assert renewed_session.expires_at > shortened_expiry
+
+
+def _connection(headers: dict[str, str]) -> Request:
+    """A bare `Request` carrying only the headers under test."""
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
+        }
+    )
+
+
+def test_bearer_is_used_when_the_header_source_finds_nothing(
+    config: SessionConfig,
+) -> None:
+    """The priority list is a fallback chain, not a first-entry-only lookup.
+
+    Every other extraction test supplies the header it asks for first, so the
+    loop always returned on its first pass and an implementation that only
+    ever checked `token_source_priority[0]` would have passed them all.
+    """
+    token = _extract_header_token(
+        _connection({"Authorization": "Bearer from-bearer"}), config
+    )
+
+    assert token == "from-bearer"
+
+
+def test_header_wins_over_bearer_when_both_are_present(
+    config: SessionConfig,
+) -> None:
+    """Order in the list is the order that is honoured."""
+    token = _extract_header_token(
+        _connection(
+            {
+                config.header_name: "from-header",
+                "Authorization": "Bearer from-bearer",
+            }
+        ),
+        config,
+    )
+
+    assert token == "from-header"
+
+
+def test_bearer_source_is_skipped_when_bearer_tokens_are_disabled() -> None:
+    """`use_bearer_token=False` must win over the priority list."""
+    config = SessionConfig(secret_key="a" * 32, use_bearer_token=False)
+
+    token = _extract_header_token(
+        _connection({"Authorization": "Bearer from-bearer"}), config
+    )
+
+    assert token is None

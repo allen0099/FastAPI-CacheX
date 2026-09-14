@@ -206,3 +206,39 @@ def test_jwt_serializer_without_pyjwt_explains_the_extra(
 
     with pytest.raises(ImportError, match=r"fastapi-cachex\[jwt\]"):
         JWTTokenSerializer(config)
+
+
+def test_jwt_serializer_rejects_a_non_numeric_iat() -> None:
+    """`iat` arrives from the token, so a non-numeric value is external input."""
+
+    class BadIatJWTModule:
+        def encode(self, payload: dict[str, object], key: str, algorithm: str) -> str:
+            return "token"
+
+        def decode(self, token_str: str, **kwargs: object) -> dict[str, object]:
+            return {"sid": "session-id", "iat": "not-a-number"}
+
+    config = SessionConfig(secret_key=SecretStr("a" * 32), token_format="jwt")
+    serializer = JWTTokenSerializer(config, jwt_module=BadIatJWTModule())
+
+    with pytest.raises(ValueError, match="Invalid JWT payload"):
+        serializer.from_string("token")
+
+
+def test_jwt_serializer_accepts_a_numeric_string_iat() -> None:
+    """A string that is a number is coerced rather than rejected."""
+
+    class StringIatJWTModule:
+        def encode(self, payload: dict[str, object], key: str, algorithm: str) -> str:
+            return "token"
+
+        def decode(self, token_str: str, **kwargs: object) -> dict[str, object]:
+            return {"sid": "session-id", "iat": "1700000000"}
+
+    config = SessionConfig(secret_key=SecretStr("a" * 32), token_format="jwt")
+    serializer = JWTTokenSerializer(config, jwt_module=StringIatJWTModule())
+
+    token = serializer.from_string("token")
+
+    assert token.session_id == "session-id"
+    assert int(token.issued_at.timestamp()) == 1700000000

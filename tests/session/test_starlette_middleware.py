@@ -719,3 +719,36 @@ def test_missing_itsdangerous_explains_the_extra(
 
     with pytest.raises(ImportError, match=r"fastapi-cachex\[starlette\]"):
         FastAPICacheXSessionMiddleware(app, session_manager=manager, config=config)
+
+
+@pytest.mark.asyncio
+async def test_header_source_cleared_session_is_deleted_without_a_cookie(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """Clearing a header-sourced session deletes the record and sets no cookie.
+
+    The cookie transport answers a clear with an expiring `Set-Cookie`; a
+    header client has no cookie to expire and simply keeps a token that no
+    longer resolves. Only the cookie half of that branch was covered.
+    """
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/logout")
+    async def logout_route(request: Request) -> dict[str, bool]:
+        request.session.clear()
+        return {"ok": True}
+
+    _session, token = await manager.create_session(
+        user=SessionUser(user_id="header-logout-user"), data={"seen": True}
+    )
+
+    client = TestClient(app)
+    response = client.get("/logout", headers={config.header_name: token})
+
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(token)

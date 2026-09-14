@@ -2,6 +2,7 @@ import asyncio
 import os
 import socket
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -37,6 +38,19 @@ requires_memcached = pytest.mark.skipif(
     not is_memcached_running(),
     reason="Memcached server is not running",
 )
+
+
+def stubbed_backend() -> MemcachedBackend:
+    """A fully constructed backend whose client is a stub.
+
+    `HashClient` opens no socket until it is used, so `__init__` runs without
+    a server. Going through the real constructor matters: bypassing it with
+    `__new__` and setting attributes by hand would leave these tests driving a
+    half-built object the moment `__init__` grows a new one.
+    """
+    backend = MemcachedBackend([MEMCACHED_SERVER])
+    backend.client = MagicMock()
+    return backend
 
 
 def test_memcached_without_pymemcache(monkeypatch):
@@ -447,8 +461,7 @@ async def test_memcached_get_and_delete_has_exactly_one_winner(
 
 def test_legal_keys_are_left_alone() -> None:
     """Entries written by earlier versions must stay readable."""
-    backend = MemcachedBackend.__new__(MemcachedBackend)
-    backend.key_prefix = "fastapi_cachex:"
+    backend = stubbed_backend()
 
     assert backend._make_key("GET|||localhost|||/users/1|||") == (
         "fastapi_cachex:GET|||localhost|||/users/1|||"
@@ -466,8 +479,7 @@ def test_legal_keys_are_left_alone() -> None:
 )
 def test_keys_memcached_would_refuse_are_hashed(key: str) -> None:
     """A key Memcached rejects becomes a digest instead of an exception."""
-    backend = MemcachedBackend.__new__(MemcachedBackend)
-    backend.key_prefix = "fastapi_cachex:"
+    backend = stubbed_backend()
 
     made = backend._make_key(key)
 
@@ -508,11 +520,8 @@ async def test_illegal_keys_round_trip_through_the_server(
 async def test_ttl_beyond_thirty_days_is_sent_as_an_absolute_timestamp() -> None:
     """Memcached reads an exptime over 30 days as a Unix timestamp, not a duration."""
     import time
-    from unittest.mock import MagicMock
 
-    backend = MemcachedBackend.__new__(MemcachedBackend)
-    backend.key_prefix = "fastapi_cachex:"
-    backend.client = MagicMock()
+    backend = stubbed_backend()
 
     sixty_days = 60 * 24 * 60 * 60
     await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), sixty_days)
@@ -526,11 +535,7 @@ async def test_ttl_beyond_thirty_days_is_sent_as_an_absolute_timestamp() -> None
 @pytest.mark.parametrize(("ttl", "expected"), [(None, 0), (0, 0), (60, 60)])
 async def test_short_ttls_stay_relative(ttl: int | None, expected: int) -> None:
     """Durations inside the boundary are passed straight through."""
-    from unittest.mock import MagicMock
-
-    backend = MemcachedBackend.__new__(MemcachedBackend)
-    backend.key_prefix = "fastapi_cachex:"
-    backend.client = MagicMock()
+    backend = stubbed_backend()
 
     await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), ttl)
 
@@ -576,11 +581,7 @@ async def test_increment_reports_a_counter_that_vanished_mid_call() -> None:
     Memcached has no way to make the pair atomic, so `increment` has to
     surface the loss instead of returning `None` as if it were a count.
     """
-    from unittest.mock import MagicMock
-
-    backend = MemcachedBackend.__new__(MemcachedBackend)
-    backend.key_prefix = "fastapi_cachex:"
-    backend.client = MagicMock()
+    backend = stubbed_backend()
     # INCR keeps missing: the key is gone again by the time ADD's retry runs.
     backend.client.incr.return_value = None
 

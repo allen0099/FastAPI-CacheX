@@ -97,6 +97,9 @@ def _extract_header_token(
     Returns:
         Session token or None
     """
+    # `token_source_priority` is a list of Literals, so pydantic has already
+    # rejected anything that is neither branch; the chain stays an `elif` so a
+    # source added later falls through instead of being read as a bearer token.
     for source in config.token_source_priority:
         if source == "header":
             token = connection.headers.get(config.header_name)

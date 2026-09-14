@@ -656,3 +656,39 @@ async def test_session_sweeps_are_no_ops_without_key_enumeration() -> None:
 
     assert await manager.delete_user_sessions("u1") == 0
     assert await manager.clear_expired_sessions() == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_user_sessions_covers_every_session_of_that_user() -> None:
+    """The sweep has to keep going after the first match, and skip other users."""
+    config = SessionConfig(secret_key="a" * 32)
+    manager = SessionManager(MemoryBackend(), config)
+
+    await manager.create_session(user=SessionUser(user_id="u1"))
+    await manager.create_session(user=SessionUser(user_id="u1"))
+    _, other_token = await manager.create_session(user=SessionUser(user_id="u2"))
+
+    assert await manager.delete_user_sessions("u1") == 2
+    assert await manager.delete_user_sessions("u1") == 0
+    assert await manager.get_session(other_token) is not None
+
+
+@pytest.mark.asyncio
+async def test_session_sweeps_skip_entries_they_cannot_read() -> None:
+    """A key under the prefix that does not decode must be stepped over.
+
+    Anything may end up under the prefix -- a half-written entry, a record
+    from an older schema -- and a bulk operation that raised on one of them
+    would take every later session down with it.
+    """
+    config = SessionConfig(secret_key="a" * 32)
+    backend = MemoryBackend()
+    manager = SessionManager(backend, config)
+
+    await manager.create_session(user=SessionUser(user_id="u1"))
+    await backend.set(
+        f"{config.backend_key_prefix}not-a-session",
+        CacheEntry(fingerprint="e", content=b"not json"),
+    )
+
+    assert await manager.delete_user_sessions("u1") == 1

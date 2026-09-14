@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex.backends import AsyncRedisCacheBackend
+from fastapi_cachex.backends.redis import _BATCH_SIZE
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
@@ -729,3 +730,43 @@ async def test_redis_delete_many_counts_only_existing_keys(
     assert await async_redis_backend.delete_many(["dm-a", "dm-b", "dm-missing"]) == 2
     assert await async_redis_backend.get("dm-a") is None
     assert await async_redis_backend.get("dm-keep") is not None
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_scan_walks_every_page(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """SCAN is paginated; a keyspace larger than one page must not be truncated.
+
+    Every other pattern test in this file fits in a single page, so the loop
+    that follows a non-zero cursor was never taken and a one-page-only
+    implementation would have passed them all.
+    """
+    total = _BATCH_SIZE * 3
+    for index in range(total):
+        await async_redis_backend.set(
+            f"page|||localhost|||/item/{index}|||",
+            CacheEntry(fingerprint="e", content=b"v"),
+        )
+
+    assert len(await async_redis_backend.get_all_keys()) == total
+    assert await async_redis_backend.clear_pattern("page|||*") == total
+    assert await async_redis_backend.get_all_keys() == []
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_get_cache_data_skips_undecodable_values(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """A value another writer put there must be reported as absent, not crash."""
+    await async_redis_backend.set("good", CacheEntry(fingerprint="e", content=b"v"))
+    await async_redis_backend.client.set(
+        async_redis_backend._make_key("junk"), "not json at all"
+    )
+
+    data = await async_redis_backend.get_cache_data()
+
+    assert "good" in data
+    assert "junk" not in data

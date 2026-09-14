@@ -629,3 +629,62 @@ async def test_write_only_use_starts_the_cleanup_task():
         assert "stays" in backend.cache
     finally:
         backend.stop_cleanup()
+
+
+@pytest.mark.asyncio
+async def test_get_evicts_the_expired_entry_it_skips():
+    """A miss on an expired key must also free the memory it was holding.
+
+    Asserting that `get` returns `None` says nothing about this: it returns
+    `None` whether or not the entry is dropped. The dictionary is checked
+    directly, because between sweeps this is the only thing that reclaims an
+    expired entry the caller happened to ask for.
+    """
+    backend = MemoryBackend()
+    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), ttl=1)
+
+    try:
+        await asyncio.sleep(1.05)
+
+        assert await backend.get("k") is None
+        assert "k" not in backend.cache
+    finally:
+        backend.stop_cleanup()
+
+
+@pytest.mark.asyncio
+async def test_read_only_use_starts_the_cleanup_task():
+    """A read-mostly caller needs the sweeper too.
+
+    `set` starts it, but a process that only reads a cache another process
+    fills would never sweep its own copy of nothing -- and, more to the point,
+    a backend that is read before it is written must not be left without one.
+    """
+    backend = MemoryBackend()
+
+    before = backend._cleanup_task
+
+    try:
+        await backend.get("never-stored")
+        after = backend._cleanup_task
+
+        assert before is None
+        assert after is not None
+        assert not after.done()
+    finally:
+        backend.stop_cleanup()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_leaves_live_entries_alone():
+    """A sweep with nothing to do must not touch what is still valid."""
+    backend = MemoryBackend()
+    await backend.set("a", CacheEntry(fingerprint="e", content=b"1"), ttl=60)
+    await backend.set("b", CacheEntry(fingerprint="e", content=b"2"))
+
+    try:
+        await backend.cleanup()
+
+        assert sorted(backend.cache) == ["a", "b"]
+    finally:
+        backend.stop_cleanup()
