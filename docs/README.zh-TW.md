@@ -33,7 +33,9 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
 ### Session 管理（可選擴充套件）
 - 使用 HMAC-SHA256 權杖簽名的安全 Session 管理
 - IP 地址和 User-Agent 綁定（可選安全功能）
-- Header 和 Bearer 權杖支援（API-first 架構）
+- Header、Bearer 權杖與 Cookie 傳輸（Cookie 需使用 `FastAPICacheXSessionMiddleware`；
+  舊的 `SessionMiddleware` 已 deprecated，將於 0.3.5 移除，詳見
+  [Session 管理指南](SESSION.md)）
 - 自動 Session 更新（滑動過期）
 - 跨請求通訊的 Flash Messages
 - 支援多種後端（Redis、Memcached、記憶體內）
@@ -62,6 +64,17 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
 ```bash
 uv add fastapi-cachex
 ```
+
+核心套件搭配記憶體後端即可運作；其餘後端與 Session 的選用傳輸方式以 extra 形式提供：
+
+| Extra | 安裝 | 帶入套件 | 用途 |
+|-------|------|---------|------|
+| `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`、`orjson` | `AsyncRedisCacheBackend` |
+| `memcache` | `uv add "fastapi-cachex[memcache]"` | `pymemcache` | `MemcachedBackend`（注意是 `memcache` 不是 `memcached`） |
+| `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
+| `starlette` | `uv add "fastapi-cachex[starlette]"` | `itsdangerous` | `FastAPICacheXSessionMiddleware` |
+
+可以合併安裝：`uv add "fastapi-cachex[redis,jwt]"`。
 
 ### 開發版本安裝
 
@@ -126,16 +139,39 @@ FastAPI-CacheX 支援多種快取後端。你可以使用 `BackendProxy` 輕鬆�
 - 不同的查詢參數將獲得各自獨立的快取項目
 - 同一端點配合不同參數可以獨立快取
 
+查詢參數依照客戶端送出的順序取用，不會排序，因此 `?a=1&b=2` 與 `?b=2&a=1`
+對同一個邏輯請求會是兩筆不同的快取項目。
+
 所有後端會自動為金鑰加上前綴（例如 `fastapi_cachex:`）以避免與其他應用程式衝突。
 
 ### 快取命中行為
 
 當快取項目有效（在 TTL 內）時：
-- **預設行為**：直接返回快取內容並使用 HTTP 200 狀態碼，無需重新執行端點處理器
+- **預設行為**：直接返回快取內容，連同處理器當初產生的狀態碼與標頭，無需重新執行端點處理器
 - **帶有 `If-None-Match` 標頭**：如果 ETag 匹配則返回 HTTP 304 Not Modified
 - **帶有 `no-cache` 指令**：強制重新驗證以確定是否需要返回 304
 
+- **使用 `private=True`**：不讀也不寫共享後端，處理器每次都執行，只保留 `If-None-Match` 重新驗證
+
 這意味著**快取命中非常快速** - 端點處理器函數永遠不會被執行。
+
+只有成功的回應會被儲存。處理器**回傳**的非 2xx 回應（例如 `Response(..., status_code=404)`）
+會原樣送出且不寫入快取，因此暫時性錯誤不會覆蓋上一份好的條目；`206 Partial Content` 同樣不快取。
+`Set-Cookie` 永遠不會被存下或重播。
+
+### 快取監控端點
+
+`add_routes(app)` 會掛上兩個唯讀端點：`{prefix}/cached-hits`（各路由命中次數）與
+`{prefix}/cached-records`（目前所有快取條目，含內容預覽）。
+
+> [!WARNING]
+> **這兩個端點本身沒有任何認證。** `include_in_schema=False` 只是讓它們不出現在 OpenAPI 文件，
+> 猜到路徑的人照樣讀得到，而 `/cached-records` 會外洩快取內容預覽與整個路由結構。
+> 生產環境務必傳入 `dependencies=[Depends(你的認證)]`，或只掛在對內的應用上。
+
+> [!NOTE]
+> Redis 後端的 `ttl_remaining` 不可用：`get_cache_data()` 不會逐一查詢每個金鑰的 TTL，
+> 因此監控畫面會把 Redis 條目一律顯示為永不過期（實際過期仍由 Redis 執行）。
 
 ### 記憶體快取 (預設後端)
 
@@ -164,8 +200,11 @@ BackendProxy.set(backend)
 ```
 
 **限制**：
-- Memcached 協議不支援基於模式的金鑰清除 (`clear_pattern`)
-- 金鑰使用 `fastapi_cachex:` 前綴以避免衝突
+- Memcached 協議沒有金鑰列舉能力，`clear_pattern()` 與 `get_all_keys()` 都是 no-op
+  （回傳 `0`／`[]` 並發出 `RuntimeWarning`）；建立在其上的 `CacheManager.clear()`
+  與 `clear_prefix()` 因此同樣無效
+- 金鑰使用 `fastapi_cachex:` 前綴以避免衝突；超過 Memcached 250 bytes 上限的金鑰
+  會自動改用 SHA-256 摘要
 - 如果需要基於模式的快取清除，請考慮使用 Redis 後端
 
 ### Redis
@@ -220,10 +259,12 @@ async def expensive_operation():
 
 ## 文件
 
-- [快取流程說明](CACHE_FLOW.zh-TW.md)
+- [快取流程說明](CACHE_FLOW.md)
 - [開發指南](DEVELOPMENT.md)
 - [貢獻指南](CONTRIBUTING.md)
 - [Session 管理指南](SESSION.md) - 完整的 Session 功能使用指南
+- [State 管理指南](STATE.md) - OAuth／CSRF 一次性 state token
+- [JWT Claims 說明](JWT_CLAIMS.md) - JWT session token 的 claim 設計與擴展方式
 
 ## 授權條款
 

@@ -1,6 +1,25 @@
 # Session Management Extension
 
-FastAPI-CacheX Session Management 提供完整的使用者 Session 管理功能，包含安全的 token 簽名、Cookie/Header 處理、自動展期等特性。
+FastAPI-CacheX Session Management 提供完整的使用者 Session 管理功能，包含安全的 token 簽名、
+自動展期、IP/User-Agent 綁定等特性。Session 內容一律存在後端（cache backend），客戶端只持有
+一枚已簽名的 Token。
+
+Token 的**傳輸方式取決於你掛哪一個 middleware**：
+
+| Middleware | Token 來源 | 回應側 | 狀態 |
+|------------|-----------|--------|------|
+| `FastAPICacheXSessionMiddleware` | 自訂 Header（預設 `X-Session-Token`）／`Authorization: Bearer`／**Cookie**（預設名稱 `session`） | 依來源分流：Header 進來就回 Header，Cookie 進來（或全新 Session）就 `Set-Cookie` | **建議使用** |
+| `SessionMiddleware` | 自訂 Header／`Authorization: Bearer`，**不支援 Cookie** | 續期 Token 以回應 Header 回送 | 已 deprecated，**0.3.5 移除** |
+
+**新專案請一律使用 `FastAPICacheXSessionMiddleware`。** 它涵蓋 `SessionMiddleware` 的
+全部傳輸方式（同樣讀 `X-Session-Token` 與 `Authorization: Bearer`），額外支援 Cookie；
+`SessionMiddleware` 自 0.3.1 起建構時就會發出 `DeprecationWarning`，並將在 **0.3.5 移除**。
+兩者的 Session 依賴項（`get_session`、`get_optional_session`、`require_session`）完全相同，
+遷移通常只需要換掉 `add_middleware` 的那一行，既有以 Header 傳 token 的客戶端不必改動。
+
+`SessionConfig` 的六個 `cookie_*` 設定（`cookie_name`、`cookie_max_age`、`cookie_path`、
+`cookie_same_site`、`cookie_https_only`、`cookie_domain`）**只有 `FastAPICacheXSessionMiddleware`
+會讀**；掛 `SessionMiddleware` 時設了也不會有任何效果。
 
 ## 特性
 
@@ -10,12 +29,14 @@ FastAPI-CacheX Session Management 提供完整的使用者 Session 管理功能�
   - IP 地址綁定（可選）
   - User-Agent 綁定（可選）
   - 登入後自動重新生成 Session ID
-- ✅ **多種 Token 來源**：Header、Bearer Token
+- ✅ **多種 Token 來源**：自訂 Header、`Authorization: Bearer`、Cookie
+  （Cookie 僅 `FastAPICacheXSessionMiddleware` 支援）
 - ✅ **可選 JWT 格式**：支援以 JWT 作為 Session Token（需安裝 extra `jwt`）
 - ✅ **自動展期**：滑動過期時間支援
 - ✅ **Flash Messages**：跨請求訊息傳遞
 - ✅ **多後端支援**：Redis、Memcached、In-Memory
-- ✅ **API-first 架構**：適用於前後端分離應用，由客戶端管理 Token
+- ✅ **API-first 或瀏覽器架構皆可**：Token 可由客戶端自行保管（Header/Bearer），
+  也可交給瀏覽器以 Cookie 保管（`FastAPICacheXSessionMiddleware`）
 
 ## 快速開始
 
@@ -40,7 +61,7 @@ from fastapi import FastAPI
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.session import (
     SessionManager,
-    SessionMiddleware,
+    FastAPICacheXSessionMiddleware,
     SessionConfig,
     SessionUser,
     get_session,
@@ -60,18 +81,19 @@ config = SessionConfig(
 backend = MemoryBackend()
 session_manager = SessionManager(backend, config)
 
-# 添加 Session Middleware
+# 添加 Session Middleware（SessionMiddleware 已 deprecated，將於 0.3.5 移除）
 app.add_middleware(
-    SessionMiddleware,
+    FastAPICacheXSessionMiddleware,
     session_manager=session_manager,
     config=config,
 )
 
 # 或者使用 Proxy（可選）
 from fastapi_cachex.session import SessionManagerProxy
+
 SessionManagerProxy.set(session_manager)
 
-app.add_middleware(SessionMiddleware) # 自動從 Proxy 取得
+app.add_middleware(FastAPICacheXSessionMiddleware)  # 自動從 Proxy 取得
 
 
 # 登入端點
@@ -128,7 +150,7 @@ from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.session import (
     SessionManager,
-    SessionMiddleware,
+    FastAPICacheXSessionMiddleware,
     SessionConfig,
     SessionUser,
     get_session,
@@ -157,7 +179,7 @@ config = SessionConfig(
 session_manager = SessionManager(backend, config)
 
 app.add_middleware(
-    SessionMiddleware,
+    FastAPICacheXSessionMiddleware,
     session_manager=session_manager,
     config=config,
 )
@@ -297,7 +319,9 @@ Session 依賴項 `get_session`、`get_optional_session`、`require_session`
 ```python
 from fastapi_cachex.session import FastAPICacheXSessionMiddleware, get_session
 
-app.add_middleware(FastAPICacheXSessionMiddleware, session_manager=manager, config=config)
+app.add_middleware(
+    FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+)
 
 
 @app.get("/me")
@@ -312,34 +336,51 @@ async def me(session=Depends(get_session)):
 ```python
 SessionConfig(
     # Session 生命週期
-    session_ttl=3600,              # Session TTL（秒）
-    absolute_timeout=None,         # 絕對過期時間（秒）
-    sliding_expiration=True,       # 滑動過期
-    sliding_threshold=0.5,         # 滑動閾值（0.5 = TTL 過半時更新）
-
+    session_ttl=3600,  # Session TTL（秒）
+    absolute_timeout=None,  # 絕對過期時間（秒）
+    sliding_expiration=True,  # 滑動過期
+    sliding_threshold=0.5,  # 滑動閾值（0.5 = TTL 過半時更新）
     # Token 來源（API-first 架構）
-    token_format="simple",         # 可選："simple"（預設）、"jwt"
+    token_format="simple",  # 可選："simple"（預設）、"jwt"
     header_name="X-Session-Token",
     use_bearer_token=True,
-    token_source_priority=["header", "bearer"],  # 客戶端透過 header 傳送 token
-
+    token_source_priority=["header", "bearer"],  # 只接受這兩個值（見下方說明）
     # JWT（token_format == "jwt" 時使用）
     jwt_algorithm="HS256",
-    jwt_issuer=None,                # 若設定，解析時會驗證 iss
-    jwt_audience=None,              # 若設定，解析時會驗證 aud
-    jwt_leeway=60,                  # exp/nbf/iat 驗證的容忍秒數
-
+    jwt_issuer=None,  # 若設定，解析時會驗證 iss
+    jwt_audience=None,  # 若設定，解析時會驗證 aud
+    jwt_leeway=60,  # exp/iat 驗證的容忍秒數（本套件不簽發也不驗證 nbf）
     # 安全設定
-    secret_key="...",              # 必須：至少 32 字元
-    ip_binding=False,              # IP 綁定
-    user_agent_binding=False,      # User-Agent 綁定
-
+    secret_key="...",  # 必須：至少 32 字元
+    ip_binding=False,  # IP 綁定
+    user_agent_binding=False,  # User-Agent 綁定
+    trusted_proxies=[],  # 可信任的反向代理位址（見下方「客戶端 IP 與反向代理」）
     # 後端設定
     backend_key_prefix="session:",
+    # Cookie 設定（只有 FastAPICacheXSessionMiddleware 會讀）
+    cookie_name="session",
+    cookie_max_age=14 * 24 * 60 * 60,  # None 代表瀏覽器關閉即失效
+    cookie_path="/",
+    cookie_same_site="lax",  # "lax" / "strict" / "none"
+    cookie_https_only=False,  # True 會加上 Secure
+    cookie_domain=None,  # None 代表不輸出 Domain 屬性
 )
 ```
 
-**注意**：此設計為 API-first 架構（前後端分離），Token 由客戶端管理並在每次請求的 Header 中傳送。客戶端應將 token 儲存在 `localStorage` 或 `sessionStorage` 中，並在請求時透過 `Authorization: Bearer <token>` 或 `X-Session-Token: <token>` header 傳送。
+#### `token_source_priority` 只接受 `"header"` 與 `"bearer"`
+
+這個欄位的型別是 `list[Literal["header", "bearer"]]`，填入 `"cookie"` 會被 pydantic
+直接擋下（`ValidationError`）。Cookie **不是**優先順序的一員：
+`FastAPICacheXSessionMiddleware` 的解析順序是固定的 —— 先照 `token_source_priority`
+讀 Header/Bearer，都沒有才回退到 Cookie。這是刻意的：回應側要依 Token 的來源分流
+（Header 進來就回 Header、Cookie 進來就 `Set-Cookie`），把 Cookie 混進同一份優先序
+會讓「只填 `["cookie"]`」在已 deprecated 的 `SessionMiddleware` 上變成無聲失效。
+待 0.3.5 移除 `SessionMiddleware` 後，三種來源可望統一由同一份優先序描述。
+
+**Header/Bearer 客戶端**應將 token 儲存在 `localStorage` 或 `sessionStorage`，並於請求時以
+`Authorization: Bearer <token>` 或 `X-Session-Token: <token>` 傳送。**Cookie 客戶端**（瀏覽器）
+不需要自行處理 token，但要注意 CSRF：Cookie 會被瀏覽器自動附帶，請搭配 `cookie_same_site`
+與自有的 CSRF 防護。
 
 ### 使用 JWT Token 格式
 
@@ -398,7 +439,30 @@ config = SessionConfig(
 - 使用 `httpOnly` 選項（如果使用 cookie 儲存）來防止 XSS
 - 避免在 URL 中傳遞 token
 
-### 3. IP 綁定（可選）
+### 3. 客戶端 IP 與反向代理
+
+`ip_binding` 與稽核記錄取用的「客戶端 IP」**預設只信任直連的對端位址**，
+`X-Forwarded-For` 與 `X-Real-IP` 一律忽略 —— 任何人都能自行送出這兩個標頭。
+
+部署在反向代理後面時，把代理的位址填進 `trusted_proxies`：
+
+```python
+config = SessionConfig(
+    secret_key="...",
+    ip_binding=True,
+    trusted_proxies=["10.0.0.8"],  # 直連進來的那一跳
+)
+```
+
+此時客戶端位址取自 `X-Forwarded-For` **最右側、且不在 `trusted_proxies` 裡**的那一筆：
+代理是往後附加的，最左側那筆是呼叫端自己選擇送出的內容，無法採信。若整條鏈都是可信代理，
+則退回直連對端位址。`X-Real-IP` 由代理自己寫入、沒有鏈可走，僅在 `X-Forwarded-For` 沒有
+可用值時採用。
+
+> [!NOTE]
+> `trusted_proxies` 目前以**字串完全比對**，不支援 CIDR 網段。
+
+### 4. IP 綁定（可選）
 
 提高安全性但可能影響使用者體驗（例如 IP 變動）：
 
@@ -409,7 +473,7 @@ config = SessionConfig(
 )
 ```
 
-### 4. 登入後重新生成 Session ID
+### 5. 登入後重新生成 Session ID
 
 防止 Session Fixation 攻擊：
 
@@ -426,10 +490,10 @@ session, new_token = await session_manager.regenerate_session_id(session)
 #### create_session()
 ```python
 async def create_session(
-    user: SessionUser | None = None,
+    user: SessionUser,
     ip_address: str | None = None,
     user_agent: str | None = None,
-    **extra_data,
+    **extra_data: object,
 ) -> tuple[Session, str]:
 ```
 
@@ -465,9 +529,9 @@ async def regenerate_session_id(
 
 ```python
 from fastapi_cachex.session import (
-    get_session,          # 需要認證（無 session 時返回 401）
-    get_optional_session, # 可選認證（無 session 時返回 None）
-    require_session,      # 別名：get_session
+    get_session,  # 需要認證（無 session 時返回 401）
+    get_optional_session,  # 可選認證（無 session 時返回 None）
+    require_session,  # 別名：get_session
 )
 
 # Type annotations
