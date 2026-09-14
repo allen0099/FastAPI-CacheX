@@ -57,9 +57,11 @@ CACHEX_TEST_REDIS_PORT=6380 CACHEX_TEST_MEMCACHED_PORT=11212 uv run pytest
 so do not point these at anything you care about. When a port is set but nothing
 is listening, the suites skip and say so.
 
-Note that the coverage gate (`fail_under = 90`) is only met with both services
-opted in; a skipped run leaves the network backends uncovered. CI sets both
-variables against its own service containers.
+A run with nothing opted in still clears the coverage gate (`fail_under = 90`)
+at about 92.8%, but only because the rest of the suite carries it — `redis.py`
+alone drops to roughly 29%. The margin is thin, so the first place an untested
+line shows up as a failure is a local opted-out run, not CI, which sets both
+variables against its own service containers and sees 99.95%.
 
 ### Checking that a test can fail
 
@@ -143,3 +145,28 @@ uv run mypy fastapi_cachex --strict
 - Use `Optional[Type]` for parameters that could be None
 - Use `from __future__ import annotations` for forward references
 - Add `py.typed` file to make your package mypy compliant
+
+## Releasing
+
+`release.yml` bumps the version, tags it and writes the GitHub release notes
+from `git log --pretty=format:"- %s (%h)"`. It does **not** read
+`CHANGELOG.md`, and that is deliberate: the release notes answer "what commits
+landed", while the changelog answers "what does this mean for me" — a
+behaviour change under an unchanged API, such as forwarded IP headers no longer
+being trusted, reads as one ordinary `fix:` subject in a commit list. Wiring the
+workflow to publish the changelog instead would either lose the commit list or
+make a release fail on a documentation omission, and neither is worth it for a
+project this size.
+
+The consequence is that **`CHANGELOG.md` is maintained by hand and nothing
+enforces it**. When cutting a release:
+
+1. Rename the `## [Unreleased]` heading to `## [x.y.z] - YYYY-MM-DD`.
+2. Add a fresh empty `## [Unreleased]` above it.
+3. Update the link definitions at the bottom: point `[Unreleased]` at
+   `vx.y.z...HEAD` and add a `[x.y.z]` compare link against the previous
+   *released* tag (0.3.3 was never released, so 0.3.4 compares against 0.3.2).
+
+When a pull request changes behaviour, adds public API, or fixes something a
+user could have hit, add the entry to `## [Unreleased]` in the same PR. That is
+the only thing keeping the file from going stale.

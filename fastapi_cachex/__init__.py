@@ -43,11 +43,21 @@ from .state import StateManagerProxy as StateManagerProxy
 from .state import get_state_manager as get_state_manager
 from .types import CacheKeyBuilder as CacheKeyBuilder
 
-try:
-    __version__ = version("fastapi-cachex")
-except PackageNotFoundError:  # pragma: no cover - only when running from a
-    # source tree that was never installed, where there is no metadata to read.
-    __version__ = "0.0.0.dev0"
+
+def _read_version() -> str:
+    """Return the installed distribution's version.
+
+    Importing from a source tree that was never installed leaves no metadata to
+    read; reporting a development version there is part of the contract, so this
+    lives in a function the tests can drive rather than behind a coverage pragma.
+    """
+    try:
+        return version("fastapi-cachex")
+    except PackageNotFoundError:
+        return "0.0.0.dev0"
+
+
+__version__ = _read_version()
 
 _package_logger = logging.getLogger("fastapi_cachex")
 _package_logger.addHandler(

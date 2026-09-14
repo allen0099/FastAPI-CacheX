@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 GitHub release notes are generated from commit subjects; this file records what
 changed for users of the library, in particular behaviour that changed under an
-unchanged API.
+unchanged API. It is maintained by hand — see
+[Releasing](docs/DEVELOPMENT.md#releasing) for what to do at release time.
+
+Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
@@ -25,6 +28,14 @@ unchanged API.
 - `private=True` responses are no longer written to or read from the shared
   backend. Previously a response marked private was still stored where every
   other caller could read it; only `If-None-Match` revalidation is kept.
+- **Check your key builder if you copied the per-user caching example from the
+  README of 0.3.4 or earlier.** That example built the cache key from an
+  unverified `X-User-Id` request header, immediately above a paragraph warning
+  against exactly that. Code copied from it is a horizontal privilege
+  escalation: sending `X-User-Id: <someone-else>` returns that user's cached
+  response. The example now reads an identity the authentication layer verified
+  and wrote to `request.state`, and the warning is a CAUTION block showing the
+  header version as an explicit anti-example.
 
 ### Added
 
@@ -134,3 +145,9 @@ unchanged API.
 
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
+
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.2...v0.3.4
+[0.3.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/allen0099/FastAPI-CacheX/releases/tag/v0.3.0

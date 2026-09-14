@@ -30,8 +30,13 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
 ## Pull Request Process
 
 1. Update the README.md with details of changes to the interface, if applicable
-2. Update the documentation with any new dependencies, features, or changes
-3. The PR may be merged once you have the sign-off of at least one other developer
+2. Add an entry to the `## [Unreleased]` section of
+   [CHANGELOG.md](../CHANGELOG.md) if your change alters behaviour, adds public
+   API, or fixes something a user could have hit. Nothing enforces this — the
+   release workflow builds its notes from commit subjects and never reads the
+   changelog, so an omission fails silently
+3. Update the documentation with any new dependencies, features, or changes
+4. The PR may be merged once you have the sign-off of at least one other developer
 
 ## Any Questions?
 
