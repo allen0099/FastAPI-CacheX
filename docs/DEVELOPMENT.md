@@ -61,6 +61,30 @@ Note that the coverage gate (`fail_under = 90`) is only met with both services
 opted in; a skipped run leaves the network backends uncovered. CI sets both
 variables against its own service containers.
 
+### Checking that a test can fail
+
+Coverage says a line ran, not that anything checked what it did. A test that
+asserts on a value the code never actually produces — `bool(scope["session"])`
+where the session data is always empty, or `await get()` returning `None` where
+`get()` deletes expired entries itself — passes whether the mechanism works or
+not, and trains everyone to ignore it.
+
+The way to find those is to break the thing on purpose and see if the suite
+notices:
+
+```bash
+# neuter one mechanism, then run the whole suite
+git stash -- fastapi_cachex/         # or edit the function to return early
+uv run pytest -q -p no:randomly
+git checkout fastapi_cachex/
+```
+
+Anything still green is a test that was not testing. A sweep of 25 such
+mutations across the backends, the cache decorator and the session layer found
+three, including one that claimed to prove a forged `X-Forwarded-For` cannot
+satisfy IP binding and would have stayed green with the check disabled entirely.
+Worth doing whenever a test is written for something security-relevant.
+
 ## Using tox
 
 tox ensures the code works across different Python versions (3.10-3.13).
