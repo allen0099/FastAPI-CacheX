@@ -38,10 +38,16 @@ def _get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | N
     """Get the client IP address from an HTTP connection.
 
     `X-Forwarded-For` and `X-Real-IP` are believed only when the request
-    actually arrived from one of `config.trusted_proxies`. Anyone can send
-    those headers, so trusting them unconditionally would let a caller holding
-    a stolen token satisfy `ip_binding` simply by naming the right address.
-    With the default empty list they are ignored entirely.
+    actually arrived from one of `config.trusted_proxies`; with the default
+    empty list they are ignored entirely, because anyone can send them.
+
+    Even behind a trusted proxy the leftmost `X-Forwarded-For` entry is not the
+    client: proxies append, so a caller who sends the header themselves has
+    their value sitting in front of the address the proxy added. This walks the
+    chain from the right and takes the first address that is not a trusted
+    proxy — the closest hop nobody in the chain could have forged. If every
+    entry is a trusted proxy there is no client address to recover and the
+    direct peer is used.
 
     Args:
         connection: Incoming HTTP connection (or a `Request`, which IS-A
@@ -54,15 +60,15 @@ def _get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | N
     peer = connection.client.host if connection.client else None
 
     if peer is not None and peer in config.trusted_proxies:
-        # Check X-Forwarded-For header (for proxied requests)
         forwarded_for = connection.headers.get("x-forwarded-for")
         if forwarded_for:
-            # Get first IP from comma-separated list
-            ip = forwarded_for.split(",")[0].strip()
-            logger.debug("Client IP from X-Forwarded-For: %s", ip)
-            return ip
+            for entry in reversed(forwarded_for.split(",")):
+                candidate = entry.strip()
+                if candidate and candidate not in config.trusted_proxies:
+                    logger.debug("Client IP from X-Forwarded-For: %s", candidate)
+                    return candidate
 
-        # Check X-Real-IP header
+        # X-Real-IP is written by the proxy itself, so it has no chain to walk.
         real_ip = connection.headers.get("x-real-ip")
         if real_ip:
             logger.debug("Client IP from X-Real-IP: %s", real_ip)

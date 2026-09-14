@@ -108,7 +108,11 @@ class SessionConfig(BaseModel):
         default_factory=list,
         description="Peer addresses whose X-Forwarded-For / X-Real-IP headers "
         "may be believed. Empty (the default) ignores those headers and uses "
-        "the direct peer address, since anyone can send them.",
+        "the direct peer address, since anyone can send them. When the peer is "
+        "trusted, the client address is the rightmost X-Forwarded-For entry "
+        "that is not itself listed here: proxies append, so the leftmost entry "
+        "is whatever the caller chose to send. Matching is by exact string; "
+        "CIDR ranges are not supported.",
     )
     user_agent_binding: bool = Field(
         default=False,

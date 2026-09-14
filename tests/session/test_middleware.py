@@ -144,7 +144,9 @@ def test_get_client_ip_from_x_forwarded_for_behind_trusted_proxy(
     async def app(scope, receive, send):
         pass
 
-    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
+    config = SessionConfig(
+        secret_key="a" * 32, trusted_proxies=["10.0.0.9", "10.0.0.1"]
+    )
     middleware = SessionMiddleware(app, manager, config)
 
     request = MagicMock(spec=Request)
@@ -154,6 +156,49 @@ def test_get_client_ip_from_x_forwarded_for_behind_trusted_proxy(
     request.client = client
 
     assert middleware._get_client_ip(request) == "192.168.1.1"
+
+
+def test_get_client_ip_ignores_a_prepended_forwarded_entry(
+    manager: SessionManager,
+) -> None:
+    """Proxies append, so the leftmost entry is whatever the caller sent."""
+
+    async def app(scope, receive, send):
+        pass
+
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
+    middleware = SessionMiddleware(app, manager, config)
+
+    request = MagicMock(spec=Request)
+    # The attacker sent the first entry themselves; nginx appended the second.
+    request.headers = {"x-forwarded-for": "198.51.100.5, 203.0.113.99"}
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
+
+    assert middleware._get_client_ip(request) == "203.0.113.99"
+
+
+def test_get_client_ip_falls_back_when_every_hop_is_trusted(
+    manager: SessionManager,
+) -> None:
+    """With no untrusted entry left there is no client address to recover."""
+
+    async def app(scope, receive, send):
+        pass
+
+    config = SessionConfig(
+        secret_key="a" * 32, trusted_proxies=["10.0.0.9", "10.0.0.1"]
+    )
+    middleware = SessionMiddleware(app, manager, config)
+
+    request = MagicMock(spec=Request)
+    request.headers = {"x-forwarded-for": "10.0.0.1"}
+    client = MagicMock()
+    client.host = "10.0.0.9"
+    request.client = client
+
+    assert middleware._get_client_ip(request) == "10.0.0.9"
 
 
 def test_get_client_ip_from_real_ip_behind_trusted_proxy(

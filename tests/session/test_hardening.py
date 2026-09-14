@@ -107,6 +107,62 @@ def test_forged_forwarded_header_cannot_satisfy_ip_binding(
     assert response.json() == {"authenticated": False}
 
 
+def test_prepended_forwarded_entry_cannot_satisfy_ip_binding(manager: SessionManager):
+    """Behind a trusted proxy, the attacker's own entry must not be believed.
+
+    `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` appends, so a
+    caller who sends the header themselves ends up with their chosen address in
+    front of the one the proxy added.
+    """
+    # The proxy in this test is TestClient itself, which presents as
+    # "testclient"; trusting it puts us in the deployment the setting exists for.
+    config = SessionConfig(
+        secret_key="a" * 32, ip_binding=True, trusted_proxies=["testclient"]
+    )
+    manager = SessionManager(MemoryBackend(), config)
+
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/me")
+    async def me(request: Request) -> dict[str, bool]:
+        # The backend session is only attached once every binding check passed.
+        loaded = request.scope["state"].get("__fastapi_cachex_session")
+        return {"authenticated": loaded is not None}
+
+    import asyncio
+
+    _, token = asyncio.run(
+        manager.create_session(
+            user=SessionUser(user_id="u1"),
+            ip_address="198.51.100.5",
+        )
+    )
+
+    client = TestClient(app)
+    forged = client.get(
+        "/me",
+        headers={
+            "X-Session-Token": token,
+            # Left entry forged by the attacker, right entry added by the proxy.
+            "X-Forwarded-For": "198.51.100.5, 203.0.113.99",
+        },
+    )
+
+    assert forged.status_code == 200
+    assert forged.json() == {"authenticated": False}
+
+    # The genuine client arrives with only the proxy's own entry.
+    genuine = client.get(
+        "/me",
+        headers={"X-Session-Token": token, "X-Forwarded-For": "198.51.100.5"},
+    )
+
+    assert genuine.json() == {"authenticated": True}
+
+
 def test_jwt_algorithm_none_is_rejected():
     """An unsigned JWT would make every session forgeable."""
     with pytest.raises(ValidationError, match="jwt_algorithm must be one of"):

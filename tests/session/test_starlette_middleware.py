@@ -421,7 +421,7 @@ def test_get_client_ip_from_x_forwarded_for(config: SessionConfig) -> None:
 
     from fastapi_cachex.session.middleware import _get_client_ip
 
-    trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9"]})
+    trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9", "10.0.0.1"]})
     scope: dict[str, Any] = {
         "type": "http",
         "headers": [(b"x-forwarded-for", b"192.168.1.1, 10.0.0.1")],
@@ -430,6 +430,25 @@ def test_get_client_ip_from_x_forwarded_for(config: SessionConfig) -> None:
     connection = HTTPConnection(scope)
 
     assert _get_client_ip(connection, trusting) == "192.168.1.1"
+
+
+def test_get_client_ip_takes_the_rightmost_untrusted_entry(
+    config: SessionConfig,
+) -> None:
+    """A caller-supplied entry sits to the left of the address the proxy added."""
+    from starlette.requests import HTTPConnection
+
+    from fastapi_cachex.session.middleware import _get_client_ip
+
+    trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9"]})
+    scope: dict[str, Any] = {
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"198.51.100.5, 203.0.113.99")],
+        "client": ("10.0.0.9", 12345),
+    }
+    connection = HTTPConnection(scope)
+
+    assert _get_client_ip(connection, trusting) == "203.0.113.99"
 
 
 def test_get_client_ip_from_real_ip(config: SessionConfig) -> None:
