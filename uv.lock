@@ -521,9 +521,11 @@ starlette = [
 dev = [
     { name = "coverage" },
     { name = "httpx" },
+    { name = "itsdangerous" },
     { name = "mypy" },
     { name = "orjson" },
     { name = "pre-commit" },
+    { name = "pyjwt" },
     { name = "pymemcache" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -553,9 +555,11 @@ provides-extras = ["memcache", "redis", "jwt", "starlette"]
 dev = [
     { name = "coverage", specifier = ">=7.8.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "itsdangerous" },
     { name = "mypy", specifier = ">=1.15.0" },
     { name = "orjson", specifier = ">=3.10.16" },
     { name = "pre-commit", specifier = ">=4.2.0" },
+    { name = "pyjwt", specifier = ">=2.9.0" },
     { name = "pymemcache", specifier = ">=4.0.0" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-asyncio", specifier = ">=0.26.0" },
