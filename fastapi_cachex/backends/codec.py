@@ -11,8 +11,10 @@ from fastapi_cachex.types import counter_entry
 try:
     import orjson as json
 
-except ImportError:  # pragma: no cover
-    import json  # type: ignore[no-redef]  # pragma: no cover
+# Resolved once at import time; whichever branch this interpreter takes, the
+# other one cannot be reached again in the same process.
+except ImportError:  # pragma: no cover - import-time, environment dependent
+    import json  # type: ignore[no-redef]
 
 # ``json.loads`` (either implementation) raises ``ValueError`` subclasses for bad
 # JSON; ``KeyError``/``TypeError``/``AttributeError`` cover documents whose shape

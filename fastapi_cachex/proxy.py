@@ -60,7 +60,7 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
     """FastAPI CacheX Proxy for backend management."""
 
     @staticmethod
-    def get_backend() -> BaseCacheBackend:  # pragma: no cover
+    def get_backend() -> BaseCacheBackend:
         """Get the current backend instance.
 
         .. deprecated:: 0.3.0
@@ -78,7 +78,7 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
         return BackendProxy.get()
 
     @staticmethod
-    def set_backend(backend: BaseCacheBackend | None) -> None:  # pragma: no cover
+    def set_backend(backend: BaseCacheBackend | None) -> None:
         """Set the backend instance.
 
         .. deprecated:: 0.3.0

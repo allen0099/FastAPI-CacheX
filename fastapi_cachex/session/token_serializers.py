@@ -32,12 +32,12 @@ TOKEN_PARTS_COUNT = 3
 class TokenSerializer(Protocol):
     """Protocol for token serialization strategies."""
 
-    def to_string(self, token: SessionToken) -> str:  # pragma: no cover - interface
+    def to_string(self, token: SessionToken) -> str:  # pragma: no cover - Protocol body
         """Serialize a `SessionToken` to a string."""
 
     def from_string(
         self, token_str: str
-    ) -> SessionToken:  # pragma: no cover - interface
+    ) -> SessionToken:  # pragma: no cover - Protocol body
         """Parse a string into a `SessionToken` (with necessary verification)."""
 
 
@@ -111,11 +111,11 @@ class JWTTokenSerializer:
                 ``decode``; defaults to importing ``jwt`` (PyJWT).
         """
         if jwt_module is not None:
-            self.jwt_encoder = jwt_module  # pragma: no cover
+            self.jwt_encoder = jwt_module
         else:
             try:
                 self.jwt_encoder = importlib.import_module("jwt")
-            except ImportError as e:  # pragma: no cover
+            except ImportError as e:
                 msg = "JWT backend not available; install fastapi-cachex[jwt] or inject jwt_module"
                 raise ImportError(msg) from e
 

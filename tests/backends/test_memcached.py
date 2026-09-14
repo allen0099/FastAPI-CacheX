@@ -567,3 +567,24 @@ def test_cached_route_with_a_space_in_the_path_is_served() -> None:
         assert second.json() == {"ok": "yes"}
     finally:
         BackendProxy.set(previous)
+
+
+@pytest.mark.asyncio
+async def test_increment_reports_a_counter_that_vanished_mid_call() -> None:
+    """ADD then INCR is two round-trips; the entry can expire in between.
+
+    Memcached has no way to make the pair atomic, so `increment` has to
+    surface the loss instead of returning `None` as if it were a count.
+    """
+    from unittest.mock import MagicMock
+
+    backend = MemcachedBackend.__new__(MemcachedBackend)
+    backend.key_prefix = "fastapi_cachex:"
+    backend.client = MagicMock()
+    # INCR keeps missing: the key is gone again by the time ADD's retry runs.
+    backend.client.incr.return_value = None
+
+    with pytest.raises(CacheXError, match="Counter vanished between ADD and INCR"):
+        await backend.increment("k")
+
+    assert backend.client.add.call_count == 1

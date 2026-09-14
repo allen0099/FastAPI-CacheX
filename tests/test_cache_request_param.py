@@ -51,7 +51,7 @@ async def _call(handler: Any, path: str = "/x", **kwargs: Any) -> Any:
         "state": {},
     }
 
-    async def receive() -> dict[str, Any]:  # pragma: no cover - never awaited
+    async def receive() -> dict[str, Any]:
         return {"type": "http.request", "body": b"", "more_body": False}
 
     return await handler(**kwargs, **{INJECTED: Request(scope, receive)})

@@ -196,7 +196,7 @@ class MemcachedBackend(BaseCacheBackend):
         except MemcacheClientError as e:
             msg = "Cache key holds a value that is not a counter"
             raise CacheXError(msg) from e
-        if value is None:  # pragma: no cover - the counter expired mid-call
+        if value is None:
             msg = "Counter vanished between ADD and INCR"
             raise CacheXError(msg)
         logger.debug("Memcached INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)

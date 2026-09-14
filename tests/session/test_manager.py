@@ -636,3 +636,23 @@ async def test_session_scans_ignore_keys_outside_the_session_prefix(
     assert await manager.clear_expired_sessions() == 1
     assert await manager.delete_user_sessions("1") == 0
     assert await backend.get("cache:unrelated") is not None
+
+
+@pytest.mark.asyncio
+async def test_session_sweeps_are_no_ops_without_key_enumeration() -> None:
+    """Memcached cannot list keys, so the bulk operations yield nothing.
+
+    `_iter_sessions` swallows `NotImplementedError` so a caller on such a
+    backend gets `0` rather than a crash.
+    """
+
+    class NoEnumerationBackend(MemoryBackend):
+        async def get_all_keys(self) -> list[str]:
+            raise NotImplementedError
+
+    config = SessionConfig(secret_key="a" * 32)
+    manager = SessionManager(NoEnumerationBackend(), config)
+    await manager.create_session(user=SessionUser(user_id="u1"))
+
+    assert await manager.delete_user_sessions("u1") == 0
+    assert await manager.clear_expired_sessions() == 0

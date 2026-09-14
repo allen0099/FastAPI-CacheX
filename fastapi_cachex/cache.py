@@ -322,7 +322,7 @@ async def get_response(
 
     # Get response_class from route if available
     route: APIRoute | None = __request.scope.get("route")
-    if route is None:  # pragma: no cover
+    if route is None:
         msg = "Route not found in request scope"
         raise CacheXError(msg)
 
@@ -482,8 +482,9 @@ def cache(
             else:
                 req = kwargs.pop(request_name, None)
 
-            if not req:  # pragma: no cover
-                # Skip coverage for this case, as it should not happen
+            if not req:
+                # Reached when the wrapper is called outside the router, which
+                # is the only caller that supplies the request parameter.
                 raise RequestNotFoundError
 
             # Only cache GET requests

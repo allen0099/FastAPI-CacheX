@@ -175,3 +175,34 @@ def test_jwt_serializer_non_string_sid() -> None:
 
     parsed = serializer.from_string("token")
     assert parsed.session_id == "42"
+
+
+def test_jwt_serializer_uses_an_injected_module() -> None:
+    """`jwt_module` exists so PyJWT is not the only possible implementation."""
+    stub = StubJWTModule()
+    config = SessionConfig(secret_key=SecretStr("a" * 32), token_format="jwt")
+
+    serializer = JWTTokenSerializer(config, jwt_module=stub)
+
+    assert serializer.jwt_encoder is stub
+
+
+def test_jwt_serializer_without_pyjwt_explains_the_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without the extra installed the error must name the extra."""
+    import importlib
+
+    real_import_module = importlib.import_module
+
+    def fake_import_module(name: str, package: str | None = None) -> object:
+        if name == "jwt":
+            msg = "No module named 'jwt'"
+            raise ImportError(msg)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
+    config = SessionConfig(secret_key=SecretStr("a" * 32), token_format="jwt")
+
+    with pytest.raises(ImportError, match=r"fastapi-cachex\[jwt\]"):
+        JWTTokenSerializer(config)

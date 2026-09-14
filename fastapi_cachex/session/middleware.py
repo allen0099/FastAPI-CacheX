@@ -281,7 +281,7 @@ class FastAPICacheXSessionMiddleware:
         """
         try:
             from starlette.middleware.sessions import Session as _StarletteSession
-        except ImportError as e:  # pragma: no cover
+        except ImportError as e:
             msg = (
                 "FastAPICacheXSessionMiddleware requires itsdangerous; "
                 "install fastapi-cachex[starlette]"

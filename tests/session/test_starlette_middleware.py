@@ -695,3 +695,27 @@ def test_session_middleware_construction_is_deprecated(
 
     with pytest.warns(DeprecationWarning, match="FastAPICacheXSessionMiddleware"):
         SessionMiddleware(app, manager, config)
+
+
+def test_missing_itsdangerous_explains_the_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The middleware borrows starlette's Session, which needs itsdangerous.
+
+    A `None` entry in `sys.modules` is what the import system treats as "this
+    module is not importable", which is the same failure a missing
+    itsdangerous produces inside starlette.
+    """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "starlette.middleware.sessions", None)
+
+    backend = MemoryBackend()
+    config = SessionConfig(secret_key="a" * 32)
+    manager = SessionManager(backend, config)
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        """Never reached; construction fails first."""
+
+    with pytest.raises(ImportError, match=r"fastapi-cachex\[starlette\]"):
+        FastAPICacheXSessionMiddleware(app, session_manager=manager, config=config)
