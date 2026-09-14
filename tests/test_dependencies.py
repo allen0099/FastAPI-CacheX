@@ -5,7 +5,9 @@ from fastapi.testclient import TestClient
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import CacheBackend
 from fastapi_cachex.backends import MemoryBackend
+from fastapi_cachex.dependencies import get_app_cache
 from fastapi_cachex.exceptions import BackendNotFoundError
+from fastapi_cachex.manager_proxy import CacheManagerProxy
 
 # Setup FastAPI application
 app = FastAPI()
@@ -46,19 +48,14 @@ async def test_get_app_cache_falls_back_to_memory_without_a_backend():
     its constructor, so the dependency returned a 500 unless a `@cache` route
     happened to have installed the fallback backend first.
     """
-    from fastapi_cachex.backends.memory import MemoryBackend as _MemoryBackend
-    from fastapi_cachex.dependencies import get_app_cache
-    from fastapi_cachex.manager_proxy import CacheManagerProxy
-    from fastapi_cachex.proxy import BackendProxy as _BackendProxy
-
     CacheManagerProxy.set(None)
-    _BackendProxy.set(None)
+    BackendProxy.set(None)
 
     manager = get_app_cache()
 
-    assert isinstance(manager.backend, _MemoryBackend)
+    assert isinstance(manager.backend, MemoryBackend)
     # The fallback is registered, so `@cache` and `AppCache` share one backend.
-    assert _BackendProxy.get() is manager.backend
+    assert BackendProxy.get() is manager.backend
     assert CacheManagerProxy.get() is manager
 
     CacheManagerProxy.set(None)
@@ -67,9 +64,6 @@ async def test_get_app_cache_falls_back_to_memory_without_a_backend():
 @pytest.mark.asyncio
 async def test_get_app_cache_uses_the_configured_backend():
     """A configured backend must not be replaced by the fallback."""
-    from fastapi_cachex.dependencies import get_app_cache
-    from fastapi_cachex.manager_proxy import CacheManagerProxy
-
     CacheManagerProxy.set(None)
     backend = MemoryBackend()
     BackendProxy.set(backend)

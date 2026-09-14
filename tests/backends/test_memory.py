@@ -164,42 +164,30 @@ async def test_memory_backend_stop_cleanup_when_not_running(
 
 
 @pytest.mark.asyncio
-async def test_memory_backend_cleanup_task_impl(memory_backend: MemoryBackend):
-    """Test that the cleanup task actually runs and cleans up expired items."""
-    key1 = "test_key1"
-    value1 = CacheEntry(
-        fingerprint="test_etag1",
-        content=b"test_value1",
-    )
-    key2 = "test_key2"
-    value2 = CacheEntry(
-        fingerprint="test_etag2",
-        content=b"test_value2",
-    )
+async def test_memory_backend_cleanup_task_impl():
+    """The sweeper itself has to drop expired entries.
 
-    # Set shorter cleanup interval for testing
-    memory_backend.cleanup_interval = 1
+    Reading the keys back through `get` proves nothing about the sweeper:
+    `get` deletes an expired entry on its way to returning `None`, so that
+    assertion holds even if the background task never removes anything. The
+    dictionary is inspected directly instead, and neither key is ever read.
+    """
+    backend = MemoryBackend(cleanup_interval=1)
+    expiring = CacheEntry(fingerprint="test_etag1", content=b"test_value1")
+    surviving = CacheEntry(fingerprint="test_etag2", content=b"test_value2")
 
-    # Set items with different TTLs
-    await memory_backend.set(key1, value1, ttl=1)  # This should expire
-    await memory_backend.set(key2, value2, ttl=60)  # This should remain
+    await backend.set("expiring", expiring, ttl=1)
+    await backend.set("surviving", surviving, ttl=60)
+    backend.start_cleanup()
 
-    # Start the cleanup task
-    memory_backend.start_cleanup()
+    try:
+        # One full interval plus the entry's own TTL.
+        await asyncio.sleep(2)
 
-    # Wait for cleanup to run at least once
-    await asyncio.sleep(2)
-
-    # Get values after cleanup
-    value1_after = await memory_backend.get(key1)
-    value2_after = await memory_backend.get(key2)
-
-    # Stop the cleanup task
-    memory_backend.stop_cleanup()
-
-    # Assert that expired item was cleaned up
-    assert value1_after is None
-    assert value2_after == value2
+        assert "expiring" not in backend.cache
+        assert backend.cache["surviving"].value == surviving
+    finally:
+        backend.stop_cleanup()
 
 
 @pytest.mark.asyncio
@@ -627,15 +615,17 @@ async def test_write_only_use_starts_the_cleanup_task():
     creates states without ever reading them back through `get` — accumulated
     expired entries with nothing to remove them.
     """
-    backend = MemoryBackend()
-    before = backend._cleanup_task
+    backend = MemoryBackend(cleanup_interval=1)
 
-    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), 60)
-    after = backend._cleanup_task
+    await backend.set("gone", CacheEntry(fingerprint="e", content=b"v"), ttl=1)
+    await backend.set("stays", CacheEntry(fingerprint="e", content=b"v"), ttl=60)
 
     try:
-        assert before is None
-        assert after is not None
-        assert not after.done()
+        await asyncio.sleep(2)
+
+        # Nothing here ever calls `get`, so only the sweeper can have removed
+        # the expired key — a task that merely exists would leave it in place.
+        assert "gone" not in backend.cache
+        assert "stays" in backend.cache
     finally:
         backend.stop_cleanup()

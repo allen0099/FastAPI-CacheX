@@ -266,7 +266,7 @@ class MemoryBackend(BaseCacheBackend):
         try:
             while True:
                 await asyncio.sleep(self.cleanup_interval)
-                await self.cleanup()  # pragma: no cover
+                await self.cleanup()
         except asyncio.CancelledError:
             # Handle task cancellation gracefully
             pass
