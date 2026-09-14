@@ -1,4 +1,5 @@
 import asyncio
+import os
 import socket
 import sys
 from collections.abc import AsyncGenerator
@@ -12,15 +13,22 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 
+# Point the suite at a throwaway server instead of whatever happens to occupy
+# the default port on a developer machine.
+REDIS_HOST = os.environ.get("CACHEX_TEST_REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.environ.get("CACHEX_TEST_REDIS_PORT", "6379"))
 
-def is_redis_running(host: str = "127.0.0.1", port: int = 6379) -> bool:
+
+def is_redis_running(host: str = REDIS_HOST, port: int = REDIS_PORT) -> bool:
     """Check if Redis server is running."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1.0)
         s.connect((host, port))
         s.close()
-    except TimeoutError:
+    except OSError:
+        # Covers a refused connection as well as a timeout: with nothing
+        # listening the suite must skip, not fail during collection.
         return False
     else:
         return True
@@ -138,7 +146,7 @@ def test_redis_protocol_default_is_resp2() -> None:
     Redis 8.0 can negotiate RESP3, but hiredis < 3.0 does not support RESP3.
     Defaulting to RESP2 avoids protocol-negotiation failures on Redis 8.0.
     """
-    backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379)
+    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=REDIS_PORT)
     pool = backend.client.connection_pool
     kwargs = getattr(pool, "connection_kwargs", {})
     if kwargs:
@@ -173,8 +181,8 @@ async def async_redis_backend() -> AsyncGenerator[AsyncRedisCacheBackend, Any]:
         pytest.skip("Redis server is not running")
 
     backend = AsyncRedisCacheBackend(
-        host="127.0.0.1",
-        port=6379,
+        host=REDIS_HOST,
+        port=REDIS_PORT,
         socket_timeout=1.0,
         socket_connect_timeout=1.0,
     )

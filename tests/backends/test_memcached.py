@@ -1,4 +1,5 @@
 import asyncio
+import os
 import socket
 import sys
 
@@ -10,8 +11,16 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 
+# Point the suite at a throwaway server instead of whatever happens to occupy
+# the default port on a developer machine.
+MEMCACHED_HOST = os.environ.get("CACHEX_TEST_MEMCACHED_HOST", "127.0.0.1")
+MEMCACHED_PORT = int(os.environ.get("CACHEX_TEST_MEMCACHED_PORT", "11211"))
+MEMCACHED_SERVER = f"{MEMCACHED_HOST}:{MEMCACHED_PORT}"
 
-def is_memcached_running(host: str = "127.0.0.1", port: int = 11211) -> bool:
+
+def is_memcached_running(
+    host: str = MEMCACHED_HOST, port: int = MEMCACHED_PORT
+) -> bool:
     """Check if memcached is running."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -54,7 +63,7 @@ def test_memcached_without_pymemcache(monkeypatch):
 
 @pytest_asyncio.fixture
 async def memcached_backend():
-    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
     await backend.clear()
     return backend
 
@@ -63,7 +72,7 @@ async def memcached_backend():
 def test_memcached_client_waits_for_write_acknowledgements() -> None:
     # With pooling, an unacknowledged write on one socket can still be in flight
     # while a read on another socket is served; every command must be replied to.
-    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
     assert backend.client.use_pooling is True
     assert backend.client.default_kwargs["default_noreply"] is False
 
@@ -220,7 +229,7 @@ async def test_memcached_clear_pattern_warning(memcached_backend: MemcachedBacke
 @pytest.mark.asyncio
 async def test_memcached_set_content_bytes(monkeypatch) -> None:
     """Test bytes content round-trip through set/get."""
-    backend = MemcachedBackend(servers=["127.0.0.1:11211"])
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
     await backend.clear()
     value = CacheEntry(fingerprint="c", content=b"bytes-content")
 
