@@ -48,7 +48,6 @@ async def test_get_app_cache_falls_back_to_memory_without_a_backend():
     its constructor, so the dependency returned a 500 unless a `@cache` route
     happened to have installed the fallback backend first.
     """
-    CacheManagerProxy.set(None)
     BackendProxy.set(None)
 
     manager = get_app_cache()
@@ -58,18 +57,13 @@ async def test_get_app_cache_falls_back_to_memory_without_a_backend():
     assert BackendProxy.get() is manager.backend
     assert CacheManagerProxy.get() is manager
 
-    CacheManagerProxy.set(None)
-
 
 @pytest.mark.asyncio
 async def test_get_app_cache_uses_the_configured_backend():
     """A configured backend must not be replaced by the fallback."""
-    CacheManagerProxy.set(None)
     backend = MemoryBackend()
     BackendProxy.set(backend)
 
     manager = get_app_cache()
 
     assert manager.backend is backend
-
-    CacheManagerProxy.set(None)
