@@ -134,6 +134,11 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 - The release runs the full test suite — including the Redis and Memcached
   suites, which cannot skip there — before it writes, tags or publishes
   anything, and refuses a version that is already tagged.
+- The release can be rehearsed: dispatching it with `dry_run` runs the gate,
+  the version bump, the changelog promotion and the build, then stops short of
+  the four steps that commit, tag, release and publish. The release notes and
+  the built distributions are attached to the run so they can be inspected
+  before the real thing.
 
 ## [0.3.4] - 2026-09-05
 

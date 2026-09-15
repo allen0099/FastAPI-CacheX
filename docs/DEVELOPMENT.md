@@ -194,6 +194,28 @@ The workflow runs in this order:
    and the promoted changelog, push it, tag, push the tag by refspec, create
    the GitHub release from the promoted section, publish to PyPI.
 
+### Rehearsing a release
+
+Dispatch it with **dry run** ticked. Everything runs — the gate, the version
+bump, the tag check, the changelog promotion, `uv build` — and the four steps
+that write somewhere permanent (commit, tag, GitHub release, PyPI) are skipped.
+Until this existed, the first real exercise of the release path was a release.
+
+A dry run answers two questions, and the job summary reports both: whether the
+bump and the promotion actually landed in `pyproject.toml`, `uv.lock` and
+`CHANGELOG.md` (shown as a `git diff --stat`, staged by nothing), and what
+would have been published. The release notes and the built `dist/` are attached
+to the run as an artifact, because the notes are markdown and reading them in
+the job summary renders them a second time — which is not what the release page
+would show.
+
+Two things a dry run deliberately does not do. It does not pass `--dry-run` to
+`scripts/changelog_release.py`: the script's flag prints the body and writes
+nothing, while the rehearsal needs the real files, which are then simply never
+committed. And it does not publish to TestPyPI — that needs a second set of
+credentials and has its own failure modes, so it would be a rehearsal of a
+different path, not of this one.
+
 ### The changelog is part of the release now
 
 `CHANGELOG.md` used to be maintained entirely by hand and nothing enforced it:

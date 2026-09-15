@@ -29,6 +29,11 @@ on:
         description: 'Exact version to release (e.g. 0.4.0). Overrides the bump choice.'
         required: false
         type: string
+      dry_run:
+        description: 'Rehearse: run everything, but do not commit, tag, release or publish'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -179,15 +184,77 @@ jobs:
       - name: Build package
         run: uv build
 
+      # A dry run's whole value is in what you can inspect afterwards, and the
+      # two questions it exists to answer are "did the bump and the changelog
+      # promotion actually land in the files?" and "what exactly would have
+      # been published?". `git diff` here deliberately does not stage anything:
+      # the real commit step is the only thing that runs `git add`.
+      - name: Report what the release would have done
+        if: ${{ inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo '### Dry run — nothing was published'
+            echo
+            echo "- Would have released: **v$VERSION**"
+            echo "- Would have tagged: \`v$VERSION\`"
+            echo "- Previous tag: ${PREVIOUS_TAG:-none}"
+            echo
+            echo 'Changes that the release commit would have carried:'
+            echo
+            echo '```'
+            git --no-pager diff --stat -- pyproject.toml uv.lock CHANGELOG.md
+            echo '```'
+            echo
+            echo 'Build artifacts:'
+            echo
+            echo '```'
+            ls -lh dist/
+            echo '```'
+            echo
+            echo '<details><summary>Release notes that would have been published</summary>'
+            echo
+            cat release-notes.md
+            echo
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The release body is markdown, and pasting it into the step summary
+      # renders it a second time, which is not what a GitHub release page shows.
+      # The artifact is the copy you can actually compare against.
+      - name: Upload the rehearsal output
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: dry-run-v${{ steps.version.outputs.version }}
+          path: |
+            release-notes.md
+            dist/
+          if-no-files-found: error
+
       - name: Configure git
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      # Everything above this line is reversible by cancelling the run.
-      # Everything below writes somewhere permanent, and the steps are kept
-      # adjacent so a `dry_run` input can guard them as one block later.
+      # Below this line are the steps that change the four things a cancelled
+      # run cannot take back: the branch, the tags, the GitHub releases, PyPI.
+      # Nothing above the line touches any of them. (A dry run does leave a
+      # build artifact attached to the run, and setup-uv may write an Actions
+      # cache. Both expire on their own and neither is repository state, which
+      # is why they sit above the line.)
+      #
+      # EVERY STEP BELOW THIS LINE MUST CARRY `if: ${{ !inputs.dry_run }}`,
+      # including any step added later, and a new step of that kind belongs
+      # here rather than above. `Summary` carries the guard as well, even
+      # though all it writes is the job summary: it *describes* those four
+      # effects, and a rule with no exceptions to remember is worth more than
+      # a correctly narrow one.
       - name: Commit the release
+        if: ${{ !inputs.dry_run }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BRANCH: ${{ github.ref_name }}
@@ -202,6 +269,7 @@ jobs:
           fi
 
       - name: Tag the release
+        if: ${{ !inputs.dry_run }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -210,6 +278,7 @@ jobs:
           git push origin "refs/tags/v$VERSION"
 
       - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.version }}
@@ -223,9 +292,11 @@ jobs:
             dist/*.tar.gz
 
       - name: Publish to PyPI
+        if: ${{ !inputs.dry_run }}
         uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Summary
+        if: ${{ !inputs.dry_run }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
           PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
