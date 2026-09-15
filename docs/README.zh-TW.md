@@ -34,7 +34,7 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
 - 使用 HMAC-SHA256 權杖簽名的安全 Session 管理
 - IP 地址和 User-Agent 綁定（可選安全功能）
 - Header、Bearer 權杖與 Cookie 傳輸（Cookie 需使用 `FastAPICacheXSessionMiddleware`；
-  舊的 `SessionMiddleware` 已 deprecated，將於 0.3.5 移除，詳見
+  舊的 `SessionMiddleware` 已 deprecated，將於 0.4.0 移除，詳見
   [Session 管理指南](SESSION.md)）
 - 自動 Session 更新（滑動過期）
 - 跨請求通訊的 Flash Messages
@@ -72,7 +72,9 @@ uv add fastapi-cachex
 | `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`、`orjson` | `AsyncRedisCacheBackend` |
 | `memcache` | `uv add "fastapi-cachex[memcache]"` | `pymemcache` | `MemcachedBackend`（注意是 `memcache` 不是 `memcached`） |
 | `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
-| `starlette` | `uv add "fastapi-cachex[starlette]"` | `itsdangerous` | `FastAPICacheXSessionMiddleware` |
+
+`starlette` extra 已移除：`itsdangerous` 改為基本依賴，`FastAPICacheXSessionMiddleware`
+在一般安裝下即可使用。
 
 可以合併安裝：`uv add "fastapi-cachex[redis,jwt]"`。
 

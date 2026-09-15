@@ -1,9 +1,9 @@
 """Tests for the Starlette-aligned, backend-backed session middleware.
 
-These tests require itsdangerous (fastapi-cachex[starlette]) since
 FastAPICacheXSessionMiddleware reuses starlette.middleware.sessions.Session for
-its dict-like scope["session"] interface, and that module unconditionally
-imports itsdangerous.
+its dict-like scope["session"] interface. That module imports itsdangerous at
+module level, which is why itsdangerous is a base dependency rather than an
+extra: the middleware cannot be constructed without it.
 """
 
 from datetime import datetime
@@ -25,8 +25,6 @@ from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.models import SessionUser
-
-pytest.importorskip("itsdangerous")
 
 
 @pytest.fixture
@@ -695,30 +693,6 @@ def test_session_middleware_construction_is_deprecated(
 
     with pytest.warns(DeprecationWarning, match="FastAPICacheXSessionMiddleware"):
         SessionMiddleware(app, manager, config)
-
-
-def test_missing_itsdangerous_explains_the_extra(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The middleware borrows starlette's Session, which needs itsdangerous.
-
-    A `None` entry in `sys.modules` is what the import system treats as "this
-    module is not importable", which is the same failure a missing
-    itsdangerous produces inside starlette.
-    """
-    import sys
-
-    monkeypatch.setitem(sys.modules, "starlette.middleware.sessions", None)
-
-    backend = MemoryBackend()
-    config = SessionConfig(secret_key="a" * 32)
-    manager = SessionManager(backend, config)
-
-    async def app(scope: Any, receive: Any, send: Any) -> None:
-        """Never reached; construction fails first."""
-
-    with pytest.raises(ImportError, match=r"fastapi-cachex\[starlette\]"):
-        FastAPICacheXSessionMiddleware(app, session_manager=manager, config=config)
 
 
 @pytest.mark.asyncio

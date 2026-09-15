@@ -36,7 +36,7 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 - IP address and User-Agent binding (optional security features)
 - Header, bearer token and cookie transports (cookies via
   `FastAPICacheXSessionMiddleware`; the older `SessionMiddleware` is deprecated
-  and removed in 0.3.5 — see [Session Management Guide](docs/SESSION.md))
+  and removed in 0.4.0 — see [Session Management Guide](docs/SESSION.md))
 - Automatic session renewal (sliding expiration)
 - Flash messages for cross-request communication
 - Multiple backend support (Redis, Memcached, In-Memory)
@@ -74,7 +74,9 @@ backends and the optional session transports ship as extras:
 | `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`, `orjson` | `AsyncRedisCacheBackend` |
 | `memcache` | `uv add "fastapi-cachex[memcache]"` | `pymemcache` | `MemcachedBackend` (note: `memcache`, not `memcached`) |
 | `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
-| `starlette` | `uv add "fastapi-cachex[starlette]"` | `itsdangerous` | `FastAPICacheXSessionMiddleware` |
+
+The `starlette` extra is gone: `itsdangerous` is a base dependency now, so
+`FastAPICacheXSessionMiddleware` works on a plain install.
 
 Extras combine: `uv add "fastapi-cachex[redis,jwt]"`.
 

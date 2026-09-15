@@ -5,10 +5,11 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-GitHub release notes are generated from commit subjects; this file records what
-changed for users of the library, in particular behaviour that changed under an
-unchanged API. It is maintained by hand — see
-[Releasing](docs/DEVELOPMENT.md#releasing) for what to do at release time.
+This file records what changed for users of the library, in particular
+behaviour that changed under an unchanged API. The `## [Unreleased]` section is
+what the Release workflow publishes as the GitHub release notes, and a release
+with an empty one fails — so entries are added by hand, in the pull request
+that earns them. See [Releasing](docs/DEVELOPMENT.md#releasing).
 
 Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
@@ -44,8 +45,31 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   subsystem (`StateManager`, one-shot `consume_state()`, the dependency
   injection helpers).
 
+### Deprecated
+
+- `SessionMiddleware` is now scheduled for removal in 0.4.0 rather than 0.3.5.
+  Nothing about the class changes — it has emitted a `DeprecationWarning` since
+  0.3.1 and still does — but 0.3.5 is a patch release, and removing an exported
+  public class in a patch release is a breaking change no matter how small the
+  migration is. The runtime warning, the docstring and the guides all name
+  0.4.0 now, which is where `delete()` returning `bool` and the removal of
+  `BackendProxy.get_backend()`/`set_backend()` were already scheduled.
+
+### Removed
+
+- The `starlette` extra. All it ever pulled in was `itsdangerous`, which is a
+  base dependency now, so the extra adds nothing. Installing
+  `fastapi-cachex[starlette]` still resolves — an unknown extra is a warning,
+  not an error — it simply has no effect.
+
 ### Changed
 
+- `itsdangerous` is a required dependency rather than an extra, so
+  `FastAPICacheXSessionMiddleware` works on a plain `pip install fastapi-cachex`.
+  It reuses `starlette.middleware.sessions.Session` for its dict-like
+  `scope["session"]`, and that module imports `itsdangerous` at module level, so
+  the middleware could never be constructed without it — the extra only moved
+  the failure from install time to runtime.
 - A cache hit now replays the status code and the headers the handler produced,
   instead of always returning `200` with no headers. Entries written by earlier
   versions are still readable and replay as `200`.
@@ -85,7 +109,7 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   reports every entry as never expiring because `get_cache_data()` returns no
   TTL.
 - `docs/SESSION.md` states that `SessionMiddleware` is deprecated since 0.3.1
-  and will be removed in 0.3.5, and that cookie transport is provided only by
+  and will be removed in 0.4.0, and that cookie transport is provided only by
   `FastAPICacheXSessionMiddleware`.
 
 ### Testing
@@ -98,6 +122,26 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   live-server suite fail the run. Opting in kept a stray `pytest` from wiping a
   developer's data, but it also meant a mistyped port silently dropped those
   suites while coverage stayed near 97% and the job went green.
+
+### Release process
+
+- Releases are cut by one workflow instead of two. `publish.yml` (patch) and
+  `release.yml` (minor) were the same steps twice over, so which part of the
+  version a release moved depended on which Actions page was opened; `Release`
+  now takes the bump as an input, with an exact version as an override.
+- The GitHub release notes are this file's `## [Unreleased]` section, promoted
+  by `scripts/changelog_release.py`, rather than a list of commit subjects. A
+  release with an empty `## [Unreleased]` stops instead of publishing notes
+  that say nothing; the commit list is still reachable through the compare
+  link at the end of the notes.
+- The release runs the full test suite — including the Redis and Memcached
+  suites, which cannot skip there — before it writes, tags or publishes
+  anything, and refuses a version that is already tagged.
+- The release can be rehearsed: dispatching it with `dry_run` runs the gate,
+  the version bump, the changelog promotion and the build, then stops short of
+  the four steps that commit, tag, release and publish. The release notes and
+  the built distributions are attached to the run so they can be inspected
+  before the real thing.
 
 ## [0.3.4] - 2026-09-05
 

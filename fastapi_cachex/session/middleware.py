@@ -10,6 +10,7 @@ from fastapi import Response
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
+from starlette.middleware.sessions import Session as StarletteSession
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp
 from starlette.types import Message
@@ -23,12 +24,6 @@ from .manager import SessionManager
 from .proxy import SessionManagerProxy
 
 if TYPE_CHECKING:
-    # starlette.middleware.sessions unconditionally imports itsdangerous, an
-    # optional dependency (fastapi-cachex[starlette]) only needed at runtime by
-    # FastAPICacheXSessionMiddleware; import it lazily there instead (see its
-    # __init__) so the rest of this module doesn't require it.
-    from starlette.middleware.sessions import Session as StarletteSession
-
     from .models import Session
 
 logger = logging.getLogger(__name__)
@@ -143,7 +138,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
     .. deprecated:: 0.3.1
         Use :class:`FastAPICacheXSessionMiddleware` instead. Will be removed in
-        version 0.3.5.
+        version 0.4.0.
     """
 
     def __init__(
@@ -161,7 +156,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         """
         warnings.warn(
             "SessionMiddleware is deprecated, use FastAPICacheXSessionMiddleware. "
-            "Will be removed in version 0.3.5.",
+            "Will be removed in version 0.4.0.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -282,16 +277,6 @@ class FastAPICacheXSessionMiddleware:
             session_manager: Session manager instance
             config: Session configuration
         """
-        try:
-            from starlette.middleware.sessions import Session as _StarletteSession
-        except ImportError as e:
-            msg = (
-                "FastAPICacheXSessionMiddleware requires itsdangerous; "
-                "install fastapi-cachex[starlette]"
-            )
-            raise ImportError(msg) from e
-        self._session_cls: type[StarletteSession] = _StarletteSession
-
         self.app = app
         self.session_manager = session_manager or SessionManagerProxy.get()
         self.config = config or self.session_manager.config
@@ -348,16 +333,16 @@ class FastAPICacheXSessionMiddleware:
                     user_agent=user_agent,
                 )
                 loaded_token = renewed_token or token_value
-                scope["session"] = self._session_cls(backend_session.data)
+                scope["session"] = StarletteSession(backend_session.data)
                 initial_session_was_empty = not backend_session.data
             except SessionError:
                 logger.debug(
                     "FastAPICacheXSessionMiddleware: token invalid/expired; "
                     "starting empty session",
                 )
-                scope["session"] = self._session_cls()
+                scope["session"] = StarletteSession()
         else:
-            scope["session"] = self._session_cls()
+            scope["session"] = StarletteSession()
 
         scope.setdefault("state", {})["__fastapi_cachex_session"] = backend_session
 
@@ -429,7 +414,7 @@ class FastAPICacheXSessionMiddleware:
 
     async def _write_session(
         self,
-        session: "StarletteSession",
+        session: StarletteSession,
         connection: HTTPConnection,
         backend_session: "Session | None",
         loaded_token: str | None,

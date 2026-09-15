@@ -9,11 +9,11 @@ Token 的**傳輸方式取決於你掛哪一個 middleware**：
 | Middleware | Token 來源 | 回應側 | 狀態 |
 |------------|-----------|--------|------|
 | `FastAPICacheXSessionMiddleware` | 自訂 Header（預設 `X-Session-Token`）／`Authorization: Bearer`／**Cookie**（預設名稱 `session`） | 依來源分流：Header 進來就回 Header，Cookie 進來（或全新 Session）就 `Set-Cookie` | **建議使用** |
-| `SessionMiddleware` | 自訂 Header／`Authorization: Bearer`，**不支援 Cookie** | 續期 Token 以回應 Header 回送 | 已 deprecated，**0.3.5 移除** |
+| `SessionMiddleware` | 自訂 Header／`Authorization: Bearer`，**不支援 Cookie** | 續期 Token 以回應 Header 回送 | 已 deprecated，**0.4.0 移除** |
 
 **新專案請一律使用 `FastAPICacheXSessionMiddleware`。** 它涵蓋 `SessionMiddleware` 的
 全部傳輸方式（同樣讀 `X-Session-Token` 與 `Authorization: Bearer`），額外支援 Cookie；
-`SessionMiddleware` 自 0.3.1 起建構時就會發出 `DeprecationWarning`，並將在 **0.3.5 移除**。
+`SessionMiddleware` 自 0.3.1 起建構時就會發出 `DeprecationWarning`，並將在 **0.4.0 移除**。
 兩者的 Session 依賴項（`get_session`、`get_optional_session`、`require_session`）完全相同，
 遷移通常只需要換掉 `add_middleware` 的那一行，既有以 Header 傳 token 的客戶端不必改動。
 
@@ -81,7 +81,7 @@ config = SessionConfig(
 backend = MemoryBackend()
 session_manager = SessionManager(backend, config)
 
-# 新增 Session Middleware（SessionMiddleware 已 deprecated，將於 0.3.5 移除）
+# 新增 Session Middleware（SessionMiddleware 已 deprecated，將於 0.4.0 移除）
 app.add_middleware(
     FastAPICacheXSessionMiddleware,
     session_manager=session_manager,
@@ -295,7 +295,7 @@ def get_user_roles(username: str) -> list[str]:
 ## Migration: SessionMiddleware → FastAPICacheXSessionMiddleware
 
 `SessionMiddleware` 已自 0.3.1 版本起標記為 deprecated（建構時會發出
-`DeprecationWarning`），並將在 0.3.5 版本移除，請改用
+`DeprecationWarning`），並將在 0.4.0 版本移除，請改用
 `FastAPICacheXSessionMiddleware`：
 
 - **`SessionMiddleware`**（`BaseHTTPMiddleware`）：透過自訂 Header（預設
@@ -375,7 +375,7 @@ SessionConfig(
 讀 Header/Bearer，都沒有才回退到 Cookie。這是刻意的：回應側要依 Token 的來源分流
 （Header 進來就回 Header、Cookie 進來就 `Set-Cookie`），把 Cookie 混進同一份優先序
 會讓「只填 `["cookie"]`」在已 deprecated 的 `SessionMiddleware` 上變成無聲失效。
-待 0.3.5 移除 `SessionMiddleware` 後，三種來源可望統一由同一份優先序描述。
+待 0.4.0 移除 `SessionMiddleware` 後，三種來源可望統一由同一份優先序描述。
 
 **Header/Bearer 客戶端**應將 token 儲存在 `localStorage` 或 `sessionStorage`，並於請求時以
 `Authorization: Bearer <token>` 或 `X-Session-Token: <token>` 傳送。**Cookie 客戶端**（瀏覽器）

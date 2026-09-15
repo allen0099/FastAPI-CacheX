@@ -26,6 +26,7 @@ classifiers = [
 keywords = ["fastapi", "cache", "etag", "cache-control", "redis", "memcached", "in-memory"]
 dependencies = [
     "fastapi",
+    "itsdangerous",
     "pydantic",
 ]
 
@@ -38,7 +39,6 @@ Issues = "https://github.com/allen0099/FastAPI-CacheX/issues"
 dev = [
     "coverage>=7.8.0",
     "httpx>=0.28.1",
-    "itsdangerous",
     "mypy>=1.15.0",
     "orjson>=3.10.16",
     "pre-commit>=4.2.0",
@@ -60,7 +60,6 @@ dev = [
 memcache = ["pymemcache"]
 redis = ["redis[hiredis]>=5.3.0", "orjson"]
 jwt = ["PyJWT>=2.9.0"]
-starlette = ["itsdangerous"]
 
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]
@@ -101,6 +100,7 @@ force-single-line = true
 keep-runtime-typing = true
 
 [tool.ruff.lint.per-file-ignores]
+"scripts/**" = ["INP001"]  # Standalone tooling, not an importable package
 "tests/**" = [
     "D",
     "S101",
@@ -122,7 +122,6 @@ keep-runtime-typing = true
 "fastapi_cachex/backends/redis.py" = ["PLR0913", "PLC0415"]  # Optional dependency, Redis config
 "fastapi_cachex/proxy.py" = ["PLW0603"]  # Global backend management by design
 "fastapi_cachex/session/manager.py" = ["PLR0915"]  # Session/security validation branches needed
-"fastapi_cachex/session/middleware.py" = ["PLC0415"]  # Optional dependency (itsdangerous)
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -136,7 +135,7 @@ exclude = [
 convention = "google"
 
 [tool.coverage.run]
-source = ["fastapi_cachex"]
+source = ["fastapi_cachex", "scripts"]
 omit = ["tests/*"]
 branch = true
 

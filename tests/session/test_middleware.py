@@ -613,3 +613,37 @@ def test_bearer_source_is_skipped_when_bearer_tokens_are_disabled() -> None:
     )
 
     assert token is None
+
+
+def test_an_unknown_source_is_skipped_rather_than_read_as_a_bearer_token() -> None:
+    """The chain ends in an `elif`, not an `else`, and this is why.
+
+    `token_source_priority` is a list of Literals, so pydantic refuses an
+    unknown source at construction and no caller can reach this through the
+    public API. Nothing revalidates the list afterwards, though, and the
+    branch exists for the maintainer who adds a third source to the Literal
+    and forgets this function: it must fall through, not inherit whatever the
+    last branch happens to do. Mutating the list in place is the only way to
+    stand where that maintainer will stand.
+    """
+    config = SessionConfig(secret_key="a" * 32)
+    config.token_source_priority[:] = ["cookie"]  # type: ignore[list-item]
+
+    token = _extract_header_token(
+        _connection({"Authorization": "Bearer from-bearer"}), config
+    )
+
+    assert token is None
+
+
+def test_a_known_source_after_an_unknown_one_is_still_honoured(
+    config: SessionConfig,
+) -> None:
+    """Falling through must continue the chain, not abandon it."""
+    config.token_source_priority[:] = ["cookie", "header"]  # type: ignore[list-item]
+
+    token = _extract_header_token(
+        _connection({config.header_name: "from-header"}), config
+    )
+
+    assert token == "from-header"
