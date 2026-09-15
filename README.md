@@ -36,7 +36,7 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 - IP address and User-Agent binding (optional security features)
 - Header, bearer token and cookie transports (cookies via
   `FastAPICacheXSessionMiddleware`; the older `SessionMiddleware` is deprecated
-  and removed in 0.3.5 — see [Session Management Guide](docs/SESSION.md))
+  and removed in 0.4.0 — see [Session Management Guide](docs/SESSION.md))
 - Automatic session renewal (sliding expiration)
 - Flash messages for cross-request communication
 - Multiple backend support (Redis, Memcached, In-Memory)

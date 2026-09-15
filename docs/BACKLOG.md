@@ -36,7 +36,7 @@ alongside the existing fetch, which must stay a single round-trip.
 is read solely by `FastAPICacheXSessionMiddleware`, and the response side is a
 binary decision driven by the token's source; folding cookies into the same
 priority list would let `["cookie"]` fail silently on the deprecated
-`SessionMiddleware`. Once 0.3.5 removes that class, one priority list can
+`SessionMiddleware`. Once 0.4.0 removes that class, one priority list can
 describe all three sources. See [SESSION.md](SESSION.md).
 
 ### `get_app_cache` can race on the very first request
@@ -78,4 +78,6 @@ dropping the payload.
 available through `get_and_delete()` instead. Returning whether anything was
 deleted is the better signature, and 0.4.0 is when it can change. The same
 release should drop `BackendProxy.get_backend()`/`set_backend()`, already marked
-for removal in 0.4.0.
+for removal in 0.4.0, and remove the deprecated `SessionMiddleware`, whose
+removal moved here from 0.3.5 because a patch release cannot drop an exported
+public class.

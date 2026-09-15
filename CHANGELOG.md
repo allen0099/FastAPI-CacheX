@@ -45,6 +45,16 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   subsystem (`StateManager`, one-shot `consume_state()`, the dependency
   injection helpers).
 
+### Deprecated
+
+- `SessionMiddleware` is now scheduled for removal in 0.4.0 rather than 0.3.5.
+  Nothing about the class changes — it has emitted a `DeprecationWarning` since
+  0.3.1 and still does — but 0.3.5 is a patch release, and removing an exported
+  public class in a patch release is a breaking change no matter how small the
+  migration is. The runtime warning, the docstring and the guides all name
+  0.4.0 now, which is where `delete()` returning `bool` and the removal of
+  `BackendProxy.get_backend()`/`set_backend()` were already scheduled.
+
 ### Removed
 
 - The `starlette` extra. `itsdangerous` is a base dependency now, so
@@ -96,7 +106,7 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   reports every entry as never expiring because `get_cache_data()` returns no
   TTL.
 - `docs/SESSION.md` states that `SessionMiddleware` is deprecated since 0.3.1
-  and will be removed in 0.3.5, and that cookie transport is provided only by
+  and will be removed in 0.4.0, and that cookie transport is provided only by
   `FastAPICacheXSessionMiddleware`.
 
 ### Testing

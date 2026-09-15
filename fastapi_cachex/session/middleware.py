@@ -138,7 +138,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
     .. deprecated:: 0.3.1
         Use :class:`FastAPICacheXSessionMiddleware` instead. Will be removed in
-        version 0.3.5.
+        version 0.4.0.
     """
 
     def __init__(
@@ -156,7 +156,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         """
         warnings.warn(
             "SessionMiddleware is deprecated, use FastAPICacheXSessionMiddleware. "
-            "Will be removed in version 0.3.5.",
+            "Will be removed in version 0.4.0.",
             DeprecationWarning,
             stacklevel=2,
         )
