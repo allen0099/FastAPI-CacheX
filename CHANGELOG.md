@@ -15,6 +15,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-09-15
+
 ### Security
 
 - `SessionMiddleware` no longer trusts `X-Forwarded-For`/`X-Real-IP` by default.
@@ -194,7 +196,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.2...v0.3.4
 [0.3.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.0...v0.3.1
