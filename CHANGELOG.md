@@ -57,16 +57,19 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Removed
 
-- The `starlette` extra. `itsdangerous` is a base dependency now, so
+- The `starlette` extra. All it ever pulled in was `itsdangerous`, which is a
+  base dependency now, so the extra adds nothing. Installing
+  `fastapi-cachex[starlette]` still resolves — an unknown extra is a warning,
+  not an error — it simply has no effect.
+
+### Changed
+
+- `itsdangerous` is a required dependency rather than an extra, so
   `FastAPICacheXSessionMiddleware` works on a plain `pip install fastapi-cachex`.
   It reuses `starlette.middleware.sessions.Session` for its dict-like
   `scope["session"]`, and that module imports `itsdangerous` at module level, so
   the middleware could never be constructed without it — the extra only moved
-  the failure to runtime. Installing `fastapi-cachex[starlette]` still resolves
-  (an unknown extra is a warning, not an error), it simply adds nothing.
-
-### Changed
-
+  the failure from install time to runtime.
 - A cache hit now replays the status code and the headers the handler produced,
   instead of always returning `200` with no headers. Entries written by earlier
   versions are still readable and replay as `200`.
