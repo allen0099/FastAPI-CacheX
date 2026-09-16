@@ -23,7 +23,7 @@ repos:
       - id: end-of-file-fixer
       - id: mixed-line-ending
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.7
+    rev: v0.16.8
     hooks:
       - id: ruff
         name: Lint with ruff
@@ -31,11 +31,11 @@ repos:
       - id: ruff-format
         name: Format with ruff
   - repo: https://github.com/crate-ci/typos
-    rev: v1.50.1
+    rev: v1.50.2
     hooks:
       - id: typos
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.12.13
+    rev: 0.12.15
     hooks:
       - id: uv-lock
         name: Update uv lockfile
