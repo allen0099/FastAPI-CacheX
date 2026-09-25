@@ -42,6 +42,8 @@ class CacheManager:
                 without an explicit ttl. None means no expiry by default.
 
         Raises:
+            BackendNotFoundError: If ``backend`` is None and no backend has
+                been set with ``BackendProxy.set()``.
             ValueError: If ``default_ttl`` is zero or negative.
         """
         self.backend = backend if backend is not None else BackendProxy.get()

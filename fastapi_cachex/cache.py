@@ -437,24 +437,45 @@ def cache(
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
+    Only GET requests go through the cache; other methods run the handler
+    unchanged.
+
     Args:
-        ttl: Time-to-live in seconds for cache entries, sent as ``max-age``.
+        ttl: How long, in seconds, a stored response may be served without
+            running the handler. The same value is sent as ``max-age``.
             ``ttl=0`` sends ``max-age=0`` and, like ``None``, keeps the entry
             only for ETag revalidation: the body is never served from the
             cache, but a matching ``If-None-Match`` still gets a 304. Negative
             values are rejected.
-        stale_ttl: Additional time-to-live for stale cache entries
-        stale: Stale response handling strategy ('error' or 'revalidate')
-        no_cache: Whether to disable caching
-        no_store: Whether to prevent storing responses
-        public: Whether responses can be cached by shared caches
-        private: Whether responses are for single user only
-        immutable: Whether cached responses never change
-        must_revalidate: Whether to force revalidation when stale
-        key_builder: Custom function to build cache keys. If None, uses default_key_builder
+        stale_ttl: Seconds sent with the directive chosen by ``stale``. It only
+            shapes the ``Cache-Control`` header; the backend entry still
+            expires after ``ttl``. Must be given together with ``stale``.
+        stale: ``"revalidate"`` sends ``stale-while-revalidate=<stale_ttl>``,
+            ``"error"`` sends ``stale-if-error=<stale_ttl>``.
+        no_cache: Run the handler on every request and send ``no-cache``. The
+            response is still stored and ``If-None-Match`` still gets a 304
+            when it matches the fresh ETag. The header then carries only
+            ``no-cache`` (plus ``must-revalidate`` when set); ``ttl``,
+            ``stale``, ``public``/``private`` and ``immutable`` are left out.
+        no_store: Run the handler, store nothing, and send ``no-store``. Takes
+            precedence over every other option.
+        public: Send ``public``. Mutually exclusive with ``private``.
+        private: Send ``private`` and bypass the shared backend entirely: the
+            handler runs on every request and nothing is read or stored. ETag
+            revalidation still works against the freshly rendered response.
+            Mutually exclusive with ``public``.
+        immutable: Send ``immutable``.
+        must_revalidate: Send ``must-revalidate``.
+        key_builder: Custom function to build cache keys. If None, uses
+            ``default_key_builder``.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
+
+    Raises:
+        CacheXError: When the decorator is applied, if ``stale`` and
+            ``stale_ttl`` are not given together, if ``public`` and
+            ``private`` are both set, or if ``ttl`` is negative.
     """
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:

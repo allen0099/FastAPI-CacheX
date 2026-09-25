@@ -179,7 +179,9 @@ uv run mypy fastapi_cachex --strict
 
 - Make sure all functions have type annotations
 - Use `Type | None` for parameters that could be None (the codebase uses PEP 604 unions, not `Optional`)
-- Use `from __future__ import annotations` for forward references
+- Write forward references as quoted annotations (`"SessionManager"`), importing the name under
+  `if TYPE_CHECKING:` when it is only needed for typing. Most modules do this; only a couple use
+  `from __future__ import annotations`
 - Keep `fastapi_cachex/py.typed` in place; it is what makes the installed package typed for users
   (it is listed under `[tool.uv.build-backend] include` in `pyproject.toml`)
 
