@@ -352,6 +352,29 @@ class TestCachedRecordsRoute:
         record = data["cached_records"][0]
         assert len(record["content_preview"]) == 100
 
+    def test_cached_records_can_omit_content_preview(self, app, client, setup_cache):
+        """include_content_preview=False hides bodies but keeps the metadata."""
+        add_routes(app, include_content_preview=False)
+
+        @app.get("/api/secret")
+        @cache(ttl=60)
+        async def get_secret():
+            return Response(
+                content=b'{"token": "s3cr3t"}', media_type="application/json"
+            )
+
+        client.get("/api/secret")
+
+        response = client.get("/cached-records")
+        assert response.status_code == 200
+        (record,) = response.json()["cached_records"]
+        assert record["content_preview"] is None
+        assert "s3cr3t" not in response.text
+        # Everything but the body is still reported.
+        assert record["path"] == "/api/secret"
+        assert record["content_size"] == len(b'{"token": "s3cr3t"}')
+        assert record["ttl_remaining"] is not None
+
     def test_cached_records_summary_calculations(self, app, client, setup_cache):
         """Test that summary calculations are correct."""
         add_routes(app)

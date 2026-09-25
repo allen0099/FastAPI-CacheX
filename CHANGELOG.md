@@ -22,6 +22,9 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   prefix, JSON encoding and `default_ttl` as `set()`, and runs on the
   backend's atomic `set_if_absent`, so of several concurrent callers exactly
   one wins — for "send this webhook once" style deduplication. ([#65](https://github.com/allen0099/FastAPI-CacheX/issues/65))
+- `add_routes(..., include_content_preview=False)` leaves response bodies out
+  of `/cached-records`: `content_preview` is `null`, while keys, sizes and expiry
+  are still reported. The default stays `True`. ([#79](https://github.com/allen0099/FastAPI-CacheX/issues/79))
 
 ### Fixed
 
