@@ -35,6 +35,23 @@ def warn_if_path_shaped(pattern: str, cleared: int) -> None:
         )
 
 
+def validate_ttl(ttl: int | None) -> int | None:
+    """Return ``ttl`` if it is ``None`` or a positive number of seconds.
+
+    Every backend reads ``0`` or a negative TTL differently (Memcached treats
+    ``0`` as "never expires", Redis rejects it, the memory backend expires the
+    entry at once), so the library refuses them instead of letting the
+    meaning depend on the backend. ``None`` is the way to say "no expiry".
+
+    Raises:
+        ValueError: If ``ttl`` is zero or negative
+    """
+    if ttl is not None and ttl <= 0:
+        msg = f"ttl must be a positive number of seconds or None, got {ttl!r}"
+        raise ValueError(msg)
+    return ttl
+
+
 class BaseCacheBackend(ABC):
     """Base class for all cache backends."""
 
@@ -44,7 +61,12 @@ class BaseCacheBackend(ABC):
 
     @abstractmethod
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
-        """Store a response in the cache."""
+        """Store a response in the cache.
+
+        ``ttl`` is ``None`` (never expires) or a positive number of seconds;
+        implementations should pass it through ``validate_ttl`` so zero and
+        negative values are rejected the same way on every backend.
+        """
 
     @abstractmethod
     async def delete(self, key: str) -> None:
@@ -106,6 +128,7 @@ class BaseCacheBackend(ABC):
         Returns:
             Whether ``value`` was stored
         """
+        validate_ttl(ttl)
         if await self.get(key) is not None:
             return False
         await self.set(key, value, ttl=ttl)
@@ -161,6 +184,7 @@ class BaseCacheBackend(ABC):
         Raises:
             CacheXError: If ``key`` holds a cached response instead of a counter
         """
+        validate_ttl(ttl)
         current = await self.get(key)
         value = delta if current is None else counter_value(current) + delta
         await self.set(key, counter_entry(value), ttl=ttl)

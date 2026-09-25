@@ -438,7 +438,11 @@ def cache(
     """Cache decorator for FastAPI route handlers.
 
     Args:
-        ttl: Time-to-live in seconds for cache entries
+        ttl: Time-to-live in seconds for cache entries, sent as ``max-age``.
+            ``ttl=0`` sends ``max-age=0`` and, like ``None``, keeps the entry
+            only for ETag revalidation: the body is never served from the
+            cache, but a matching ``If-None-Match`` still gets a 304. Negative
+            values are rejected.
         stale_ttl: Additional time-to-live for stale cache entries
         stale: Stale response handling strategy ('error' or 'revalidate')
         no_cache: Whether to disable caching
@@ -463,6 +467,9 @@ def cache(
             raise CacheXError(msg)
         if public and private:
             msg = "public and private are mutually exclusive"
+            raise CacheXError(msg)
+        if ttl is not None and ttl < 0:
+            msg = "ttl must not be negative"
             raise CacheXError(msg)
 
         # Analyze the original function's signature
@@ -541,6 +548,10 @@ def cache(
         # The header only depends on the decorator arguments, so build it once.
         cache_control = build_cache_control()
         builder = key_builder or default_key_builder
+        # `max-age=0` is a legal header, but backends disagree on what a zero
+        # TTL means, so such an entry is stored like `ttl=None`: kept only to
+        # answer ETag revalidation, never served directly.
+        store_ttl = ttl or None
 
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:
@@ -638,7 +649,7 @@ def cache(
 
             # If we don't have If-None-Match header, check if we have a valid cached copy
             # and can serve it directly (cache hit without ETag comparison)
-            if cached_data and not no_cache and ttl is not None:
+            if cached_data and not no_cache and store_ttl is not None:
                 logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
                 return Response(
                     content=cached_data.content,
@@ -687,7 +698,7 @@ def cache(
                         status_code=current_response.status_code,
                         headers=_cacheable_headers(current_response),
                     ),
-                    ttl=ttl,
+                    ttl=store_ttl,
                 )
                 logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
 

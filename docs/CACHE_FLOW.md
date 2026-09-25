@@ -113,9 +113,10 @@ The header value is built once per decorated route:
 | anything else | in order: `public` or `private`, `max-age=<ttl>`, `must-revalidate`, `stale-while-revalidate=<n>` or `stale-if-error=<n>`, `immutable` |
 
 > [!NOTE]
-> Without `ttl`, an entry is still written (with no expiry) but is never served
-> directly: it is only used to answer a matching `If-None-Match` with `304`. Set
-> `ttl` to have the server replay cached responses.
+> Without `ttl` (or with `ttl=0`, which sends `max-age=0`), an entry is still
+> written (with no expiry) but is never served directly: it is only used to
+> answer a matching `If-None-Match` with `304`. Set a positive `ttl` to have the
+> server replay cached responses.
 
 > [!WARNING]
 > **The default cache key does not include the user's identity**, and the backend
