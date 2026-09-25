@@ -91,6 +91,41 @@ class CacheManager:
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
 
+    async def add(self, key: str, value: Any, ttl: int | None = None) -> bool:
+        """Store ``value`` only when ``key`` does not already exist.
+
+        Same key prefix, JSON encoding and ``default_ttl`` handling as
+        ``set()``. Delegates to ``backend.set_if_absent`` so the claim is
+        atomic on Memory, Redis and Memcached.
+
+        Args:
+            key: Logical cache key (without the manager's prefix).
+            value: A JSON-serializable Python value.
+            ttl: Time-to-live in seconds. If None, uses ``self.default_ttl``
+                (which itself defaults to no expiry).
+
+        Returns:
+            True if the value was stored, False if ``key`` already existed.
+
+        Raises:
+            TypeError: If ``value`` is not JSON-serializable.
+        """
+        effective_ttl = ttl if ttl is not None else self.default_ttl
+
+        json_content = json.dumps(value)
+        fingerprint = hashlib.sha256(json_content.encode()).hexdigest()
+        entry = CacheEntry(
+            fingerprint=fingerprint, content=json_content.encode("utf-8")
+        )
+
+        stored = await self.backend.set_if_absent(
+            self._cache_key(key), entry, ttl=effective_ttl
+        )
+        logger.debug(
+            "Cache ADD; key=%s ttl=%s stored=%s", key, effective_ttl, stored
+        )
+        return stored
+
     async def delete(self, key: str) -> bool:
         """Remove a value from the cache.
 

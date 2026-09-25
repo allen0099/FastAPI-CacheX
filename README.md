@@ -229,6 +229,9 @@ await manager.clear_prefix()  # clear everything under "myapp:"
 # undecodable. It may be sync or async.
 profile = await manager.get_or_set("user:42", lambda: load_user(42), ttl=300)
 
+# Store only if the key is still free (atomic on Memory, Redis, Memcached).
+claimed = await manager.add("webhook:evt-123", True, ttl=86400)
+
 # Glob over this manager's namespace, using the backend's native pattern
 # support (Redis SCAN) rather than enumerating every key.
 await manager.clear_pattern("user:*")  # matches "myapp:user:*"
@@ -244,7 +247,7 @@ entries.
 **Note**: `clear()`/`clear_prefix()` are implemented via the backend's
 `get_all_keys()` and `delete_many()` (one batched `DEL` on Redis). Since Memcached doesn't support key enumeration (see
 [Memcached limitations](#memcached)), these two methods are no-ops on a
-Memcached backend — `get()`/`set()`/`delete()`/`has()` work normally. Use
+Memcached backend — `get()`/`set()`/`add()`/`delete()`/`has()` work normally. Use
 Redis or the in-memory backend if you need bulk clearing.
 
 ## Backend Configuration

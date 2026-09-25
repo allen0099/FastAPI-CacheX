@@ -409,6 +409,46 @@ async def test_set_non_json_serializable_raises_type_error(
         await cache_manager.set("key", {1, 2, 3})
 
 
+# --- add (store-if-absent) ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_stores_when_key_absent(cache_manager: CacheManager) -> None:
+    """add() stores a value and returns True when the key is free."""
+    assert await cache_manager.add("once", {"event": 1}) is True
+    assert await cache_manager.get("once") == {"event": 1}
+
+
+@pytest.mark.asyncio
+async def test_add_does_not_overwrite_existing_key(
+    cache_manager: CacheManager,
+) -> None:
+    """add() returns False and leaves the original value when the key exists."""
+    await cache_manager.set("once", "first")
+    assert await cache_manager.add("once", "second") is False
+    assert await cache_manager.get("once") == "first"
+
+
+@pytest.mark.asyncio
+async def test_add_honors_default_ttl(memory_backend: MemoryBackend) -> None:
+    """add() without an explicit ttl uses the manager's default_ttl."""
+    BackendProxy.set(memory_backend)
+    manager = CacheManager(default_ttl=1)
+    assert await manager.add("key", "value") is True
+    assert await manager.get("key") == "value"
+    await asyncio.sleep(1.2)
+    assert await manager.get("key") is None
+
+
+@pytest.mark.asyncio
+async def test_add_non_json_serializable_raises_type_error(
+    cache_manager: CacheManager,
+) -> None:
+    """add() propagates TypeError for a non-JSON-serializable value."""
+    with pytest.raises(TypeError):
+        await cache_manager.add("key", {1, 2, 3})
+
+
 @pytest.mark.asyncio
 async def test_get_with_corrupted_backend_content_returns_default(
     memory_backend: MemoryBackend,

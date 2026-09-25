@@ -17,6 +17,11 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Added
 
+- `CacheManager.add(key, value, ttl=None) -> bool` stores a JSON-serializable
+  application value only when the key is free, using the same prefix,
+  encoding and `default_ttl` as `set()`, and delegating to
+  `backend.set_if_absent` so the claim is atomic on Memory, Redis and
+  Memcached. ([#65](https://github.com/allen0099/FastAPI-CacheX/issues/65))
 - `BaseCacheBackend.set_if_absent(key, value, ttl=None) -> bool` and
   `delete_if_equals(key, expected) -> bool`, the atomic pair for locks and
   per-user slots: claim a key only when it is free, and release it only while
