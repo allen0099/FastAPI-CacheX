@@ -264,13 +264,16 @@ class MemcachedBackend(BaseCacheBackend):
     async def clear(self) -> None:
         """Clear all values from cache.
 
-        Note: Memcached's flush_all affects the entire server.
-        Consider using clear_path() with your specific keys instead.
+        Note: Memcached's flush_all affects the entire server, including
+        other applications' keys. Memcached cannot enumerate keys, so there
+        is no way to clear only this namespace; delete keys you know by name
+        with ``delete()``/``delete_many()`` instead.
         """
         warnings.warn(
             "Memcached.clear() flushes ALL cached data from the server, "
-            "affecting other applications. Consider using clear_path() instead "
-            "to selectively remove only this namespace's keys.",
+            "affecting other applications. Memcached cannot enumerate keys, so "
+            "this namespace cannot be cleared on its own; delete known keys "
+            "with delete() or delete_many() instead.",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -280,14 +283,15 @@ class MemcachedBackend(BaseCacheBackend):
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
 
-        Note: Memcached does not support pattern-based queries.
-        This method can only delete keys if the exact key is provided,
-        or will try to match keys in memory if include_params=True.
-        For better pattern support, consider using Redis backend.
+        Note: Memcached does not support pattern-based queries, so this
+        only deletes the key that is exactly ``path``. HTTP route keys
+        (``method|||host|||path|||query``) are not matched. For path-based
+        clearing, use the Redis or memory backend.
 
         Args:
-            path: The path to clear cache for
-            include_params: Currently unsupported (Memcached limitation)
+            path: The exact key to delete
+            include_params: Unsupported; emits a ``RuntimeWarning`` and is
+                otherwise ignored
 
         Returns:
             Number of cache entries cleared (0 or 1 for exact match only)

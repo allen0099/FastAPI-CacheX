@@ -402,8 +402,10 @@ class SessionManager:
     async def _iter_sessions(self) -> AsyncIterator[tuple[str, Session]]:
         """Yield every readable session under this manager's prefix with its key.
 
-        Backends without key enumeration (which raise NotImplementedError)
-        simply yield nothing.
+        Backends that cannot enumerate keys yield nothing: the built-in
+        Memcached backend returns ``[]`` from ``get_all_keys()`` with a
+        ``RuntimeWarning``, and a custom backend may raise
+        ``NotImplementedError`` instead.
         """
         try:
             all_keys = await self.backend.get_all_keys()

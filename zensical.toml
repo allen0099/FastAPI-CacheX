@@ -87,6 +87,11 @@ md_in_html = {}
 tables = {}
 toc.permalink = true
 pymdownx.details = {}
+# Turn `:white_check_mark:`-style shortcodes (rendered natively on GitHub)
+# into the Unicode characters on the site as well, without loading images
+# from a CDN.
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.emoji.emoji_generator = "pymdownx.emoji.to_alt"
 pymdownx.highlight.anchor_linenums = true
 pymdownx.highlight.line_spans = "__span"
 pymdownx.highlight.pygments_lang_class = true

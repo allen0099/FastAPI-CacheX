@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse
 
 from fastapi_cachex import BackendProxy
 from fastapi_cachex.backends import MemoryBackend
-from fastapi_cachex.state import InvalidStateError, StateExpiredError, StateManagerDep
+from fastapi_cachex.state import StateError, StateManagerDep
 
 app = FastAPI()
 BackendProxy.set(MemoryBackend())
@@ -38,7 +38,7 @@ async def login(states: StateManagerDep):
 async def callback(state: str, code: str, states: StateManagerDep):
     try:
         data = await states.consume_state(state)  # one-time: deleted on retrieval
-    except (InvalidStateError, StateExpiredError) as e:
+    except StateError as e:  # unknown, expired or malformed state
         raise HTTPException(status_code=400, detail="Invalid state") from e
 
     # Exchange the code for tokens, create a session ...
