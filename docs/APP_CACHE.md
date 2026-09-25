@@ -28,6 +28,10 @@ await manager.clear_prefix()  # clear everything under "myapp:"
 # undecodable. It may be sync or async.
 profile = await manager.get_or_set("user:42", lambda: load_user(42), ttl=300)
 
+# Store only if the key is free: of concurrent callers exactly one gets True.
+if await manager.add(f"webhook:{event_id}", True, ttl=86400):
+    await deliver_webhook(event_id)
+
 # Glob over this manager's namespace, using the backend's native pattern
 # support (Redis SCAN) rather than enumerating every key.
 await manager.clear_pattern("user:*")  # matches "myapp:user:*"
@@ -40,6 +44,11 @@ await manager.clear_pattern("user:*")  # matches "myapp:user:*"
 - `set()` lets `TypeError` propagate for values that are not JSON-serializable.
 - `get_or_set()` provides no stampede protection: concurrent misses for the same
   key each run `factory`.
+- `add()` stores a value only when the key is free and returns whether it did.
+  The check and the write are one atomic backend operation (`set_if_absent`),
+  so it suits "do this once per key" work such as webhook or email
+  deduplication. An expired key counts as free; a key holding an undecodable
+  value does not, even though `get()` treats it as a miss.
 - Keys live under their own `cache:`-prefixed namespace by default, separate from
   the HTTP route cache and OAuth state, so `clear()`/`clear_prefix()` never touch
   unrelated cache entries.
@@ -51,7 +60,7 @@ await manager.clear_pattern("user:*")  # matches "myapp:user:*"
 > and `delete_many()` (one batched `DEL` on Redis). Since Memcached doesn't
 > support key enumeration (see [Backends](BACKENDS.md#memcached)), these
 > methods — and `clear_pattern()` — are no-ops on a Memcached backend;
-> `get()`/`set()`/`delete()`/`has()` work normally. Use Redis or the in-memory
+> `get()`/`set()`/`add()`/`delete()`/`has()` work normally. Use Redis or the in-memory
 > backend if you need bulk clearing.
 
 The full method list is in the [API reference](api/cache-manager.md).

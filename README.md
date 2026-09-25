@@ -23,7 +23,7 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 - **HTTP caching** — a `@cache` decorator for GET routes with `Cache-Control`,
   `ETag` / `If-None-Match` (304) and per-route invalidation.
 - **Application cache** — `CacheManager` for caching arbitrary JSON values in
-  your own code, with compute-on-miss `get_or_set()`.
+  your own code, with compute-on-miss `get_or_set()` and atomic store-if-absent `add()`.
 - **Backends** — in-memory, Redis and Memcached, with atomic counters,
   one-shot values and locks.
 - **Sessions (optional)** — HMAC-signed or JWT session tokens over headers,

@@ -17,6 +17,16 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Added
 
+- `CacheManager.add(key, value, ttl=None) -> bool` stores an application value
+  only when the key is free and reports whether it did. It uses the same key
+  prefix, JSON encoding and `default_ttl` as `set()`, and runs on the
+  backend's atomic `set_if_absent`, so of several concurrent callers exactly
+  one wins — for "send this webhook once" style deduplication. ([#65](https://github.com/allen0099/FastAPI-CacheX/issues/65))
+
+## [0.3.6] - 2026-09-25
+
+### Added
+
 - `BaseCacheBackend.set_if_absent(key, value, ttl=None) -> bool` and
   `delete_if_equals(key, expected) -> bool`, the atomic pair for locks and
   per-user slots: claim a key only when it is free, and release it only while
@@ -244,7 +254,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.2...v0.3.4
 [0.3.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.1...v0.3.2

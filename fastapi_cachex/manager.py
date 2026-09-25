@@ -47,6 +47,12 @@ class CacheManager:
     def _cache_key(self, key: str) -> str:
         return f"{self.key_prefix}{key}"
 
+    @staticmethod
+    def _encode(value: Any) -> CacheEntry:
+        json_content = json.dumps(value)
+        fingerprint = hashlib.sha256(json_content.encode()).hexdigest()
+        return CacheEntry(fingerprint=fingerprint, content=json_content.encode("utf-8"))
+
     async def get(self, key: str, default: Any = None) -> Any:
         """Retrieve and JSON-decode a cached value.
 
@@ -81,15 +87,43 @@ class CacheManager:
             TypeError: If ``value`` is not JSON-serializable.
         """
         effective_ttl = ttl if ttl is not None else self.default_ttl
-
-        json_content = json.dumps(value)
-        fingerprint = hashlib.sha256(json_content.encode()).hexdigest()
-        entry = CacheEntry(
-            fingerprint=fingerprint, content=json_content.encode("utf-8")
-        )
+        entry = self._encode(value)
 
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
+
+    async def add(self, key: str, value: Any, ttl: int | None = None) -> bool:
+        """Store a value only if the key is not already in the cache.
+
+        The check and the write are one atomic backend operation
+        (``set_if_absent``), so of several concurrent callers adding the same
+        key exactly one gets ``True``. Use it to do something once per key,
+        such as sending a webhook or recording a first occurrence.
+
+        An expired key counts as absent. A key holding a value that cannot be
+        decoded still exists, so ``add()`` returns ``False`` for it, whereas
+        ``get()`` and ``get_or_set()`` treat it as a miss.
+
+        Args:
+            key: Logical cache key (without the manager's prefix).
+            value: A JSON-serializable Python value.
+            ttl: Time-to-live in seconds. If None, uses ``self.default_ttl``
+                (which itself defaults to no expiry).
+
+        Returns:
+            True if the value was stored, False if the key already existed.
+
+        Raises:
+            TypeError: If ``value`` is not JSON-serializable.
+        """
+        effective_ttl = ttl if ttl is not None else self.default_ttl
+        entry = self._encode(value)
+
+        added = await self.backend.set_if_absent(
+            self._cache_key(key), entry, ttl=effective_ttl
+        )
+        logger.debug("Cache ADD; key=%s ttl=%s added=%s", key, effective_ttl, added)
+        return added
 
     async def delete(self, key: str) -> bool:
         """Remove a value from the cache.
