@@ -36,9 +36,13 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
    release notes are built from, and a release refuses to run on an empty one,
    so an omission surfaces — but only at release time, and only as "somebody
    forgot", never as which PR it was
-3. Update the documentation with any new dependencies, features, or changes
+3. Update the documentation with any new dependencies, features, or changes.
+   New public API needs a docstring and, if it lives in a module not yet
+   covered, an entry under `docs/api/`; check the site with
+   `uv run zensical build --strict` (see
+   [Documentation site](DEVELOPMENT.md#documentation-site))
 4. The PR may be merged once you have the sign-off of at least one other developer
 
 ## Any Questions?
 
-Feel free to open an issue with the tag "question" if you need any help!
+Feel free to open an issue with the `question` label if you need any help!
