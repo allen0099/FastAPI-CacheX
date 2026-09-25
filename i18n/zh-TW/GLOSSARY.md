@@ -51,6 +51,16 @@
 | stampede | 保留（cache stampede） | |
 | token | 權杖 | |
 | signature / sign | 簽章／簽署 | |
+| serializer | 序列化器 | |
+| secret key | 密鑰 | |
+| stateful / stateless | 有狀態／無狀態 | |
+| revoke / revocation | 撤銷 | |
+| issuer / audience | 發行者／受眾 | claim 名稱 `iss`、`aud` 保留 |
+| key rotation | 金鑰輪替 | |
+| absolute timeout | 絕對逾時 | |
+| session fixation | Session 固定攻擊（session fixation） | |
+| config / configuration | 設定 | 不用「組態」 |
+| proxy / reverse proxy | 保留：proxy／反向 proxy | 與 `BackendProxy` 等類別名稱一致 |
 | session | 保留（Session） | |
 | claim | 保留 | JWT claim |
 | state（OAuth） | 保留 | |

@@ -79,7 +79,7 @@ async def report(cache: AppCache):
 - [快取流程](CACHE_FLOW.md)：快取請求內部的處理流程
 - [應用層快取](APP_CACHE.md)：`CacheManager`
 - [後端](BACKENDS.md)：選擇與設定後端、原子操作的基本功能
-- [Session 管理](https://fastapi-cachex.readthedocs.io/en/latest/SESSION/)與 [JWT claims](https://fastapi-cachex.readthedocs.io/en/latest/JWT_CLAIMS/)（英文）
+- [Session 管理](SESSION.md)與 [JWT claims](JWT_CLAIMS.md)
 - [OAuth state](STATE.md)：一次性的 OAuth / CSRF state 權杖
 - [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)（英文）
 - [開發指南](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/)與[貢獻指南](https://fastapi-cachex.readthedocs.io/en/latest/CONTRIBUTING/)（英文）
