@@ -65,6 +65,10 @@ jobs:
         CACHEX_REQUIRE_LIVE_SERVERS: 1
 
     - name: Upload coverage badge
+      # Only a push to master updates the badge. A pull request's coverage is
+      # not master's, and a fork's pull request gets a read-only token, so the
+      # push would fail with 403 and turn the check red.
+      if: github.event_name == 'push'
       uses: JamesIves/github-pages-deploy-action@v4
       with:
         branch: coverage-badge
