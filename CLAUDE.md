@@ -84,7 +84,7 @@ All backends implement `BaseCacheBackend` (abstract base in `backends/base.py`):
 
 Backend keys are namespaced automatically (default prefix: `fastapi_cachex:`).
 
-Four non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see README "Atomic backend primitives"):
+Four non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see `docs/BACKENDS.md` "Atomic backend primitives"):
 - `increment(key, delta=1, ttl=None) -> int`: fixed-window counter; `ttl` applies only when the counter is created. Redis runs a registered Lua script, Memcached uses `ADD` + `INCR`/`DECR`, memory works under its lock. A counter reads back through `get()` as a `CacheEntry` with `COUNTER_FINGERPRINT` (`types.py`).
 - `get_and_delete(key) -> CacheEntry | None`: one-shot retrieval (Redis `GETDEL`, Memcached get + `delete(noreply=False)` winner check). `StateManager.consume_state`, `delete_state`, `CacheManager.delete` and `invalidate()` use it. `delete()` keeps returning `None` for 0.3.x compatibility.
 - `set_if_absent(key, value, ttl=None) -> bool`: claim-if-free for locks/slots. Redis `SET NX EX`, Memcached `ADD`, memory under its lock.

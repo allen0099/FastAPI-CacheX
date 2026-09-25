@@ -9,7 +9,7 @@ This file records what changed for users of the library, in particular
 behaviour that changed under an unchanged API. The `## [Unreleased]` section is
 what the Release workflow publishes as the GitHub release notes, and a release
 with an empty one fails — so entries are added by hand, in the pull request
-that earns them. See [Releasing](docs/DEVELOPMENT.md#releasing).
+that earns them. See [Releasing](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/#releasing).
 
 Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
@@ -24,6 +24,28 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   someone else has claimed since. Redis uses `SET NX EX` and a Lua
   compare-and-delete, Memcached `ADD` and `GETS` + `CAS`, memory its lock.
   Third-party backends inherit non-atomic fallbacks. ([#62](https://github.com/allen0099/FastAPI-CacheX/issues/62))
+
+### Documentation
+
+- The documentation is published at <https://fastapi-cachex.readthedocs.io/>,
+  built with Zensical and including an API reference generated from the
+  docstrings. The package metadata links to it as `Documentation`.
+- Every guide is now in English and was checked against the code. Among the
+  corrections: `docs/JWT_CLAIMS.md` told you to install a custom token
+  serializer by assigning `manager._token_serializer`, which has no effect —
+  pass `token_serializer=` to `SessionManager` instead; and the cache-flow
+  guide said `clear()` is a no-op on Memcached, when it runs `flush_all` and
+  empties the whole server.
+- `README.md` is now a short landing page. Its reference material moved to new
+  guides: HTTP caching, Application cache and Backends.
+- `StateManager.create_state()` no longer documents `StateDataError` for backend
+  failures: backend errors propagate unchanged. ([#88](https://github.com/allen0099/FastAPI-CacheX/issues/88))
+
+### Testing
+
+- The changelog test takes the previous version from the latest released
+  heading instead of naming it, so it no longer has to be edited after every
+  release.
 
 ## [0.3.5] - 2026-09-15
 

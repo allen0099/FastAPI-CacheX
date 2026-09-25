@@ -360,74 +360,13 @@ async def cleanup_task():
 
 ### Manual clearing
 
-The clearing methods live on the backend, which you can inject with the
-`CacheBackend` dependency or fetch with `BackendProxy.get()`:
-
-```python
-from fastapi_cachex import CacheBackend
-
-
-@app.post("/admin/clear")
-async def clear(cache: CacheBackend) -> None:
-    # Clear a specific path: only entries WITHOUT query params...
-    await cache.clear_path("/api/users")
-    # ...or every query-param variant too
-    await cache.clear_path("/api/users", include_params=True)
-
-    # Clear by pattern: matched against the whole key method|||host|||path|||query
-    await cache.clear_pattern("GET|||*|||/api/users/*")
-    # Keys you built yourself (e.g. CacheManager keys) match directly
-    await cache.clear_pattern("cache:user:*")
-
-    # Clear everything
-    await cache.clear()  # removes every cache entry
-```
-
-`clear_path()` matches entries for the path across every method and host. A
-pattern written as a bare path (for example `clear_pattern("/api/users/*")`)
-cannot match an HTTP key; when such a call clears nothing it emits a
-`RuntimeWarning` pointing you to `clear_path()`.
-
-To invalidate a single cached route (for example, dropping the matching GET
-entry after a write), use the top-level `invalidate()`. It rebuilds the key with
-the same key builder and deletes it:
-
-```python
-from fastapi_cachex import invalidate
-
-removed: bool = await invalidate(request)  # uses the default key_builder
-removed = await invalidate(
-    request, key_builder=my_key_builder
-)  # must match the route's custom builder
-```
-
-The return value tells you whether the entry existed. If no backend is
-configured it returns `False` instead of raising.
+`clear_path()`, `clear_pattern()`, `clear()` and `invalidate()` are covered in
+[HTTP caching](HTTP_CACHING.md#clearing-the-cache).
 
 ## Performance
 
-### Cache-hit path
-
-```
-Request → cache lookup (< 5 ms)
-          ↓
-          return cached response (< 1 ms)
-
-Total: ~5-10 ms (the endpoint handler does not run)
-Compared with running the handler: saves 100-1000 ms+ (depending on endpoint complexity)
-```
-
-These figures are illustrative; actual numbers depend on the backend and the
-network.
-
-### Choosing a backend
-
-| Scenario | Recommended backend | Why |
-|----------|---------------------|-----|
-| Development and testing | MemoryBackend | Fast, no dependencies |
-| Distributed systems | Redis | Async, efficient, supports pattern clearing |
-| Simple caching | Memcached | Stable, mature (but no key enumeration, so no pattern/path clearing or monitoring) |
-| Multi-process deployments | Redis | Shared cache, consistency |
+On a cache hit the endpoint handler does not run at all: the cost is one backend
+lookup. Which backend to pick is covered in [Backends](BACKENDS.md#choosing-a-backend).
 
 ## Cache invalidation scenarios
 
