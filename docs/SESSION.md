@@ -575,93 +575,21 @@ session, new_token = await session_manager.regenerate_session_id(session)
 `regenerate_session_id()` deletes the backend record under the old ID and saves the session under
 a new ID, keeping its data, user, `created_at` and expiry.
 
-## API Reference
+## SessionManager at a glance
 
-See also the generated [Session API reference](api/session.md).
+`SessionManager(backend, config, token_serializer=None)` handles the whole
+lifecycle: `create_session()` / `create_anonymous_session()` return
+`(session, token)`; `get_session()` returns `(session, renewed_token)`, where
+`renewed_token` is set only when sliding expiration renewed the token and should
+be sent back to the client. `get_session()` raises a `SessionError` subclass on
+failure: `SessionTokenError` (malformed token), `SessionSecurityError` (bad
+signature or binding mismatch), `SessionNotFoundError`, `SessionInvalidError`
+(session not active) or `SessionExpiredError` (TTL or absolute timeout exceeded).
 
-### SessionManager
+Every method with its signature is in the generated
+[Session API reference](api/session.md).
 
-```python
-SessionManager(
-    backend: BaseCacheBackend,
-    config: SessionConfig,
-    token_serializer: TokenSerializer | None = None,  # overrides the simple/jwt choice
-)
-```
-
-#### create_session()
-```python
-async def create_session(
-    user: SessionUser,
-    ip_address: str | None = None,
-    user_agent: str | None = None,
-    **extra_data: object,
-) -> tuple[Session, str]:
-```
-
-Returns `(session, token)`. `extra_data` becomes the initial `session.data`.
-
-#### create_anonymous_session()
-```python
-async def create_anonymous_session(
-    ip_address: str | None = None,
-    user_agent: str | None = None,
-    **extra_data: object,
-) -> tuple[Session, str]:
-```
-
-Same as `create_session()` but with `session.user` set to `None`.
-
-#### get_session()
-```python
-async def get_session(
-    token_string: str,
-    ip_address: str | None = None,
-    user_agent: str | None = None,
-) -> tuple[Session, str | None]:
-```
-
-Returns a tuple of `(session, renewed_token)`. `renewed_token` is non-`None` only when sliding
-expiration triggered a token renewal; the caller should propagate it to the client (e.g. via a
-response header). Raises a subclass of `SessionError` (from `fastapi_cachex.session.exceptions`)
-on failure: `SessionTokenError` (malformed token), `SessionSecurityError` (bad signature or
-binding mismatch), `SessionNotFoundError`, `SessionInvalidError` (session not active) or
-`SessionExpiredError` (TTL or absolute timeout exceeded).
-
-#### update_session()
-```python
-async def update_session(session: Session) -> None:
-```
-
-#### delete_session()
-```python
-async def delete_session(session_id: str) -> None:
-```
-
-#### invalidate_session()
-```python
-async def invalidate_session(session: Session) -> None:
-```
-
-Marks the session as invalidated and saves it; later lookups raise `SessionInvalidError` until
-the record expires.
-
-#### regenerate_session_id()
-```python
-async def regenerate_session_id(
-    session: Session,
-) -> tuple[Session, str]:
-```
-
-#### delete_user_sessions() / clear_expired_sessions()
-```python
-async def delete_user_sessions(user_id: str) -> int:
-async def clear_expired_sessions() -> int:
-```
-
-Return the number of sessions deleted (see the key-enumeration note under the full example).
-
-### Dependencies
+## Dependencies
 
 ```python
 from fastapi_cachex.session import (
