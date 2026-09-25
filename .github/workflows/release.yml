@@ -150,7 +150,8 @@ jobs:
       # Promoting the changelog is part of cutting the release, not a chore to
       # remember afterwards: the script fails when `## [Unreleased]` is empty,
       # so a release with nothing written down stops here instead of shipping
-      # release notes that say nothing.
+      # release notes that say nothing. It also fails when an entry has no bold
+      # one-line summary, because the release notes are those summaries.
       - name: Promote the changelog
         env:
           VERSION: ${{ steps.version.outputs.version }}
