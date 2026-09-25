@@ -30,6 +30,7 @@ nav = [
     { "Session 管理" = "SESSION.md" },
     { "JWT claims" = "JWT_CLAIMS.md" },
     { "OAuth state" = "STATE.md" },
+    { "Distributed lock" = "LOCK.md" },
   ] },
   { "API 參考（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/" },
   { "開發（英文）" = [

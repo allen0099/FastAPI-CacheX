@@ -6,21 +6,30 @@ import secrets
 import time
 from types import TracebackType
 
-from typing_extensions import Self
-
 from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.exceptions import LockTimeoutError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
-from fastapi_cachex.types import lock_entry
 
 logger = logging.getLogger(__name__)
+
+# Fingerprint every backend reports for a key that holds a lock entry
+_LOCK_FINGERPRINT = "lock"
+
+
+def _lock_entry(token: str) -> CacheEntry:
+    """Wrap a lock token string in the entry model shared by every backend."""
+    return CacheEntry(fingerprint=_LOCK_FINGERPRINT, content=token.encode("utf-8"))
 
 
 class CacheLock:
     """Distributed lock helper built on backend primitives.
 
     Can be used as an async context manager or with direct acquire/release calls.
+
+    Note:
+        A single CacheLock instance cannot be shared across concurrent tasks or
+        re-entered. Instantiate a new CacheLock for each acquisition.
 
     Args:
         name: Unique lock identifier
@@ -51,7 +60,8 @@ class CacheLock:
         self._backend = backend
         self.key_prefix = key_prefix
         self._token = secrets.token_hex(16)
-        self._entry: CacheEntry = lock_entry(self._token)
+        self._entry: CacheEntry = _lock_entry(self._token)
+        self._is_held = False
 
     @property
     def key(self) -> str:
@@ -75,13 +85,24 @@ class CacheLock:
 
         Args:
             blocking: Override default blocking mode
-            timeout: Override default timeout (seconds)
+            timeout: Override default timeout (seconds). If timeout=None, the lock will
+                use the instance's default timeout.
             poll_interval: Override default poll interval (seconds)
             ttl: Override default TTL (seconds)
 
         Returns:
             True if the lock was acquired, False on timeout or failure
+
+        Raises:
+            RuntimeError: If this CacheLock instance is already held.
         """
+        if self._is_held:
+            msg = (
+                "This CacheLock instance is already held. Use a new CacheLock instance "
+                "for each acquisition."
+            )
+            raise RuntimeError(msg)
+
         is_blocking = self.blocking if blocking is None else blocking
         effective_timeout = self.timeout if timeout is None else timeout
         interval = self.poll_interval if poll_interval is None else poll_interval
@@ -90,11 +111,17 @@ class CacheLock:
         backend = self._get_backend()
 
         if not is_blocking:
-            return await backend.set_if_absent(self.key, self._entry, ttl=effective_ttl)
+            acquired = await backend.set_if_absent(
+                self.key, self._entry, ttl=effective_ttl
+            )
+            if acquired:
+                self._is_held = True
+            return acquired
 
         start = time.monotonic()
         while True:
             if await backend.set_if_absent(self.key, self._entry, ttl=effective_ttl):
+                self._is_held = True
                 return True
             if effective_timeout is not None:
                 elapsed = time.monotonic() - start
@@ -112,6 +139,7 @@ class CacheLock:
         Returns:
             True if the lock was released, False if expired or owned by another caller
         """
+        self._is_held = False
         backend = self._get_backend()
         released = await backend.delete_if_equals(self.key, self._entry)
         if not released:
@@ -143,7 +171,7 @@ class CacheLock:
         backend = self._get_backend()
         return (await backend.get(self.key)) is not None
 
-    async def __aenter__(self) -> Self:
+    async def __aenter__(self) -> "CacheLock":
         """Acquire lock as async context manager.
 
         Raises:

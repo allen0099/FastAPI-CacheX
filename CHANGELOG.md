@@ -17,7 +17,7 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Added
 
-- `CacheLock` distributed lock async context manager helper built on backend primitives, with `acquire`, `release`, `extend`, `locked`, and `LockTimeoutError`.
+- `CacheLock` distributed lock async context manager helper built on backend primitives, with `acquire`, `release`, `extend`, `locked`, and `LockTimeoutError`. ([#64](https://github.com/allen0099/FastAPI-CacheX/issues/64))
 - `expire_if_equals(key, expected, ttl) -> bool` atomic backend primitive added to `BaseCacheBackend`, `MemoryBackend`, `AsyncRedisCacheBackend`, and `MemcachedBackend`.
 
 ## [0.3.7] - 2026-09-25

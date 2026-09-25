@@ -88,6 +88,7 @@ async def report(cache: AppCache):
 - [Backends](https://fastapi-cachex.readthedocs.io/en/latest/BACKENDS/) — choosing and configuring a backend, atomic primitives
 - [Session management](https://fastapi-cachex.readthedocs.io/en/latest/SESSION/) and [JWT claims](https://fastapi-cachex.readthedocs.io/en/latest/JWT_CLAIMS/)
 - [OAuth state](https://fastapi-cachex.readthedocs.io/en/latest/STATE/) — one-shot OAuth/CSRF state tokens
+- [Distributed lock](https://fastapi-cachex.readthedocs.io/en/latest/LOCK/) — `CacheLock` for multi-process mutual exclusion
 - [API reference](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)
 - [Development guide](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/) and [contributing](https://fastapi-cachex.readthedocs.io/en/latest/CONTRIBUTING/)
 - [Changelog](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md) · [Known limitations and planned work](https://github.com/allen0099/FastAPI-CacheX/issues)
