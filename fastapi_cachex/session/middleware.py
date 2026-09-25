@@ -29,8 +29,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | None:
+def get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | None:
     """Get the client IP address from an HTTP connection.
+
+    This is the address the session middleware checks `ip_binding` against.
+    Pass the same value to `SessionManager.create_session()` so the address
+    stored at login matches the one checked on later requests, which
+    `request.client.host` does not when the app runs behind a trusted proxy.
 
     `X-Forwarded-For` and `X-Real-IP` are believed only when the request
     actually arrived from one of `config.trusted_proxies`; with the default
@@ -250,7 +255,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         Returns:
             Client IP address or None
         """
-        return _get_client_ip(request, self.config)
+        return get_client_ip(request, self.config)
 
 
 class FastAPICacheXSessionMiddleware:
@@ -325,7 +330,7 @@ class FastAPICacheXSessionMiddleware:
         token_value = header_token or connection.cookies.get(self.config.cookie_name)
         if token_value:
             try:
-                ip_address = _get_client_ip(connection, self.config)
+                ip_address = get_client_ip(connection, self.config)
                 user_agent = connection.headers.get("user-agent")
                 backend_session, renewed_token = await self.session_manager.get_session(
                     token_value,
@@ -439,7 +444,7 @@ class FastAPICacheXSessionMiddleware:
                 backend_session,
                 loaded_token,
             ) = await self.session_manager.create_anonymous_session(
-                ip_address=_get_client_ip(connection, self.config),
+                ip_address=get_client_ip(connection, self.config),
                 user_agent=connection.headers.get("user-agent"),
             )
             new_token: str | None = loaded_token
