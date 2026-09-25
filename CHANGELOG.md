@@ -40,6 +40,14 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
+- `StateManager` no longer writes the raw OAuth state to its logs. The state
+  comes from the callback query string, so logging it leaked live tokens and let
+  a caller forge log lines with CR/LF. Log lines now carry `state_ref`, the
+  first 12 hex characters of the state's SHA-256. An unknown or expired state
+  in `consume_state()` is logged at INFO instead of WARNING, and malformed
+  stored data is logged once at WARNING without a traceback, instead of two
+  ERROR records with a traceback that echoed the stored state.
+
 - Regenerating the session ID of the request's session (the documented defence
   against session fixation at login) now sends a token for the new ID.
   `FastAPICacheXSessionMiddleware` used to re-send the loaded token, which named

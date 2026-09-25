@@ -29,6 +29,23 @@ def _is_past(moment: datetime) -> bool:
     return datetime.now(timezone.utc) > moment
 
 
+def _state_ref(state: str) -> str:
+    """Return a short digest that identifies a state in logs without revealing it.
+
+    The state comes straight from the callback query string, so logging it raw
+    would leak live tokens and let a caller forge log lines with CR/LF.
+    """
+    return hashlib.sha256(state.encode("utf-8", "surrogatepass")).hexdigest()[:12]
+
+
+def _log_decode_failure(state: str) -> None:
+    # No traceback: pydantic validation errors echo the stored input, which
+    # includes the state itself.
+    logger.warning(
+        "Stored OAuth state data is malformed; state_ref=%s", _state_ref(state)
+    )
+
+
 class StateManager:
     """Manages OAuth state and session state lifecycle and storage."""
 
@@ -56,12 +73,13 @@ class StateManager:
     def _cache_key(self, state: str) -> str:
         return f"{self.key_prefix}{state}"
 
-    def _decode_state(self, cached: CacheEntry, state: str) -> StateData:
+    def _decode_state(self, cached: CacheEntry) -> StateData:
         """Turn a backend entry into a StateData model.
+
+        Nothing is logged here; the caller logs the failure once.
 
         Args:
             cached: The CacheEntry retrieved from backend
-            state: State string (used for logging)
 
         Returns:
             StateData instance
@@ -80,31 +98,29 @@ class StateManager:
             state_dict: dict[str, Any] = json.loads(json_content)
         except json.JSONDecodeError as e:
             msg = f"Failed to parse state data: {e}"
-            logger.exception("Failed to parse state data; state=%s", state)
             raise StateDataError(msg) from e
 
         try:
             return StateData(**state_dict)
         except ValueError as e:
             msg = f"Invalid state data structure: {e}"
-            logger.exception("Failed to create StateData model; state=%s", state)
             raise StateDataError(msg) from e
 
     async def _peek_state(self, state: str) -> StateData | None:
         """Load a state without consuming it; None when missing, malformed or expired."""
         cached = await self.backend.get(self._cache_key(state))
         if cached is None:
-            logger.debug("State not found; state=%s", state)
+            logger.debug("State not found; state_ref=%s", _state_ref(state))
             return None
 
         try:
-            state_data = self._decode_state(cached, state)
+            state_data = self._decode_state(cached)
         except StateDataError:
-            logger.exception("Failed to parse or validate state data; state=%s", state)
+            _log_decode_failure(state)
             return None
 
         if _is_past(state_data.expires_at):
-            logger.debug("State expired; state=%s", state)
+            logger.debug("State expired; state_ref=%s", _state_ref(state))
             return None
 
         return state_data
@@ -149,7 +165,9 @@ class StateManager:
         )
         await self.backend.set(self._cache_key(state), entry, ttl=effective_ttl)
 
-        logger.debug("OAuth state created; state=%s ttl=%s", state, effective_ttl)
+        logger.debug(
+            "OAuth state created; state_ref=%s ttl=%s", _state_ref(state), effective_ttl
+        )
         return state
 
     async def consume_state(self, state: str) -> StateData:
@@ -172,18 +190,26 @@ class StateManager:
         # out to be malformed or past its wall-clock expiry is gone as well.
         cached = await self.backend.get_and_delete(self._cache_key(state))
         if cached is None:
-            logger.warning("OAuth state not found or expired; state=%s", state)
+            logger.info(
+                "OAuth state not found or expired; state_ref=%s", _state_ref(state)
+            )
             msg = "Invalid or expired state"
             raise InvalidStateError(msg)
 
-        state_data = self._decode_state(cached, state)
+        try:
+            state_data = self._decode_state(cached)
+        except StateDataError:
+            _log_decode_failure(state)
+            raise
 
         if _is_past(state_data.expires_at):
-            logger.warning("OAuth state expired; state=%s", state)
+            logger.info("OAuth state expired; state_ref=%s", _state_ref(state))
             msg = "State has expired"
             raise StateExpiredError(msg)
 
-        logger.debug("OAuth state consumed and deleted; state=%s", state)
+        logger.debug(
+            "OAuth state consumed and deleted; state_ref=%s", _state_ref(state)
+        )
         return state_data
 
     async def validate_state(self, state: str) -> bool:
@@ -219,7 +245,9 @@ class StateManager:
             True if state was deleted, False if it didn't exist
         """
         if await self.backend.get_and_delete(self._cache_key(state)) is None:
-            logger.debug("OAuth state not found for deletion; state=%s", state)
+            logger.debug(
+                "OAuth state not found for deletion; state_ref=%s", _state_ref(state)
+            )
             return False
-        logger.debug("OAuth state deleted; state=%s", state)
+        logger.debug("OAuth state deleted; state_ref=%s", _state_ref(state))
         return True

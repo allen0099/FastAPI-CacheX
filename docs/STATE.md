@@ -167,3 +167,7 @@ CacheXError
   sides. Override `get_and_delete()` in that case.
 - Do not store sensitive data in a state. `metadata` is stored as plain-text JSON in the
   cache backend.
+- **Logs never contain the state itself.** Log lines from `fastapi_cachex.state.manager`
+  identify a state by `state_ref`, the first 12 hex characters of its SHA-256, which you can
+  compute from a known state to match it. An unknown or expired state is logged at INFO,
+  since it is routine client input; malformed stored data is logged once at WARNING.
