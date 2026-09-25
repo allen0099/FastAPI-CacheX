@@ -40,15 +40,6 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
-- A `@cache` handler that returns plain data instead of a `Response` is
-  rendered the way FastAPI renders it. The result goes through the route's
-  response model (validation, field filtering and the `response_model_*`
-  options) or `jsonable_encoder`, so a Pydantic model, `datetime` or `UUID` no
-  longer fails to encode. The route's `status_code` applies (a `204` drops the
-  body), and the status and headers set on an injected `response: Response`
-  are kept, on cache hits as well.
-  ([#99](https://github.com/allen0099/FastAPI-CacheX/issues/99))
-
 - A sync (`def`) handler under `@cache` runs in the threadpool again. The
   cache wrapper is `async`, so FastAPI stopped offloading the handler and
   `@cache` called it on the event loop, where blocking I/O stalled every other
@@ -63,6 +54,10 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   the same pipeline as its value and returns the absolute expiry the memory
   backend reports. A key that disappears between the scan and the fetch is left
   out. ([#74](https://github.com/allen0099/FastAPI-CacheX/issues/74))
+- The client IP used for `ip_binding` now walks every `X-Forwarded-For` header
+  line, not only the first. A proxy that adds its own line instead of appending
+  to the caller's left a caller-chosen first line in charge of the walk, so a
+  forged address could satisfy the binding. ([#104](https://github.com/allen0099/FastAPI-CacheX/issues/104))
 
 ## [0.3.6] - 2026-09-25
 

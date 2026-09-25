@@ -74,12 +74,6 @@ good entry. `206 Partial Content` is excluded as well, since its body is only
 meaningful for the `Range` request that produced it. `Set-Cookie` is never
 stored or replayed.
 
-A handler that returns plain data instead of a `Response` gets the same
-treatment it would without `@cache`: the value is validated and filtered by the
-route's response model (declared or inferred from the return annotation, with
-the `response_model_*` options), the route's `status_code` applies, and the
-status and headers set on an injected `response: Response` parameter are kept.
-
 ## Cache keys
 
 Cache keys are generated in the following format to avoid collisions:

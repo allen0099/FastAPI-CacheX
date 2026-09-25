@@ -21,9 +21,6 @@ from typing import get_type_hints
 
 from fastapi import Request
 from fastapi import Response
-from fastapi.encoders import jsonable_encoder
-from fastapi.utils import is_body_allowed_for_status_code
-from pydantic import TypeAdapter
 from starlette.concurrency import run_in_threadpool
 from starlette.status import HTTP_200_OK
 from starlette.status import HTTP_206_PARTIAL_CONTENT
@@ -307,38 +304,6 @@ async def _render(
     return response, body, None if body is None else _etag_for(body)
 
 
-# Attribute a route's response-model TypeAdapter is kept under, so it is built
-# once per route rather than on every cache miss.
-_ADAPTER_ATTR = "_cachex_response_adapter"
-
-
-def _serialize_result(route: "APIRoute", result: object) -> object:
-    """JSON-compatible content for a handler's non-Response return value.
-
-    With a response model (declared, or inferred from the return annotation)
-    the result is validated against it and dumped with the route's
-    ``response_model_*`` options, so fields the model leaves out are dropped.
-    Otherwise it goes through ``jsonable_encoder``, as FastAPI does.
-    """
-    if route.response_model is None:
-        return jsonable_encoder(result)
-    adapter: TypeAdapter[Any] | None = getattr(route, _ADAPTER_ATTR, None)
-    if adapter is None:
-        adapter = TypeAdapter(route.response_model)
-        setattr(route, _ADAPTER_ATTR, adapter)
-    validated = adapter.validate_python(result, from_attributes=True)
-    return adapter.dump_python(
-        validated,
-        mode="json",
-        include=route.response_model_include,
-        exclude=route.response_model_exclude,
-        by_alias=route.response_model_by_alias,
-        exclude_unset=route.response_model_exclude_unset,
-        exclude_defaults=route.response_model_exclude_defaults,
-        exclude_none=route.response_model_exclude_none,
-    )
-
-
 def _is_coroutine_callable(func: HandlerCallable) -> bool:
     """Report whether calling `func` returns a coroutine.
 
@@ -401,25 +366,8 @@ async def get_response(
         ),
     )
 
-    # Build the response the way FastAPI would have without the cache wrapper:
-    # serialize through the response model, apply the route's status code and
-    # carry over what the handler set on an injected `response: Response`.
-    sub_response = next(
-        (value for value in kwargs.values() if isinstance(value, Response)), None
-    )
-    status_code = route.status_code
-    if sub_response is not None and sub_response.status_code:
-        status_code = sub_response.status_code
-    response_args: dict[str, Any] = {}
-    if status_code is not None:
-        response_args["status_code"] = status_code
-
-    response = response_class(_serialize_result(route, result), **response_args)
-    if not is_body_allowed_for_status_code(response.status_code):
-        response.body = b""
-    if sub_response is not None:
-        response.headers.raw.extend(sub_response.headers.raw)
-    return response
+    # Convert non-Response result to Response using appropriate response_class
+    return response_class(content=result)
 
 
 def cache(
