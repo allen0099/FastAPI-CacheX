@@ -84,11 +84,13 @@ All backends implement `BaseCacheBackend` (abstract base in `backends/base.py`):
 
 Backend keys are namespaced automatically (default prefix: `fastapi_cachex:`).
 
-Two non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see README "Atomic backend primitives"):
+Four non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see README "Atomic backend primitives"):
 - `increment(key, delta=1, ttl=None) -> int`: fixed-window counter; `ttl` applies only when the counter is created. Redis runs a registered Lua script, Memcached uses `ADD` + `INCR`/`DECR`, memory works under its lock. A counter reads back through `get()` as a `CacheEntry` with `COUNTER_FINGERPRINT` (`types.py`).
 - `get_and_delete(key) -> CacheEntry | None`: one-shot retrieval (Redis `GETDEL`, Memcached get + `delete(noreply=False)` winner check). `StateManager.consume_state`, `delete_state`, `CacheManager.delete` and `invalidate()` use it. `delete()` keeps returning `None` for 0.3.x compatibility.
+- `set_if_absent(key, value, ttl=None) -> bool`: claim-if-free for locks/slots. Redis `SET NX EX`, Memcached `ADD`, memory under its lock.
+- `delete_if_equals(key, expected) -> bool`: release only while the key still holds `expected` (compared as decoded `CacheEntry`). Redis compares in Python then deletes via a Lua script that re-checks the raw bytes; Memcached uses `GETS` + `CAS` with exptime `-1` (immediate expiry), since classic `DELETE` has no CAS.
 
-`delete_many(keys) -> int` is the third non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock).
+`delete_many(keys) -> int` is the fifth non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock).
 
 `backends/codec.py` holds the JSON `CacheEntry` codec shared by Redis and Memcached; `decode_entry` maps a bare integer to a counter entry and every malformed value to `None`.
 

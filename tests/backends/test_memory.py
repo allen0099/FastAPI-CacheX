@@ -688,3 +688,114 @@ async def test_cleanup_leaves_live_entries_alone():
         assert sorted(backend.cache) == ["a", "b"]
     finally:
         backend.stop_cleanup()
+
+
+@pytest.mark.asyncio
+async def test_memory_set_if_absent_stores_only_the_first_value(
+    memory_backend: MemoryBackend,
+):
+    first = CacheEntry(fingerprint="lock", content=b"owner-a")
+    second = CacheEntry(fingerprint="lock", content=b"owner-b")
+
+    assert await memory_backend.set_if_absent("slot", first, 60) is True
+    assert await memory_backend.set_if_absent("slot", second, 60) is False
+    assert await memory_backend.get("slot") == first
+    assert memory_backend.cache["slot"].expiry is not None
+
+
+@pytest.mark.asyncio
+async def test_memory_set_if_absent_without_ttl_never_expires(
+    memory_backend: MemoryBackend,
+):
+    entry = CacheEntry(fingerprint="lock", content=b"owner-a")
+
+    assert await memory_backend.set_if_absent("slot", entry) is True
+    assert memory_backend.cache["slot"].expiry is None
+
+
+@pytest.mark.asyncio
+async def test_memory_set_if_absent_treats_an_expired_entry_as_absent(
+    memory_backend: MemoryBackend,
+):
+    stale = CacheEntry(fingerprint="lock", content=b"owner-a")
+    fresh = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await memory_backend.set("slot", stale, 60)
+    memory_backend.cache["slot"].expiry = time.time() - 1
+
+    assert await memory_backend.set_if_absent("slot", fresh, 60) is True
+    assert await memory_backend.get("slot") == fresh
+
+
+@pytest.mark.asyncio
+async def test_memory_set_if_absent_has_exactly_one_winner(
+    memory_backend: MemoryBackend,
+):
+    results = await asyncio.gather(
+        *(
+            memory_backend.set_if_absent(
+                "slot", CacheEntry(fingerprint="lock", content=str(i).encode()), 60
+            )
+            for i in range(20)
+        )
+    )
+
+    assert results.count(True) == 1
+    winner = results.index(True)
+    assert await memory_backend.get("slot") == CacheEntry(
+        fingerprint="lock", content=str(winner).encode()
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_delete_if_equals_removes_only_a_matching_entry(
+    memory_backend: MemoryBackend,
+):
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await memory_backend.set("slot", theirs, 60)
+
+    assert await memory_backend.delete_if_equals("slot", mine) is False
+    assert await memory_backend.get("slot") == theirs
+
+    assert await memory_backend.delete_if_equals("slot", theirs) is True
+    assert "slot" not in memory_backend.cache
+    assert await memory_backend.delete_if_equals("slot", theirs) is False
+
+
+@pytest.mark.asyncio
+async def test_memory_delete_if_equals_ignores_an_expired_entry(
+    memory_backend: MemoryBackend,
+):
+    entry = CacheEntry(fingerprint="lock", content=b"owner-a")
+    await memory_backend.set("slot", entry, 60)
+    memory_backend.cache["slot"].expiry = time.time() - 1
+
+    assert await memory_backend.delete_if_equals("slot", entry) is False
+
+
+@pytest.mark.asyncio
+async def test_memory_delete_if_equals_matches_a_counter(
+    memory_backend: MemoryBackend,
+):
+    await memory_backend.increment("hits", 3)
+
+    assert await memory_backend.delete_if_equals("hits", counter_entry(2)) is False
+    assert await memory_backend.delete_if_equals("hits", counter_entry(3)) is True
+    assert await memory_backend.get("hits") is None
+
+
+@pytest.mark.asyncio
+async def test_memory_lock_release_after_expiry_keeps_the_new_holder(
+    memory_backend: MemoryBackend,
+):
+    """The lock cycle issue #62 asks for: a late release must not free a slot
+    that has since been claimed by someone else."""
+    owner_a = CacheEntry(fingerprint="lock", content=b"owner-a")
+    owner_b = CacheEntry(fingerprint="lock", content=b"owner-b")
+
+    assert await memory_backend.set_if_absent("slot", owner_a, 60) is True
+    memory_backend.cache["slot"].expiry = time.time() - 1
+    assert await memory_backend.set_if_absent("slot", owner_b, 60) is True
+
+    assert await memory_backend.delete_if_equals("slot", owner_a) is False
+    assert await memory_backend.get("slot") == owner_b

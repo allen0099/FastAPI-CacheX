@@ -15,6 +15,18 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+### Added
+
+- `BaseCacheBackend.set_if_absent(key, value, ttl=None) -> bool` and
+  `delete_if_equals(key, expected) -> bool`, the atomic pair for locks and
+  per-user slots: claim a key only when it is free, and release it only while
+  it still holds your entry, so a holder whose entry expired cannot free a slot
+  someone else has claimed since. Redis uses `SET NX EX` and a Lua
+  compare-and-delete, Memcached `ADD` and `GETS` + `CAS`, memory its lock.
+  Third-party backends inherit non-atomic fallbacks. ([#62](https://github.com/allen0099/FastAPI-CacheX/issues/62))
+
+## [0.3.5] - 2026-09-15
+
 ### Security
 
 - `SessionMiddleware` no longer trusts `X-Forwarded-For`/`X-Real-IP` by default.
@@ -194,7 +206,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.2...v0.3.4
 [0.3.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.0...v0.3.1

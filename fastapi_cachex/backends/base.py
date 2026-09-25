@@ -83,6 +83,58 @@ class BaseCacheBackend(ABC):
             await self.delete(key)
         return value
 
+    async def set_if_absent(
+        self, key: str, value: CacheEntry, ttl: int | None = None
+    ) -> bool:
+        """Store ``value`` only when ``key`` does not exist yet.
+
+        The building block for locks and slots: of several concurrent callers
+        exactly one stores its value and gets ``True``, every other caller
+        gets ``False`` and the stored value is left untouched. An expired key
+        counts as absent. Pair it with ``delete_if_equals`` to release only
+        what you still hold.
+
+        The base implementation is a best-effort, NON-atomic get-then-set
+        fallback for third-party backends; the built-in backends override it
+        with an atomic implementation.
+
+        Args:
+            key: Cache key to claim
+            value: Entry to store, typically carrying a unique owner token
+            ttl: Time to live in seconds (``None`` = never expires)
+
+        Returns:
+            Whether ``value`` was stored
+        """
+        if await self.get(key) is not None:
+            return False
+        await self.set(key, value, ttl=ttl)
+        return True
+
+    async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+        """Remove ``key`` only while it still holds ``expected``.
+
+        Releasing a lock with a plain ``delete`` is unsafe: if the holder's
+        entry expired and someone else claimed the key in the meantime, the
+        delete removes the new holder's entry. Comparing against the value the
+        caller stored makes the release a no-op in that case.
+
+        The base implementation is a best-effort, NON-atomic get-compare-delete
+        fallback for third-party backends; the built-in backends override it
+        with an atomic implementation.
+
+        Args:
+            key: Cache key to release
+            expected: The entry the caller stored (compared with ``==``)
+
+        Returns:
+            Whether the entry was removed
+        """
+        if await self.get(key) != expected:
+            return False
+        await self.delete(key)
+        return True
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the integer counter stored at ``key``.
 

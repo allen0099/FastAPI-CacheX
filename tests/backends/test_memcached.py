@@ -562,3 +562,108 @@ async def test_increment_reports_a_counter_that_vanished_mid_call() -> None:
         await backend.increment("k")
 
     assert backend.client.add.call_count == 1
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_set_if_absent_stores_only_the_first_value(
+    memcached_backend: MemcachedBackend,
+):
+    first = CacheEntry(fingerprint="lock", content=b"owner-a")
+    second = CacheEntry(fingerprint="lock", content=b"owner-b")
+
+    assert await memcached_backend.set_if_absent("slot", first, 60) is True
+    assert await memcached_backend.set_if_absent("slot", second, 60) is False
+    assert await memcached_backend.get("slot") == first
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_set_if_absent_applies_the_ttl(
+    memcached_backend: MemcachedBackend,
+):
+    entry = CacheEntry(fingerprint="lock", content=b"owner-a")
+
+    assert await memcached_backend.set_if_absent("slot", entry, 1) is True
+    await asyncio.sleep(2.1)
+    assert await memcached_backend.set_if_absent("slot", entry, 60) is True
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_set_if_absent_has_exactly_one_winner(
+    memcached_backend: MemcachedBackend,
+):
+    results = await asyncio.gather(
+        *(
+            memcached_backend.set_if_absent(
+                "slot", CacheEntry(fingerprint="lock", content=str(i).encode()), 60
+            )
+            for i in range(20)
+        )
+    )
+
+    assert results.count(True) == 1
+    winner = results.index(True)
+    assert await memcached_backend.get("slot") == CacheEntry(
+        fingerprint="lock", content=str(winner).encode()
+    )
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_delete_if_equals_removes_only_a_matching_entry(
+    memcached_backend: MemcachedBackend,
+):
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await memcached_backend.set("slot", theirs, 60)
+
+    assert await memcached_backend.delete_if_equals("slot", mine) is False
+    assert await memcached_backend.get("slot") == theirs
+
+    assert await memcached_backend.delete_if_equals("slot", theirs) is True
+    assert await memcached_backend.get("slot") is None
+    assert await memcached_backend.delete_if_equals("slot", theirs) is False
+    # The CAS-expired key is really gone: it can be claimed again at once.
+    assert await memcached_backend.set_if_absent("slot", mine, 60) is True
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_delete_if_equals_matches_a_counter(
+    memcached_backend: MemcachedBackend,
+):
+    await memcached_backend.increment("hits", 3)
+
+    assert await memcached_backend.delete_if_equals("hits", counter_entry(2)) is False
+    assert await memcached_backend.delete_if_equals("hits", counter_entry(3)) is True
+    assert await memcached_backend.get("hits") is None
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_delete_if_equals_keeps_a_value_written_after_the_compare(
+    memcached_backend: MemcachedBackend,
+):
+    """Between GETS and the CAS, another holder claims the key; the CAS token
+    no longer matches, so the new holder's entry survives."""
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    await memcached_backend.set("slot", mine, 60)
+
+    client = memcached_backend.client
+    original_gets = client.gets
+
+    def gets_then_overwrite(key):
+        result = original_gets(key)
+        client.set(key, b'{"overwritten": true}', 60)
+        return result
+
+    client.gets = gets_then_overwrite
+    try:
+        assert await memcached_backend.delete_if_equals("slot", mine) is False
+    finally:
+        client.gets = original_gets
+
+    raw = await asyncio.to_thread(client.get, memcached_backend._make_key("slot"))
+    assert raw == b'{"overwritten": true}'

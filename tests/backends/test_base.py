@@ -86,3 +86,30 @@ async def test_delete_many_fallback_deletes_one_by_one(backend: DictBackend) -> 
 
     assert await backend.delete_many(["a", "b", "missing"]) == 3
     assert backend.store == {}
+
+
+@pytest.mark.asyncio
+async def test_set_if_absent_fallback_stores_only_the_first_value(
+    backend: DictBackend,
+) -> None:
+    first = CacheEntry(fingerprint="lock", content=b"owner-a")
+    second = CacheEntry(fingerprint="lock", content=b"owner-b")
+
+    assert await backend.set_if_absent("slot", first, ttl=30) is True
+    assert await backend.set_if_absent("slot", second, ttl=30) is False
+    assert backend.store["slot"] == (first, 30)
+
+
+@pytest.mark.asyncio
+async def test_delete_if_equals_fallback_removes_only_a_matching_entry(
+    backend: DictBackend,
+) -> None:
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await backend.set("slot", theirs)
+
+    assert await backend.delete_if_equals("slot", mine) is False
+    assert "slot" in backend.store
+    assert await backend.delete_if_equals("slot", theirs) is True
+    assert "slot" not in backend.store
+    assert await backend.delete_if_equals("slot", theirs) is False
