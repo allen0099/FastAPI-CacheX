@@ -1,6 +1,5 @@
 import asyncio
 import sys
-import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -563,7 +562,7 @@ async def test_redis_get_cache_data_with_entries(
     assert stored_value1 == value1
     assert stored_value2 == value2
 
-    # Stored without a ttl, so neither key expires.
+    # Redis backend returns None for expiry (no expiry tracking)
     assert expiry1 is None
     assert expiry2 is None
 
@@ -712,45 +711,6 @@ async def test_redis_scan_walks_every_page(
     assert len(await async_redis_backend.get_all_keys()) == total
     assert await async_redis_backend.clear_pattern("page|||*") == total
     assert await async_redis_backend.get_all_keys() == []
-
-
-@requires_redis
-@pytest.mark.asyncio
-async def test_redis_get_cache_data_reports_absolute_expiry(
-    async_redis_backend: AsyncRedisCacheBackend,
-) -> None:
-    """A key with a ttl reports when it expires, as a time.time() timestamp."""
-    entry = CacheEntry(fingerprint="e", content=b"v")
-    before = time.time()
-    await async_redis_backend.set("short", entry, ttl=60)
-    await async_redis_backend.set("forever", entry)
-
-    data = await async_redis_backend.get_cache_data()
-    after = time.time()
-
-    _, expiry = data["short"]
-    assert expiry is not None
-    assert before + 59 <= expiry <= after + 60
-    assert data["forever"][1] is None
-
-
-@requires_redis
-@pytest.mark.asyncio
-async def test_redis_get_cache_data_skips_keys_gone_after_scan(
-    async_redis_backend: AsyncRedisCacheBackend,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A key that vanishes between SCAN and the fetch (PTTL -2) is left out."""
-    await async_redis_backend.set("kept", CacheEntry(fingerprint="e", content=b"v"))
-
-    async def keys_with_a_ghost() -> list[str]:
-        return ["kept", "gone"]
-
-    monkeypatch.setattr(async_redis_backend, "get_all_keys", keys_with_a_ghost)
-
-    data = await async_redis_backend.get_cache_data()
-
-    assert list(data) == ["kept"]
 
 
 @requires_redis

@@ -1,7 +1,6 @@
 """Redis cache backend implementation."""
 
 import logging
-import time
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from typing import Any
@@ -22,10 +21,6 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
 logger = logging.getLogger(__name__)
-
-# PTTL replies that are not a remaining lifetime.
-_PTTL_NO_EXPIRY = -1
-_PTTL_MISSING = -2
 
 # SCAN page size and DEL batch size; keeps individual commands small.
 _BATCH_SIZE = 100
@@ -336,10 +331,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Get all cache data with expiry information.
 
         Returns:
-            Dictionary mapping cache keys to (CacheEntry, expiry) tuples, where
-            expiry is an absolute ``time.time()`` timestamp like the memory
-            backend reports, or None for a key without a TTL. It is derived
-            from each key's ``PTTL``, so it is accurate to the round-trip.
+            Dictionary mapping cache keys to (CacheEntry, expiry) tuples.
+            Note: Redis stores TTL but not absolute expiry time, so this
+            returns None for expiry (no expiry tracking in Redis backend).
         """
         all_keys = await self.get_all_keys()
         cache_data: dict[str, tuple[CacheEntry, float | None]] = {}
@@ -347,25 +341,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         if not all_keys:
             return cache_data
 
-        # Fetch every value and its remaining lifetime in a single pipeline
-        # round-trip instead of 2N commands.
+        # Fetch all values in a single pipeline round-trip instead of N+1 GETs
         pipe = self.client.pipeline()
         for key in all_keys:
-            redis_key = self._make_key(key)
-            pipe.get(redis_key)
-            pipe.pttl(redis_key)
-        replies: list[Any] = await pipe.execute()
-        now = time.time()
+            pipe.get(self._make_key(key))
+        raw_values: list[str | None] = await pipe.execute()
 
-        for key, raw, pttl in zip(all_keys, replies[::2], replies[1::2], strict=True):
-            # -2: the key expired or was deleted between SCAN and this fetch.
-            if pttl == _PTTL_MISSING:
-                continue
+        for key, raw in zip(all_keys, raw_values, strict=False):
             value = decode_entry(raw)
-            if value is None:
-                continue
-            expiry = None if pttl == _PTTL_NO_EXPIRY else now + pttl / 1000
-            cache_data[key] = (value, expiry)
+            if value is not None:
+                cache_data[key] = (value, None)
 
         logger.debug("Redis GET_CACHE_DATA; keys=%s", len(cache_data))
         return cache_data

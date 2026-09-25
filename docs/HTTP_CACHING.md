@@ -269,4 +269,8 @@ add_routes(
 > an internal-only app.
 
 > [!NOTE]
-> On Memcached, which cannot enumerate keys, both routes return nothing.
+> The `ttl_remaining` field is not available on the Redis backend.
+> `AsyncRedisCacheBackend.get_cache_data()` does not issue a per-key `TTL`
+> lookup, so Redis-backed entries are reported as never expiring. Expiry itself
+> still happens — only the monitoring view is blind to it. On Memcached, which
+> cannot enumerate keys, both routes return nothing.
