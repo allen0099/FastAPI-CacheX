@@ -1,0 +1,111 @@
+# Documentation site, built with Zensical and hosted on Read the Docs.
+#
+#   uv sync --group docs
+#   uv run zensical serve          # live preview on http://localhost:8000
+#   uv run zensical build --strict # what CI and Read the Docs run
+
+[project]
+site_name = "FastAPI-CacheX"
+site_description = "HTTP caching, application caching and session management for FastAPI."
+# Zensical cannot read READTHEDOCS_CANONICAL_URL, so the canonical URL is fixed.
+site_url = "https://fastapi-cachex.readthedocs.io/"
+repo_url = "https://github.com/allen0099/FastAPI-CacheX"
+repo_name = "allen0099/FastAPI-CacheX"
+edit_uri = "edit/master/docs/"
+docs_dir = "docs"
+site_dir = "site"
+
+nav = [
+  { "Home" = "index.md" },
+  { "Guides" = [
+    { "Cache flow" = "CACHE_FLOW.md" },
+    { "Session management" = "SESSION.md" },
+    { "JWT claims" = "JWT_CLAIMS.md" },
+    { "State management" = "STATE.md" },
+  ] },
+  { "API reference" = [
+    { "HTTP caching" = "api/http-caching.md" },
+    { "Backends" = "api/backends.md" },
+    { "CacheManager" = "api/cache-manager.md" },
+    { "Session" = "api/session.md" },
+    { "State" = "api/state.md" },
+    { "Types and exceptions" = "api/types.md" },
+  ] },
+  { "Development" = [
+    { "Development guide" = "DEVELOPMENT.md" },
+    { "Contributing" = "CONTRIBUTING.md" },
+  ] },
+  { "Changelog" = "changelog.md" },
+  { "繁體中文" = "README.zh-TW.md" },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.action.edit",
+  "content.code.annotate",
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences = {}
+pymdownx.tabbed.alternate_style = true
+pymdownx.tasklist.custom_checkbox = true
+# `--8<--` includes files from outside docs/ (README.md, CHANGELOG.md), so
+# they are written once and appear both on GitHub/PyPI and on the site.
+pymdownx.snippets.base_path = ["."]
+pymdownx.snippets.check_paths = true
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["."]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+show_source = false
+show_root_heading = true
+show_root_full_path = false
+show_symbol_type_heading = true
+show_symbol_type_toc = true
+members_order = "source"
+separate_signature = true
+show_signature_annotations = true
+signature_crossrefs = true
+filters = ["!^_"]
