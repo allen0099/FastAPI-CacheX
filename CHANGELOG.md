@@ -48,6 +48,10 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   awaited instead of failing to encode.
   ([#100](https://github.com/allen0099/FastAPI-CacheX/issues/100))
 
+- `CacheManager.get_or_set()` awaits whatever the factory returns when it is
+  awaitable. The documented `get_or_set(key, lambda: load_user(42))` form used
+  to store the coroutine itself and fail with `TypeError`. ([#101](https://github.com/allen0099/FastAPI-CacheX/issues/101))
+
 - The monitoring routes from `add_routes()` now show when Redis entries
   expire. `AsyncRedisCacheBackend.get_cache_data()` reported every entry as
   never expiring (`ttl_remaining: null`); it now fetches each key's `PTTL` in
