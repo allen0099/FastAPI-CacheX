@@ -228,11 +228,19 @@ class SessionMiddleware(BaseHTTPMiddleware):
         # Store session in request state
         setattr(request.state, "__fastapi_cachex_session", session)
 
+        loaded_session_id = session.session_id if session is not None else None
+
         # Process request
         response: Response = await call_next(request)
 
-        # Propagate renewed token to client so its JWT exp stays in sync
-        if renewed_token is not None:
+        if session is not None and session.session_id != loaded_session_id:
+            # The handler regenerated the session ID; a renewed token would
+            # name the deleted record, so send a token for the new ID.
+            response.headers[self.config.header_name] = (
+                self.session_manager.issue_token(session)
+            )
+        elif renewed_token is not None:
+            # Propagate renewed token to client so its JWT exp stays in sync
             response.headers[self.config.header_name] = renewed_token
 
         return response
@@ -321,6 +329,7 @@ class FastAPICacheXSessionMiddleware:
         loaded_token: str | None = None
         renewed_token: str | None = None
         backend_session: Session | None = None
+        loaded_session_id: str | None = None
 
         # Resolve the incoming session token: prefer the header/bearer transport
         # (e.g. X-Session-Token, as used by SessionMiddleware) and fall back to
@@ -340,6 +349,7 @@ class FastAPICacheXSessionMiddleware:
                     user_agent=user_agent,
                 )
                 loaded_token = renewed_token or token_value
+                loaded_session_id = backend_session.session_id
                 scope["session"] = StarletteSession(backend_session.data)
                 initial_session_was_empty = not backend_session.data
             except SessionError:
@@ -363,6 +373,10 @@ class FastAPICacheXSessionMiddleware:
                 session: StarletteSession = scope["session"]
                 headers = MutableHeaders(scope=message)
 
+                current_token, fresh_token = self._response_tokens(
+                    backend_session, loaded_session_id, loaded_token, renewed_token
+                )
+
                 if session.accessed:
                     headers.add_vary_header("Cookie")
 
@@ -371,8 +385,8 @@ class FastAPICacheXSessionMiddleware:
                         session,
                         connection,
                         backend_session,
-                        loaded_token,
-                        renewed_token,
+                        current_token,
+                        fresh_token,
                     )
                     # Header clients only need a genuinely new/renewed token (an
                     # unchanged one is already held); cookie clients always get a
@@ -394,14 +408,34 @@ class FastAPICacheXSessionMiddleware:
                         # Cookie transport: expire the cookie. A header-based client
                         # simply drops its now-dangling token (record is deleted).
                         headers.append("Set-Cookie", self._build_clear_cookie_header())
-                elif renewed_token is not None:
-                    # Sliding expiration renewed the token even though the dict
-                    # itself was untouched; propagate it via the same transport.
-                    self._emit_token(headers, renewed_token, from_header=from_header)
+                elif fresh_token is not None:
+                    # Sliding expiration renewed the token, or the ID was
+                    # regenerated, even though the dict itself was untouched;
+                    # propagate it via the same transport.
+                    self._emit_token(headers, fresh_token, from_header=from_header)
 
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+    def _response_tokens(
+        self,
+        backend_session: "Session | None",
+        loaded_session_id: str | None,
+        loaded_token: str | None,
+        renewed_token: str | None,
+    ) -> tuple[str | None, str | None]:
+        """The ``(current, fresh)`` tokens to answer with.
+
+        Normally the loaded token and the sliding-renewed one (if any). If the
+        handler regenerated the session ID (at login, say), the loaded token
+        names a deleted record, so both become a token for the new ID and the
+        client gets it on either transport.
+        """
+        if backend_session is None or backend_session.session_id == loaded_session_id:
+            return loaded_token, renewed_token
+        token = self.session_manager.issue_token(backend_session)
+        return token, token
 
     def _emit_token(
         self, headers: MutableHeaders, token: str, *, from_header: bool
