@@ -40,6 +40,14 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
+- A sync (`def`) handler under `@cache` runs in the threadpool again. The
+  cache wrapper is `async`, so FastAPI stopped offloading the handler and
+  `@cache` called it on the event loop, where blocking I/O stalled every other
+  request. A handler whose call returns an awaitable (an object with an
+  `async def __call__`, or a sync callable returning a coroutine) is now
+  awaited instead of failing to encode.
+  ([#100](https://github.com/allen0099/FastAPI-CacheX/issues/100))
+
 - The monitoring routes from `add_routes()` now show when Redis entries
   expire. `AsyncRedisCacheBackend.get_cache_data()` reported every entry as
   never expiring (`ttl_remaining: null`); it now fetches each key's `PTTL` in

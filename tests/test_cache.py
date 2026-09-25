@@ -1,4 +1,6 @@
+import threading
 from collections.abc import AsyncGenerator
+from functools import partial
 
 import pytest
 from fastapi import FastAPI
@@ -208,6 +210,66 @@ def test_sync_endpoint():
 
     response = client.get("/sync")
     assert response.status_code == 200
+
+
+def test_sync_handler_runs_off_the_event_loop_thread():
+    threads: dict[str, int] = {}
+    local_app = FastAPI()
+
+    @local_app.get("/loop")
+    @cache()
+    async def on_loop() -> dict[str, str]:
+        threads["async"] = threading.get_ident()
+        return {"ok": "async"}
+
+    @local_app.get("/blocking")
+    @cache()
+    def blocking() -> dict[str, str]:
+        threads["sync"] = threading.get_ident()
+        return {"ok": "sync"}
+
+    with TestClient(local_app) as local_client:
+        assert local_client.get("/loop").json() == {"ok": "async"}
+        assert local_client.get("/blocking").json() == {"ok": "sync"}
+
+    # Inline, the sync handler would run on the event loop's thread and block
+    # every other request while it waits.
+    assert threads["sync"] != threads["async"]
+
+
+async def _greet(name: str) -> dict[str, str]:
+    return {"hello": name}
+
+
+class _AsyncCallable:
+    async def __call__(self) -> dict[str, str]:
+        return {"hello": "callable"}
+
+
+def _returns_awaitable() -> object:
+    return _greet("lambda")
+
+
+@pytest.mark.parametrize(
+    ("handler", "expected"),
+    [
+        (partial(_greet, "partial"), {"hello": "partial"}),
+        (_AsyncCallable(), {"hello": "callable"}),
+        (_returns_awaitable, {"hello": "lambda"}),
+    ],
+    ids=["partial", "async-call", "sync-returning-awaitable"],
+)
+def test_handler_returning_a_coroutine_is_awaited(
+    handler: object, expected: dict[str, str]
+) -> None:
+    local_app = FastAPI()
+    local_app.get("/greet")(cache(ttl=60)(handler))  # type: ignore[arg-type]
+
+    with TestClient(local_app) as local_client:
+        response = local_client.get("/greet")
+
+    assert response.status_code == 200
+    assert response.json() == expected
 
 
 def test_no_cache_with_revalidate():

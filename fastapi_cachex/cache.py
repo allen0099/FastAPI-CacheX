@@ -21,6 +21,7 @@ from typing import get_type_hints
 
 from fastapi import Request
 from fastapi import Response
+from starlette.concurrency import run_in_threadpool
 from starlette.status import HTTP_200_OK
 from starlette.status import HTTP_206_PARTIAL_CONTENT
 from starlette.status import HTTP_300_MULTIPLE_CHOICES
@@ -303,6 +304,19 @@ async def _render(
     return response, body, None if body is None else _etag_for(body)
 
 
+def _is_coroutine_callable(func: HandlerCallable) -> bool:
+    """Report whether calling `func` returns a coroutine.
+
+    `inspect.iscoroutinefunction` already sees through `functools.partial`;
+    an instance with an ``async def __call__`` needs its method checked. The
+    method is looked up on the type, as the call itself does, so a class
+    (whose type is ``type``) counts as sync.
+    """
+    return inspect.iscoroutinefunction(func) or inspect.iscoroutinefunction(
+        type(func).__call__
+    )
+
+
 async def get_response(
     __func: HandlerCallable,
     __request: Request,
@@ -310,11 +324,20 @@ async def get_response(
     *args: Any,
     **kwargs: Any,
 ) -> Response:
-    """Get the response from the function."""
-    if inspect.iscoroutinefunction(__func):
-        result = await __func(*args, **kwargs)
+    """Get the response from the function.
+
+    Coroutine handlers are awaited. Sync handlers run in the threadpool, as
+    FastAPI would run them without the (async) cache wrapper, so blocking I/O
+    in a ``def`` handler does not stall the event loop.
+    """
+    if _is_coroutine_callable(__func):
+        result = await cast("Callable[..., Awaitable[object]]", __func)(*args, **kwargs)
     else:
-        result = __func(*args, **kwargs)
+        result = await run_in_threadpool(__func, *args, **kwargs)
+    # A sync callable can still hand back an awaitable (a lambda wrapping a
+    # coroutine function, say); await it rather than try to encode it.
+    if inspect.isawaitable(result):
+        result = await result
 
     # If already a Response object, return it directly
     if isinstance(result, Response):
