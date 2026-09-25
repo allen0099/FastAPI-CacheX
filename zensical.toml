@@ -7,8 +7,9 @@
 [project]
 site_name = "FastAPI-CacheX"
 site_description = "HTTP caching, application caching and session management for FastAPI."
-# Zensical cannot read READTHEDOCS_CANONICAL_URL, so the canonical URL is fixed.
-site_url = "https://fastapi-cachex.readthedocs.io/"
+# Zensical cannot read READTHEDOCS_CANONICAL_URL, so the canonical URL is fixed
+# to the default version Read the Docs serves.
+site_url = "https://fastapi-cachex.readthedocs.io/en/latest/"
 repo_url = "https://github.com/allen0099/FastAPI-CacheX"
 repo_name = "allen0099/FastAPI-CacheX"
 edit_uri = "edit/master/docs/"
