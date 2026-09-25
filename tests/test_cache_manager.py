@@ -224,6 +224,86 @@ async def test_get_or_set_treats_corrupted_content_as_miss(
     assert await manager.get("bad") == "repaired"
 
 
+# --- add ------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_stores_when_key_is_free(cache_manager: CacheManager) -> None:
+    """add() stores the value and reports it when nothing holds the key."""
+    assert await cache_manager.add("event:1", {"sent": True}) is True
+    assert await cache_manager.get("event:1") == {"sent": True}
+
+
+@pytest.mark.asyncio
+async def test_add_keeps_the_existing_value(cache_manager: CacheManager) -> None:
+    """add() never overwrites: the first value stays and the call reports False."""
+    await cache_manager.set("event:1", "first")
+
+    assert await cache_manager.add("event:1", "second") is False
+    assert await cache_manager.get("event:1") == "first"
+
+
+@pytest.mark.asyncio
+async def test_add_concurrent_callers_have_exactly_one_winner(
+    cache_manager: CacheManager,
+) -> None:
+    """The check and the write are atomic, so only one concurrent add() succeeds."""
+    results = await asyncio.gather(
+        *(cache_manager.add("event:1", n) for n in range(20))
+    )
+
+    assert results.count(True) == 1
+    # The stored value is the winner's, not a later caller's.
+    assert await cache_manager.get("event:1") == results.index(True)
+
+
+@pytest.mark.asyncio
+async def test_add_ttl_expires_the_claim(cache_manager: CacheManager) -> None:
+    """An explicit ttl applies, and once it lapses the key can be added again."""
+    assert await cache_manager.add("event:1", "first", ttl=1) is True
+    assert await cache_manager.add("event:1", "second", ttl=1) is False
+
+    await asyncio.sleep(1.2)
+
+    assert await cache_manager.add("event:1", "third") is True
+    assert await cache_manager.get("event:1") == "third"
+
+
+@pytest.mark.asyncio
+async def test_add_uses_default_ttl(memory_backend: MemoryBackend) -> None:
+    """add() without an explicit ttl falls back to the manager's default_ttl."""
+    manager = CacheManager(backend=memory_backend, default_ttl=1)
+    assert await manager.add("event:1", "value") is True
+
+    await asyncio.sleep(1.2)
+
+    assert await manager.get("event:1") is None
+
+
+@pytest.mark.asyncio
+async def test_add_treats_undecodable_content_as_present(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Unlike get(), add() sees a corrupted entry as an existing key."""
+    manager = CacheManager(backend=memory_backend)
+    entry = CacheEntry(fingerprint="x", content=b"not valid json")
+    await memory_backend.set(f"{manager.key_prefix}bad", entry, ttl=60)
+
+    assert await manager.add("bad", "value") is False
+    assert await manager.get("bad", default="fallback") == "fallback"
+
+
+@pytest.mark.asyncio
+async def test_add_non_json_serializable_raises_type_error(
+    cache_manager: CacheManager,
+) -> None:
+    """add() raises TypeError like set(), and leaves the key free."""
+    with pytest.raises(TypeError):
+        await cache_manager.add("event:1", {1, 2, 3})
+
+    assert await cache_manager.has("event:1") is False
+
+
 # --- delete / has ---------------------------------------------------------------
 
 
