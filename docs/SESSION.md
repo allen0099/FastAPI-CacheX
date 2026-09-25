@@ -598,14 +598,32 @@ match the bound one (or has no address) is treated as having no session.
 Prevents session fixation attacks:
 
 ```python
-# After a successful login
-session, _renewed_token = await session_manager.get_session(current_token)
-session, new_token = await session_manager.regenerate_session_id(session)
-# Hand new_token to the client; the old token no longer resolves to a session.
+from fastapi_cachex.session.dependencies import SessionDep, SessionManagerDep
+
+
+@app.post("/login")
+async def login(request: Request, session: SessionDep, manager: SessionManagerDep):
+    ...  # verify the credentials
+    await manager.regenerate_session_id(session)
+    request.session["user_id"] = "123"
+    return {"ok": True}
 ```
 
 `regenerate_session_id()` deletes the backend record under the old ID and saves the session under
-a new ID, keeping its data, user, `created_at` and expiry.
+a new ID, keeping its data, user, `created_at` and expiry. When the session is the request's own
+(from `SessionDep`, `get_session` and friends), either middleware sees the new ID and sends a token
+for it through the transport the request used: `Set-Cookie` for a cookie, the response header for a
+header token. After that the old token no longer resolves to a session.
+
+Outside a middleware, load the session with the same bindings the middleware would pass, and hand
+the returned token to the client yourself:
+
+```python
+session, _ = await manager.get_session(
+    current_token, ip_address=client_ip, user_agent=user_agent
+)
+session, new_token = await manager.regenerate_session_id(session)
+```
 
 ## SessionManager at a glance
 

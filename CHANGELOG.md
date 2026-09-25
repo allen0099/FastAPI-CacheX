@@ -40,6 +40,17 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
+- Regenerating the session ID of the request's session (the documented defence
+  against session fixation at login) now sends a token for the new ID.
+  `FastAPICacheXSessionMiddleware` used to re-send the loaded token, which named
+  the record `regenerate_session_id()` had just deleted, so the user was logged
+  straight back out. Header clients got no token at all. The deprecated
+  `SessionMiddleware` could overwrite the new token with a sliding-renewed one
+  for the old ID. Both middlewares now notice the changed ID and send the new
+  token through the request's transport. `SessionManager.issue_token(session)`
+  is the one place tokens are signed.
+  ([#103](https://github.com/allen0099/FastAPI-CacheX/issues/103))
+
 - `ttl` means the same thing on every backend. Zero or negative TTLs now raise
   `ValueError` from `set`, `set_if_absent` and `increment` on all built-in
   backends, from the base-class fallbacks, and from `CacheManager` and

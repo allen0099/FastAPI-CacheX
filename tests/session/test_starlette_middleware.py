@@ -726,3 +726,113 @@ async def test_header_source_cleared_session_is_deleted_without_a_cookie(
     assert "set-cookie" not in response.headers
     with pytest.raises(SessionNotFoundError):
         await manager.get_session(token)
+
+
+def _regenerating_app(
+    manager: SessionManager,
+    config: SessionConfig,
+    *,
+    write_data: bool,
+    middleware: Any = FastAPICacheXSessionMiddleware,
+) -> FastAPI:
+    """An app whose /login regenerates the request's session ID, as docs advise."""
+    app = FastAPI()
+    app.add_middleware(middleware, session_manager=manager, config=config)
+
+    @app.post("/login")
+    async def login(request: Request, session=Depends(get_session)):
+        await manager.regenerate_session_id(session)
+        if write_data:
+            request.session["logged_in"] = True
+        return {"ok": True}
+
+    return app
+
+
+async def _shorten_expiry(manager: SessionManager, token: str) -> None:
+    """Push the session under the sliding threshold so the load renews it."""
+    session, _ = await manager.get_session(token)
+    session.expires_at = datetime.now(timezone.utc) + timedelta(seconds=100)
+    await manager._save_session(session)
+
+
+@pytest.mark.parametrize("write_data", [True, False])
+@pytest.mark.parametrize("sliding", [True, False])
+@pytest.mark.asyncio
+async def test_regenerated_session_id_is_sent_as_cookie(
+    manager: SessionManager, config: SessionConfig, write_data: bool, sliding: bool
+) -> None:
+    """After regenerate_session_id() the cookie must carry a token for the new ID.
+
+    The middleware used to re-send the loaded token, which named the deleted
+    record, so logging in with the documented fixation defence logged the user
+    straight back out.
+    """
+    _session, old_token = await manager.create_session(
+        user=SessionUser(user_id="u"), a=1
+    )
+    if sliding:
+        await _shorten_expiry(manager, old_token)
+    client = TestClient(_regenerating_app(manager, config, write_data=write_data))
+    client.cookies.set(config.cookie_name, old_token)
+
+    response = client.post("/login")
+
+    assert response.status_code == 200
+    new_token = _extract_cookie_token(
+        response.headers["set-cookie"], config.cookie_name
+    )
+    assert new_token != old_token
+    session, _ = await manager.get_session(new_token)
+    expected = {"a": 1, "logged_in": True} if write_data else {"a": 1}
+    assert session.data == expected
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(old_token)
+
+
+@pytest.mark.parametrize("write_data", [True, False])
+@pytest.mark.parametrize("sliding", [True, False])
+@pytest.mark.asyncio
+async def test_regenerated_session_id_is_sent_in_the_header(
+    manager: SessionManager, config: SessionConfig, write_data: bool, sliding: bool
+) -> None:
+    """A header client gets the new ID's token back in the response header."""
+    _session, old_token = await manager.create_session(user=SessionUser(user_id="u"))
+    if sliding:
+        await _shorten_expiry(manager, old_token)
+    client = TestClient(_regenerating_app(manager, config, write_data=write_data))
+
+    response = client.post("/login", headers={config.header_name: old_token})
+
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    new_token = response.headers[config.header_name]
+    assert new_token != old_token
+    await manager.get_session(new_token)
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(old_token)
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+@pytest.mark.parametrize("sliding", [True, False])
+@pytest.mark.asyncio
+async def test_deprecated_middleware_sends_regenerated_token(
+    manager: SessionManager, config: SessionConfig, sliding: bool
+) -> None:
+    """SessionMiddleware must not overwrite the new ID's token with a renewed old one."""
+    _session, old_token = await manager.create_session(user=SessionUser(user_id="u"))
+    if sliding:
+        await _shorten_expiry(manager, old_token)
+    client = TestClient(
+        _regenerating_app(
+            manager, config, write_data=False, middleware=SessionMiddleware
+        )
+    )
+
+    response = client.post("/login", headers={config.header_name: old_token})
+
+    assert response.status_code == 200
+    new_token = response.headers[config.header_name]
+    await manager.get_session(new_token)
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(old_token)
