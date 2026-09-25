@@ -153,8 +153,7 @@ class SessionManager:
         # Store in backend
         await self._save_session(session)
 
-        # Generate signed token (pass expires_at so JWT exp reflects sliding expiration)
-        token = self._create_token(session.session_id, expires_at=session.expires_at)
+        token = self.issue_token(session)
         logger.debug(
             "Session created; id=%s ttl=%s ip=%s ua=%s",
             session.session_id,
@@ -163,7 +162,7 @@ class SessionManager:
             session.user_agent,
         )
 
-        return session, self._serializer.to_string(token)
+        return session, token
 
     async def get_session(
         self,
@@ -276,10 +275,7 @@ class SessionManager:
 
             if time_remaining < threshold:
                 session.renew(self.config.session_ttl)
-                token = self._create_token(
-                    session.session_id, expires_at=session.expires_at
-                )
-                renewed_token = self._serializer.to_string(token)
+                renewed_token = self.issue_token(session)
                 logger.debug(
                     "Session renewed (sliding expiration); id=%s ttl=%s",
                     session.session_id,
@@ -326,6 +322,11 @@ class SessionManager:
     ) -> tuple[Session, str]:
         """Regenerate session ID (after login for security).
 
+        ``session`` is changed in place. When it is the request's session under
+        either middleware, the middleware notices the new ID and sends the new
+        token through the request's transport, so a handler that only needs
+        the cookie or header updated can ignore the returned token.
+
         Args:
             session: Session to regenerate
 
@@ -342,13 +343,28 @@ class SessionManager:
         # Save with new ID
         await self._save_session(session)
 
-        # Create new token (pass expires_at so JWT exp reflects current expiry)
-        token = self._create_token(session.session_id, expires_at=session.expires_at)
         logger.debug(
             "Session ID regenerated; old_id=%s new_id=%s", old_id, session.session_id
         )
 
-        return session, self._serializer.to_string(token)
+        return session, self.issue_token(session)
+
+    def issue_token(self, session: Session) -> str:
+        """Sign a token string for ``session``'s current ID and expiry.
+
+        This is the token ``create_session``, sliding renewal and
+        ``regenerate_session_id`` hand out; the middleware also uses it to
+        send a fresh token once a handler has regenerated the session ID.
+
+        Args:
+            session: Session to issue a token for
+
+        Returns:
+            Serialized session token
+        """
+        # expires_at is passed so a JWT's exp matches the session's expiry.
+        token = self._create_token(session.session_id, expires_at=session.expires_at)
+        return self._serializer.to_string(token)
 
     async def delete_user_sessions(self, user_id: str) -> int:
         """Delete all sessions for a user.
