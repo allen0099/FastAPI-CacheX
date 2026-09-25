@@ -48,16 +48,16 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   awaited instead of failing to encode.
   ([#100](https://github.com/allen0099/FastAPI-CacheX/issues/100))
 
-- `CacheManager.get_or_set()` awaits whatever the factory returns when it is
-  awaitable. The documented `get_or_set(key, lambda: load_user(42))` form used
-  to store the coroutine itself and fail with `TypeError`. ([#101](https://github.com/allen0099/FastAPI-CacheX/issues/101))
-
 - The monitoring routes from `add_routes()` now show when Redis entries
   expire. `AsyncRedisCacheBackend.get_cache_data()` reported every entry as
   never expiring (`ttl_remaining: null`); it now fetches each key's `PTTL` in
   the same pipeline as its value and returns the absolute expiry the memory
   backend reports. A key that disappears between the scan and the fetch is left
   out. ([#74](https://github.com/allen0099/FastAPI-CacheX/issues/74))
+- The client IP used for `ip_binding` now walks every `X-Forwarded-For` header
+  line, not only the first. A proxy that adds its own line instead of appending
+  to the caller's left a caller-chosen first line in charge of the walk, so a
+  forged address could satisfy the binding. ([#104](https://github.com/allen0099/FastAPI-CacheX/issues/104))
 
 ## [0.3.6] - 2026-09-25
 
