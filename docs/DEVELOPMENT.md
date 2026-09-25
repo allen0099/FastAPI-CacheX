@@ -262,8 +262,9 @@ The workflow runs in this order:
    `vX.Y.Z` is already tagged, locally or on the remote, the run stops here.
 3. **The changelog.** `scripts/changelog_release.py` renames `## [Unreleased]`
    to `## [X.Y.Z] - YYYY-MM-DD`, opens a fresh empty `## [Unreleased]` above
-   it, rewrites the compare links at the bottom, and writes the promoted
-   section out to be used as the release body.
+   it, rewrites the compare links at the bottom, and writes the release body:
+   each entry's bold summary and issue links, and a link to the full entries
+   on the documentation site.
 4. **The permanent part**, kept together at the end: commit the version bump
    and the promoted changelog, push it, tag, push the tag by refspec, create
    the GitHub release from the promoted section, publish to PyPI.
@@ -295,10 +296,32 @@ different path, not of this one.
 `CHANGELOG.md` used to be maintained entirely by hand and nothing enforced it:
 the release notes came from `git log --pretty=format:"- %s (%h)"`, so a release
 happened whether or not anyone had written down what it meant. That is no
-longer true. The release body **is** the `## [Unreleased]` section, and an
-empty one fails the run — for a hand-maintained file, "nobody wrote it down" is
-far more likely than "nothing changed". The commit list has not been lost: the
-release body ends with a compare link against the previous tag.
+longer true. The release body is built from the `## [Unreleased]` section, and
+an empty one fails the run — for a hand-maintained file, "nobody wrote it down"
+is far more likely than "nothing changed". The commit list has not been lost:
+the release body ends with a compare link against the previous tag.
+
+The changelog and the release page serve different readers. The changelog
+explains each change in full: what behaviour moved, why, and how to adapt. The
+release page is scanned, so it gets one line per change. Every entry therefore
+opens with a bold summary, and the release body is just those summaries:
+
+```markdown
+- **Add `CacheManager.add()` for store-if-absent writes.** It uses the same
+  key prefix, JSON encoding and `default_ttl` as `set()`, and runs on the
+  backend's atomic `set_if_absent` ... ([#65](https://github.com/allen0099/FastAPI-CacheX/issues/65))
+```
+
+becomes ``- Add `CacheManager.add()` for store-if-absent writes. ([#65](...))``
+under the same `### Added` heading. The issue links are carried over from
+anywhere in the entry, and the body ends with a link to the version's section
+on the documentation site's changelog page. Write the summary for someone
+deciding whether this release matters to them: what changed, in the imperative
+or as a plain statement, not how. An entry without one fails the run and is
+named in the error, and so does a line in the section that is neither a `###`
+heading nor a `- ` entry. `tests/test_changelog_release.py` runs the same check
+on the real `CHANGELOG.md`, so the pull request that adds an entry without a
+summary fails CI instead of the release.
 
 Two details of the promotion are worth knowing, because both have bitten this
 project:
