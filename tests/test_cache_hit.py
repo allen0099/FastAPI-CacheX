@@ -155,7 +155,7 @@ def test_no_cache_still_returns_304_on_etag_match():
     response1 = client.get("/no-cache-with-etag")
     assert response1.status_code == 200
     assert execution_count["value"] == 1
-    etag = response1.headers.get("ETag")
+    etag = response1.headers["ETag"]
 
     # Second request with If-None-Match matching ETag
     # Handler executes again to get fresh data for comparison (no-cache behavior)
@@ -209,7 +209,7 @@ def test_cache_hit_preserves_headers():
     response1 = client.get("/header-preservation")
     assert response1.status_code == 200
     etag1 = response1.headers.get("ETag")
-    cache_control1 = response1.headers.get("Cache-Control")
+    cache_control1 = response1.headers["Cache-Control"]
 
     # Second request (cache hit)
     response2 = client.get("/header-preservation")
