@@ -40,6 +40,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
+- The Cache-Control table in the HTTP caching guide no longer marks
+  header-only directives as simply "supported". It now shows, for each
+  directive, how to set it, whether it is sent, and what it does to the
+  server-side cache. A new section documents that the request's own
+  `Cache-Control` is ignored by design.
+
 - Docstrings and guides that disagreed with the code are corrected. Most
   visible:
   - `SessionConfig.sliding_threshold` now describes renewal once less than

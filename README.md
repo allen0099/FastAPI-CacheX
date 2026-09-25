@@ -14,7 +14,7 @@
 
 [English](https://github.com/allen0099/FastAPI-CacheX/blob/master/README.md) | [繁體中文](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/README.zh-TW.md)
 
-A high-performance caching extension for FastAPI, providing comprehensive HTTP caching support and optional session management.
+A high-performance caching extension for FastAPI: a server-side response cache with `Cache-Control` and `ETag` support, application-level caching, and optional session management.
 
 **Documentation:** <https://fastapi-cachex.readthedocs.io/en/latest/> — guides and the full API reference.
 
