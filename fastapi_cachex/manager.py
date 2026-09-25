@@ -165,8 +165,10 @@ class CacheManager:
 
         Args:
             key: Logical cache key (without the manager's prefix).
-            factory: Zero-argument callable (sync or async) that produces the
-                JSON-serializable value to cache on a miss.
+            factory: Zero-argument callable that produces the JSON-serializable
+                value to cache on a miss. If it returns an awaitable (an async
+                function, or a lambda or ``functools.partial`` wrapping one),
+                the result is awaited.
             ttl: Time-to-live in seconds for a newly created value. If None,
                 uses ``self.default_ttl``.
 
@@ -181,10 +183,11 @@ class CacheManager:
         if cached is not sentinel:
             return cached
 
-        if inspect.iscoroutinefunction(factory):
-            value = await factory()
-        else:
-            value = factory()
+        # Await whatever comes back awaitable, not just from coroutine
+        # functions: `lambda: load(42)` and `functools.partial` return one too.
+        value = factory()
+        if inspect.isawaitable(value):
+            value = await value
 
         await self.set(key, value, ttl=ttl)
         return value

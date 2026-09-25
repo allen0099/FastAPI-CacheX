@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from functools import partial
 from typing import TYPE_CHECKING
 from typing import Any
 
@@ -192,6 +193,24 @@ async def test_get_or_set_miss_calls_async_factory_and_caches(
     assert result == "async_value"
     assert calls == 1
     assert await cache_manager.get("nope") == "async_value"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrap", ["lambda", "partial"])
+async def test_get_or_set_awaits_a_sync_callable_returning_an_awaitable(
+    cache_manager: CacheManager, wrap: str
+) -> None:
+    """The documented `lambda: load_user(42)` form must store the result, not the coroutine."""
+
+    async def load_user(user_id: int) -> dict[str, int]:
+        return {"id": user_id}
+
+    factory = (lambda: load_user(42)) if wrap == "lambda" else partial(load_user, 42)
+
+    result = await cache_manager.get_or_set("user", factory)
+
+    assert result == {"id": 42}
+    assert await cache_manager.get("user") == {"id": 42}
 
 
 @pytest.mark.asyncio
