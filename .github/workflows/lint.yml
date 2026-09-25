@@ -7,12 +7,12 @@ on:
       - '**.py'
       - 'pyproject.toml'
       - '.github/workflows/lint.yml'
+  # No paths filter on pull requests, so this check can be required before
+  # merging: a required check that never starts blocks the pull request. It
+  # also covers pull requests that only touch files outside the push filter,
+  # such as CHANGELOG.md, whose format tests/test_changelog_release.py checks.
   pull_request:
     branches: [ "master" ]
-    paths:
-      - '**.py'
-      - 'pyproject.toml'
-      - '.github/workflows/lint.yml'
 
 jobs:
   lint:
