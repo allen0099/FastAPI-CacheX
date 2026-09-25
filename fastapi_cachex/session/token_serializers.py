@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import Protocol
 
-from .config import JWT_HMAC_ALGORITHMS
 from .models import SessionToken
 
 if TYPE_CHECKING:  # Import for typing only to avoid circular import concerns
@@ -110,24 +109,7 @@ class JWTTokenSerializer:
             config: Session configuration instance.
             jwt_module: Optional JWT-compatible module providing ``encode`` and
                 ``decode``; defaults to importing ``jwt`` (PyJWT).
-
-        Raises:
-            ValueError: If ``config.jwt_algorithm`` is asymmetric. This
-                serializer signs and verifies with the ``secret_key`` string,
-                which only the HMAC algorithms can use; an asymmetric
-                algorithm needs a custom ``token_serializer`` that holds the
-                key pair.
         """
-        if config.jwt_algorithm not in JWT_HMAC_ALGORITHMS:
-            supported = ", ".join(sorted(JWT_HMAC_ALGORITHMS))
-            msg = (
-                f"jwt_algorithm {config.jwt_algorithm!r} needs a private/public "
-                f"key pair, but the built-in JWT serializer signs with secret_key; "
-                f"use one of {supported}, or pass a custom token_serializer to "
-                f"SessionManager"
-            )
-            raise ValueError(msg)
-
         if jwt_module is not None:
             self.jwt_encoder = jwt_module
         else:

@@ -37,7 +37,7 @@ The implementation lives in [`fastapi_cachex/session/token_serializers.py`](http
 | `session_ttl` | `3600` | Session lifetime in seconds; used for `exp` when the session has no `expires_at` |
 
 > [!NOTE]
-> **Asymmetric algorithms:** `jwt_algorithm` accepts `HS*`, `RS*`, `ES*`, `PS*` and `EdDSA`, but the built-in serializer signs and verifies with the single `secret_key` string, so it only supports the HMAC algorithms (`HS256`, `HS384`, `HS512`). Building a `SessionManager` with an asymmetric algorithm and no custom serializer raises `ValueError`. To use one, pass a custom `token_serializer` that encodes with a private key and decodes with the matching public key (see [Extension Guide](#extension-guide-adding-custom-claims)).
+> **Asymmetric algorithms:** `jwt_algorithm` accepts `HS*`, `RS*`, `ES*`, `PS*` and `EdDSA`, but the built-in serializer signs and verifies with the single `secret_key` string. In practice only the HMAC algorithms (`HS256`, `HS384`, `HS512`) work out of the box; an asymmetric algorithm needs a custom serializer that encodes with a private key and decodes with the matching public key (see [Extension Guide](#extension-guide-adding-custom-claims)).
 
 ### Standard Claims That Are Not Implemented
 
