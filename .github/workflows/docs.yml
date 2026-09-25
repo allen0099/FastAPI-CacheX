@@ -1,0 +1,48 @@
+name: Docs
+
+on:
+  push:
+    branches: [ "master" ]
+    paths:
+      - 'docs/**'
+      - 'fastapi_cachex/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'zensical.toml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [ "master" ]
+    paths:
+      - 'docs/**'
+      - 'fastapi_cachex/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'zensical.toml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.14"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10.1.0
+
+    # Same command Read the Docs runs; a broken link or docstring reference
+    # fails the PR here instead of the published site.
+    - name: Sync dependencies
+      run: uv sync --frozen --only-group docs --no-install-project
+
+    - name: Build (strict)
+      run: uv run --no-sync zensical build --strict
