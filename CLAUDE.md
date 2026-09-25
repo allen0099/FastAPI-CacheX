@@ -57,7 +57,7 @@ The library has four independent subsystems:
 - Cache values are stored as `CacheEntry(fingerprint, content, media_type)` dataclass (defined in `types.py`).
 
 **2. Application-Level Caching (`fastapi_cachex/manager.py`, `manager_proxy.py`)**
-- `CacheManager` is a thin, JSON-serializing wrapper around whatever backend `BackendProxy` has configured, for caching arbitrary developer values (not HTTP responses) via `get`/`set`/`delete`/`has`/`clear_prefix`/`clear`.
+- `CacheManager` is a thin, JSON-serializing wrapper around whatever backend `BackendProxy` has configured, for caching arbitrary developer values (not HTTP responses) via `get`/`set`/`add`/`delete`/`has`/`get_or_set`/`clear_prefix`/`clear`. `add()` is store-if-absent on top of `backend.set_if_absent`.
 - Keys live under their own `cache:`-prefixed namespace by default (configurable via `key_prefix`), separate from HTTP route keys and `oauth_state:`.
 - `get()` never raises — returns `default` (`None` unless overridden) on a miss or decode failure. `set()` lets `TypeError` propagate for non-JSON-serializable values.
 - `CacheManagerProxy` mirrors `BackendProxy`/`SessionManagerProxy`. The `AppCache` FastAPI dependency (`get_app_cache`, in `dependencies.py`) lazily creates and registers a default `CacheManager` on first use.

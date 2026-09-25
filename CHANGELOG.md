@@ -15,6 +15,14 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+### Added
+
+- `CacheManager.add(key, value, ttl=None) -> bool` stores an application value
+  only when the key is free and reports whether it did. It uses the same key
+  prefix, JSON encoding and `default_ttl` as `set()`, and runs on the
+  backend's atomic `set_if_absent`, so of several concurrent callers exactly
+  one wins — for "send this webhook once" style deduplication. ([#65](https://github.com/allen0099/FastAPI-CacheX/issues/65))
+
 ## [0.3.6] - 2026-09-25
 
 ### Added
