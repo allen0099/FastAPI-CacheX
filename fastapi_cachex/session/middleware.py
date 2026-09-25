@@ -60,9 +60,7 @@ def get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | No
     peer = connection.client.host if connection.client else None
 
     if peer is not None and config.is_trusted_proxy(peer):
-        # A proxy may add its own header line instead of appending to the
-        # caller's, so the chain is every line joined, not just the first one.
-        forwarded_for = ",".join(connection.headers.getlist("x-forwarded-for"))
+        forwarded_for = connection.headers.get("x-forwarded-for")
         if forwarded_for:
             for entry in reversed(forwarded_for.split(",")):
                 candidate = entry.strip()
