@@ -10,6 +10,7 @@ from datetime import timezone
 from typing import Any
 
 from fastapi_cachex.backends.base import BaseCacheBackend
+from fastapi_cachex.backends.base import validate_ttl
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
 
@@ -43,7 +44,11 @@ class StateManager:
             backend: Cache backend instance. If None, uses BackendProxy.get().
             key_prefix: Prefix for state keys in cache backend
             default_ttl: Default time-to-live in seconds for state
+
+        Raises:
+            ValueError: If ``default_ttl`` is zero or negative.
         """
+        validate_ttl(default_ttl)
         self.backend = backend if backend is not None else BackendProxy.get()
         self.key_prefix = key_prefix
         self.default_ttl = default_ttl
@@ -118,6 +123,9 @@ class StateManager:
         Returns:
             The generated state string
 
+        Raises:
+            ValueError: If ``ttl`` is zero or negative.
+
         Backend errors (for example a Redis connection error) propagate
         unchanged; they are not wrapped in ``StateDataError``.
         """
@@ -126,6 +134,7 @@ class StateManager:
 
         # Use provided TTL or default
         effective_ttl = ttl if ttl is not None else self.default_ttl
+        validate_ttl(effective_ttl)
 
         # Create state data model
         state_data = StateData(

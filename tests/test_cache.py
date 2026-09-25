@@ -639,8 +639,8 @@ def test_no_store_and_no_cache_combined():
     assert "no-cache" not in cc
 
 
-def test_ttl_zero_entry_expires_immediately():
-    """ttl=0 causes the entry to expire immediately; subsequent requests re-execute handler."""
+def test_ttl_zero_sends_max_age_zero_and_only_revalidates():
+    """ttl=0 is `max-age=0`: the body is never replayed, a matching ETag gets 304."""
     call_count = {"n": 0}
     ttl0_app = FastAPI()
     ttl0_backend = MemoryBackend()
@@ -656,17 +656,31 @@ def test_ttl_zero_entry_expires_immediately():
 
     r1 = ttl0_client.get("/ttl-zero")
     assert r1.status_code == 200
-    assert "ETag" in r1.headers
-    assert call_count["n"] == 1
+    assert r1.headers["Cache-Control"] == "max-age=0"
+    etag = r1.headers["ETag"]
 
-    # Remove the (immediately-expired) entry directly from the backend dict
-    # so the next request hits a fresh cache miss and re-executes the handler.
-    ttl0_backend.cache.clear()
+    # The entry is kept without an expiry, like ttl=None; the backend is never
+    # handed a zero TTL, which every backend used to read differently.
+    (item,) = ttl0_backend.cache.values()
+    assert item.expiry is None
 
-    # Second request — no cached entry, handler called again
+    # Without a validator the handler runs again: nothing is served directly.
     r2 = ttl0_client.get("/ttl-zero")
     assert r2.status_code == 200
+    assert r2.content == b"hello"
     assert call_count["n"] == 2
+
+    # A matching validator is answered from the stored ETag.
+    r3 = ttl0_client.get("/ttl-zero", headers={"If-None-Match": etag})
+    assert r3.status_code == 304
+    assert r3.headers["Cache-Control"] == "max-age=0"
+    assert call_count["n"] == 2
+    ttl0_backend.stop_cleanup()
+
+
+def test_negative_ttl_is_rejected_at_decoration():
+    with pytest.raises(CacheXError, match="ttl must not be negative"):
+        cache(ttl=-1)(lambda: None)
 
 
 def test_stale_client_etag_with_changed_cache():

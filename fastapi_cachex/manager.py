@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .backends.base import BaseCacheBackend
+from .backends.base import validate_ttl
 from .proxy import BackendProxy
 from .types import CacheEntry
 
@@ -39,10 +40,13 @@ class CacheManager:
             key_prefix: Prefix prepended to all logical keys in the cache backend.
             default_ttl: Default TTL (seconds) applied when set() is called
                 without an explicit ttl. None means no expiry by default.
+
+        Raises:
+            ValueError: If ``default_ttl`` is zero or negative.
         """
         self.backend = backend if backend is not None else BackendProxy.get()
         self.key_prefix = key_prefix
-        self.default_ttl = default_ttl
+        self.default_ttl = validate_ttl(default_ttl)
 
     def _cache_key(self, key: str) -> str:
         return f"{self.key_prefix}{key}"
@@ -85,8 +89,9 @@ class CacheManager:
 
         Raises:
             TypeError: If ``value`` is not JSON-serializable.
+            ValueError: If ``ttl`` is zero or negative.
         """
-        effective_ttl = ttl if ttl is not None else self.default_ttl
+        effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         entry = self._encode(value)
 
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
@@ -115,8 +120,9 @@ class CacheManager:
 
         Raises:
             TypeError: If ``value`` is not JSON-serializable.
+            ValueError: If ``ttl`` is zero or negative.
         """
-        effective_ttl = ttl if ttl is not None else self.default_ttl
+        effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         entry = self._encode(value)
 
         added = await self.backend.set_if_absent(
@@ -177,7 +183,10 @@ class CacheManager:
 
         Raises:
             TypeError: If the value produced by ``factory`` is not JSON-serializable.
+            ValueError: If ``ttl`` is zero or negative.
         """
+        # Reject a bad ttl before the factory does any (possibly costly) work.
+        validate_ttl(ttl)
         sentinel = object()
         cached = await self.get(key, default=sentinel)
         if cached is not sentinel:

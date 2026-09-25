@@ -40,6 +40,19 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
+- `ttl` means the same thing on every backend. Zero or negative TTLs now raise
+  `ValueError` from `set`, `set_if_absent` and `increment` on all built-in
+  backends, from the base-class fallbacks, and from `CacheManager` and
+  `StateManager` (defaults included). Before, Memcached stored the entry
+  forever, Redis failed with `invalid expire time`, and the memory backend
+  expired it at once. `None` remains the way to say "no expiry", and
+  `validate_ttl()` in `fastapi_cachex.backends.base` lets third-party backends
+  apply the same rule. `@cache(ttl=0)` stays valid: it sends `max-age=0` and
+  keeps the entry only for ETag revalidation, like `ttl=None`, instead of
+  answering 500 on Redis or replaying the first response forever on
+  Memcached. A negative `@cache` ttl raises `CacheXError` at decoration time.
+  ([#102](https://github.com/allen0099/FastAPI-CacheX/issues/102))
+
 - A `@cache` handler that returns plain data instead of a `Response` is
   rendered the way FastAPI renders it. The result goes through the route's
   response model (validation, field filtering and the `response_model_*`

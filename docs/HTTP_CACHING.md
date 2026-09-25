@@ -66,6 +66,7 @@ When a cached entry is valid (within TTL):
 - **With `no-cache` directive**: Forces revalidation with fresh content before deciding on 304
 - **With `private=True`**: Nothing is read from or written to the shared backend; the handler runs every time and only `If-None-Match` revalidation applies
 - **Without `ttl`** (`ttl=None`): The cached body is never served directly; the handler runs on every request except one whose `If-None-Match` matches the stored ETag, which gets a 304
+- **With `ttl=0`**: Sends `max-age=0` and otherwise behaves like `ttl=None`. A negative `ttl` is rejected with `CacheXError` when the decorator is applied
 
 Only successful responses are stored. A response the handler *returns* with a
 non-2xx status (for example `Response(..., status_code=404)`) is passed straight
