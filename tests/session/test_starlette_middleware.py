@@ -417,7 +417,7 @@ def test_get_client_ip_from_x_forwarded_for(config: SessionConfig) -> None:
     """Shared _get_client_ip reads X-Forwarded-For behind a trusted proxy."""
     from starlette.requests import HTTPConnection
 
-    from fastapi_cachex.session.middleware import _get_client_ip
+    from fastapi_cachex.session.middleware import get_client_ip
 
     trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9", "10.0.0.1"]})
     scope: dict[str, Any] = {
@@ -427,7 +427,7 @@ def test_get_client_ip_from_x_forwarded_for(config: SessionConfig) -> None:
     }
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection, trusting) == "192.168.1.1"
+    assert get_client_ip(connection, trusting) == "192.168.1.1"
 
 
 def test_get_client_ip_takes_the_rightmost_untrusted_entry(
@@ -436,7 +436,7 @@ def test_get_client_ip_takes_the_rightmost_untrusted_entry(
     """A caller-supplied entry sits to the left of the address the proxy added."""
     from starlette.requests import HTTPConnection
 
-    from fastapi_cachex.session.middleware import _get_client_ip
+    from fastapi_cachex.session.middleware import get_client_ip
 
     trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9"]})
     scope: dict[str, Any] = {
@@ -446,14 +446,14 @@ def test_get_client_ip_takes_the_rightmost_untrusted_entry(
     }
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection, trusting) == "203.0.113.99"
+    assert get_client_ip(connection, trusting) == "203.0.113.99"
 
 
 def test_get_client_ip_from_real_ip(config: SessionConfig) -> None:
     """Shared _get_client_ip falls back to X-Real-IP behind a trusted proxy."""
     from starlette.requests import HTTPConnection
 
-    from fastapi_cachex.session.middleware import _get_client_ip
+    from fastapi_cachex.session.middleware import get_client_ip
 
     trusting = config.model_copy(update={"trusted_proxies": ["10.0.0.9"]})
     scope: dict[str, Any] = {
@@ -463,7 +463,7 @@ def test_get_client_ip_from_real_ip(config: SessionConfig) -> None:
     }
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection, trusting) == "192.168.1.1"
+    assert get_client_ip(connection, trusting) == "192.168.1.1"
 
 
 def test_get_client_ip_ignores_forwarded_headers_from_untrusted_peer(
@@ -472,7 +472,7 @@ def test_get_client_ip_ignores_forwarded_headers_from_untrusted_peer(
     """With no trusted proxies the headers are ignored entirely."""
     from starlette.requests import HTTPConnection
 
-    from fastapi_cachex.session.middleware import _get_client_ip
+    from fastapi_cachex.session.middleware import get_client_ip
 
     scope: dict[str, Any] = {
         "type": "http",
@@ -484,14 +484,14 @@ def test_get_client_ip_ignores_forwarded_headers_from_untrusted_peer(
     }
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection, config) == "10.0.0.9"
+    assert get_client_ip(connection, config) == "10.0.0.9"
 
 
 def test_get_client_ip_from_client(config: SessionConfig) -> None:
     """Shared _get_client_ip free function falls back to the raw client address."""
     from starlette.requests import HTTPConnection
 
-    from fastapi_cachex.session.middleware import _get_client_ip
+    from fastapi_cachex.session.middleware import get_client_ip
 
     scope: dict[str, Any] = {
         "type": "http",
@@ -500,19 +500,19 @@ def test_get_client_ip_from_client(config: SessionConfig) -> None:
     }
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection, config) == "192.168.1.1"
+    assert get_client_ip(connection, config) == "192.168.1.1"
 
 
 def test_get_client_ip_none(config: SessionConfig) -> None:
     """Shared _get_client_ip free function returns None when nothing is available."""
     from starlette.requests import HTTPConnection
 
-    from fastapi_cachex.session.middleware import _get_client_ip
+    from fastapi_cachex.session.middleware import get_client_ip
 
     scope: dict[str, Any] = {"type": "http", "headers": [], "client": None}
     connection = HTTPConnection(scope)
 
-    assert _get_client_ip(connection, config) is None
+    assert get_client_ip(connection, config) is None
 
 
 @pytest.mark.asyncio
