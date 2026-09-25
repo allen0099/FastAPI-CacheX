@@ -16,6 +16,7 @@ from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
+from .base import validate_ttl
 from .base import warn_if_path_shaped
 
 if TYPE_CHECKING:
@@ -183,6 +184,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Store a response in the cache."""
+        validate_ttl(ttl)
         await self.client.set(self._make_key(key), encode_entry(value), ex=ttl)
         logger.debug("Redis SET; key=%s ttl=%s", key, ttl)
 
@@ -213,6 +215,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         A single ``SET ... NX EX``.
         """
+        validate_ttl(ttl)
         stored = await self.client.set(
             self._make_key(key), encode_entry(value), ex=ttl, nx=True
         )
@@ -248,6 +251,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         A short Lua script makes the increment and the expiry one server-side
         operation; the key is stored as a plain Redis integer.
         """
+        validate_ttl(ttl)
         from redis.exceptions import ResponseError
 
         try:

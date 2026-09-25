@@ -884,3 +884,40 @@ async def test_redis_lock_release_after_expiry_keeps_the_new_holder(
 
     assert await async_redis_backend.delete_if_equals("slot", owner_a) is False
     assert await async_redis_backend.get("slot") == owner_b
+
+
+@requires_redis
+def test_cached_route_with_ttl_zero_is_served() -> None:
+    """End to end: `@cache(ttl=0)` used to send `SET ... EX 0` and answer 500."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from fastapi_cachex.cache import cache
+    from fastapi_cachex.proxy import BackendProxy
+
+    backend = AsyncRedisCacheBackend(
+        host=REDIS_HOST, port=REDIS_PORT, key_prefix="cachex_ttl0_test:"
+    )
+    previous = BackendProxy.get()
+    BackendProxy.set(backend)
+    try:
+        app = FastAPI()
+
+        @app.get("/ttl-zero")
+        @cache(ttl=0)
+        async def ttl_zero() -> dict[str, str]:
+            return {"ok": "yes"}
+
+        with TestClient(app) as client:
+            first = client.get("/ttl-zero")
+            revalidated = client.get(
+                "/ttl-zero", headers={"If-None-Match": first.headers["ETag"]}
+            )
+            # Clean up inside the client's event loop, which owns the pool.
+            client.portal.call(backend.clear)  # type: ignore[union-attr]
+
+        assert first.status_code == 200
+        assert first.headers["Cache-Control"] == "max-age=0"
+        assert revalidated.status_code == 304
+    finally:
+        BackendProxy.set(previous)

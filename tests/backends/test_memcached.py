@@ -505,7 +505,7 @@ async def test_ttl_beyond_thirty_days_is_sent_as_an_absolute_timestamp() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("ttl", "expected"), [(None, 0), (0, 0), (60, 60)])
+@pytest.mark.parametrize(("ttl", "expected"), [(None, 0), (60, 60)])
 async def test_short_ttls_stay_relative(ttl: int | None, expected: int) -> None:
     """Durations inside the boundary are passed straight through."""
     backend = stubbed_backend()

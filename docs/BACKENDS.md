@@ -163,6 +163,18 @@ All four have a non-atomic fallback on `BaseCacheBackend`, so a third-party back
 that only implements the abstract methods keeps working; override them to get
 real atomicity.
 
+## TTL values
+
+Every `ttl` argument (`set`, `set_if_absent`, `increment`, and the `CacheManager`
+and `StateManager` methods and defaults built on them) is either `None`, meaning
+the entry never expires, or a positive number of seconds. Zero and negative
+values raise `ValueError`. The underlying stores disagree on what they mean:
+Memcached reads an exptime of `0` as "never expire", Redis rejects `EX 0`, and
+an in-process dict would expire the entry at once. A third-party backend should
+call `fastapi_cachex.backends.base.validate_ttl(ttl)` in its `set` to follow
+the same rule. (`@cache(ttl=0)` is separate: it sends `max-age=0` and never
+passes `0` to the backend; see [HTTP caching](HTTP_CACHING.md).)
+
 How each backend stores entries is described in
 [Cache flow](CACHE_FLOW.md#backend-storage-formats); the classes themselves are in
 the [API reference](api/backends.md).

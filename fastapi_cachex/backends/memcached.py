@@ -12,6 +12,7 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
+from .base import validate_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ class MemcachedBackend(BaseCacheBackend):
             value: CacheEntry instance to store
             ttl: Time to live in seconds
         """
+        validate_ttl(ttl)
         await asyncio.to_thread(
             self.client.set, self._make_key(key), encode_entry(value), _expiry(ttl)
         )
@@ -174,6 +176,7 @@ class MemcachedBackend(BaseCacheBackend):
 
         Memcached's ``ADD`` is exactly this operation.
         """
+        validate_ttl(ttl)
         stored = await asyncio.to_thread(
             self.client.add,
             self._make_key(key),
@@ -226,6 +229,7 @@ class MemcachedBackend(BaseCacheBackend):
         Memcached counters are unsigned, so a negative ``delta`` uses DECR,
         which stops at 0 instead of going negative.
         """
+        validate_ttl(ttl)
         from pymemcache.exceptions import MemcacheClientError
 
         prefixed_key = self._make_key(key)
