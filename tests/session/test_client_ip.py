@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from starlette.requests import HTTPConnection
 
 from fastapi_cachex.backends.memory import MemoryBackend
@@ -106,3 +107,62 @@ def test_peer_address_binding_fails_behind_trusted_proxy(proxied_app: FastAPI):
 
     me = client.get("/me", headers={**forwarded, "X-Session-Token": token})
     assert me.json() == {"authenticated": False}
+
+
+@pytest.mark.parametrize(
+    ("entry", "peer"),
+    [
+        ("10.0.0.0/8", "10.20.30.40"),
+        ("10.0.0.8", "10.0.0.8"),
+        ("10.0.0.8/24", "10.0.0.200"),  # host bits are ignored
+        ("2001:db8::/32", "2001:db8:1::5"),
+        ("2001:db8::1", "2001:DB8::1"),
+        ("10.0.0.0/8", "::ffff:10.1.2.3"),  # dual-stack socket
+        ("testclient", "testclient"),
+    ],
+)
+def test_trusted_proxy_matches(entry: str, peer: str):
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=[entry])
+
+    assert config.is_trusted_proxy(peer)
+
+
+@pytest.mark.parametrize(
+    ("entry", "peer"),
+    [
+        ("10.0.0.0/8", "11.0.0.1"),
+        ("10.0.0.8", "10.0.0.9"),
+        ("2001:db8::/32", "2001:db9::1"),
+        ("10.0.0.0/8", "2001:db8::1"),
+        ("10.0.0.0/8", "testclient"),
+        ("testclient", "10.0.0.1"),
+    ],
+)
+def test_trusted_proxy_rejects(entry: str, peer: str):
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=[entry])
+
+    assert not config.is_trusted_proxy(peer)
+
+
+@pytest.mark.parametrize("entry", ["10.0.0.0/33", "10.0.0.0/x", "proxy/8"])
+def test_malformed_cidr_entry_is_rejected(entry: str):
+    with pytest.raises(ValidationError, match="not a valid CIDR range"):
+        SessionConfig(secret_key="a" * 32, trusted_proxies=[entry])
+
+
+def test_forwarded_chain_skips_every_hop_inside_a_trusted_range():
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.0/8"])
+    connection = _connection(
+        "10.0.0.9", {"X-Forwarded-For": "198.51.100.66, 203.0.113.5, 10.1.1.1"}
+    )
+
+    assert get_client_ip(connection, config) == "203.0.113.5"
+
+
+def test_model_copy_update_uses_the_new_ranges():
+    """model_copy(update=...) skips validation; matching must not be stale."""
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.0/8"])
+    copied = config.model_copy(update={"trusted_proxies": ["192.168.0.0/16"]})
+
+    assert copied.is_trusted_proxy("192.168.1.1")
+    assert not copied.is_trusted_proxy("10.0.0.1")

@@ -31,6 +31,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   honouring `trusted_proxies`. Pass it to `create_session()`: behind a trusted
   proxy, `request.client.host` is the proxy's address, so a session bound to it
   was rejected on its next request. ([#87](https://github.com/allen0099/FastAPI-CacheX/issues/87))
+- `SessionConfig.trusted_proxies` accepts CIDR ranges (`10.0.0.0/8`,
+  `2001:db8::/32`) as well as single addresses, for load balancers that connect
+  from a subnet. It applies to both the peer check and the `X-Forwarded-For`
+  walk. IPv4-mapped IPv6 peers match IPv4 entries, and non-IP entries such as
+  `testclient` still match exactly. An entry containing `/` that is not a valid
+  range now fails config validation. ([#73](https://github.com/allen0099/FastAPI-CacheX/issues/73))
 
 ### Fixed
 
