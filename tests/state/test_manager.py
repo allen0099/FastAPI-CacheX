@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from datetime import timedelta
@@ -16,6 +17,7 @@ from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.state.exceptions import InvalidStateError
 from fastapi_cachex.state.exceptions import StateDataError
+from fastapi_cachex.state.exceptions import StateExpiredError
 from fastapi_cachex.state.manager import StateManager
 from fastapi_cachex.state.models import StateData
 from fastapi_cachex.types import CacheEntry
@@ -823,3 +825,92 @@ async def test_peeking_a_state_past_its_wall_clock_expiry_treats_it_as_gone(
 
     assert await state_manager.validate_state(state) is False
     assert await state_manager.get_state_metadata(state) is None
+
+
+def _state_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.name == "fastapi_cachex.state.manager"]
+
+
+@pytest.mark.asyncio
+async def test_logs_never_contain_the_raw_state(
+    memory_backend: MemoryBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Every log line identifies a state by digest only, so CR/LF cannot forge lines."""
+    caplog.set_level(logging.DEBUG, logger="fastapi_cachex.state.manager")
+    manager = StateManager(backend=memory_backend)
+
+    state = await manager.create_state()
+    await manager.validate_state(state)
+    await manager.consume_state(state)
+    await manager.delete_state(state)
+    forged = "abc\r\nERROR forged entry"
+    with pytest.raises(InvalidStateError):
+        await manager.consume_state(forged)
+    await manager.validate_state(forged)
+
+    records = _state_records(caplog)
+    assert records
+    assert state not in caplog.text
+    assert "forged entry" not in caplog.text
+    assert all("\n" not in r.getMessage() for r in records)
+    assert hashlib.sha256(state.encode()).hexdigest()[:12] in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_unknown_state_is_not_logged_as_warning(
+    memory_backend: MemoryBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A missing or expired state is routine client input, not an operator warning."""
+    caplog.set_level(logging.DEBUG, logger="fastapi_cachex.state.manager")
+    manager = StateManager(backend=memory_backend)
+
+    with pytest.raises(InvalidStateError):
+        await manager.consume_state("unknown")
+
+    state = await manager.create_state(ttl=60)
+    stale = StateData(
+        state=state, expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
+    )
+    content = stale.model_dump_json().encode()
+    await memory_backend.set(
+        f"{manager.key_prefix}{state}",
+        CacheEntry(fingerprint=hashlib.sha256(content).hexdigest(), content=content),
+        ttl=60,
+    )
+    with pytest.raises(StateExpiredError):
+        await manager.consume_state(state)
+
+    assert all(r.levelno < logging.WARNING for r in _state_records(caplog))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["consume", "validate", "metadata"])
+async def test_malformed_state_data_is_logged_once_without_the_state(
+    memory_backend: MemoryBackend,
+    caplog: pytest.LogCaptureFixture,
+    operation: str,
+) -> None:
+    """A decode failure produces one warning, with no traceback echoing the stored state."""
+    caplog.set_level(logging.DEBUG, logger="fastapi_cachex.state.manager")
+    manager = StateManager(backend=memory_backend)
+    state = "secret-state-token"
+    content = json.dumps({"state": state, "expires_at": "not a date"}).encode()
+    await memory_backend.set(
+        f"{manager.key_prefix}{state}",
+        CacheEntry(fingerprint=hashlib.sha256(content).hexdigest(), content=content),
+        ttl=60,
+    )
+
+    if operation == "consume":
+        with pytest.raises(StateDataError):
+            await manager.consume_state(state)
+    elif operation == "validate":
+        assert await manager.validate_state(state) is False
+    else:
+        assert await manager.get_state_metadata(state) is None
+
+    records = [r for r in _state_records(caplog) if r.levelno >= logging.WARNING]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None
+    assert state not in caplog.text
