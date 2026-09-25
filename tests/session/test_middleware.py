@@ -11,7 +11,6 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
-from starlette.datastructures import Headers
 
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
@@ -152,7 +151,7 @@ def test_get_client_ip_from_x_forwarded_for_behind_trusted_proxy(
     middleware = SessionMiddleware(app, manager, config)
 
     request = MagicMock(spec=Request)
-    request.headers = Headers({"x-forwarded-for": "192.168.1.1, 10.0.0.1"})
+    request.headers = {"x-forwarded-for": "192.168.1.1, 10.0.0.1"}
     client = MagicMock()
     client.host = "10.0.0.9"
     request.client = client
@@ -173,7 +172,7 @@ def test_get_client_ip_ignores_a_prepended_forwarded_entry(
 
     request = MagicMock(spec=Request)
     # The attacker sent the first entry themselves; nginx appended the second.
-    request.headers = Headers({"x-forwarded-for": "198.51.100.5, 203.0.113.99"})
+    request.headers = {"x-forwarded-for": "198.51.100.5, 203.0.113.99"}
     client = MagicMock()
     client.host = "10.0.0.9"
     request.client = client
@@ -195,7 +194,7 @@ def test_get_client_ip_falls_back_when_every_hop_is_trusted(
     middleware = SessionMiddleware(app, manager, config)
 
     request = MagicMock(spec=Request)
-    request.headers = Headers({"x-forwarded-for": "10.0.0.1"})
+    request.headers = {"x-forwarded-for": "10.0.0.1"}
     client = MagicMock()
     client.host = "10.0.0.9"
     request.client = client
@@ -215,7 +214,7 @@ def test_get_client_ip_from_real_ip_behind_trusted_proxy(
     middleware = SessionMiddleware(app, manager, config)
 
     request = MagicMock(spec=Request)
-    request.headers = Headers({"x-real-ip": "192.168.1.1"})
+    request.headers = {"x-real-ip": "192.168.1.1"}
     client = MagicMock()
     client.host = "10.0.0.9"
     request.client = client
