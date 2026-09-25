@@ -10,6 +10,7 @@ from fastapi import status
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.security import HTTPBearer
 
+from .middleware import get_client_ip
 from .models import Session
 
 if TYPE_CHECKING:
@@ -115,6 +116,38 @@ def get_session_manager(request: Request) -> "SessionManager":
     return manager
 
 
+def get_session_client_ip(
+    request: Request,
+    manager: "SessionManager" = Depends(get_session_manager),
+) -> str | None:
+    """Get the client IP address the session middleware binds sessions to.
+
+    Resolves the address with the registered SessionManager's configuration,
+    honouring `trusted_proxies` exactly like the middleware does. Pass it to
+    `create_session()` so `ip_binding` checks later requests against the same
+    address.
+
+    Example:
+        ```python
+        from fastapi_cachex.session.dependencies import ClientIPDep, SessionManagerDep
+
+
+        @app.post("/login")
+        async def login(manager: SessionManagerDep, client_ip: ClientIPDep):
+            session, token = await manager.create_session(user, ip_address=client_ip)
+            return {"token": token}
+        ```
+
+    Args:
+        request: FastAPI request object
+        manager: SessionManager registered by the session middleware
+
+    Returns:
+        Client IP address or None
+    """
+    return get_client_ip(request, manager.config)
+
+
 require_session = get_session  # Alias for required session dependency
 
 # Type annotations for dependency injection
@@ -123,3 +156,4 @@ RequiredSession = Annotated[Session, Depends(get_session)]
 SessionDep = Annotated[Session, Depends(get_session)]
 UserSessionDep = Annotated[Session, Depends(get_session)]
 SessionManagerDep = Annotated["SessionManager", Depends(get_session_manager)]
+ClientIPDep = Annotated[str | None, Depends(get_session_client_ip)]

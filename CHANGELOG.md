@@ -25,6 +25,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 - `add_routes(..., include_content_preview=False)` leaves response bodies out
   of `/cached-records`: `content_preview` is `null`, while keys, sizes and expiry
   are still reported. The default stays `True`. ([#79](https://github.com/allen0099/FastAPI-CacheX/issues/79))
+- `get_client_ip(request, config)` (exported from `fastapi_cachex.session`) and
+  the `ClientIPDep` dependency (`fastapi_cachex.session.dependencies`) return
+  the client address the session middleware checks `ip_binding` against,
+  honouring `trusted_proxies`. Pass it to `create_session()`: behind a trusted
+  proxy, `request.client.host` is the proxy's address, so a session bound to it
+  was rejected on its next request. ([#87](https://github.com/allen0099/FastAPI-CacheX/issues/87))
 
 ### Fixed
 

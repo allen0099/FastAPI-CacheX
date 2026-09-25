@@ -170,6 +170,7 @@ from fastapi_cachex.session import (
     SessionUser,
     get_session,
 )
+from fastapi_cachex.session.dependencies import ClientIPDep
 
 app = FastAPI()
 
@@ -200,7 +201,7 @@ app.add_middleware(
 
 
 @app.post("/api/auth/login")
-async def login(username: str, password: str, request: Request):
+async def login(username: str, password: str, request: Request, client_ip: ClientIPDep):
     # Authenticate the user (should query a database)
     if not authenticate_user(username, password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -213,14 +214,13 @@ async def login(username: str, password: str, request: Request):
         roles=get_user_roles(username),
     )
 
-    # Collect client information for the bindings. See "Client IP and reverse
-    # proxies" below if the app runs behind a proxy.
-    ip_address = request.client.host if request.client else None
+    # Collect client information for the bindings. `client_ip` is the address
+    # the middleware checks later, including behind trusted proxies.
     user_agent = request.headers.get("user-agent")
 
     session, token = await session_manager.create_session(
         user=user,
-        ip_address=ip_address,
+        ip_address=client_ip,
         user_agent=user_agent,
     )
 
@@ -544,8 +544,24 @@ used only when `X-Forwarded-For` yields no usable value.
 
 The middleware applies this logic when it checks a binding, but `create_session()` binds whatever
 `ip_address` you pass it. Behind a trusted proxy, `request.client.host` is the proxy's address,
-so pass the same client address the middleware will derive, or the binding check fails on the
-next request.
+which never matches, so the binding check fails on the next request. Pass the address the
+middleware derives instead, either through the `ClientIPDep` dependency or by calling
+`get_client_ip()` with the same config:
+
+```python
+from fastapi_cachex.session import get_client_ip
+from fastapi_cachex.session.dependencies import ClientIPDep, SessionManagerDep
+
+
+@app.post("/login")
+async def login(manager: SessionManagerDep, client_ip: ClientIPDep):
+    session, token = await manager.create_session(user, ip_address=client_ip)
+    return {"token": token}
+
+
+# Outside a route, with the SessionConfig you gave the middleware:
+client_ip = get_client_ip(request, config)
+```
 
 ### 4. IP Binding (Optional)
 
