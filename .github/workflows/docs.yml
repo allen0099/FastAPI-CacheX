@@ -9,6 +9,8 @@ on:
       - 'README.md'
       - 'CHANGELOG.md'
       - 'zensical.toml'
+      - 'zensical.zh-TW.toml'
+      - 'i18n/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/docs.yml'
@@ -20,6 +22,8 @@ on:
       - 'README.md'
       - 'CHANGELOG.md'
       - 'zensical.toml'
+      - 'zensical.zh-TW.toml'
+      - 'i18n/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/docs.yml'
@@ -46,3 +50,6 @@ jobs:
 
     - name: Build (strict)
       run: uv run --no-sync zensical build --strict
+
+    - name: Build Traditional Chinese translation (strict)
+      run: uv run --no-sync zensical build --strict -f zensical.zh-TW.toml

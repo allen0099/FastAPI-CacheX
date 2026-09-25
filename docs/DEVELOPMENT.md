@@ -204,6 +204,25 @@ The **Docs** workflow (`.github/workflows/docs.yml`) and Read the Docs
 (`.readthedocs.yaml`) both run `zensical build --strict`, so a broken link,
 snippet path or docstring reference fails the PR.
 
+### Traditional Chinese translation
+
+A Traditional Chinese (`zh-TW`) translation is published at
+<https://fastapi-cachex.readthedocs.io/zh-tw/latest/>. It is a separate Read the
+Docs translation project built from `zensical.zh-TW.toml` (build settings in
+`i18n/zh-TW/.readthedocs.yaml`), and its pages live in `i18n/zh-TW/docs/` — not
+under `docs/`, which would pull them into the English site.
+
+```bash
+uv run zensical serve -f zensical.zh-TW.toml
+uv run zensical build --strict -f zensical.zh-TW.toml  # also run by the Docs workflow
+```
+
+The English pages are the source of truth. The translation may lag behind
+them, and every translated page carries a banner saying so, with a link to the
+English original. Pages that are not translated yet are linked from the
+translation's navigation to the English site. When translating, follow the
+terms in [`i18n/zh-TW/GLOSSARY.md`](https://github.com/allen0099/FastAPI-CacheX/blob/master/i18n/zh-TW/GLOSSARY.md).
+
 ### Adding API reference pages
 
 API pages live under `docs/api/` and are generated from docstrings (Google
