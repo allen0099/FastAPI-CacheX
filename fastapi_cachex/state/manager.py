@@ -63,6 +63,8 @@ class StateManager:
             default_ttl: Default time-to-live in seconds for state
 
         Raises:
+            BackendNotFoundError: If ``backend`` is None and no backend has
+                been set with ``BackendProxy.set()``.
             ValueError: If ``default_ttl`` is zero or negative.
         """
         validate_ttl(default_ttl)

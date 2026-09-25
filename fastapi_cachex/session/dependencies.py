@@ -32,7 +32,8 @@ def get_optional_session(
     """Get session from request state (optional).
 
     This dependency automatically displays the authorization input box in OpenAPI/Swagger UI.
-    The actual authentication is handled by SessionMiddleware; the credentials parameter
+    The actual authentication is handled by the session middleware
+    (``FastAPICacheXSessionMiddleware``); the credentials parameter
     is only used to generate the OpenAPI security scheme.
 
     Args:
@@ -52,7 +53,8 @@ def get_session(
     """Get session from request state (required).
 
     This dependency automatically displays the authorization input box in OpenAPI/Swagger UI.
-    The actual authentication is handled by SessionMiddleware; the credentials parameter
+    The actual authentication is handled by the session middleware
+    (``FastAPICacheXSessionMiddleware``); the credentials parameter
     is only used to generate the OpenAPI security scheme.
 
     Args:
@@ -79,7 +81,8 @@ def get_session_manager(request: Request) -> "SessionManager":
     """Get SessionManager instance from app state.
 
     This dependency allows you to access the SessionManager instance
-    that was registered via SessionMiddleware. Use this when you need
+    that the session middleware (``FastAPICacheXSessionMiddleware``)
+    registered on ``app.state`` when it handled its first request. Use this when you need
     to perform session operations like create, delete, or regenerate.
 
     Example:
@@ -103,7 +106,8 @@ def get_session_manager(request: Request) -> "SessionManager":
         SessionManager instance
 
     Raises:
-        HTTPException: 500 if SessionManager not found in app state
+        HTTPException: 500 if no session middleware has registered a
+            SessionManager yet
     """
     manager: SessionManager | None = getattr(
         request.app.state, "__fastapi_cachex_session_manager", None
@@ -111,7 +115,10 @@ def get_session_manager(request: Request) -> "SessionManager":
     if manager is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="SessionManager not initialized. Ensure SessionMiddleware is added to the app.",
+            detail=(
+                "SessionManager not initialized. Ensure "
+                "FastAPICacheXSessionMiddleware is added to the app."
+            ),
         )
     return manager
 

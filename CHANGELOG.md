@@ -40,6 +40,22 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
+- Docstrings and guides that disagreed with the code are corrected. Most
+  visible:
+  - `SessionConfig.sliding_threshold` now describes renewal once less than
+    that fraction of the TTL remains; it used to say the opposite.
+  - The `cache()` arguments `no_cache`, `stale_ttl`, `private` and `ttl` are
+    described by what they do, and the docstring gains a `Raises:` section.
+  - The per-user `key_builder` example in the HTTP caching guide no longer
+    sets `private=True`, which bypassed the backend and made the key builder
+    unused.
+  - The state quick start catches `StateError`, so a malformed state is a 400
+    instead of a 500.
+  - The `get_session_manager` 500 message and the session dependency
+    docstrings name `FastAPICacheXSessionMiddleware` instead of the
+    deprecated `SessionMiddleware`.
+  - The monitoring routes no longer claim to count cache hits.
+
 - The Redis backend now matches its key prefix and the path given to
   `clear_path()` literally when it builds `SCAN` patterns. Glob characters in
   them used to be live: `clear_path("/files/[draft]")` missed the cached entry

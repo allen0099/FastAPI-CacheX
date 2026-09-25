@@ -103,6 +103,6 @@ Four non-abstract atomic primitives live on the base class with non-atomic fallb
 - Ruff is configured with `extend-select = ['ALL']` with specific ignores (see `pyproject.toml`). Notable: E501 (line length), B008 (function calls in defaults), FBT001/FBT002 (boolean args — intentional for Cache-Control API).
 - mypy runs in strict mode on the package (not tests).
 - pydocstring convention is Google style.
-- `from __future__ import annotations` is used for forward references.
+- Forward references are mostly quoted annotations with `TYPE_CHECKING` imports; only a couple of modules use `from __future__ import annotations`.
 - All public functions must have complete type annotations.
 - Coverage threshold is 90% (enforced by `pytest-cov`).

@@ -87,7 +87,7 @@ class SessionConfig(BaseModel):
         default=0.5,
         ge=0.0,
         le=1.0,
-        description="Fraction of TTL that must pass before sliding refresh (0.5 = refresh after half TTL)",
+        description="Renew once less than this fraction of session_ttl remains (0.5 = renew in the second half of the TTL)",
     )
 
     # Token settings

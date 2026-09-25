@@ -22,7 +22,7 @@ _PREVIEW_BYTES = 100
 
 @dataclass
 class CacheHitRecord:
-    """Record for a single cache hit."""
+    """One cached route entry. Despite the name, hits are not counted."""
 
     cache_key: str
     method: str
@@ -36,7 +36,7 @@ class CacheHitRecord:
 
 @dataclass
 class CacheHitSummary:
-    """Summary of cache hit statistics."""
+    """Summary of the cached route entries."""
 
     total_cached_entries: int
     active_entries: int
@@ -45,7 +45,10 @@ class CacheHitSummary:
 
 @dataclass
 class CacheHitsResponse:
-    """Response for cached hits endpoint."""
+    """Response for the ``/cached-hits`` endpoint.
+
+    The ``*_hits`` fields count cached entries, not requests served from them.
+    """
 
     cached_hits: list[CacheHitRecord]
     total_hits: int
@@ -241,9 +244,10 @@ def add_routes(
 ) -> None:
     """Add cache monitoring routes to the FastAPI application.
 
-    This function allows users to optionally add cache monitoring routes
-    to their FastAPI application. Users can call this function to enable
-    cache hit tracking and cache record display.
+    Mounts two read-only routes that report what the configured backend
+    currently holds. They inspect stored entries; nothing counts cache hits.
+    The routes have no authentication of their own, so pass ``dependencies``
+    in production.
 
     Args:
         app: FastAPI application instance
@@ -261,14 +265,16 @@ def add_routes(
                       expiry are still reported. Defaults to True.
 
     Example:
+        ```python
         from fastapi import FastAPI
         from fastapi_cachex import add_routes
 
         app = FastAPI()
         add_routes(app)  # Routes at /cached-hits and /cached-records
 
-        # Or with prefix
-        add_routes(app, prefix="/api/cache")  # Routes at /api/cache/cached-hits and /api/cache/cached-records
+        # Or with a prefix: /api/cache/cached-hits and /api/cache/cached-records
+        add_routes(app, prefix="/api/cache")
+        ```
     """
 
     @app.get(
@@ -277,13 +283,14 @@ def add_routes(
         dependencies=dependencies,
     )
     async def get_cached_hits() -> CacheHitsResponse:
-        """Return cached hit records.
+        """List the cached route entries.
 
-        Shows cache statistics including which routes are frequently being cached,
-        hit counts, and cache key information.
+        Splits every cached key into method, host, path and query, with its
+        ETag and expiry, plus counts of valid and expired entries and the
+        distinct cached paths. Cache hits are not counted.
 
         Returns:
-            CacheHitsResponse containing cache hit records and statistics
+            CacheHitsResponse describing the cached entries
         """
         return _cached_hits(_parse_entries(await _cache_data()))
 

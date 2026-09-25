@@ -120,9 +120,12 @@ HTTP requests.
 >    cache it, and `If-None-Match` revalidation still works against freshly
 >    rendered content.
 > 2. **A key builder that includes the caller's identity** — use this when you
->    do want a server-side cache per user.
+>    do want a server-side cache per user. Leave `private` unset: `private=True`
+>    bypasses the backend, so the key builder would never be used.
 
 ```python
+from fastapi import Request, Response
+
 from fastapi_cachex import cache
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 
@@ -149,10 +152,18 @@ def per_user_key(request: Request) -> str:
 
 
 @app.get("/me/dashboard")
-@cache(ttl=60, private=True, key_builder=per_user_key)
-async def my_dashboard(user: CurrentUser):
+@cache(ttl=60, key_builder=per_user_key)
+async def my_dashboard(user: CurrentUser, response: Response):
+    # Without `private`, the response goes out as `Cache-Control: max-age=60`,
+    # which a shared cache (CDN, reverse proxy) may store. Vary on whatever
+    # carries the identity so such a cache keeps one copy per user.
+    response.headers["Vary"] = "Authorization"
     return build_dashboard(user)
 ```
+
+A per-user entry is only safe from shared caches in front of your app if they
+honour `Vary` for that header. When they don't, or when identity comes from
+something a shared cache cannot see, use option 1 instead.
 
 > [!CAUTION]
 > The key builder decides who sees whose data, so the identity it reads must
