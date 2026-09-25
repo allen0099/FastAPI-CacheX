@@ -103,35 +103,42 @@ class CacheLock:
             )
             raise RuntimeError(msg)
 
-        is_blocking = self.blocking if blocking is None else blocking
-        effective_timeout = self.timeout if timeout is None else timeout
-        interval = self.poll_interval if poll_interval is None else poll_interval
-        effective_ttl = self.ttl if ttl is None else ttl
+        self._is_held = True
+        try:
+            is_blocking = self.blocking if blocking is None else blocking
+            effective_timeout = self.timeout if timeout is None else timeout
+            interval = self.poll_interval if poll_interval is None else poll_interval
+            effective_ttl = self.ttl if ttl is None else ttl
 
-        backend = self._get_backend()
+            backend = self._get_backend()
 
-        if not is_blocking:
-            acquired = await backend.set_if_absent(
-                self.key, self._entry, ttl=effective_ttl
-            )
-            if acquired:
-                self._is_held = True
-            return acquired
+            if not is_blocking:
+                acquired = await backend.set_if_absent(
+                    self.key, self._entry, ttl=effective_ttl
+                )
+                if not acquired:
+                    self._is_held = False
+                return acquired
 
-        start = time.monotonic()
-        while True:
-            if await backend.set_if_absent(self.key, self._entry, ttl=effective_ttl):
-                self._is_held = True
-                return True
-            if effective_timeout is not None:
-                elapsed = time.monotonic() - start
-                if elapsed >= effective_timeout:
-                    return False
-                remaining = effective_timeout - elapsed
-                sleep_time = min(interval, remaining)
-            else:
-                sleep_time = interval
-            await asyncio.sleep(sleep_time)
+            start = time.monotonic()
+            while True:
+                if await backend.set_if_absent(
+                    self.key, self._entry, ttl=effective_ttl
+                ):
+                    return True
+                if effective_timeout is not None:
+                    elapsed = time.monotonic() - start
+                    if elapsed >= effective_timeout:
+                        self._is_held = False
+                        return False
+                    remaining = effective_timeout - elapsed
+                    sleep_time = min(interval, remaining)
+                else:
+                    sleep_time = interval
+                await asyncio.sleep(sleep_time)
+        except Exception:
+            self._is_held = False
+            raise
 
     async def release(self) -> bool:
         """Release the lock if still held by this instance.
@@ -171,7 +178,7 @@ class CacheLock:
         backend = self._get_backend()
         return (await backend.get(self.key)) is not None
 
-    async def __aenter__(self) -> "CacheLock":
+    async def __aenter__(self) -> "CacheLock":  # noqa: PYI034
         """Acquire lock as async context manager.
 
         Raises:

@@ -11,6 +11,7 @@ from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.exceptions import LockTimeoutError
 from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.types import CacheEntry
 from tests.live_servers import requires_memcached
 from tests.live_servers import requires_redis
 from tests.live_servers import requires_redis_package
@@ -207,9 +208,17 @@ async def test_lock_reentry_raises_runtime_error() -> None:
     assert await lock.release() is True
 
 
+class YieldingMemoryBackend(MemoryBackend):
+    async def set_if_absent(
+        self, key: str, value: CacheEntry, ttl: int | None = None
+    ) -> bool:
+        await asyncio.sleep(0)
+        return await super().set_if_absent(key, value, ttl=ttl)
+
+
 @pytest.mark.asyncio
 async def test_lock_shared_instance_raises_runtime_error() -> None:
-    backend = MemoryBackend()
+    backend = YieldingMemoryBackend()
     BackendProxy.set(backend)
 
     lock = CacheLock("shared_job", ttl=30)
