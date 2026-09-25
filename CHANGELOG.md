@@ -25,6 +25,15 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   compare-and-delete, Memcached `ADD` and `GETS` + `CAS`, memory its lock.
   Third-party backends inherit non-atomic fallbacks. ([#62](https://github.com/allen0099/FastAPI-CacheX/issues/62))
 
+### Fixed
+
+- Concurrent first requests to the `AppCache` dependency, in an app that never
+  configured a backend, no longer each build their own `MemoryBackend` and
+  `CacheManager`. `get_app_cache` runs in worker threads, so the last one
+  registered replaced the others and, for a while, requests used caches that
+  could not see each other's entries. The lazy set-up and the `@cache`
+  fallback now happen under one lock. ([#76](https://github.com/allen0099/FastAPI-CacheX/issues/76))
+
 ### Documentation
 
 - The documentation is published at <https://fastapi-cachex.readthedocs.io/>,
