@@ -38,24 +38,39 @@ when it is missing. If no backend has been configured, `@cache` falls back to a
 
 ## Cache-Control directives
 
-| Directive                | Supported          | Description                                                                                             |
-|--------------------------|--------------------|---------------------------------------------------------------------------------------------------------|
-| `max-age`                | :white_check_mark: | Specifies the maximum amount of time a resource is considered fresh.                                    |
-| `s-maxage`               | :x:                | Specifies the maximum amount of time a resource is considered fresh for shared caches.                  |
-| `no-cache`               | :white_check_mark: | Forces caches to submit the request to the origin server for validation before releasing a cached copy. |
-| `no-store`               | :white_check_mark: | Instructs caches not to store any part of the request or response.                                      |
-| `no-transform`           | :x:                | Instructs caches not to transform the response content.                                                 |
-| `must-revalidate`        | :white_check_mark: | Forces caches to revalidate the response with the origin server after it becomes stale.                 |
-| `proxy-revalidate`       | :x:                | Similar to `must-revalidate`, but only for shared caches.                                               |
-| `must-understand`        | :x:                | Indicates that the recipient must understand the directive or treat it as an error.                     |
-| `private`                | :white_check_mark: | Indicates that the response is intended for a single user and should not be stored by shared caches.    |
-| `public`                 | :white_check_mark: | Indicates that the response may be cached by any cache, even if it is normally non-cacheable.           |
-| `immutable`              | :white_check_mark: | Indicates that the response body will not change over time, allowing for longer caching.                |
-| `stale-while-revalidate` | :white_check_mark: | Indicates that a cache can serve a stale response while it revalidates the response in the background.  |
-| `stale-if-error`         | :white_check_mark: | Indicates that a cache can serve a stale response if the origin server is unavailable.                  |
+`@cache` plays two roles. It writes a `Cache-Control` header for browsers and
+intermediaries (CDNs, reverse proxies), and it keeps its own server-side cache in
+the backend. Most directives only affect the first: they are written into the
+header, and the server-side cache behaves the same with or without them.
 
-How each decorator argument turns into the header is described in
+| Directive                | Set with                                 | Sent in header     | Effect on the server-side cache                                                                                |
+|--------------------------|------------------------------------------|--------------------|----------------------------------------------------------------------------------------------------------------|
+| `max-age`                | `ttl=N`                                  | :white_check_mark: | The stored response is served for `N` seconds without running the handler (`ttl=0` or unset: never served directly). |
+| `no-cache`               | `no_cache=True`                          | :white_check_mark: | The handler runs on every request; the response is still stored, and a matching `If-None-Match` gets a 304.   |
+| `no-store`               | `no_store=True`                          | :white_check_mark: | Nothing is read or stored, and no ETag is set.                                                                  |
+| `private`                | `private=True`                           | :white_check_mark: | The backend is bypassed; the handler runs on every request, and ETag revalidation still works.                 |
+| `public`                 | `public=True`                            | :white_check_mark: | None (header only).                                                                                            |
+| `immutable`              | `immutable=True`                         | :white_check_mark: | None (header only).                                                                                            |
+| `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | None (header only).                                                                                            |
+| `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | None (header only): the server-side cache never serves stale content.                                         |
+| `stale-if-error`         | `stale="error", stale_ttl=N`             | :white_check_mark: | None (header only): a failing handler is not answered from the cache.                                          |
+| `s-maxage`               | —                                        | :x:                | —                                                                                                              |
+| `proxy-revalidate`       | —                                        | :x:                | —                                                                                                              |
+| `no-transform`           | —                                        | :x:                | —                                                                                                              |
+| `must-understand`        | —                                        | :x:                | —                                                                                                              |
+
+`no_cache=True` and `no_store=True` replace the rest of the header: with
+`no_cache` only `no-cache` (and `must-revalidate`, when set) is sent, and with
+`no_store` only `no-store`. How the other arguments combine is described in
 [Cache flow](CACHE_FLOW.md#2-cache-control-directives).
+
+### The request's `Cache-Control` is ignored
+
+A client's own `Cache-Control` request header (`no-cache`, `max-age=0`, as sent
+by a browser's hard reload, and so on) does not change what `@cache` does. This
+is deliberate: if a request header could bypass the cache, any client could
+send every request straight to your handler. Conditional requests are honoured:
+a matching `If-None-Match` gets a 304.
 
 ## Cache hit behavior
 

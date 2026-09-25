@@ -15,6 +15,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-09-25
+
 ### Added
 
 - `CacheManager.add(key, value, ttl=None) -> bool` stores an application value
@@ -39,6 +41,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   range now fails config validation. ([#73](https://github.com/allen0099/FastAPI-CacheX/issues/73))
 
 ### Fixed
+
+- The Cache-Control table in the HTTP caching guide no longer marks
+  header-only directives as simply "supported". It now shows, for each
+  directive, how to set it, whether it is sent, and what it does to the
+  server-side cache. A new section documents that the request's own
+  `Cache-Control` is ignored by design.
 
 - Docstrings and guides that disagreed with the code are corrected. Most
   visible:
@@ -126,6 +134,15 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   line, not only the first. A proxy that adds its own line instead of appending
   to the caller's left a caller-chosen first line in charge of the walk, so a
   forged address could satisfy the binding. ([#104](https://github.com/allen0099/FastAPI-CacheX/issues/104))
+
+### Documentation
+
+- The guides are available in Traditional Chinese at
+  <https://fastapi-cachex.readthedocs.io/zh-tw/latest/>, with a language
+  switcher on both sites. English stays the source of truth: every translated
+  page says it may lag behind and links to its English original. The API
+  reference and the development guides remain English-only.
+  `docs/README.zh-TW.md` is replaced by the translated home page. ([#89](https://github.com/allen0099/FastAPI-CacheX/issues/89))
 
 ## [0.3.6] - 2026-09-25
 
@@ -358,7 +375,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.2...v0.3.4

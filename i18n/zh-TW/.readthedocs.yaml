@@ -1,0 +1,20 @@
+# Read the Docs build of the Traditional Chinese translation:
+# https://fastapi-cachex.readthedocs.io/zh-tw/latest/
+# Same as the root .readthedocs.yaml, but built from zensical.zh-TW.toml. The
+# translation project points its "Build configuration file" setting here.
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.14"
+  jobs:
+    install:
+      - pip install uv
+      - UV_PROJECT_ENVIRONMENT=$READTHEDOCS_VIRTUALENV_PATH uv sync --frozen --only-group docs --no-install-project
+    build:
+      html:
+        - UV_PROJECT_ENVIRONMENT=$READTHEDOCS_VIRTUALENV_PATH uv run --no-sync zensical build --strict -f zensical.zh-TW.toml
+    post_build:
+      - mkdir -p $READTHEDOCS_OUTPUT/html/
+      - cp -r site-zh-TW/* $READTHEDOCS_OUTPUT/html/

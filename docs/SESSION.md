@@ -27,10 +27,10 @@ The six `cookie_*` settings of `SessionConfig` (`cookie_name`, `cookie_max_age`,
 
 - ✅ **Session lifecycle management**: create, read, update, delete, invalidate
 - ✅ **Security**:
-  - HMAC-SHA256 token signing
-  - IP address binding (optional)
-  - User-Agent binding (optional)
-  - Session ID regeneration after login
+    - HMAC-SHA256 token signing
+    - IP address binding (optional)
+    - User-Agent binding (optional)
+    - Session ID regeneration after login
 - ✅ **Multiple token sources**: custom header, `Authorization: Bearer`, cookie
   (cookies are supported by `FastAPICacheXSessionMiddleware` only)
 - ✅ **Optional JWT format**: use a JWT as the session token (requires the `jwt` extra)
