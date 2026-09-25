@@ -133,6 +133,15 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   to the caller's left a caller-chosen first line in charge of the walk, so a
   forged address could satisfy the binding. ([#104](https://github.com/allen0099/FastAPI-CacheX/issues/104))
 
+### Documentation
+
+- The guides are available in Traditional Chinese at
+  <https://fastapi-cachex.readthedocs.io/zh-tw/latest/>, with a language
+  switcher on both sites. English stays the source of truth: every translated
+  page says it may lag behind and links to its English original. The API
+  reference and the development guides remain English-only.
+  `docs/README.zh-TW.md` is replaced by the translated home page. ([#89](https://github.com/allen0099/FastAPI-CacheX/issues/89))
+
 ## [0.3.6] - 2026-09-25
 
 ### Added
