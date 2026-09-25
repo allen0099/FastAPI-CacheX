@@ -15,6 +15,11 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+### Added
+
+- `CacheLock` distributed lock async context manager helper built on backend primitives, with `acquire`, `release`, `extend`, `locked`, and `LockTimeoutError`.
+- `expire_if_equals(key, expected, ttl) -> bool` atomic backend primitive added to `BaseCacheBackend`, `MemoryBackend`, `AsyncRedisCacheBackend`, and `MemcachedBackend`.
+
 ## [0.3.7] - 2026-09-25
 
 ### Added

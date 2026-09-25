@@ -887,6 +887,48 @@ async def test_redis_lock_release_after_expiry_keeps_the_new_holder(
 
 
 @requires_redis
+@pytest.mark.asyncio
+async def test_redis_expire_if_equals_updates_ttl_only_when_matching(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await async_redis_backend.set("slot", theirs, 30)
+
+    assert await async_redis_backend.expire_if_equals("slot", mine, 60) is False
+    assert await async_redis_backend.expire_if_equals("slot", theirs, 60) is True
+    pttl = await async_redis_backend.client.pttl(async_redis_backend._make_key("slot"))
+    assert 55000 <= pttl <= 60000
+    assert await async_redis_backend.expire_if_equals("missing", theirs, 60) is False
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_expire_if_equals_keeps_a_value_written_after_the_compare(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await async_redis_backend.set("slot", mine, 60)
+
+    client = async_redis_backend.client
+    original_get = client.get
+
+    async def get_then_overwrite(name):
+        raw = await original_get(name)
+        await async_redis_backend.set("slot", theirs, 60)
+        return raw
+
+    client.get = get_then_overwrite  # type: ignore[method-assign]
+    try:
+        assert await async_redis_backend.expire_if_equals("slot", mine, 120) is False
+    finally:
+        client.get = original_get  # type: ignore[method-assign]
+
+    assert await async_redis_backend.get("slot") == theirs
+
+
+@requires_redis
 def test_cached_route_with_ttl_zero_is_served() -> None:
     """End to end: `@cache(ttl=0)` used to send `SET ... EX 0` and answer 500."""
     from fastapi import FastAPI

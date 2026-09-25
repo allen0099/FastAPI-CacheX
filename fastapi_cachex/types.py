@@ -71,3 +71,12 @@ def counter_value(entry: CacheEntry) -> int:
     except ValueError as e:
         msg = "Cache key holds a value that is not a counter"
         raise CacheXError(msg) from e
+
+
+# Fingerprint every backend reports for a key that holds a lock entry
+LOCK_FINGERPRINT = "lock"
+
+
+def lock_entry(token: str) -> CacheEntry:
+    """Wrap a lock token string in the entry model shared by every backend."""
+    return CacheEntry(fingerprint=LOCK_FINGERPRINT, content=token.encode("utf-8"))
