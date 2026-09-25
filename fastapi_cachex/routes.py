@@ -69,7 +69,7 @@ class CachedRecord:
     content_size: int
     is_expired: bool
     ttl_remaining: float | None
-    content_preview: str
+    content_preview: str | None
 
 
 @dataclass
@@ -192,7 +192,9 @@ def _cached_hits(entries: list[_Entry]) -> CacheHitsResponse:
     )
 
 
-def _cached_records(entries: list[_Entry]) -> CachedRecordsResponse:
+def _cached_records(
+    entries: list[_Entry], include_content_preview: bool
+) -> CachedRecordsResponse:
     cached_records = [
         CachedRecord(
             cache_key=e.cache_key,
@@ -205,8 +207,10 @@ def _cached_records(entries: list[_Entry]) -> CachedRecordsResponse:
             content_size=len(e.entry.content),
             is_expired=e.is_expired,
             ttl_remaining=e.ttl_remaining,
-            content_preview=e.entry.content[:_PREVIEW_BYTES].decode(
-                "utf-8", errors="ignore"
+            content_preview=(
+                e.entry.content[:_PREVIEW_BYTES].decode("utf-8", errors="ignore")
+                if include_content_preview
+                else None
             ),
         )
         for e in entries
@@ -233,6 +237,7 @@ def add_routes(
     prefix: str = "",
     include_in_schema: bool = False,
     dependencies: Sequence[Any] | None = None,
+    include_content_preview: bool = True,
 ) -> None:
     """Add cache monitoring routes to the FastAPI application.
 
@@ -250,6 +255,10 @@ def add_routes(
                       all monitoring routes.  Useful for adding authentication
                       or authorization guards (e.g.
                       ``[Depends(verify_api_key)]``).
+        include_content_preview: Whether ``/cached-records`` includes the first
+                      bytes of each cached response body. When False,
+                      ``content_preview`` is ``null`` while keys, sizes and
+                      expiry are still reported. Defaults to True.
 
     Example:
         from fastapi import FastAPI
@@ -292,4 +301,6 @@ def add_routes(
         Returns:
             CachedRecordsResponse containing cached records and statistics
         """
-        return _cached_records(_parse_entries(await _cache_data()))
+        return _cached_records(
+            _parse_entries(await _cache_data()), include_content_preview
+        )
