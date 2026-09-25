@@ -26,6 +26,15 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   of `/cached-records`: `content_preview` is `null`, while keys, sizes and expiry
   are still reported. The default stays `True`. ([#79](https://github.com/allen0099/FastAPI-CacheX/issues/79))
 
+### Fixed
+
+- The monitoring routes from `add_routes()` now show when Redis entries
+  expire. `AsyncRedisCacheBackend.get_cache_data()` reported every entry as
+  never expiring (`ttl_remaining: null`); it now fetches each key's `PTTL` in
+  the same pipeline as its value and returns the absolute expiry the memory
+  backend reports. A key that disappears between the scan and the fetch is left
+  out. ([#74](https://github.com/allen0099/FastAPI-CacheX/issues/74))
+
 ## [0.3.6] - 2026-09-25
 
 ### Added

@@ -329,13 +329,10 @@ value: the JSON document above
 ```
 
 > [!NOTE]
-> **The TTL fields of the monitoring endpoints are unavailable on the Redis
-> backend.** `AsyncRedisCacheBackend.get_cache_data()` returns `(entry, None)`
-> for every key without querying each key's actual TTL, so the
-> `/cached-hits` and `/cached-records` routes mounted by `add_routes()` show every
-> Redis entry as never expiring (`ttl_remaining: null`). Redis still enforces
-> expiry itself; the monitoring just cannot see the remaining seconds. On
-> Memcached these endpoints return no entries at all.
+> The `/cached-hits` and `/cached-records` routes mounted by `add_routes()` read
+> expiry from `get_cache_data()`. The memory backend tracks it directly and
+> Redis reports each key's `PTTL`; on Memcached, which cannot enumerate keys,
+> these endpoints return no entries at all.
 
 ## Cache clearing strategies
 

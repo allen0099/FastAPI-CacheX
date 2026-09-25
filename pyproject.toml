@@ -39,7 +39,7 @@ Documentation = "https://fastapi-cachex.readthedocs.io/"
 [dependency-groups]
 dev = [
     "coverage>=7.8.0",
-    "httpx>=0.28.1",
+    "httpx2>=2.13.1",
     "mypy>=1.15.0",
     "orjson>=3.10.16",
     "pre-commit>=4.2.0",
