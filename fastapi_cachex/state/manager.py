@@ -118,8 +118,8 @@ class StateManager:
         Returns:
             The generated state string
 
-        Raises:
-            StateDataError: If backend storage fails
+        Notes:
+            Exceptions raised by the configured backend propagate unchanged.
         """
         # Generate a random state string (32 bytes = 256 bits of entropy)
         state = secrets.token_urlsafe(32)
