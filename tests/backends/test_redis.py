@@ -921,3 +921,57 @@ def test_cached_route_with_ttl_zero_is_served() -> None:
         assert revalidated.status_code == 304
     finally:
         BackendProxy.set(previous)
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_clear_path_matches_glob_characters_literally(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """A path with glob metacharacters clears its HTTP entries, and only those."""
+    entry = CacheEntry(fingerprint="etag", content=b"x")
+    path = "/files/[draft]*?\\"
+    await async_redis_backend.set(f"GET|||host|||{path}|||", entry)
+    await async_redis_backend.set(f"GET|||host|||{path}|||v=1", entry)
+    # Keys the unescaped pattern would have caught.
+    await async_redis_backend.set("GET|||host|||/files/d|||", entry)
+    await async_redis_backend.set("GET|||host|||/files/[draft]xy\\|||", entry)
+
+    assert await async_redis_backend.clear_path(path) == 1
+    assert await async_redis_backend.clear_path(path, include_params=True) == 1
+    assert sorted(await async_redis_backend.get_all_keys()) == [
+        "GET|||host|||/files/[draft]xy\\|||",
+        "GET|||host|||/files/d|||",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_redis_glob_characters_in_prefix_do_not_reach_other_prefixes() -> None:
+    """clear/get_all_keys/clear_pattern stay inside a prefix containing ``?``/``*``."""
+    reason = redis_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
+
+    def make(prefix: str) -> AsyncRedisCacheBackend:
+        return AsyncRedisCacheBackend(
+            host=REDIS_HOST, port=REDIS_PORT, key_prefix=prefix
+        )
+
+    globbed, other = make("cachex-test?*:"), make("cachex-testX-other:")
+    entry = CacheEntry(fingerprint="etag", content=b"x")
+    try:
+        await other.set("keep", entry)
+        await globbed.set("mine", entry)
+
+        assert await globbed.get_all_keys() == ["mine"]
+        assert await globbed.clear_pattern("*") == 1
+        await globbed.set("mine", entry)
+        assert await globbed.clear_pattern("cachex-test?*:*") == 1
+        await globbed.set("mine", entry)
+        await globbed.clear()
+
+        assert await globbed.get_all_keys() == []
+        assert await other.get("keep") is not None
+    finally:
+        await globbed.clear()
+        await other.clear()

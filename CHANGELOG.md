@@ -40,6 +40,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
+- The Redis backend now matches its key prefix and the path given to
+  `clear_path()` literally when it builds `SCAN` patterns. Glob characters in
+  them used to be live: `clear_path("/files/[draft]")` missed the cached entry
+  for that path, and a `key_prefix` containing `?` or `*` let `clear()`,
+  `get_all_keys()` and `clear_pattern()` reach keys under other prefixes. Only
+  the pattern passed to `clear_pattern()` is still a glob.
+
 - `StateManager` no longer writes the raw OAuth state to its logs. The state
   comes from the callback query string, so logging it leaked live tokens and let
   a caller forge log lines with CR/LF. Log lines now carry `state_ref`, the

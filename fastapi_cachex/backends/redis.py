@@ -31,6 +31,15 @@ _PTTL_MISSING = -2
 # SCAN page size and DEL batch size; keeps individual commands small.
 _BATCH_SIZE = 100
 
+# Characters that are live in a Redis glob pattern.
+_GLOB_SPECIAL = frozenset("*?[]\\")
+
+
+def _escape_glob(text: str) -> str:
+    """Backslash-escape ``text`` so a Redis glob pattern matches it literally."""
+    return "".join(f"\\{ch}" if ch in _GLOB_SPECIAL else ch for ch in text)
+
+
 # INCRBY that attaches a TTL only when it creates the key, so a counter lives in
 # a fixed window. KEYS[1] = key, ARGV[1] = delta, ARGV[2] = ttl (0 = none).
 _INCREMENT_SCRIPT = """
@@ -154,6 +163,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Add prefix to cache key."""
         return f"{self.key_prefix}{key}"
 
+    @property
+    def _prefix_pattern(self) -> str:
+        """The key prefix as a literal glob, so ``*``/``?``/``[`` in it stay inert."""
+        return _escape_glob(self.key_prefix)
+
     async def _scan_keys(self, pattern: str) -> list[str]:
         """Collect every key matching ``pattern`` (a full, prefixed glob).
 
@@ -271,7 +285,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         Only deletes keys within this backend's prefix.
         """
-        removed = await self._delete_keys(await self._scan_keys(f"{self.key_prefix}*"))
+        removed = await self._delete_keys(
+            await self._scan_keys(f"{self._prefix_pattern}*")
+        )
         logger.debug("Redis CLEAR; removed=%s", removed)
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
@@ -286,9 +302,13 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """
         # Keys are method|||host|||path|||query. Without include_params only the
         # exact path is matched: default_key_builder always appends a separator
-        # after the path, so keys with no query params end with "|||".
+        # after the path, so keys with no query params end with "|||". The
+        # path is a literal, not a glob: "/files/[draft]" means those brackets.
         suffix = "*" if include_params else ""
-        pattern = f"{self.key_prefix}*{CACHE_KEY_SEPARATOR}{path}{CACHE_KEY_SEPARATOR}{suffix}"
+        pattern = (
+            f"{self._prefix_pattern}*{CACHE_KEY_SEPARATOR}"
+            f"{_escape_glob(path)}{CACHE_KEY_SEPARATOR}{suffix}"
+        )
         keys = await self._scan_keys(pattern)
 
         # Also match direct keys (custom key formats without separators)
@@ -309,15 +329,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
     async def clear_pattern(self, pattern: str) -> int:
         """Clear cached responses matching a pattern.
 
+        Only ``pattern`` is a live glob; the backend's key prefix is matched
+        literally, whether or not ``pattern`` repeats it.
+
         Args:
             pattern: A glob pattern to match cache keys against
 
         Returns:
             Number of cache entries cleared
         """
-        full_pattern = (
-            pattern if pattern.startswith(self.key_prefix) else self._make_key(pattern)
-        )
+        full_pattern = self._prefix_pattern + pattern.removeprefix(self.key_prefix)
         cleared_count = await self._delete_keys(await self._scan_keys(full_pattern))
         warn_if_path_shaped(pattern, cleared_count)
         logger.debug(
@@ -331,7 +352,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         Returns:
             List of logical cache keys (without the backend key prefix)
         """
-        keys = await self._scan_keys(f"{self.key_prefix}*")
+        keys = await self._scan_keys(f"{self._prefix_pattern}*")
         logical_keys = [k.removeprefix(self.key_prefix) for k in keys]
         logger.debug("Redis GET_ALL_KEYS; count=%s", len(logical_keys))
         return logical_keys
