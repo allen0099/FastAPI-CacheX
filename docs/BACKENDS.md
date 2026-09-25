@@ -50,6 +50,9 @@ BackendProxy.set(backend)
 - Uses SCAN instead of KEYS for safe production use (non-blocking)
 - Namespaced with `fastapi_cachex:` prefix by default; pass `key_prefix="myapp:cache:"`
   for multi-tenant scenarios
+- Only the pattern you pass to `clear_pattern()` is a glob. The key prefix and the path
+  given to `clear_path()` are matched literally, so `*`, `?`, `[` or `]` in them cannot
+  reach keys outside the prefix or miss the path
 
 **Configuring from a model**: `RedisConfig` is a pydantic model with the same
 settings and validation, which is handy when they come from environment
