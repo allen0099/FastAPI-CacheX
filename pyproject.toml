@@ -60,6 +60,7 @@ docs = [
     # Pre-1.0: upgrades are deliberate, not automatic.
     "zensical>=0.0.65,<0.1",
     "mkdocstrings-python>=2.0",
+    "markdown-callouts>=0.4",
 ]
 
 [project.optional-dependencies]

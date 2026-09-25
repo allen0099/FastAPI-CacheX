@@ -37,7 +37,6 @@ nav = [
     { "Contributing" = "CONTRIBUTING.md" },
   ] },
   { "Changelog" = "changelog.md" },
-  { "繁體中文" = "README.zh-TW.md" },
 ]
 
 [project.theme]
@@ -76,6 +75,8 @@ toggle.name = "Switch to system preference"
 
 [project.markdown_extensions]
 admonition = {}
+# GitHub-style `> [!NOTE]` callouts, so one syntax renders on GitHub and here.
+github-callouts = {}
 attr_list = {}
 def_list = {}
 footnotes = {}
