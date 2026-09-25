@@ -174,6 +174,16 @@ def test_the_repository_changelog_can_be_released():
     latest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", text, re.MULTILINE)
     assert latest is not None
 
+    # Right after a release `## [Unreleased]` is empty, which promote()
+    # rightly refuses. Give it an entry so the rest of the file is still checked.
+    text = re.sub(
+        r"^## \[Unreleased\]\n\s*(?=^## \[)",
+        "## [Unreleased]\n\n### Fixed\n\n- Placeholder entry.\n\n",
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
     rewritten, body = promote(text, "0.9.9", "2026-09-14")
 
     assert rewritten.startswith("# Changelog\n")
