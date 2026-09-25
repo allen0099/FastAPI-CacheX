@@ -1,0 +1,114 @@
+# Traditional Chinese documentation site, a Read the Docs translation of the
+# English site (zensical.toml). See "Traditional Chinese translation" in
+# docs/DEVELOPMENT.md.
+#
+#   uv run zensical serve -f zensical.zh-TW.toml
+#   uv run zensical build --strict -f zensical.zh-TW.toml
+#
+# The pages live outside docs/ because Zensical has no exclude_docs: anything
+# under docs/ would also be built into the English site.
+
+[project]
+site_name = "FastAPI-CacheX"
+site_description = "FastAPI 的 HTTP 快取、應用層快取與 Session 管理。"
+site_url = "https://fastapi-cachex.readthedocs.io/zh-tw/latest/"
+repo_url = "https://github.com/allen0099/FastAPI-CacheX"
+repo_name = "allen0099/FastAPI-CacheX"
+edit_uri = "edit/master/i18n/zh-TW/docs/"
+docs_dir = "i18n/zh-TW/docs"
+site_dir = "site-zh-TW"
+
+# Pages that are not translated (yet) point at the English site. Swap an entry
+# to the local file once its translation lands.
+nav = [
+  { "首頁" = "index.md" },
+  { "指南" = [
+    { "HTTP 快取（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/" },
+    { "快取流程（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/CACHE_FLOW/" },
+    { "應用層快取（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/APP_CACHE/" },
+    { "後端（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/BACKENDS/" },
+    { "Session 管理（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/SESSION/" },
+    { "JWT claims（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/JWT_CLAIMS/" },
+    { "OAuth state（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/STATE/" },
+  ] },
+  { "API 參考（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/" },
+  { "開發（英文）" = [
+    { "開發指南" = "https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/" },
+    { "貢獻指南" = "https://fastapi-cachex.readthedocs.io/en/latest/CONTRIBUTING/" },
+  ] },
+  { "變更紀錄（英文）" = "https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md" },
+]
+
+[project.extra]
+# Base of the English original; the "may be outdated" banner links each page
+# to its counterpart there.
+english_site = "https://fastapi-cachex.readthedocs.io/en/latest/"
+
+[[project.extra.alternate]]
+name = "English"
+link = "https://fastapi-cachex.readthedocs.io/en/latest/"
+lang = "en"
+
+[[project.extra.alternate]]
+name = "繁體中文"
+link = "https://fastapi-cachex.readthedocs.io/zh-tw/latest/"
+lang = "zh-Hant"
+
+[project.theme]
+language = "zh-Hant"
+custom_dir = "i18n/zh-TW/overrides"
+features = [
+  "content.action.edit",
+  "content.code.annotate",
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "切換為淺色模式"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "切換為深色模式"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "切換為跟隨系統"
+
+# Same extensions as the English site, so a translated page renders like its
+# original.
+[project.markdown_extensions]
+admonition = {}
+github-callouts = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.emoji.emoji_generator = "pymdownx.emoji.to_alt"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences = {}
+pymdownx.tabbed.alternate_style = true
+pymdownx.tasklist.custom_checkbox = true
+pymdownx.snippets.base_path = ["."]
+pymdownx.snippets.check_paths = true

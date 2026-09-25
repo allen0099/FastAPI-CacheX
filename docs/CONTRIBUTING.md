@@ -29,7 +29,9 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
 
 ## Pull Request Process
 
-1. Update the matching guide under `docs/` (and the README if the change belongs on the front page) when you change the interface
+1. Update the matching guide under `docs/` (and the README if the change belongs on the front page) when you change the interface. Only the English
+   pages need updating: the [Traditional Chinese translation](DEVELOPMENT.md#traditional-chinese-translation)
+   is allowed to lag behind them
 2. Add an entry to the `## [Unreleased]` section of
    [CHANGELOG.md](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md) if your change alters behaviour, adds public
    API, or fixes something a user could have hit. That section is what the

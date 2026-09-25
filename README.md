@@ -12,7 +12,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/fastapi-cachex.svg?logo=pypi&logoColor=gold&label=PyPI)](https://pypi.org/project/fastapi-cachex)
 [![Python Versions](https://img.shields.io/pypi/pyversions/fastapi-cachex.svg?logo=python&label=Python&logoColor=gold)](https://pypi.org/project/fastapi-cachex/)
 
-[English](https://github.com/allen0099/FastAPI-CacheX/blob/master/README.md) | [繁體中文](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/README.zh-TW.md)
+[English](https://github.com/allen0099/FastAPI-CacheX/blob/master/README.md) | [繁體中文](https://github.com/allen0099/FastAPI-CacheX/blob/master/i18n/zh-TW/docs/index.md)
 
 A high-performance caching extension for FastAPI: a server-side response cache with `Cache-Control` and `ETag` support, application-level caching, and optional session management.
 

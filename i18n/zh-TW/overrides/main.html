@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{#- English is the source of truth and the translation may lag behind it
+    (see issue #89), so every page says so and links to its original. -#}
+{% block announce %}
+  本頁譯自英文文件，內容可能未反映最新版本。以
+  <a href="{{ config.extra.english_site }}{{ page.url if page else '' }}">英文原文</a>
+  為準。
+{% endblock %}

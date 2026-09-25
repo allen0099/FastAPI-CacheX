@@ -42,6 +42,18 @@ nav = [
   { "Changelog" = "changelog.md" },
 ]
 
+# Language switcher. The Traditional Chinese site is a Read the Docs
+# translation project built from zensical.zh-TW.toml.
+[[project.extra.alternate]]
+name = "English"
+link = "https://fastapi-cachex.readthedocs.io/en/latest/"
+lang = "en"
+
+[[project.extra.alternate]]
+name = "繁體中文"
+link = "https://fastapi-cachex.readthedocs.io/zh-tw/latest/"
+lang = "zh-Hant"
+
 [project.theme]
 language = "en"
 features = [
