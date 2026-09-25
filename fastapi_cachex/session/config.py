@@ -30,6 +30,12 @@ JWT_ALGORITHMS = frozenset(
     }
 )
 
+# The algorithms the built-in `JWTTokenSerializer` can use: it signs and
+# verifies with the single `secret_key` string. The asymmetric ones above need
+# a private key to sign and a public key to verify, so they only work with a
+# custom `token_serializer`.
+JWT_HMAC_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
+
 
 class SessionConfig(BaseModel):
     """Session configuration settings."""

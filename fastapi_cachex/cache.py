@@ -26,12 +26,12 @@ from starlette.status import HTTP_206_PARTIAL_CONTENT
 from starlette.status import HTTP_300_MULTIPLE_CHOICES
 from starlette.status import HTTP_304_NOT_MODIFIED
 
+from .backends import MemoryBackend
 from .directives import DirectiveType
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
 from .exceptions import RequestNotFoundError
 from .proxy import BackendProxy
-from .proxy import get_backend_or_fallback
 from .types import CACHE_KEY_SEPARATOR
 from .types import CacheEntry
 from .types import CacheKeyBuilder
@@ -470,7 +470,12 @@ def cache(
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:
             # Resolve backend on every request to support lifespan-configured backends
-            cache_backend = get_backend_or_fallback()
+            try:
+                cache_backend = BackendProxy.get()
+            except BackendNotFoundError:
+                cache_backend = MemoryBackend()
+                BackendProxy.set(cache_backend)
+                logger.debug("No backend configured; using MemoryBackend fallback")
 
             if found_request:
                 req: Request | None = kwargs.get(request_name)

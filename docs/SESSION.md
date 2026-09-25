@@ -464,7 +464,9 @@ config = SessionConfig(
 
 `jwt_algorithm` must be one of `HS256`, `HS384`, `HS512`, `RS256`, `RS384`, `RS512`, `ES256`,
 `ES384`, `ES512`, `PS256`, `PS384`, `PS512` or `EdDSA`; anything else (including `none`) raises a
-`ValidationError`. The same `secret_key` is used to sign and verify tokens.
+`ValidationError`. The built-in serializer signs and verifies with the same `secret_key`, so it
+only supports `HS256`, `HS384` and `HS512`: with an asymmetric algorithm, `SessionManager` raises
+`ValueError` unless you pass a custom `token_serializer` that holds the key pair.
 
 Security notes:
 
