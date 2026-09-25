@@ -12,7 +12,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/fastapi-cachex.svg?logo=pypi&logoColor=gold&label=PyPI)](https://pypi.org/project/fastapi-cachex)
 [![Python Versions](https://img.shields.io/pypi/pyversions/fastapi-cachex.svg?logo=python&label=Python&logoColor=gold)](https://pypi.org/project/fastapi-cachex/)
 
-[English](https://github.com/allen0099/FastAPI-CacheX/blob/master/README.md) | [繁體中文](README.zh-TW.md)
+[English](../README.md) | [繁體中文](README.zh-TW.md)
 
 FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件，提供完整的 HTTP 快取功能支援和可選的 Session 管理。
 
@@ -264,7 +264,7 @@ async def expensive_operation():
 - [快取流程說明](CACHE_FLOW.md)
 - [開發指南](DEVELOPMENT.md)
 - [已知限制與待辦](https://github.com/allen0099/FastAPI-CacheX/issues)
-- [變更紀錄](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md)
+- [變更紀錄](../CHANGELOG.md)
 - [貢獻指南](CONTRIBUTING.md)
 - [Session 管理指南](SESSION.md) - 完整的 Session 功能使用指南
 - [State 管理指南](STATE.md) - OAuth／CSRF 一次性 state token
@@ -272,4 +272,4 @@ async def expensive_operation():
 
 ## 授權條款
 
-本專案採用 Apache License 2.0 授權條款 - 查看 [LICENSE](https://github.com/allen0099/FastAPI-CacheX/blob/master/LICENSE) 檔案了解更多細節。
+本專案採用 Apache License 2.0 授權條款 - 查看 [LICENSE](../LICENSE) 檔案了解更多細節。

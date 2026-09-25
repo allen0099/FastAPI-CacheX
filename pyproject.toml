@@ -34,7 +34,6 @@ dependencies = [
 Homepage = "https://github.com/allen0099/FastAPI-CacheX"
 Repository = "https://github.com/allen0099/FastAPI-CacheX.git"
 Issues = "https://github.com/allen0099/FastAPI-CacheX/issues"
-Documentation = "https://fastapi-cachex.readthedocs.io/"
 
 [dependency-groups]
 dev = [
@@ -55,11 +54,6 @@ dev = [
     "ty>=0.0.1a34",
     "types-orjson>=3.6.2",
     "types-redis>=4.6.0.20241004",
-]
-docs = [
-    # Pre-1.0: upgrades are deliberate, not automatic.
-    "zensical>=0.0.65,<0.1",
-    "mkdocstrings-python>=2.0",
 ]
 
 [project.optional-dependencies]

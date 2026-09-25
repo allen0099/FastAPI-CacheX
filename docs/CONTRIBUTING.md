@@ -31,7 +31,7 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
 
 1. Update the README.md with details of changes to the interface, if applicable
 2. Add an entry to the `## [Unreleased]` section of
-   [CHANGELOG.md](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md) if your change alters behaviour, adds public
+   [CHANGELOG.md](../CHANGELOG.md) if your change alters behaviour, adds public
    API, or fixes something a user could have hit. That section is what the
    release notes are built from, and a release refuses to run on an empty one,
    so an omission surfaces — but only at release time, and only as "somebody
