@@ -14,7 +14,7 @@
 
 [English](https://github.com/allen0099/FastAPI-CacheX/blob/master/README.md) | [繁體中文](README.zh-TW.md)
 
-FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件，提供完整的 HTTP 快取功能支援和可選的 Session 管理。
+FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件，提供伺服器端回應快取（支援 `Cache-Control` 與 `ETag`）、應用層快取和可選的 Session 管理。
 
 ## 功能特點
 
@@ -27,7 +27,7 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
     - Redis
     - Memcached
     - 記憶體內快取
-- 完整實現 Cache-Control 指令
+- 可在回應中設定常用的 Cache-Control 指令（詳見下表）
 - 簡單易用的 `@cache` 裝飾器
 
 ### Session 管理（可選擴充套件）
@@ -43,21 +43,25 @@ FastAPI-CacheX 是一個為 FastAPI 框架設計的高效能快取擴充套件�
 
 ### Cache-Control 指令
 
-| 指令                       | 支援狀態               | 說明                              |
-|--------------------------|--------------------|---------------------------------|
-| `max-age`                | :white_check_mark: | 指定資源被認為是新鮮的最長時間。                |
-| `s-maxage`               | :x:                | 在共享快取中資源被認為是新鮮的最長時間。            |
-| `no-cache`               | :white_check_mark: | 強制快取在釋放快取副本前向原始伺服器驗證請求。         |
-| `no-store`               | :white_check_mark: | 指示快取不儲存請求或回應的任何部分。              |
-| `no-transform`           | :x:                | 指示快取不要轉換回應內容。                   |
-| `must-revalidate`        | :white_check_mark: | 強制快取在資源過期後向原始伺服器重新驗證。           |
-| `proxy-revalidate`       | :x:                | 類似 `must-revalidate`，但僅適用於共享快取。 |
-| `must-understand`        | :x:                | 表示接收者必須理解該指令，否則應視為錯誤。           |
-| `private`                | :white_check_mark: | 表示回應僅供單一使用者使用，不應被共享快取儲存。        |
-| `public`                 | :white_check_mark: | 表示回應可被任何快取儲存，即使通常是無法快取的。        |
-| `immutable`              | :white_check_mark: | 表示回應內容不會隨時間改變，允許更長時間的快取。        |
-| `stale-while-revalidate` | :white_check_mark: | 表示快取可以在背景重新驗證時提供過期的回應。          |
-| `stale-if-error`         | :white_check_mark: | 表示當原始伺服器無法訪問時，快取可以提供過期的回應。      |
+`@cache` 有兩個角色：替瀏覽器與中間層（CDN、反向代理）寫出 `Cache-Control` 標頭，以及在後端維護自己的伺服器端快取。大部分指令只影響前者：它們會寫進標頭，但伺服器端快取的行為不會因此改變。
+
+| 指令                       | 設定方式                                | 寫入標頭               | 對伺服器端快取的影響                                                  |
+|--------------------------|-------------------------------------|--------------------|-------------------------------------------------------------|
+| `max-age`                | `ttl=N`                             | :white_check_mark: | `N` 秒內直接回傳已儲存的回應，不執行 handler（`ttl=0` 或未設定：不直接回傳）。          |
+| `no-cache`               | `no_cache=True`                     | :white_check_mark: | 每次都執行 handler；回應仍會儲存，`If-None-Match` 相符時回 304。                  |
+| `no-store`               | `no_store=True`                     | :white_check_mark: | 不讀取也不儲存，也不設定 ETag。                                          |
+| `private`                | `private=True`                      | :white_check_mark: | 完全不經過後端；每次都執行 handler，ETag 重新驗證仍有效。                        |
+| `public`                 | `public=True`                       | :white_check_mark: | 無（僅寫入標頭）。                                                   |
+| `immutable`              | `immutable=True`                    | :white_check_mark: | 無（僅寫入標頭）。                                                   |
+| `must-revalidate`        | `must_revalidate=True`              | :white_check_mark: | 無（僅寫入標頭）。                                                   |
+| `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`   | :white_check_mark: | 無（僅寫入標頭）：伺服器端快取不會回傳過期內容。                                    |
+| `stale-if-error`         | `stale="error", stale_ttl=N`        | :white_check_mark: | 無（僅寫入標頭）：handler 失敗時不會改用快取回應。                               |
+| `s-maxage`               | —                                   | :x:                | —                                                           |
+| `proxy-revalidate`       | —                                   | :x:                | —                                                           |
+| `no-transform`           | —                                   | :x:                | —                                                           |
+| `must-understand`        | —                                   | :x:                | —                                                           |
+
+請求端的 `Cache-Control`（例如瀏覽器強制重新整理時送出的 `no-cache`、`max-age=0`）不會改變 `@cache` 的行為。這是刻意的設計：若請求標頭能繞過快取，任何用戶端都能讓每個請求直接打到 handler。條件式請求仍會處理：`If-None-Match` 相符時回 304。
 
 ## 安裝指南
 
