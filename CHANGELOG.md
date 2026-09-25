@@ -46,6 +46,10 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   the same pipeline as its value and returns the absolute expiry the memory
   backend reports. A key that disappears between the scan and the fetch is left
   out. ([#74](https://github.com/allen0099/FastAPI-CacheX/issues/74))
+- The client IP used for `ip_binding` now walks every `X-Forwarded-For` header
+  line, not only the first. A proxy that adds its own line instead of appending
+  to the caller's left a caller-chosen first line in charge of the walk, so a
+  forged address could satisfy the binding. ([#104](https://github.com/allen0099/FastAPI-CacheX/issues/104))
 
 ## [0.3.6] - 2026-09-25
 

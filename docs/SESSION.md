@@ -545,7 +545,8 @@ config = SessionConfig(
 
 The client address is then the **rightmost `X-Forwarded-For` entry that is not listed in
 `trusted_proxies`**: proxies append to the header, so the leftmost entry is whatever the caller
-chose to send and cannot be trusted. If every entry in the chain is a trusted proxy, the direct
+chose to send and cannot be trusted. When the header arrives on several lines, they are read as
+one comma-separated chain. If every entry in the chain is a trusted proxy, the direct
 peer address is used. `X-Real-IP` is written by the proxy itself and has no chain to walk, so it is
 used only when `X-Forwarded-For` yields no usable value.
 
