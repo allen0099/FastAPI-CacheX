@@ -167,6 +167,51 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached GET_AND_DELETE HIT; key=%s", key)
         return decode_entry(raw)
 
+    async def set_if_absent(
+        self, key: str, value: CacheEntry, ttl: int | None = None
+    ) -> bool:
+        """Atomically store ``value`` unless ``key`` exists (see base class).
+
+        Memcached's ``ADD`` is exactly this operation.
+        """
+        stored = await asyncio.to_thread(
+            self.client.add,
+            self._make_key(key),
+            encode_entry(value),
+            _expiry(ttl),
+            noreply=False,
+        )
+        logger.debug(
+            "Memcached SET_IF_ABSENT %s; key=%s ttl=%s",
+            "STORED" if stored else "EXISTS",
+            key,
+            ttl,
+        )
+        return bool(stored)
+
+    async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+        """Atomically remove ``key`` while it holds ``expected`` (see base class).
+
+        The classic protocol's DELETE takes no CAS token, so the release is a
+        CAS write with a negative exptime, which Memcached treats as "expired
+        immediately": it succeeds only if nothing wrote the key since ``GETS``
+        read the value that was compared.
+        """
+        prefixed_key = self._make_key(key)
+        raw, cas_token = await asyncio.to_thread(self.client.gets, prefixed_key)
+        if raw is None or decode_entry(raw) != expected:
+            logger.debug("Memcached DELETE_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        deleted = await asyncio.to_thread(
+            self.client.cas, prefixed_key, b"", cas_token, -1, noreply=False
+        )
+        logger.debug(
+            "Memcached DELETE_IF_EQUALS %s; key=%s",
+            "HIT" if deleted else "LOST RACE",
+            key,
+        )
+        return bool(deleted)
+
     def _add_delta(self, prefixed_key: str, delta: int) -> int | None:
         """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist."""
         if delta < 0:

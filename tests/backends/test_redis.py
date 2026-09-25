@@ -728,3 +728,119 @@ async def test_redis_get_cache_data_skips_undecodable_values(
 
     assert "good" in data
     assert "junk" not in data
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_set_if_absent_stores_only_the_first_value(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    first = CacheEntry(fingerprint="lock", content=b"owner-a")
+    second = CacheEntry(fingerprint="lock", content=b"owner-b")
+
+    assert await async_redis_backend.set_if_absent("slot", first, 60) is True
+    assert await async_redis_backend.set_if_absent("slot", second, 60) is False
+    assert await async_redis_backend.get("slot") == first
+    ttl = await async_redis_backend.client.ttl(async_redis_backend._make_key("slot"))
+    assert 0 < ttl <= 60
+
+    assert await async_redis_backend.set_if_absent("forever", first) is True
+    assert (
+        await async_redis_backend.client.ttl(async_redis_backend._make_key("forever"))
+        == -1
+    )
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_set_if_absent_has_exactly_one_winner(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    results = await asyncio.gather(
+        *(
+            async_redis_backend.set_if_absent(
+                "slot", CacheEntry(fingerprint="lock", content=str(i).encode()), 60
+            )
+            for i in range(20)
+        )
+    )
+
+    assert results.count(True) == 1
+    winner = results.index(True)
+    assert await async_redis_backend.get("slot") == CacheEntry(
+        fingerprint="lock", content=str(winner).encode()
+    )
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_delete_if_equals_removes_only_a_matching_entry(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await async_redis_backend.set("slot", theirs, 60)
+
+    assert await async_redis_backend.delete_if_equals("slot", mine) is False
+    assert await async_redis_backend.get("slot") == theirs
+
+    assert await async_redis_backend.delete_if_equals("slot", theirs) is True
+    assert await async_redis_backend.get("slot") is None
+    assert await async_redis_backend.delete_if_equals("slot", theirs) is False
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_delete_if_equals_matches_a_counter(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Counters are stored as bare integers, not as encoded entries."""
+    await async_redis_backend.increment("hits", 3)
+
+    assert await async_redis_backend.delete_if_equals("hits", counter_entry(2)) is False
+    assert await async_redis_backend.delete_if_equals("hits", counter_entry(3)) is True
+    assert await async_redis_backend.get("hits") is None
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_delete_if_equals_keeps_a_value_written_after_the_compare(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """Between the GET that compares and the script that deletes, another
+    holder claims the key; the script must see the new bytes and back off."""
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await async_redis_backend.set("slot", mine, 60)
+
+    client = async_redis_backend.client
+    original_get = client.get
+
+    async def get_then_overwrite(name):
+        raw = await original_get(name)
+        await async_redis_backend.set("slot", theirs, 60)
+        return raw
+
+    client.get = get_then_overwrite  # type: ignore[method-assign]
+    try:
+        assert await async_redis_backend.delete_if_equals("slot", mine) is False
+    finally:
+        client.get = original_get  # type: ignore[method-assign]
+
+    assert await async_redis_backend.get("slot") == theirs
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_lock_release_after_expiry_keeps_the_new_holder(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    owner_a = CacheEntry(fingerprint="lock", content=b"owner-a")
+    owner_b = CacheEntry(fingerprint="lock", content=b"owner-b")
+
+    assert await async_redis_backend.set_if_absent("slot", owner_a, 60) is True
+    await async_redis_backend.client.delete(async_redis_backend._make_key("slot"))
+    assert await async_redis_backend.set_if_absent("slot", owner_b, 60) is True
+
+    assert await async_redis_backend.delete_if_equals("slot", owner_a) is False
+    assert await async_redis_backend.get("slot") == owner_b

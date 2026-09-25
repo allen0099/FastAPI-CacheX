@@ -157,6 +157,37 @@ class MemoryBackend(BaseCacheBackend):
             logger.debug("Memory cache GET_AND_DELETE HIT; key=%s", key)
             return item.value
 
+    async def set_if_absent(
+        self, key: str, value: CacheEntry, ttl: int | None = None
+    ) -> bool:
+        """Atomically store ``value`` unless ``key`` exists (see base class)."""
+        self._ensure_cleanup_started()
+
+        async with self.lock:
+            now = time.time()
+            item = self.cache.get(key)
+            if item is not None and _is_live(item, now):
+                logger.debug("Memory cache SET_IF_ABSENT EXISTS; key=%s", key)
+                return False
+            expiry = now + ttl if ttl is not None else None
+            self.cache[key] = CacheItem(value=value, expiry=expiry)
+            logger.debug("Memory cache SET_IF_ABSENT STORED; key=%s ttl=%s", key, ttl)
+            return True
+
+    async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+        """Atomically remove ``key`` while it holds ``expected`` (see base class)."""
+        async with self.lock:
+            item = self.cache.get(key)
+            if item is None or not _is_live(item, time.time()):
+                logger.debug("Memory cache DELETE_IF_EQUALS MISS; key=%s", key)
+                return False
+            if item.value != expected:
+                logger.debug("Memory cache DELETE_IF_EQUALS MISMATCH; key=%s", key)
+                return False
+            del self.cache[key]
+            logger.debug("Memory cache DELETE_IF_EQUALS HIT; key=%s", key)
+            return True
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 

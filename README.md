@@ -352,11 +352,14 @@ stored or replayed.
 
 ### Atomic backend primitives
 
-Every backend exposes two atomic operations on top of `get`/`set`/`delete`, for
+Every backend exposes atomic operations on top of `get`/`set`/`delete`, for
 values that are read and written by many concurrent requests:
 
 ```python
+import secrets
+
 from fastapi_cachex import BackendProxy
+from fastapi_cachex.types import CacheEntry
 
 backend = BackendProxy.get()
 
@@ -367,6 +370,14 @@ if hits > 3:
 
 # One-shot value: of several concurrent callers exactly one gets the entry.
 grant = await backend.get_and_delete(f"grant:{token}")
+
+# Lock / slot: claim only if free, release only while it is still yours.
+owner = CacheEntry(fingerprint="lock", content=secrets.token_bytes(16))
+if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
+    try:
+        ...
+    finally:
+        await backend.delete_if_equals(f"stream:{user_id}", owner)
 ```
 
 - `increment(key, delta=1, ttl=None) -> int` — Memory does the read-modify-write
@@ -380,8 +391,18 @@ grant = await backend.get_and_delete(f"grant:{token}")
   uses `GETDEL` (server 6.2+) and Memcached returns the value only when its own
   `DELETE` won. `StateManager.consume_state`, `CacheManager.delete` and
   `invalidate()` are built on it.
+- `set_if_absent(key, value, ttl=None) -> bool` — stores `value` only when
+  `key` does not exist (an expired key counts as absent) and reports whether it
+  did. Memory checks under its lock, Redis uses `SET NX EX` and Memcached `ADD`.
+- `delete_if_equals(key, expected) -> bool` — removes `key` only while it still
+  holds `expected`, so a holder whose entry expired cannot release a lock that
+  someone else has claimed since. Put a unique token in the entry you store and
+  release with that same entry. Memory compares under its lock, Redis deletes
+  through a Lua script that re-checks the value it compared, and Memcached uses
+  `GETS` + a `CAS` write that expires the entry immediately (the classic
+  protocol's `DELETE` takes no CAS token).
 
-Both have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
+All four have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
 that only implements the abstract methods keeps working; override them to get
 real atomicity.
 

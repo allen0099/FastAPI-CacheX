@@ -169,12 +169,17 @@ def test_the_repository_changelog_can_be_released():
     changelog = Path(__file__).parent.parent / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8")
 
+    # Read the latest release off the file instead of naming it, so the test
+    # keeps passing after every release rather than breaking on the next one.
+    latest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", text, re.MULTILINE)
+    assert latest is not None
+
     rewritten, body = promote(text, "0.9.9", "2026-09-14")
 
     assert rewritten.startswith("# Changelog\n")
     assert text.count("removed in 0.3.5") == rewritten.count("removed in 0.3.5")
-    assert f"[0.9.9]: {BASE}/compare/v0.3.4...v0.9.9" in rewritten
-    assert body.startswith("### Security")
+    assert f"[0.9.9]: {BASE}/compare/v{latest[1]}...v0.9.9" in rewritten
+    assert body.startswith("### ")
     # Every released heading still has a link definition, and vice versa.
     headings = {
         line.removeprefix("## [").split("]")[0]

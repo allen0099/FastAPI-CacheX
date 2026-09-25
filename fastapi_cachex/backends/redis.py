@@ -36,6 +36,15 @@ end
 return value
 """
 
+# DEL that only fires while the key still holds the exact bytes the caller read,
+# so a value replaced in the meantime survives. KEYS[1] = key, ARGV[1] = bytes.
+_DELETE_IF_EQUALS_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
 
 class AsyncRedisCacheBackend(BaseCacheBackend):
     """Async Redis cache backend implementation.
@@ -108,6 +117,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         # Registered once so every call is an EVALSHA (redis-py reloads the
         # script transparently if the server has flushed it).
         self._increment_script = self.client.register_script(_INCREMENT_SCRIPT)
+        self._delete_if_equals_script = self.client.register_script(
+            _DELETE_IF_EQUALS_SCRIPT
+        )
 
     @staticmethod
     def load_from_config(config: RedisConfig) -> "AsyncRedisCacheBackend":
@@ -188,6 +200,42 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         value = decode_entry(await self.client.getdel(self._make_key(key)))
         logger.debug("Redis GETDEL %s; key=%s", "HIT" if value else "MISS", key)
         return value
+
+    async def set_if_absent(
+        self, key: str, value: CacheEntry, ttl: int | None = None
+    ) -> bool:
+        """Atomically store ``value`` unless ``key`` exists (see base class).
+
+        A single ``SET ... NX EX``.
+        """
+        stored = await self.client.set(
+            self._make_key(key), encode_entry(value), ex=ttl, nx=True
+        )
+        logger.debug(
+            "Redis SET_IF_ABSENT %s; key=%s ttl=%s",
+            "STORED" if stored else "EXISTS",
+            key,
+            ttl,
+        )
+        return bool(stored)
+
+    async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+        """Atomically remove ``key`` while it holds ``expected`` (see base class).
+
+        The stored value is decoded and compared here, then a Lua script
+        deletes the key only if it still holds the bytes that were compared,
+        so a value written in between is never removed.
+        """
+        prefixed_key = self._make_key(key)
+        raw = await self.client.get(prefixed_key)
+        if raw is None or decode_entry(raw) != expected:
+            logger.debug("Redis DELETE_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        deleted = await self._delete_if_equals_script(keys=[prefixed_key], args=[raw])
+        logger.debug(
+            "Redis DELETE_IF_EQUALS %s; key=%s", "HIT" if deleted else "LOST RACE", key
+        )
+        return bool(deleted)
 
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
