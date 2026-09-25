@@ -1,5 +1,7 @@
 """Session configuration settings."""
 
+import ipaddress
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import BaseModel
@@ -9,6 +11,32 @@ from pydantic import SecretStr
 from pydantic import field_validator
 
 SameSitePolicy = Literal["lax", "strict", "none"]
+
+IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+
+@lru_cache(maxsize=256)
+def _parse_network(entry: str) -> IPNetwork | None:
+    """Parse a trusted-proxy entry as an IP network, or None if it is not one."""
+    try:
+        return ipaddress.ip_network(entry, strict=False)
+    except ValueError:
+        return None
+
+
+@lru_cache(maxsize=1024)
+def _parse_address(value: str) -> IPAddress | None:
+    """Parse a peer or forwarded address as an IP address, or None if it is not one."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    # A dual-stack socket reports IPv4 peers as ::ffff:a.b.c.d.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return address.ipv4_mapped
+    return address
+
 
 # Signing algorithms accepted for JWT session tokens. `none` is deliberately
 # absent: an unsigned token would make every session forgeable.
@@ -117,8 +145,8 @@ class SessionConfig(BaseModel):
         "the direct peer address, since anyone can send them. When the peer is "
         "trusted, the client address is the rightmost X-Forwarded-For entry "
         "that is not itself listed here: proxies append, so the leftmost entry "
-        "is whatever the caller chose to send. Matching is by exact string; "
-        "CIDR ranges are not supported.",
+        "is whatever the caller chose to send. Entries may be IP addresses, "
+        "CIDR ranges (e.g. 10.0.0.0/8) or other strings, which match exactly.",
     )
     user_agent_binding: bool = Field(
         default=False,
@@ -160,6 +188,41 @@ class SessionConfig(BaseModel):
         description="Domain attribute for the session cookie; None omits the "
         "Domain attribute",
     )
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _check_trusted_proxies(cls, value: list[str]) -> list[str]:
+        """Reject entries written as a CIDR range that do not parse as one."""
+        for entry in value:
+            if "/" in entry and _parse_network(entry) is None:
+                msg = f"trusted_proxies entry is not a valid CIDR range: {entry!r}"
+                raise ValueError(msg)
+        return value
+
+    def is_trusted_proxy(self, address: str) -> bool:
+        """Report whether `address` matches an entry of `trusted_proxies`.
+
+        An IP address matches an entry that is the same address or a CIDR range
+        containing it (IPv4-mapped IPv6 addresses count as their IPv4 form).
+        Anything else, such as TestClient's ``testclient`` peer, matches only
+        an identical entry.
+
+        Args:
+            address: Peer or forwarded address to check
+
+        Returns:
+            True if the address is a trusted proxy
+        """
+        if address in self.trusted_proxies:
+            return True
+        parsed = _parse_address(address)
+        if parsed is None:
+            return False
+        for entry in self.trusted_proxies:
+            network = _parse_network(entry)
+            if network is not None and parsed in network:
+                return True
+        return False
 
     @field_validator("jwt_algorithm")
     @classmethod

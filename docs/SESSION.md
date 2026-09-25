@@ -533,6 +533,16 @@ config = SessionConfig(
 )
 ```
 
+Entries can be single addresses or CIDR ranges, for load balancers that connect from a subnet:
+
+```python
+config = SessionConfig(
+    secret_key="...",
+    ip_binding=True,
+    trusted_proxies=["10.0.0.0/8", "2001:db8::/32"],
+)
+```
+
 The client address is then the **rightmost `X-Forwarded-For` entry that is not listed in
 `trusted_proxies`**: proxies append to the header, so the leftmost entry is whatever the caller
 chose to send and cannot be trusted. If every entry in the chain is a trusted proxy, the direct
@@ -540,7 +550,10 @@ peer address is used. `X-Real-IP` is written by the proxy itself and has no chai
 used only when `X-Forwarded-For` yields no usable value.
 
 > [!NOTE]
-> `trusted_proxies` currently uses **exact string matching**; CIDR ranges are not supported.
+> An IPv4 peer reported in IPv4-mapped form (`::ffff:10.0.0.8`, as dual-stack sockets do) matches
+> IPv4 entries. Entries that are not IP addresses (for example TestClient's `testclient`) match
+> only an identical peer string, and an entry containing `/` that is not a valid CIDR range is
+> rejected when the config is created.
 
 The middleware applies this logic when it checks a binding, but `create_session()` binds whatever
 `ip_address` you pass it. Behind a trusted proxy, `request.client.host` is the proxy's address,

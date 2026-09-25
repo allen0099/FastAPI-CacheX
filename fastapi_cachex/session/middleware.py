@@ -59,12 +59,12 @@ def get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | No
     """
     peer = connection.client.host if connection.client else None
 
-    if peer is not None and peer in config.trusted_proxies:
+    if peer is not None and config.is_trusted_proxy(peer):
         forwarded_for = connection.headers.get("x-forwarded-for")
         if forwarded_for:
             for entry in reversed(forwarded_for.split(",")):
                 candidate = entry.strip()
-                if candidate and candidate not in config.trusted_proxies:
+                if candidate and not config.is_trusted_proxy(candidate):
                     logger.debug("Client IP from X-Forwarded-For: %s", candidate)
                     return candidate
 
