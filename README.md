@@ -12,7 +12,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/fastapi-cachex.svg?logo=pypi&logoColor=gold&label=PyPI)](https://pypi.org/project/fastapi-cachex)
 [![Python Versions](https://img.shields.io/pypi/pyversions/fastapi-cachex.svg?logo=python&label=Python&logoColor=gold)](https://pypi.org/project/fastapi-cachex/)
 
-[English](README.md) | [繁體中文](docs/README.zh-TW.md)
+[English](https://github.com/allen0099/FastAPI-CacheX/blob/master/README.md) | [繁體中文](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/README.zh-TW.md)
 
 A high-performance caching extension for FastAPI, providing comprehensive HTTP caching support and optional session management.
 
@@ -36,7 +36,7 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
 - IP address and User-Agent binding (optional security features)
 - Header, bearer token and cookie transports (cookies via
   `FastAPICacheXSessionMiddleware`; the older `SessionMiddleware` is deprecated
-  and removed in 0.4.0 — see [Session Management Guide](docs/SESSION.md))
+  and removed in 0.4.0 — see [Session Management Guide](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/SESSION.md))
 - Automatic session renewal (sliding expiration)
 - Flash messages for cross-request communication
 - Multiple backend support (Redis, Memcached, In-Memory)
@@ -522,15 +522,15 @@ async def expensive_operation():
 
 ## Documentation
 
-- [Cache Flow Explanation](docs/CACHE_FLOW.md)
-- [Development Guide](docs/DEVELOPMENT.md)
+- [Cache Flow Explanation](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/CACHE_FLOW.md)
+- [Development Guide](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/DEVELOPMENT.md)
 - [Known Limitations and Planned Work](https://github.com/allen0099/FastAPI-CacheX/issues)
-- [Changelog](CHANGELOG.md)
-- [Contributing Guidelines](docs/CONTRIBUTING.md)
-- [Session Management Guide](docs/SESSION.md) - Complete guide for session features
-- [State Management Guide](docs/STATE.md) - One-shot OAuth/CSRF state tokens
-- [JWT Claims Guide](docs/JWT_CLAIMS.md) - Claim design and extension points for JWT session tokens
+- [Changelog](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md)
+- [Contributing Guidelines](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/CONTRIBUTING.md)
+- [Session Management Guide](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/SESSION.md) - Complete guide for session features
+- [State Management Guide](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/STATE.md) - One-shot OAuth/CSRF state tokens
+- [JWT Claims Guide](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/JWT_CLAIMS.md) - Claim design and extension points for JWT session tokens
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](https://github.com/allen0099/FastAPI-CacheX/blob/master/LICENSE) file for details.
