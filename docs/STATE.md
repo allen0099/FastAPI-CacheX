@@ -1,13 +1,18 @@
 # State Management Extension
 
-`fastapi_cachex.state` 提供**一次性 state token**,用來擋 OAuth / OIDC 授權流程的
-CSRF：發起授權前先產生一枚隨機 state 並存進快取後端，callback 回來時**消費**它，
-消費過的 state 不能再被使用第二次。
+`fastapi_cachex.state` provides **one-time state tokens** that protect OAuth / OIDC
+authorization flows against CSRF. Before starting the authorization, generate a random
+state and store it in the cache backend. When the callback comes back, **consume** it.
+A consumed state cannot be used a second time.
 
-state 內容存在與 HTTP 快取同一組 backend 上，但使用獨立的金鑰前綴（預設
-`oauth_state:`），因此 `clear_prefix()` 等操作不會互相波及。
+States live on the same backend as the HTTP cache but under their own key prefix
+(`oauth_state:` by default), so namespaced operations such as `CacheManager.clear_prefix()`
+leave them alone. A backend-wide `clear()` (for example `BackendProxy.get().clear()`)
+does remove them, because it clears everything under the backend's namespace.
 
-## 快速開始
+Everything in this guide can also be imported from the top-level `fastapi_cachex` package.
+
+## Quick start
 
 ```python
 from fastapi import FastAPI, HTTPException
@@ -32,11 +37,11 @@ async def login(states: StateManagerDep):
 @app.get("/callback")
 async def callback(state: str, code: str, states: StateManagerDep):
     try:
-        data = await states.consume_state(state)  # 一次性：成功後即刪除
+        data = await states.consume_state(state)  # one-time: deleted on retrieval
     except (InvalidStateError, StateExpiredError) as e:
         raise HTTPException(status_code=400, detail="Invalid state") from e
 
-    # 換 token、建立 session ...
+    # Exchange the code for tokens, create a session ...
     return {"next": data.metadata.get("next", "/")}
 ```
 
@@ -46,94 +51,119 @@ async def callback(state: str, code: str, states: StateManagerDep):
 from fastapi_cachex.state import StateManager
 
 states = StateManager(
-    backend=None,  # None 代表使用 BackendProxy.get()
-    key_prefix="oauth_state:",  # 金鑰前綴
-    default_ttl=600,  # 預設 10 分鐘
+    backend=None,  # None means use BackendProxy.get()
+    key_prefix="oauth_state:",  # key prefix
+    default_ttl=600,  # default: 10 minutes
 )
 ```
 
+With `backend=None` the backend is resolved **when the `StateManager` is constructed**,
+not on each call. If `BackendProxy.set(...)` has not been called yet, the constructor
+raises `BackendNotFoundError`. Configure the backend first.
+
 ### `create_state(ttl=None, metadata=None) -> str`
 
-產生一枚 `secrets.token_urlsafe(32)`（256 bits 熵）的 state 字串並存入後端，回傳該字串。
-`metadata` 是任意可 JSON 序列化的字典，會與 state 一起存放（例如授權後要導回的路徑）。
-`ttl` 未指定時用 `default_ttl`。
+Generates a state string with `secrets.token_urlsafe(32)` (256 bits of entropy), stores it
+in the backend and returns it. `metadata` is an arbitrary JSON-serializable dict stored
+alongside the state (for example, the path to redirect to after authorization). When `ttl`
+is omitted, `default_ttl` is used. The same TTL is applied both as the backend TTL and as
+the state's `expires_at`.
 
 ### `consume_state(state) -> StateData`
 
-**一次性消費**。以後端的原子操作 `get_and_delete()` 取出並刪除，所以多個並行呼叫
-同一枚 state 時**只有一個**拿得到 —— 重播的 callback 無法通過第二次。
+**One-time consumption.** The entry is retrieved and removed with the backend's atomic
+`get_and_delete()`, so when several concurrent calls present the same state **only one**
+gets it. A replayed callback cannot pass a second time.
 
-| 情況 | 行為 |
+| Situation | Behavior |
 |------|------|
-| 不存在／已被消費 | `InvalidStateError` |
-| 取得但已過期 | `StateExpiredError`（條目同時已被刪除，不會留下殘骸） |
-| 內容無法解析 | `StateDataError`（條目同樣已被刪除） |
-| 正常 | 回傳 `StateData` |
+| Missing, already consumed, or already evicted by the backend TTL | `InvalidStateError` |
+| Retrieved but past its `expires_at` | `StateExpiredError` (the entry has been deleted too, nothing is left behind) |
+| Retrieved but the content is not valid `StateData` JSON | `StateDataError` (the entry has been deleted too) |
+| Otherwise | Returns `StateData` |
+
+In the common case the backend TTL removes an expired state first, so an expired state
+usually shows up as `InvalidStateError` instead of `StateExpiredError`; catch both. On
+Redis and Memcached, a stored value that cannot be decoded into a cache entry at all is
+treated as a miss by the backend, which also surfaces as `InvalidStateError`.
 
 ### `validate_state(state) -> bool`
 
-只看不消費：state 存在、可解析且未過期時回 `True`,否則 `False`。不會拋例外。
+Read-only check that does not consume the state: returns `True` when the state exists,
+can be parsed and has not expired, otherwise `False`. It does not raise state exceptions.
 
 > [!WARNING]
-> `validate_state()` **不會**把 state 消費掉，所以它本身擋不住重播。
-> 真正的防護是 `consume_state()`；`validate_state()` 只適合用在「先探測、再決定 UI」
-> 這類非安全判斷。
+> `validate_state()` does **not** consume the state, so on its own it does not prevent replay.
+> The real protection is `consume_state()`. Use `validate_state()` only for non-security
+> decisions such as "probe first, then decide what UI to show".
 
 ### `get_state_metadata(state) -> dict | None`
 
-同樣不消費，回傳當初存入的 `metadata`；state 不存在／過期／無法解析時回 `None`。
+Also non-consuming. Returns the `metadata` stored at creation, or `None` when the state
+is missing, expired or cannot be parsed.
 
 ### `delete_state(state) -> bool`
 
-手動刪除（例如使用者取消授權）。回傳「原本是否存在」。
+Deletes a state manually (for example, when the user cancels the authorization). Returns
+whether the state existed. It uses the same atomic `get_and_delete()`, so it returns `True`
+to at most one caller even when racing with `consume_state()`.
 
 ## StateData
 
 ```python
 class StateData(BaseModel):
-    state: str  # state 字串本身
-    created_at: datetime  # 建立時間（UTC）
-    expires_at: datetime  # 過期時間（UTC）
-    metadata: dict[str, Any]  # 建立時附帶的中繼資料
+    state: str  # the state string itself
+    created_at: datetime  # creation time (UTC)
+    expires_at: datetime  # expiry time (UTC)
+    metadata: dict[str, Any]  # metadata attached at creation
 ```
 
-`expires_at` 是存在資料內的邏輯過期時間，與後端 TTL 各自獨立：後端 TTL 到期會讓條目消失，
-而 `expires_at` 讓「後端還留著但邏輯上已過期」的條目一樣被拒絕。
+`expires_at` is a logical expiry stored inside the data, independent of the backend TTL.
+When the backend TTL runs out, the entry disappears. `expires_at` makes sure an entry the
+backend still holds but that is logically expired is rejected as well.
 
-## 依賴注入與 Proxy
+## Dependency injection and proxy
 
 ```python
 from fastapi_cachex.state import StateManagerDep, StateManagerProxy, get_state_manager
 
 
-# 1. 直接用型別註解（最常見）
+# 1. Use the type annotation directly (most common)
 @app.get("/login")
 async def login(states: StateManagerDep): ...
 
 
-# 2. 自訂實例（例如換前綴或 TTL）：啟動時註冊，依賴注入就會拿到它
+# 2. Custom instance (e.g. a different prefix or TTL): register it at startup
+#    and dependency injection will return it
 StateManagerProxy.set(StateManager(key_prefix="csrf:", default_ttl=300))
 ```
 
-`get_state_manager()`（`StateManagerDep` 背後的依賴）在沒有註冊過實例時，會延遲建立一個
-預設 `StateManager`（使用 `BackendProxy` 的後端）並註冊起來。
+When no instance has been registered, `get_state_manager()` (the dependency behind
+`StateManagerDep`) lazily creates a default `StateManager` on first use, backed by
+`BackendProxy`'s backend, and registers it. It does not fall back to a `MemoryBackend`:
+if no backend has been set, the request fails with `BackendNotFoundError`.
 
-## 例外
+## Exceptions
 
 ```
 CacheXError
 └── StateError
-    ├── InvalidStateError   # 不存在或已被消費
-    ├── StateExpiredError   # 已過期
-    └── StateDataError      # 內容格式不正確
+    ├── InvalidStateError   # missing or already consumed
+    ├── StateExpiredError   # expired
+    └── StateDataError      # malformed content
 ```
 
-## 注意事項
+## Notes
 
-- **後端必須是跨行程共享的**。多 worker 部署時用 Redis 或 Memcached；`MemoryBackend`
-  的 state 只存在於產生它的那個行程，授權 callback 打到別的 worker 就會失敗。
-- **一次性保證來自後端的原子操作**：`get_and_delete()` 在 Redis 是 `GETDEL`、
-  Memcached 是 get + `delete(noreply=False)` 的勝者判定、記憶體後端則在鎖內 pop。
-  自訂後端若只實作抽象方法，會落到 `BaseCacheBackend` 的非原子回退版本，
-  並行重播就有機會兩邊都成功 —— 請自行覆寫。
-- state 不該存放敏感資料；`metadata` 會以 JSON 明文存在快取後端。
+- **The backend must be shared across processes.** For multi-worker deployments use Redis or
+  Memcached. With `MemoryBackend` a state only exists in the process that created it, so an
+  authorization callback that lands on a different worker fails.
+- **The one-time guarantee comes from the backend's atomic operation.** `get_and_delete()` is
+  `GETDEL` on Redis (requires Redis server 6.2 or newer), a get followed by
+  `delete(noreply=False)` where only the caller whose delete succeeded wins on Memcached,
+  and a `pop` under the lock on the memory backend.
+  A custom backend that implements only the abstract methods falls back to
+  `BaseCacheBackend`'s non-atomic version, so a concurrent replay could succeed on both
+  sides. Override `get_and_delete()` in that case.
+- Do not store sensitive data in a state. `metadata` is stored as plain-text JSON in the
+  cache backend.

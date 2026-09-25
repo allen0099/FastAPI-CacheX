@@ -16,6 +16,8 @@
 
 A high-performance caching extension for FastAPI, providing comprehensive HTTP caching support and optional session management.
 
+**Documentation:** <https://fastapi-cachex.readthedocs.io/en/latest/> — guides and the full API reference.
+
 ## Features
 
 ### HTTP Caching
@@ -27,7 +29,7 @@ A high-performance caching extension for FastAPI, providing comprehensive HTTP c
     - Redis
     - Memcached
     - In-memory cache
-- Complete Cache-Control directive implementation
+- Cache-Control directive support (see the table below)
 - Easy-to-use `@cache` decorator
 
 ### Session Management (Optional Extension)
@@ -182,7 +184,9 @@ add_routes(
 )
 ```
 
-- `GET {prefix}/cached-hits` — per-route hit counts and cache key information.
+- `GET {prefix}/cached-hits` — every cached entry split into method, host, path
+  and query, with its ETag and expiry, plus counts of valid and expired entries
+  and the distinct cached paths. It does not count hits.
 - `GET {prefix}/cached-records` — every cached record with its size, expiry and
   a preview of the cached content.
 
@@ -243,7 +247,7 @@ entries.
 
 **Note**: `clear()`/`clear_prefix()` are implemented via the backend's
 `get_all_keys()` and `delete_many()` (one batched `DEL` on Redis). Since Memcached doesn't support key enumeration (see
-[Memcached limitations](#memcached)), these two methods are no-ops on a
+[Memcached limitations](#memcached)), these methods — and `clear_pattern()` — are no-ops on a
 Memcached backend — `get()`/`set()`/`delete()`/`has()` work normally. Use
 Redis or the in-memory backend if you need bulk clearing.
 
@@ -340,6 +344,7 @@ When a cached entry is valid (within TTL):
 - **With `If-None-Match` header**: Returns HTTP 304 Not Modified if the ETag matches
 - **With `no-cache` directive**: Forces revalidation with fresh content before deciding on 304
 - **With `private=True`**: Nothing is read from or written to the shared backend; the handler runs every time and only `If-None-Match` revalidation applies
+- **Without `ttl`** (`ttl=None`): The cached body is never served directly; the handler runs on every request except one whose `If-None-Match` matches the stored ETag, which gets a 304
 
 This means **cached hits are extremely fast** - the endpoint handler function is never executed.
 
@@ -389,8 +394,8 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   that holds a cached response raises `CacheXError`.
 - `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis
   uses `GETDEL` (server 6.2+) and Memcached returns the value only when its own
-  `DELETE` won. `StateManager.consume_state`, `CacheManager.delete` and
-  `invalidate()` are built on it.
+  `DELETE` won. `StateManager.consume_state`, `StateManager.delete_state`,
+  `CacheManager.delete` and `invalidate()` are built on it.
 - `set_if_absent(key, value, ttl=None) -> bool` — stores `value` only when
   `key` does not exist (an expired key counts as absent) and reports whether it
   did. Memory checks under its lock, Redis uses `SET NX EX` and Memcached `ADD`.
@@ -410,7 +415,7 @@ real atomicity.
 
 If you don't specify a backend, FastAPI-CacheX will use the in-memory cache by default.
 This is suitable for development and testing purposes. The backend automatically runs
-a cleanup task to remove expired entries every 60 seconds.
+a cleanup task to remove expired entries every 60 seconds (`MemoryBackend(cleanup_interval=60)`).
 
 ```python
 from fastapi_cachex.backends import MemoryBackend
@@ -435,7 +440,12 @@ BackendProxy.set(backend)
 
 **Limitations**:
 - Pattern-based key clearing (`clear_pattern`) is not supported by the Memcached protocol
-- Keys are namespaced with `fastapi_cachex:` prefix to avoid conflicts
+- Keys cannot be enumerated: `get_all_keys()`/`get_cache_data()` return empty
+  results (with a `RuntimeWarning`), so the monitoring routes show nothing
+- `clear_path()` deletes only the exact key given; `include_params` has no effect
+- `clear()` issues `flush_all`, which wipes the whole Memcached server, not just this namespace
+- Keys are namespaced with `fastapi_cachex:` prefix (`key_prefix=`) to avoid conflicts; a key
+  Memcached would reject (over 250 bytes, whitespace, non-ASCII) is stored under its SHA-256 digest
 - Consider using Redis backend if you need pattern-based cache clearing
 
 The synchronous pymemcache client runs in worker threads and is connection-pooled,
@@ -521,6 +531,9 @@ async def expensive_operation():
 - **Redis**: Best for production; fully async, supports all features, non-blocking operations
 
 ## Documentation
+
+The full documentation, including the API reference, is published at
+**<https://fastapi-cachex.readthedocs.io/en/latest/>**.
 
 - [Cache Flow Explanation](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/CACHE_FLOW.md)
 - [Development Guide](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/DEVELOPMENT.md)

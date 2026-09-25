@@ -1,157 +1,183 @@
-# JWT Claims 實作說明與擴展指南
+# JWT Claims: Implementation Notes and Extension Guide
 
-## 概述
+## Overview
 
-FastAPI-CacheX 的 JWT token serializer 實作了基本的 JWT claims 以支援安全的 session token 傳輸。本文件說明：
+FastAPI-CacheX's JWT token serializer implements a minimal set of JWT claims to carry session tokens securely. This document explains:
 
-1. 為什麼我們沒有實作完整的 JWT claims（如 `jti`、`nbf`）
-2. 當前實作的設計考量
-3. 如何擴展以新增自訂 claims
+1. Why we do not implement the full set of JWT claims (such as `jti` and `nbf`)
+2. The design considerations behind the current implementation
+3. How to extend the serializer with custom claims
 
-## 當前實作的 JWT Claims
+The implementation lives in [`fastapi_cachex/session/token_serializers.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/session/token_serializers.py). JWT support requires the optional extra: `pip install "fastapi-cachex[jwt]"`.
 
-### 已實作的標準 Claims
+## JWT Claims in the Current Implementation
 
-`JWTTokenSerializer` 實作了以下 JWT claims：
+### Implemented Standard Claims
 
-| Claim | 名稱 | 必需 | 驗證 | 說明 |
-|-------|------|------|------|------|
-| `sid` | Session ID | ✅ | ✅ | 自訂 claim，用於對應伺服器端 session |
-| `iat` | Issued At | ✅ | ✅ | Token 簽發時間（RFC 7519） |
-| `exp` | Expiration | ✅ | ✅ | Token 過期時間（`iat + session_ttl`） |
-| `iss` | Issuer | ⚠️ | ✅ | Token 簽發者（可選，需配置） |
-| `aud` | Audience | ⚠️ | ✅ | Token 目標受眾（可選，需配置） |
+`JWTTokenSerializer` implements the following JWT claims:
 
-### 未實作的標準 Claims
+| Claim | Name | Required | Verified | Description |
+|-------|------|----------|----------|-------------|
+| `sid` | Session ID | ✅ | ✅ | Custom claim that maps to the server-side session |
+| `iat` | Issued At | ✅ | ✅ | Time the token was issued (RFC 7519); rejected if it lies in the future (beyond `jwt_leeway`) |
+| `exp` | Expiration | ✅ | ✅ | Token expiry: the session's `expires_at` (so it follows sliding expiration), falling back to `iat + session_ttl` |
+| `iss` | Issuer | ⚠️ | ✅ | Token issuer (optional; only issued and verified when `jwt_issuer` is set) |
+| `aud` | Audience | ⚠️ | ✅ | Intended audience (optional; only issued and verified when `jwt_audience` is set) |
 
-以下是 RFC 7519 定義但**未實作**的可選 claims：
+### Related `SessionConfig` Fields
 
-| Claim | 名稱 | 用途 | 為何未實作 |
-|-------|------|------|-----------|
-| `jti` | JWT ID | Token 唯一識別碼，防止重放攻擊 | Stateful session 模型已透過伺服器端狀態處理 |
-| `nbf` | Not Before | Token 生效時間 | Session 通常立即生效，不需要延遲生效 |
-| `sub` | Subject | 主體識別碼（通常是使用者 ID） | 使用自訂 `sid` claim 表示 session ID 更清晰 |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `token_format` | `"simple"` | Set to `"jwt"` to use `JWTTokenSerializer` |
+| `secret_key` | (required) | Signing key, at least 32 characters; used both to sign and to verify the JWT |
+| `jwt_algorithm` | `"HS256"` | Signing algorithm; must be one of the supported values (`none` is rejected) |
+| `jwt_issuer` | `None` | Expected `iss`; issued and verified when set |
+| `jwt_audience` | `None` | Expected `aud`; issued and verified when set |
+| `jwt_leeway` | `0` | Leeway in seconds for `exp`/`iat` validation |
+| `session_ttl` | `3600` | Session lifetime in seconds; used for `exp` when the session has no `expires_at` |
 
-## 設計理念
+> [!NOTE]
+> **Asymmetric algorithms:** `jwt_algorithm` accepts `HS*`, `RS*`, `ES*`, `PS*` and `EdDSA`, but the built-in serializer signs and verifies with the single `secret_key` string. In practice only the HMAC algorithms (`HS256`, `HS384`, `HS512`) work out of the box; an asymmetric algorithm needs a custom serializer that encodes with a private key and decodes with the matching public key (see [Extension Guide](#extension-guide-adding-custom-claims)).
+
+### Standard Claims That Are Not Implemented
+
+The following optional claims defined by RFC 7519 are **not implemented**:
+
+| Claim | Name | Purpose | Why it is not implemented |
+|-------|------|---------|---------------------------|
+| `jti` | JWT ID | Unique token identifier, prevents replay attacks | The stateful session model already handles this through server-side state |
+| `nbf` | Not Before | Time the token becomes valid | Sessions normally take effect immediately; no delayed activation is needed |
+| `sub` | Subject | Subject identifier (usually the user ID) | A custom `sid` claim is clearer for representing a session ID |
+
+## Design Rationale
 
 ### Stateful Session vs Stateless JWT
 
-FastAPI-CacheX 採用 **stateful session** 模型，這與純 stateless JWT 有根本性差異：
+FastAPI-CacheX uses a **stateful session** model, which is fundamentally different from a purely stateless JWT:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  FastAPI-CacheX Session Model (Stateful)                │
 ├─────────────────────────────────────────────────────────┤
-│                                                           │
-│  ┌──────────┐         ┌──────────┐        ┌──────────┐ │
-│  │  Client  │  JWT    │  Server  │        │  Redis/  │ │
-│  │          │ ──────> │          │ ────>  │  Cache   │ │
-│  │          │  (sid)  │          │ lookup │          │ │
-│  └──────────┘         └──────────┘        └──────────┘ │
-│                                                           │
-│  JWT 只攜帶 session ID (sid)                            │
-│  實際 session 資料儲存在伺服器端                        │
-│  可立即撤銷（刪除 cache 中的 session）                  │
+│                                                         │
+│  ┌──────────┐         ┌──────────┐        ┌──────────┐  │
+│  │  Client  │  JWT    │  Server  │        │  Redis/  │  │
+│  │          │ ──────> │          │ ────>  │  Cache   │  │
+│  │          │  (sid)  │          │ lookup │          │  │
+│  └──────────┘         └──────────┘        └──────────┘  │
+│                                                         │
+│  The JWT carries only the session ID (sid)              │
+│  The actual session data is stored server-side          │
+│  Revocable instantly (delete the session from cache)    │
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
 │  Traditional Stateless JWT (NOT used by CacheX)         │
 ├─────────────────────────────────────────────────────────┤
-│                                                           │
+│                                                         │
 │  ┌──────────┐         ┌──────────┐                      │
 │  │  Client  │  JWT    │  Server  │                      │
 │  │          │ ──────> │          │                      │
 │  │          │ (all)   │          │                      │
 │  └──────────┘         └──────────┘                      │
-│                                                           │
-│  JWT 包含所有使用者資訊和權限                           │
-│  伺服器無狀態，無法撤銷 token                           │
-│  需要 jti + blacklist 才能撤銷                          │
+│                                                         │
+│  The JWT contains all user info and permissions         │
+│  The server is stateless and cannot revoke tokens       │
+│  Revocation requires jti + a blacklist                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 為何選擇 Stateful Session
+A valid JWT signature is necessary but not sufficient: after decoding, `SessionManager.get_session()` still loads the session from the backend and rejects it if it is missing, not active, expired, past `absolute_timeout`, or fails IP/User-Agent binding checks. Any decoding failure is raised as `SessionTokenError`, which `SessionMiddleware` treats as "no session".
 
-#### ✅ 優點
+### Why a Stateful Session
 
-1. **即時撤銷**
-   - 透過 `SessionManager.delete_session()` 立即失效
-   - 不需要維護 token 黑名單
-   - 不需要 `jti` claim 和 blacklist 系統
+#### ✅ Advantages
 
-2. **敏感資料保護**
-   - Session 資料（包含 user info）儲存在伺服器端
-   - JWT 只包含最小資訊（session ID）
-   - 降低 JWT 洩漏的風險
+1. **Instant revocation**
+    - `SessionManager.delete_session()` (or `invalidate_session()`) takes effect immediately
+    - No token blacklist to maintain
+    - No need for a `jti` claim and a blacklist system
 
-3. **靈活的 Session 管理**
-   - 支援 sliding expiration（滑動過期）
-   - 支援 session 資料即時更新
-   - 支援 flash messages 等功能
+2. **Protection of sensitive data**
+    - Session data (including user info) is stored server-side
+    - The JWT contains only minimal information (the session ID)
+    - Reduces the impact of a leaked JWT
 
-4. **Token 體積小**
-   - JWT 只需攜帶 `sid` 和時間戳記
-   - 減少網路傳輸開銷
-   - 適合 API-first 架構的頻繁請求
+3. **Flexible session management**
+    - Supports sliding expiration: when a session is renewed, a new token with an updated `exp` is returned in the response header named by `header_name` (`X-Session-Token` by default)
+    - Supports updating session data in real time
+    - Supports features such as flash messages
 
-#### ⚠️ 權衡
+4. **Small tokens**
+    - The JWT only needs to carry `sid` and timestamps
+    - Less network overhead
+    - Well suited to the frequent requests of API-first architectures
 
-1. **需要後端儲存**
-   - 需要 Redis/Memcached/Memory backend
-   - 橫向擴展需要共享 cache（如 Redis cluster）
+#### ⚠️ Trade-offs
 
-2. **每次請求需查詢 cache**
-   - 增加一次 cache lookup
-   - 但現代 cache 系統（Redis）非常快速（sub-millisecond）
+1. **Requires backend storage**
+    - Needs a Redis, Memcached, or Memory backend
+    - Horizontal scaling requires a shared cache (such as a Redis cluster)
 
-### 為何不需要某些 Claims
+2. **Every request needs a cache lookup**
+    - Adds one cache lookup per request
+    - But modern cache systems (Redis) are very fast (sub-millisecond)
+
+### Why Some Claims Are Not Needed
 
 #### `jti` (JWT ID)
 
-**用途**：為每個 JWT 生成唯一 ID，用於：
-- Token 黑名單（blacklist）
-- 防止 token 重放攻擊
-- 追蹤個別 token
+**Purpose**: generate a unique ID for every JWT, used for:
 
-**為何不需要**：
+- Token blacklists
+- Preventing token replay attacks
+- Tracking individual tokens
+
+**Why it is not needed**:
+
 ```python
-# Stateless JWT 需要 jti + blacklist
+# A stateless JWT needs jti + a blacklist
 jwt_payload = {"jti": "uuid-1234", "user_id": "123", ...}
-# 撤銷時：將 jti 加入 blacklist，每次驗證時檢查
+# To revoke: add the jti to a blacklist and check it on every verification
 
 # FastAPI-CacheX stateful session
 jwt_payload = {"sid": "session-abc123"}
-# 撤銷時：直接刪除 cache 中的 session
+# To revoke: delete the session from the cache directly
 await session_manager.delete_session("session-abc123")
-# 下次請求時，cache lookup 失敗，自動拒絕
+# On the next request the cache lookup fails and the request is rejected automatically
 ```
 
 #### `nbf` (Not Before)
 
-**用途**：指定 token 生效時間，用於：
-- 預先簽發未來使用的 token
-- 時間同步問題的容忍
+**Purpose**: specify when a token becomes valid, used for:
 
-**為何不需要**：
-- Session 通常在建立時立即生效
-- 如需延遲生效，應在應用邏輯層處理
-- `leeway` 參數已處理時間同步問題
+- Issuing tokens in advance for future use
+- Tolerating clock skew
+
+**Why it is not needed**:
+
+- A session normally takes effect as soon as it is created
+- If delayed activation is required, it belongs in the application logic
+- The `jwt_leeway` setting already handles clock skew for `exp` and `iat`
 
 #### `sub` (Subject)
 
-**用途**：識別 token 的主體（通常是使用者 ID）
+**Purpose**: identify the subject of the token (usually the user ID)
 
-**為何使用 `sid` 取代**：
-- `sub` 通常表示**不可變**的使用者識別碼
-- `sid` 表示**可變**的 session 識別碼
-- Session regeneration 時 `sid` 會改變，但 `user_id` 不變
-- 使用 `sid` 語意更清晰
+**Why `sid` is used instead**:
 
-## 擴展指南：新增自訂 Claims
+- `sub` usually denotes an **immutable** user identifier
+- `sid` denotes a **mutable** session identifier
+- `SessionManager.regenerate_session_id()` changes `sid`, while `user_id` stays the same
+- `sid` makes the semantics clearer
 
-如果您的應用需要額外的 JWT claims，可以透過繼承 `JWTTokenSerializer` 來實作。
+## Extension Guide: Adding Custom Claims
 
-### 範例 1：新增 `jti` 和 `nbf`
+If your application needs additional JWT claims, subclass `JWTTokenSerializer` and pass an instance to `SessionManager` through its `token_serializer` argument. Any object with `to_string(token) -> str` and `from_string(token_str) -> SessionToken` methods (the `TokenSerializer` protocol) will do; `from_string()` should raise `ValueError` for invalid tokens, which `SessionManager` converts into `SessionTokenError`.
+
+The examples below honour `token.expires_at` in `to_string()` the same way the built-in serializer does, so that `exp` keeps following sliding expiration.
+
+### Example 1: Adding `jti` and `nbf`
 
 ```python
 from __future__ import annotations
@@ -159,23 +185,26 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi_cachex.session.token_serializers import JWTTokenSerializer
 from fastapi_cachex.session.models import SessionToken
+from fastapi_cachex.session.token_serializers import JWTTokenSerializer
 
 
 class ExtendedJWTSerializer(JWTTokenSerializer):
-    """擴展 JWT serializer，新增 jti 和 nbf claims。"""
+    """Extended JWT serializer that adds the jti and nbf claims."""
 
     def to_string(self, token: SessionToken) -> str:
-        """編碼 SessionToken 為 JWT，包含 jti 和 nbf。"""
+        """Encode a SessionToken as a JWT, including jti and nbf."""
         iat = int(token.issued_at.timestamp())
-        exp = iat + int(self._session_ttl)
+        if token.expires_at is not None:
+            exp = int(token.expires_at.timestamp())
+        else:
+            exp = iat + int(self._session_ttl)
 
         payload: dict[str, object] = {
             "sid": token.session_id,
             "iat": iat,
             "exp": exp,
-            "jti": str(uuid.uuid4()),  # 唯一 token ID
+            "jti": str(uuid.uuid4()),  # Unique token ID
             "nbf": iat,  # Not before = issued at
         }
 
@@ -190,13 +219,13 @@ class ExtendedJWTSerializer(JWTTokenSerializer):
         return str(encoded)
 
     def from_string(self, token_str: str) -> SessionToken:
-        """解碼並驗證 JWT，包含 jti 和 nbf 驗證。"""
+        """Decode and verify a JWT, including jti and nbf validation."""
         options = {
-            "require": ["sid", "iat", "exp", "jti"],  # 要求 jti
+            "require": ["sid", "iat", "exp", "jti"],  # Require jti
             "verify_signature": True,
             "verify_exp": True,
             "verify_iat": True,
-            "verify_nbf": True,  # 驗證 nbf
+            "verify_nbf": True,  # Verify nbf
         }
 
         kwargs: dict[str, object] = {
@@ -217,49 +246,58 @@ class ExtendedJWTSerializer(JWTTokenSerializer):
             msg = "Invalid JWT token"
             raise ValueError(msg) from e
 
-        # 提取標準欄位
+        # Extract the standard fields
         sid = str(payload["sid"])
         iat = int(payload["iat"])
         issued_at = datetime.fromtimestamp(iat, tz=timezone.utc)
 
-        # 可選：記錄 jti 用於審計
+        # Optional: record the jti for auditing
         jti = payload.get("jti")
-        # logger.info(f"JWT decoded: sid={sid}, jti={jti}")
+        # logger.info("JWT decoded: sid=%s, jti=%s", sid, jti)
 
         return SessionToken(session_id=sid, signature="", issued_at=issued_at)
 ```
 
-### 範例 2：新增多租戶自訂 Claims
+### Example 2: Adding Multi-Tenant Custom Claims
 
 ```python
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
-from fastapi_cachex.session.token_serializers import JWTTokenSerializer
+from fastapi_cachex.session import SessionConfig
 from fastapi_cachex.session.models import SessionToken
+from fastapi_cachex.session.token_serializers import JWTTokenSerializer
 
 
 class MultiTenantJWTSerializer(JWTTokenSerializer):
-    """多租戶 JWT serializer，新增 tenant_id 和 api_version。"""
+    """Multi-tenant JWT serializer that adds tenant_id and api_version."""
 
     def __init__(
-        self, config, tenant_id: str, api_version: str = "v1", jwt_module=None
-    ):
+        self,
+        config: SessionConfig,
+        tenant_id: str,
+        api_version: str = "v1",
+        jwt_module: Any | None = None,
+    ) -> None:
         super().__init__(config, jwt_module)
         self.tenant_id = tenant_id
         self.api_version = api_version
 
     def to_string(self, token: SessionToken) -> str:
-        """編碼 SessionToken 為 JWT，包含租戶資訊。"""
+        """Encode a SessionToken as a JWT, including tenant information."""
         iat = int(token.issued_at.timestamp())
-        exp = iat + int(self._session_ttl)
+        if token.expires_at is not None:
+            exp = int(token.expires_at.timestamp())
+        else:
+            exp = iat + int(self._session_ttl)
 
         payload: dict[str, object] = {
             "sid": token.session_id,
             "iat": iat,
             "exp": exp,
-            # 自訂 claims
+            # Custom claims
             "tenant_id": self.tenant_id,
             "api_version": self.api_version,
         }
@@ -275,7 +313,7 @@ class MultiTenantJWTSerializer(JWTTokenSerializer):
         return str(encoded)
 
     def from_string(self, token_str: str) -> SessionToken:
-        """解碼並驗證 JWT，驗證租戶資訊。"""
+        """Decode and verify a JWT, validating the tenant information."""
         options = {
             "require": ["sid", "iat", "exp", "tenant_id", "api_version"],
             "verify_signature": True,
@@ -301,7 +339,7 @@ class MultiTenantJWTSerializer(JWTTokenSerializer):
             msg = "Invalid JWT token"
             raise ValueError(msg) from e
 
-        # 驗證租戶資訊
+        # Validate the tenant information
         if payload["tenant_id"] != self.tenant_id:
             msg = f"Invalid tenant_id: expected {self.tenant_id}, got {payload['tenant_id']}"
             raise ValueError(msg)
@@ -310,7 +348,7 @@ class MultiTenantJWTSerializer(JWTTokenSerializer):
             msg = f"Unsupported API version: {payload['api_version']}"
             raise ValueError(msg)
 
-        # 提取標準欄位
+        # Extract the standard fields
         sid = str(payload["sid"])
         iat = int(payload["iat"])
         issued_at = datetime.fromtimestamp(iat, tz=timezone.utc)
@@ -318,38 +356,39 @@ class MultiTenantJWTSerializer(JWTTokenSerializer):
         return SessionToken(session_id=sid, signature="", issued_at=issued_at)
 ```
 
-### 使用自訂 Serializer
+### Using a Custom Serializer
 
-#### 方法 1：透過 SessionManager 初始化參數（推薦）
+#### Option 1: Pass it to `SessionManager` (recommended)
 
 ```python
 from fastapi import FastAPI
+
 from fastapi_cachex.backends import AsyncRedisCacheBackend
-from fastapi_cachex.session import SessionManager, SessionConfig, SessionMiddleware
+from fastapi_cachex.session import SessionConfig, SessionManager, SessionMiddleware
 
 app = FastAPI()
 
-# 設定 backend 和 config
+# Set up the backend and config
 backend = AsyncRedisCacheBackend(host="localhost", port=6379)
 config = SessionConfig(
-    secret_key="your-secret-key-min-32-chars",
+    secret_key="your-secret-key-at-least-32-characters",
     token_format="jwt",
     jwt_algorithm="HS256",
     jwt_issuer="your-company",
     jwt_audience="your-api",
 )
 
-# 建立自訂 serializer
+# Create the custom serializer
 custom_serializer = MultiTenantJWTSerializer(
     config=config,
     tenant_id="acme-corp",
     api_version="v2",
 )
 
-# 初始化 SessionManager
-manager = SessionManager(backend, config, custom_serializer)
+# Initialize the SessionManager
+manager = SessionManager(backend, config, token_serializer=custom_serializer)
 
-# 新增 middleware
+# Add the middleware
 app.add_middleware(
     SessionMiddleware,
     session_manager=manager,
@@ -357,50 +396,58 @@ app.add_middleware(
 )
 ```
 
-#### 方法 2：繼承 SessionManager（進階）
+When `token_serializer` is given it overrides the built-in choice made from `token_format`. Keep `token_format="jwt"` anyway: with `"simple"`, `SessionManager` additionally performs its own HMAC signature check on the parsed token, which a JWT-based serializer does not provide.
+
+#### Option 2: Subclass `SessionManager` (advanced)
 
 ```python
-from fastapi_cachex.session import SessionManager
+from fastapi_cachex.backends.base import BaseCacheBackend
+from fastapi_cachex.session import SessionConfig, SessionManager
 
 
 class MultiTenantSessionManager(SessionManager):
-    """支援多租戶的 SessionManager。"""
+    """SessionManager with multi-tenant support."""
 
-    def __init__(self, backend, config, tenant_id: str):
-        super().__init__(backend, config)
+    def __init__(
+        self, backend: BaseCacheBackend, config: SessionConfig, tenant_id: str
+    ) -> None:
+        super().__init__(
+            backend,
+            config,
+            token_serializer=MultiTenantJWTSerializer(
+                config=config, tenant_id=tenant_id
+            ),
+        )
 
-        # 替換 token serializer
-        if config.token_format == "jwt":
-            self._token_serializer = MultiTenantJWTSerializer(
-                config=config,
-                tenant_id=tenant_id,
-            )
 
-
-# 使用
+# Usage
 manager = MultiTenantSessionManager(backend, config, tenant_id="acme-corp")
 ```
 
-## 完整應用範例
+Do not replace the serializer by assigning a private attribute after construction; pass it through the `token_serializer` argument so the manager uses it for both issuing and parsing tokens.
+
+## Complete Application Example
 
 ```python
 from __future__ import annotations
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.session import (
+    Session,
+    SessionConfig,
     SessionManager,
     SessionMiddleware,
-    SessionConfig,
     SessionUser,
     get_session,
 )
 
-# 使用上面定義的 MultiTenantJWTSerializer
+# Uses the MultiTenantJWTSerializer defined above
 
 app = FastAPI()
 
-# 初始化
+# Initialization
 backend = AsyncRedisCacheBackend(host="localhost", port=6379)
 config = SessionConfig(
     secret_key="your-secret-key-min-32-chars-long!!",
@@ -410,15 +457,14 @@ config = SessionConfig(
     jwt_audience="acme-api",
 )
 
-# 建立自訂 serializer
+# Create the custom serializer
 serializer = MultiTenantJWTSerializer(
     config=config,
     tenant_id="acme-corp",
     api_version="v2",
 )
 
-manager = SessionManager(backend, config)
-manager._token_serializer = serializer
+manager = SessionManager(backend, config, token_serializer=serializer)
 
 app.add_middleware(
     SessionMiddleware,
@@ -428,60 +474,66 @@ app.add_middleware(
 
 
 @app.post("/auth/login")
-async def login(username: str, password: str):
-    """登入端點，返回包含 tenant_id 的 JWT。"""
-    # 驗證使用者（省略）
+async def login(username: str, password: str) -> dict[str, str]:
+    """Login endpoint that returns a JWT containing tenant_id."""
+    # Authenticate the user (omitted)
     if username != "admin":
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     user = SessionUser(user_id="123", username=username)
     session, token = await manager.create_session(user=user)
 
-    # Token 現在包含 tenant_id 和 api_version claims
+    # The token now contains the tenant_id and api_version claims
     return {
         "token": token,
         "token_type": "bearer",
-        "tenant_id": "acme-corp",  # 也可以從 config 讀取
+        "tenant_id": "acme-corp",  # Could also be read from configuration
     }
 
 
 @app.get("/api/profile")
-async def get_profile(session=Depends(get_session)):
-    """受保護的端點，自動驗證 tenant_id。"""
-    # JWT 已在解碼時驗證 tenant_id 和 api_version
+async def get_profile(session: Session = Depends(get_session)) -> dict[str, str | None]:
+    """Protected endpoint; tenant_id is validated automatically."""
+    # tenant_id and api_version were already validated while decoding the JWT.
+    # A token for another tenant fails to decode, so the middleware sets no
+    # session and get_session responds with 401.
+    assert session.user is not None
     return {
         "user_id": session.user.user_id,
         "username": session.user.username,
     }
 ```
 
-## 安全考量
+## Security Considerations
 
-### 1. Token 大小
+### 1. Token Size
 
-新增更多 claims 會增加 JWT 大小，影響：
-- 網路傳輸開銷
-- Cookie 大小限制（如果使用 cookie）
-- 效能
+Adding more claims increases the size of the JWT, which affects:
 
-**建議**：只新增必要的 claims，避免在 JWT 中包含大量資料。
+- Network overhead
+- Cookie size limits (if the token is stored in a cookie, e.g. with `FastAPICacheXSessionMiddleware`)
+- Performance
 
-### 2. 敏感資料
+**Recommendation**: add only the claims you need and avoid putting large amounts of data in the JWT.
 
-不要在 JWT 中儲存敏感資料（如密碼、信用卡號）：
-- JWT 可以被解碼（base64）
-- 即使有簽名，內容仍可見
-- 使用 server-side session 儲存敏感資料
+### 2. Sensitive Data
 
-### 3. Claims 驗證
+Do not store sensitive data (such as passwords or credit card numbers) in a JWT:
 
-自訂 claims 務必在 `from_string()` 中驗證：
+- A JWT can be decoded (it is base64url-encoded)
+- Even with a signature, the contents are readable
+- Store sensitive data in the server-side session instead
+
+### 3. Claim Validation
+
+Always validate custom claims in `from_string()`:
+
 ```python
-# ❌ 不好：沒有驗證
+# ❌ Bad: no validation
 payload = self.jwt_encoder.decode(token_str, **kwargs)
-tenant_id = payload.get("tenant_id")  # 可能不存在或無效
+tenant_id = payload.get("tenant_id")  # May be missing or invalid
 
-# ✅ 好：嚴格驗證
+# ✅ Good: strict validation
 options = {"require": ["sid", "iat", "exp", "tenant_id"]}
 payload = self.jwt_encoder.decode(token_str, **kwargs)
 if payload["tenant_id"] != self.expected_tenant_id:
@@ -490,16 +542,18 @@ if payload["tenant_id"] != self.expected_tenant_id:
 
 ### 4. Key Rotation
 
-如需支援金鑰輪替（key rotation），可使用 `kid` (Key ID) claim：
+To support key rotation, you can use the `kid` (Key ID) header parameter. The following is a sketch; `payload`, `kwargs` and `_get_key_by_id()` are yours to fill in:
 
 ```python
 class KeyRotationJWTSerializer(JWTTokenSerializer):
-    def __init__(self, config, key_id: str, jwt_module=None):
+    def __init__(
+        self, config: SessionConfig, key_id: str, jwt_module: Any | None = None
+    ) -> None:
         super().__init__(config, jwt_module)
         self.key_id = key_id
 
     def to_string(self, token: SessionToken) -> str:
-        # 新增 kid 到 JWT header
+        # Add kid to the JWT header
         encoded = self.jwt_encoder.encode(
             payload,
             self._secret,
@@ -509,30 +563,32 @@ class KeyRotationJWTSerializer(JWTTokenSerializer):
         return str(encoded)
 
     def from_string(self, token_str: str) -> SessionToken:
-        # 解析 header 以獲取 kid
+        # Parse the header to obtain kid
         header = self.jwt_encoder.get_unverified_header(token_str)
         kid = header.get("kid")
 
-        # 根據 kid 選擇對應的 key
+        # Pick the matching key based on kid
         key = self._get_key_by_id(kid)
 
         payload = self.jwt_encoder.decode(token_str, key=key, **kwargs)
         # ...
 ```
 
-## 測試建議
+## Testing Recommendations
 
-為自訂 serializer 新增測試：
+Add tests for your custom serializer:
 
 ```python
 import pytest
+
 from fastapi_cachex.backends.memory import MemoryBackend
-from fastapi_cachex.session import SessionManager, SessionConfig, SessionUser
+from fastapi_cachex.session import SessionConfig, SessionManager, SessionUser
+from fastapi_cachex.session.exceptions import SessionTokenError
 
 
 @pytest.mark.asyncio
 async def test_custom_claims_included():
-    """測試自訂 claims 是否包含在 JWT 中。"""
+    """Custom claims are included in the JWT and the token round-trips."""
     backend = MemoryBackend()
     config = SessionConfig(secret_key="a" * 32, token_format="jwt")
 
@@ -541,99 +597,112 @@ async def test_custom_claims_included():
         tenant_id="test-tenant",
         api_version="v1",
     )
-
-    manager = SessionManager(backend, config)
-    manager._token_serializer = serializer
+    manager = SessionManager(backend, config, token_serializer=serializer)
 
     user = SessionUser(user_id="u1", username="alice")
     session, token = await manager.create_session(user=user)
 
-    # 驗證 token 可以被解碼
-    retrieved = await manager.get_session(token)
+    # The token can be decoded and carries the custom claim
+    assert (
+        serializer.jwt_encoder.decode(token, options={"verify_signature": False})[
+            "tenant_id"
+        ]
+        == "test-tenant"
+    )
+
+    # get_session returns (session, renewed_token)
+    retrieved, _renewed = await manager.get_session(token)
     assert retrieved.session_id == session.session_id
 
 
 @pytest.mark.asyncio
 async def test_custom_claims_validated():
-    """測試自訂 claims 驗證失敗時被拒絕。"""
+    """A token whose custom claims fail validation is rejected."""
     backend = MemoryBackend()
     config = SessionConfig(secret_key="a" * 32, token_format="jwt")
 
-    # 建立 token with tenant_id="tenant-1"
-    serializer1 = MultiTenantJWTSerializer(config, tenant_id="tenant-1")
-    manager1 = SessionManager(backend, config)
-    manager1._token_serializer = serializer1
+    # Create a token with tenant_id="tenant-1"
+    manager1 = SessionManager(
+        backend,
+        config,
+        token_serializer=MultiTenantJWTSerializer(config, tenant_id="tenant-1"),
+    )
     _session, token = await manager1.create_session(user=SessionUser(user_id="u1"))
 
-    # 嘗試用 tenant_id="tenant-2" 驗證（應失敗）
-    serializer2 = MultiTenantJWTSerializer(config, tenant_id="tenant-2")
-    manager2 = SessionManager(backend, config)
-    manager2._token_serializer = serializer2
+    # Try to validate it with tenant_id="tenant-2" (must fail)
+    manager2 = SessionManager(
+        backend,
+        config,
+        token_serializer=MultiTenantJWTSerializer(config, tenant_id="tenant-2"),
+    )
 
-    with pytest.raises(ValueError, match="Invalid tenant_id"):
+    # The serializer's ValueError surfaces as SessionTokenError
+    with pytest.raises(SessionTokenError, match="Invalid tenant_id"):
         await manager2.get_session(token)
 ```
 
-## 常見問題
+## FAQ
 
-### Q: 為什麼不預設實作 `jti`？
+### Q: Why isn't `jti` implemented by default?
 
-A: `jti` 主要用於 stateless JWT 的 token 撤銷（blacklist）。FastAPI-CacheX 使用 stateful session，可以直接刪除伺服器端的 session 資料來撤銷 token，不需要額外的 blacklist 機制。
+A: `jti` is mainly used to revoke stateless JWTs (via a blacklist). FastAPI-CacheX uses stateful sessions, so a token can be revoked by deleting the server-side session data directly; no separate blacklist mechanism is needed.
 
-### Q: 我需要 `nbf` 嗎？
+### Q: Do I need `nbf`?
 
-A: 大多數情況下不需要。`nbf` 用於預先簽發但延遲生效的 token。如果您的應用需要這個功能，建議在應用邏輯層處理（例如在 session.data 中記錄生效時間），而不是在 JWT 層面。
+A: In most cases, no. `nbf` is for tokens that are issued in advance but become valid later. If your application needs this, we recommend handling it in the application logic (for example, recording the activation time in `session.data`) rather than at the JWT level.
 
-### Q: 能否在不修改程式碼的情況下新增 claims？
+### Q: Can I add claims without writing code?
 
-A: 目前需要透過繼承 `JWTTokenSerializer` 來新增自訂 claims。未來版本可能會考慮新增配置選項，例如：
+A: Not currently; custom claims require subclassing `JWTTokenSerializer`. A future version might add a configuration option such as the hypothetical one below (it does not exist today, and `SessionConfig` rejects unknown fields):
+
 ```python
 SessionConfig(
     token_format="jwt",
     jwt_custom_claims={"tenant_id": "acme", "version": "v1"},
 )
 ```
-但這會增加複雜度。目前的設計提供了足夠的靈活性，同時保持程式碼簡潔。
 
-### Q: 自訂 claims 會影響效能嗎？
+That would add complexity, though. The current design offers enough flexibility while keeping the code simple.
 
-A: 影響很小。JWT 編碼/解碼的效能主要取決於：
-1. 加密演算法（HS256 很快）
-2. Token 大小（更多 claims = 更大）
-3. 網路傳輸（更大的 token）
+### Q: Do custom claims affect performance?
 
-只要不新增大量資料，影響可以忽略。
+A: Only slightly. JWT encoding/decoding performance depends mainly on:
 
-### Q: 如何在 JWT 中包含使用者權限？
+1. The signing algorithm (HS256 is fast)
+2. Token size (more claims = larger token)
+3. Network transfer (larger tokens)
 
-A: 不建議在 JWT 中包含權限資訊。FastAPI-CacheX 採用 stateful session，應該：
+As long as you don't add large amounts of data, the impact is negligible.
+
+### Q: How do I include user permissions in the JWT?
+
+A: We don't recommend putting permissions in the JWT. FastAPI-CacheX uses stateful sessions, so you should:
+
 ```python
-# ✅ 推薦：儲存在 server-side session
+# ✅ Recommended: store them in the server-side session
 session.user.roles = ["admin", "editor"]
-session.data["permissions"] = ["read", "write", "delete"]
+session.user.permissions = ["read", "write", "delete"]
 await manager.update_session(session)
 
-# ❌ 不推薦：放在 JWT claims
-# 權限變更時無法即時更新，除非撤銷所有現有 token
+# ❌ Not recommended: putting them in JWT claims
+# Permission changes cannot take effect immediately unless every existing token is revoked
 ```
 
-## 參考資料
+## References
 
 - [RFC 7519 - JSON Web Token (JWT)](https://datatracker.ietf.org/doc/html/rfc7519)
 - [PyJWT Documentation](https://pyjwt.readthedocs.io/)
 - [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
 - [FastAPI-CacheX Session Documentation](SESSION.md)
 
-## 總結
+## Summary
 
-FastAPI-CacheX 的 JWT 實作專注於 **stateful session** 場景，提供：
+FastAPI-CacheX's JWT implementation focuses on the **stateful session** use case and provides:
 
-✅ **已實作**：基本 JWT claims（sid, iat, exp, iss, aud）
-✅ **已實作**：簽名驗證與過期檢查
-✅ **已實作**：可擴展架構（透過繼承）
+- ✅ **Implemented**: the basic JWT claims (`sid`, `iat`, `exp`, `iss`, `aud`)
+- ✅ **Implemented**: signature verification and expiry checks
+- ✅ **Implemented**: an extensible design (via subclassing and the `token_serializer` argument)
+- ⚠️ **Not implemented**: `jti`, `nbf`, `sub` (these are not required for stateful sessions)
+- 🔧 **Extensible**: developers can easily add custom claims (see the examples in this document)
 
-⚠️ **未實作**：jti, nbf, sub（這些在 stateful session 中不是必需的）
-
-🔧 **可擴展**：開發者可以輕鬆新增自訂 claims（見本文件範例）
-
-這種設計在安全性、效能和靈活性之間取得了良好的平衡。如果您的應用有特殊需求，請參考本文件的擴展範例。
+This design strikes a good balance between security, performance, and flexibility. If your application has special requirements, refer to the extension examples in this document.

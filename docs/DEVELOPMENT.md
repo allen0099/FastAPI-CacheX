@@ -58,8 +58,8 @@ so do not point these at anything you care about. When a port is set but nothing
 is listening, the suites skip and say so.
 
 A run with nothing opted in still clears the coverage gate (`fail_under = 90`)
-at about 92.8%, but only because the rest of the suite carries it — `redis.py`
-alone drops to roughly 29%. The margin is thin, so the first place an untested
+at about 92.2%, but only because the rest of the suite carries it — `redis.py`
+alone drops to roughly 27%. The margin is thin, so the first place an untested
 line shows up as a failure is a local opted-out run, not CI, which sets both
 variables against its own service containers and sees 99.95%.
 
@@ -108,9 +108,13 @@ Worth doing whenever a test is written for something security-relevant.
 
 ## Using tox
 
-tox ensures the code works across different Python versions (3.10-3.13).
+tox ensures the code works across different Python versions (3.10-3.14, the
+`env_list` in `tox.ini`). Each environment installs the `redis` and `memcache`
+extras through `tox-uv` and passes the `CACHEX_TEST_*` and
+`CACHEX_REQUIRE_LIVE_SERVERS` variables through, so the opt-in rules above apply
+unchanged.
 
-1. Install all Python versions
+1. Install all Python versions (`uv python install 3.10 3.11 3.12 3.13 3.14`)
 2. Run tox:
 
 ```bash
@@ -120,19 +124,19 @@ uv run tox
 To run for a specific Python version:
 
 ```bash
-tox -e py310  # only run for Python 3.10
+uv run tox -e py310  # only run for Python 3.10
 ```
 
 ## Using pre-commit
 
 pre-commit helps maintain code quality by running checks before each commit.
 
-1. Install pre-commit:
-```bash
-uv add --dev pre-commit
-```
+1. pre-commit is part of the `dev` dependency group, so `uv sync --group dev`
+   already installs it.
 
-2. Install the pre-commit hooks:
+2. Install the git hooks (`.pre-commit-config.yaml` sets
+   `default_install_hook_types`, so this installs the `pre-commit`,
+   `post-commit` and `post-merge` hooks together):
 ```bash
 uv run pre-commit install
 ```
@@ -142,7 +146,20 @@ uv run pre-commit install
 uv run pre-commit run --all-files
 ```
 
-The pre-commit hooks will automatically run on `git commit`. If any checks fail, fix the issues and try committing again.
+The hooks cover the standard pre-commit-hooks checks, `ruff` (with `--fix`) and
+`ruff-format`, `typos`, `uv-lock`/`uv-sync`, and strict `mypy` (excluding
+`docs/` and `scripts/`). They run automatically on `git commit`. If any checks fail, fix the issues and try committing again.
+
+pre-commit only sees the files you touched. The **Lint** workflow checks the
+whole tree; run the same commands before pushing:
+
+```bash
+uv run ruff check fastapi_cachex tests scripts
+uv run ruff format --check fastapi_cachex tests scripts
+uv run mypy fastapi_cachex --strict
+uv run mypy tests
+uv run mypy scripts
+```
 
 ## Type Checking with mypy
 
@@ -153,7 +170,7 @@ We use mypy for static type checking to ensure type safety.
 uv run mypy fastapi_cachex
 ```
 
-2. Run mypy with strict mode:
+2. Run mypy with strict mode (what CI and the release gate run):
 ```bash
 uv run mypy fastapi_cachex --strict
 ```
@@ -161,9 +178,45 @@ uv run mypy fastapi_cachex --strict
 ### Common mypy Issues
 
 - Make sure all functions have type annotations
-- Use `Optional[Type]` for parameters that could be None
+- Use `Type | None` for parameters that could be None (the codebase uses PEP 604 unions, not `Optional`)
 - Use `from __future__ import annotations` for forward references
-- Add `py.typed` file to make your package mypy compliant
+- Keep `fastapi_cachex/py.typed` in place; it is what makes the installed package typed for users
+  (it is listed under `[tool.uv.build-backend] include` in `pyproject.toml`)
+
+## Documentation site
+
+The documentation at <https://fastapi-cachex.readthedocs.io/en/latest/> is built
+with [Zensical](https://zensical.org/) from `zensical.toml` and the `docs/`
+directory. The home page includes `README.md` and the changelog page includes
+`CHANGELOG.md` through snippets, so links in `README.md` must stay absolute
+(`https://github.com/allen0099/FastAPI-CacheX/blob/master/...`) to work in both
+places.
+
+```bash
+uv sync --group docs
+uv run zensical serve           # live preview on http://localhost:8000
+uv run zensical build --strict  # what CI and Read the Docs run
+```
+
+The **Docs** workflow (`.github/workflows/docs.yml`) and Read the Docs
+(`.readthedocs.yaml`) both run `zensical build --strict`, so a broken link,
+snippet path or docstring reference fails the PR.
+
+### Adding API reference pages
+
+API pages live under `docs/api/` and are generated from docstrings (Google
+style) by mkdocstrings. A page is plain markdown with one directive per object:
+
+```markdown
+# CacheManager
+
+::: fastapi_cachex.manager.CacheManager
+```
+
+Use the full module path where the object is defined (a bare module path such as
+`::: fastapi_cachex.types` documents the whole module), and add a new page to the
+`nav` in `zensical.toml`. mkdocstrings reads the package statically, so the docs
+build does not need the package or its extras installed.
 
 ## Releasing
 

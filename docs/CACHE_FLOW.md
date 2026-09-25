@@ -1,188 +1,243 @@
-# FastAPI-CacheX 快取流程說明
+# FastAPI-CacheX Cache Flow
 
-本文件詳細說明 FastAPI-CacheX 如何處理 HTTP 請求的快取邏輯。
+This document explains in detail how FastAPI-CacheX applies its caching logic to
+HTTP requests. All behaviour described here lives in
+[`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py)
+unless stated otherwise.
 
-## 整體流程圖
+## Overall flow
 
 ```
-HTTP 請求到達
+HTTP request arrives
     ↓
-@cache 裝飾器攔截（只有 GET 會走快取，其餘方法直接執行處理器）
+@cache decorator intercepts it (only GET goes through the cache; every other
+method runs the handler directly and gets no Cache-Control header)
     ↓
-生成快取金鑰: method|||host|||path|||query_params
+Build the cache key: method|||host|||path|||query_params
     ↓
-no-store？ ── 是 → 執行處理器，不讀也不寫快取
-    ↓ 否
-private？ ── 是 → 執行處理器；比對 If-None-Match 決定 304 或 200
-    │              （不讀也不寫共享後端）
-    ↓ 否
-讀取後端條目
+no-store? ── yes → run the handler, neither read nor write the cache,
+    │              respond with Cache-Control: no-store
+    ↓ no
+private? ── yes → run the handler; compare If-None-Match to decide 304 or 200
+    │              (the shared backend is neither read nor written)
+    ↓ no
+Read the backend entry
     ↓
-請求帶 If-None-Match？
-    ├─ 且 no-cache → 先執行處理器算出最新 ETag，相符 → 304
-    ├─ 一般情況   → 與快取條目的 ETag 比對，相符 → 304
-    └─ 不符 / 無此標頭 → 往下
+Request carries If-None-Match?
+    ├─ and no-cache → run the handler first to compute the current ETag; match → 304
+    ├─ otherwise    → compare with the cached entry's ETag; match → 304
+    └─ no match / no header → continue
     ↓
-有快取條目、有 ttl、且非 no-cache
-    ├─ 是 → 直接以快取內容回應（連同存下來的狀態碼與標頭；處理器 **不執行**）
-    └─ 否 → 執行處理器
-              ├─ 非 2xx（或 206）→ 原樣回傳，且 **不寫入**（不覆蓋既有好條目）
-              ├─ 串流／檔案回應 → 無法計算 ETag，原樣回傳，不寫入
-              └─ 一般回應 → 設定 ETag；與既有條目 ETag 不同才寫入後端
+Cached entry exists, ttl is set, and no-cache is off?
+    ├─ yes → respond with the cached content (including the stored status code
+    │        and headers; the handler does **not** run)
+    └─ no  → run the handler
+              ├─ non-2xx (or 206) → return as-is and **do not write**
+              │                     (an existing good entry is not overwritten)
+              ├─ streaming/file response → no ETag can be computed; return as-is, do not write
+              └─ regular response → set the ETag; write to the backend only if it
+                                    differs from the existing entry's ETag
     ↓
-回應附上 Cache-Control
+Attach Cache-Control to the response (non-2xx responses are returned without it)
 ```
 
-## 詳細步驟
+## Detailed steps
 
-### 1. 請求攔截與金鑰生成
+### 1. Request interception and key generation
 
-當請求到達時，`@cache` 裝飾器會：
+When a request arrives, the `@cache` decorator does the following:
 
 ```python
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR  # "|||"
 
-# 快取金鑰格式（fastapi_cachex/cache.py 的 default_key_builder）
+# Cache key format (default_key_builder in fastapi_cachex/cache.py)
 cache_key = CACHE_KEY_SEPARATOR.join(
     [request.method, request.headers.get("host", "unknown"), request.url.path, query]
 )
 
-# 例如：
+# For example:
 # GET|||example.com|||/api/users|||page=1&limit=10
 # GET|||api.example.com|||/api/users/123|||
 ```
 
-分隔符用 `|||` 而不是冒號，是因為 host 本身可能含連接埠（`127.0.0.1:8000`），
-用冒號會讓金鑰無法被正確拆解 —— `MemoryBackend.clear_path()` 需要從金鑰反解出路徑。
+The separator is `|||` rather than a colon because the host itself may contain a
+port (`127.0.0.1:8000`); with a colon the key could not be split reliably, and
+`clear_path()` needs to recover the path from the key.
 
-查詢參數是照請求原本的順序串接（`str(request.query_params)`），**不會排序**，
-所以 `?page=1&limit=10` 與 `?limit=10&page=1` 是兩份獨立的快取條目。需要把兩者
-視為同一份時，請自訂 `key_builder` 做正規化。
+Query parameters are joined in the order the request sent them
+(`str(request.query_params)`) and are **not sorted**, so `?page=1&limit=10` and
+`?limit=10&page=1` are two separate cache entries. If you want them treated as
+one, pass a custom `key_builder` that normalises the query string.
 
-金鑰格式確保不同維度的資料獨立快取：
-- **方法隔離**：GET 和 POST 不共享快取（且目前只有 GET 會進入快取流程）
-- **主機隔離**：`example.com` 和 `api.example.com` 分別快取
-- **路徑隔離**：不同端點各自快取
-- **查詢參數隔離**：同一端點不同查詢參數分別快取
+The key format keeps each dimension cached independently:
 
-### 2. Cache-Control 指令檢查
+- **Method isolation**: GET and POST do not share a cache (and currently only GET
+  enters the cache flow at all)
+- **Host isolation**: `example.com` and `api.example.com` are cached separately
+- **Path isolation**: each endpoint has its own entries
+- **Query parameter isolation**: different query parameters on the same endpoint
+  are cached separately
 
-裝飾器檢查各種快取指令：
+### 2. Cache-Control directives
+
+The decorator arguments control both the server-side behaviour and the
+`Cache-Control` header sent to clients:
 
 ```python
-# 完全跳過快取
-@cache(no_cache=True)     # 強制重新驗證
-@cache(no_store=True)     # 不儲存任何內容
+# Change how the server-side cache is used
+@cache(no_cache=True)     # Always re-run the handler (revalidate); entries are still written
+@cache(no_store=True)     # Never read or write the cache
 
-# 正常快取行為
-@cache(ttl=3600)          # 快取 1 小時（同時作為 max-age 的值）
-@cache(public=True)       # 允許共享快取
-@cache(private=True)      # 僅私有快取，不進共享後端
-@cache(immutable=True)    # 內容永不變更
+# Normal caching behaviour
+@cache(ttl=3600)          # Cache for 1 hour (also used as the max-age value)
+@cache(public=True)       # Allow shared caches
+@cache(private=True)      # Private only; never touches the shared backend
+@cache(immutable=True)    # Content never changes
+
+# Header-only directives (they do not change server-side behaviour)
+@cache(ttl=60, must_revalidate=True)                        # must-revalidate
+@cache(ttl=60, stale="revalidate", stale_ttl=30)            # stale-while-revalidate=30
+@cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
 ```
 
+Arguments are validated when the decorator is applied, and a `CacheXError` is
+raised if `public` and `private` are both set, or if only one of `stale` /
+`stale_ttl` is given.
+
+The header value is built once per decorated route:
+
+| Arguments | `Cache-Control` sent |
+|-----------|----------------------|
+| `no_store=True` | `no-store` (overrides everything else) |
+| `no_cache=True` | `no-cache`, plus `must-revalidate` if requested; `public`/`private`/`max-age`/`stale-*`/`immutable` are omitted |
+| anything else | in order: `public` or `private`, `max-age=<ttl>`, `must-revalidate`, `stale-while-revalidate=<n>` or `stale-if-error=<n>`, `immutable` |
+
+> [!NOTE]
+> Without `ttl`, an entry is still written (with no expiry) but is never served
+> directly: it is only used to answer a matching `If-None-Match` with `304`. Set
+> `ttl` to have the server replay cached responses.
+
 > [!WARNING]
-> **預設快取金鑰不含使用者身分**，而後端是所有 worker、所有使用者共用的。
-> 直接對需要驗證的端點使用 `@cache(ttl=...)`，會把 A 使用者的回應供應給下一
-> 個請求同一路徑的 B 使用者。
+> **The default cache key does not include the user's identity**, and the backend
+> is shared by every worker and every user. Putting `@cache(ttl=...)` directly on
+> an authenticated endpoint will serve user A's response to the next user B who
+> requests the same path.
 >
-> 需要依請求者而異的端點，擇一處理：
+> For endpoints whose response depends on the caller, pick one:
 >
-> 1. `private=True` — 完全不讀寫共享後端。仍會輸出 `Cache-Control: private`
->    讓使用者自己的瀏覽器快取，`If-None-Match` 也仍以即時算出的內容比對。
-> 2. 自訂含身分的 `key_builder` — 當你確實想要「每位使用者一份」的伺服器端快取。
+> 1. `private=True` — never read from or write to the shared backend. It still
+>    sends `Cache-Control: private` so the user's own browser can cache the
+>    response, and `If-None-Match` is still compared against freshly rendered
+>    content.
+> 2. A custom `key_builder` that includes the identity — when you really do want
+>    a per-user server-side cache.
 >
-> 身分請取自可信來源（已驗簽的 token claim、依賴注入的使用者物件），
-> 不要直接採信未經檢查的客戶端標頭。
+> Take the identity from a trusted source (a verified token claim, a
+> dependency-injected user object); do not trust unchecked client headers.
 
-### 3. 快取查詢
+### 3. Cache lookup
 
-根據快取金鑰查詢後端。後端回傳的是 `CacheEntry`（過期條目由後端自己判斷並跳過）：
+The backend is queried with the cache key. It returns a `CacheEntry` (expired
+entries are skipped by the backend itself):
 
 ```python
 from fastapi_cachex.types import CacheEntry
 
 entry = CacheEntry(
-    fingerprint='W/"9f86d081..."',  # ETag，內容的弱驗證器
-    content=b'{"data": "response"}',  # 原始回應位元組
+    fingerprint='W/"9f86d081..."',  # ETag, a weak validator for the content
+    content=b'{"data": "response"}',  # raw response bytes
     media_type="application/json",
-    status_code=200,  # 重播時沿用原本的狀態碼
-    headers={"Vary": "Accept-Encoding"},  # 重播時一併帶回的標頭
+    status_code=200,  # replayed with the original status code
+    headers={"Vary": "Accept-Encoding"},  # headers sent back on replay
 )
 ```
 
-TTL 不存在 `CacheEntry` 裡：到期時間是後端的責任（`MemoryBackend` 記在
-`CacheItem.expiry`，Redis 用 `SETEX`，Memcached 用 exptime）。
+The TTL is not stored in `CacheEntry`: expiry is the backend's responsibility
+(`MemoryBackend` keeps it in `CacheItem.expiry`, Redis uses `SET ... EX`,
+Memcached uses the exptime).
 
-**決策邏輯**（`cache.py` 的 wrapper，依序）：
+If no backend has been configured with `BackendProxy.set()`, the decorator
+creates a `MemoryBackend` on the first request and registers it.
+
+**Decision logic** (the `cache.py` wrapper, in order):
 
 ```python
+if request.method != "GET":
+    return await handler()                   # no cache, no Cache-Control
+
 if no_store:
-    return await render()                    # 不讀、不寫
+    return await render()                    # no read, no write
 
 if private:
-    response, etag = await render()          # 不讀、不寫共享後端
+    response, etag = await render()          # shared backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
-entry = await backend.get(cache_key)         # 過期條目在這裡就已被跳過
+entry = await backend.get(cache_key)         # expired entries are already skipped here
 
 if client_etag and no_cache:
-    fresh = await render()                   # no-cache：一律先重算
+    fresh = await render()                   # no-cache: always re-render first
     if etag_matches(client_etag, fresh.etag):
         return not_modified(...)             # 304
 elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
-    return not_modified(...)                 # 304，處理器不執行
+    return not_modified(...)                 # 304, handler does not run
 
 if entry and not no_cache and ttl is not None:
-    return Response(                         # 200，處理器不執行
+    return Response(                         # 200, handler does not run
         content=entry.content,
         status_code=entry.status_code,
         media_type=entry.media_type,
         headers={**(entry.headers or {}), "ETag": entry.fingerprint, ...},
     )
 
-response, body, etag = await render()        # 未命中
+response, body, etag = await render()        # miss (reused if no-cache already rendered)
 if not is_cacheable_status(response.status_code):
-    return response                          # 非 2xx：原樣回傳且不寫入
+    return response                          # non-2xx: returned as-is, not written
 if etag is None:
-    return response                          # 串流／檔案：無法計算 ETag，不寫入
+    return response                          # streaming/file: no ETag, not written
 if not entry or entry.fingerprint != etag:
     await backend.set(cache_key, CacheEntry(...), ttl=ttl)
 return response
 ```
 
 > [!NOTE]
-> 「非 2xx 不寫入」是刻意的：暫時性錯誤不該把上一份好的快取洗掉，也不該之後被
-> 以 200 重播。`206 Partial Content` 同樣不快取。
+> "Non-2xx is not written" is deliberate: a transient error must not wipe out
+> the last good cached response, nor be replayed later as a 200. `206 Partial
+> Content` is not cached either, since its body only makes sense for the `Range`
+> request that produced it. Non-2xx responses are also never answered with
+> `304` and are returned without the decorator's `Cache-Control` header (only
+> `no_store=True` adds `no-store` to every response).
 
-### 4. ETag 生成與驗證
+### 4. ETag generation and validation
 
-ETag 由回應內容算出，用來驗證內容是否變更：
+The ETag is computed from the response body and used to detect whether the
+content has changed:
 
 ```python
-# 生成：MD5，並標成弱驗證器
+# Generation: MD5, marked as a weak validator
 def _etag_for(body: bytes) -> str:
     return f'W/"{hashlib.md5(body).hexdigest()}"'
 ```
 
-`If-None-Match` 依 RFC 9110 §8.8.3.2 以**弱比對**判斷，因此：
+`If-None-Match` is evaluated with **weak comparison** as specified by RFC 9110
+§8.8.3.2, so:
 
 ```
-If-None-Match: W/"abc"            → 與 "abc" 視為相符（兩側都忽略 W/ 前綴）
-If-None-Match: "abc", W/"def"     → 多值，逐一比對，任一相符即 304
-If-None-Match: *                  → 資源存在即相符 → 304
+If-None-Match: W/"abc"            → matches "abc" (the W/ prefix is ignored on both sides)
+If-None-Match: "abc", W/"def"     → multiple values, compared one by one; any match → 304
+If-None-Match: *                  → matches whenever the resource exists → 304
 ```
 
-回 304 時，會一併帶回 200 會帶的 `Cache-Control`/`ETag` 以及會影響快取的標頭
-（`Vary`、`Content-Location`、`Expires` 等），否則中介快取在重新驗證後會把這些
-欄位弄丟（RFC 9110 §15.4.5）。
+A 304 carries the same `Cache-Control` and `ETag` a 200 would, together with the
+cache-steering headers `Vary`, `Content-Location` and `Expires`; otherwise an
+intermediate cache would lose those fields after revalidation (RFC 9110
+§15.4.5).
 
-## 後端存儲格式
+## Backend storage formats
 
 ### MemoryBackend
 
 ```python
-# dict[str, CacheItem]，CacheItem 包住 CacheEntry 並額外記到期時間
+# dict[str, CacheItem]; CacheItem wraps the CacheEntry and records its expiry
 {
     "GET|||example.com|||/api/users|||": CacheItem(
         value=CacheEntry(
@@ -192,213 +247,276 @@ If-None-Match: *                  → 資源存在即相符 → 304
             status_code=200,
             headers=None,
         ),
-        expiry=1702650600.5,  # epoch 秒；None 表示永不過期
+        expiry=1702650600.5,  # epoch seconds; None means never expires
     ),
 }
 
-# 特點：
-# - 儲存於行程內記憶體，不跨行程共享
-# - 背景清理任務每 cleanup_interval 秒（預設 60）掃掉過期項目
-# - 清理任務在第一次 get/set/increment/get_and_delete 時延遲啟動
-# - get() 讀到過期項目時會就地刪除並回報 miss，不等清理任務
+# Characteristics:
+# - Stored in process memory, not shared between processes
+# - A background cleanup task sweeps expired items every cleanup_interval
+#   seconds (default 60)
+# - The cleanup task starts lazily on the first get/set/set_if_absent/increment/
+#   get_and_delete call
+# - get() deletes an expired item in place and reports a miss, without waiting
+#   for the cleanup task
+# - Keys are not prefixed
 ```
 
-### 網路後端共用的序列化（`backends/codec.py`）
+### Serialization shared by the network backends ([`backends/codec.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/backends/codec.py))
 
-Redis 與 Memcached 共用同一份 JSON 編解碼；裝了 `orjson` 就用它，否則用標準庫 `json`：
+Redis and Memcached share the same JSON codec; it uses `orjson` when installed
+and the standard library `json` otherwise:
 
 ```json
 {
   "fingerprint": "W/\"abc123\"",
-  "content": "<回應位元組以 latin-1 解碼後的字串>",
+  "content": "<response bytes decoded as latin-1>",
   "media_type": "application/json",
   "status_code": 200,
   "headers": {"Vary": "Accept-Encoding"}
 }
 ```
 
-- `content` 走的是 **latin-1 round-trip**，不是 base64：latin-1 與位元組一一對應，
-  所以任何位元組都能安全地放進 JSON 文字再原樣取回。
-- 舊版寫入、沒有 `status_code`/`headers` 欄位的條目仍可讀，會解成 `200` 且無額外標頭。
-- 解碼失敗（JSON 壞掉、欄位缺漏、型別不對）一律當成 **cache miss** 回 `None`，不丟例外。
-- `increment()` 留下的是**裸整數**（Redis/Memcached 的 INCR 家族所寫），解碼時會轉成
-  fingerprint 為 `counter` 的 `CacheEntry`。
+- `content` uses a **latin-1 round-trip**, not base64: latin-1 maps one-to-one
+  onto bytes, so any byte sequence can be placed in JSON text and recovered
+  unchanged.
+- Entries written by older releases, without the `status_code`/`headers`
+  fields, remain readable and decode to `200` with no extra headers.
+- Any decode failure (broken JSON, missing fields, wrong types) is treated as a
+  **cache miss** and returns `None` instead of raising.
+- `increment()` leaves a **bare integer** behind (written by the Redis/Memcached
+  INCR family); it decodes to a `CacheEntry` whose fingerprint is `counter`.
 
 ### MemcachedBackend
 
 ```
 key:   "fastapi_cachex:GET|||example.com|||/api/users|||"
-value: 上述 JSON 內容
+value: the JSON document above
 
-# 特點：
-# - 金鑰含空白/控制字元或超過 250 bytes 時，整段金鑰改存 SHA-256 十六進位摘要
-#   （`fastapi_cachex:<sha256>`），否則 Memcached 會直接拒絕並讓請求變成 500
-# - TTL 超過 30 天時改送絕對 epoch 時間戳，否則會被解讀成 1970 年的時刻而立即過期
-# - 協定沒有金鑰列舉能力，所以 clear_pattern()/get_all_keys() 是 no-op，
-#   回 0/[] 並發出 RuntimeWarning；CacheManager.clear()/clear_prefix() 因此在此後端無效
-# - 同步 pymemcache client 跑在 worker thread，開啟連線池與 default_noreply=False
+# Characteristics:
+# - If the namespaced key contains whitespace, control characters or non-ASCII
+#   bytes, or exceeds 250 bytes, it is stored under its SHA-256 hex digest
+#   instead (`fastapi_cachex:<sha256>`); otherwise Memcached would reject it and
+#   the request would fail with a 500
+# - A TTL longer than 30 days is sent as an absolute epoch timestamp; otherwise
+#   Memcached would read it as a moment in 1970 and expire the entry immediately
+# - The protocol cannot enumerate keys, so clear_pattern()/get_all_keys()/
+#   get_cache_data() are no-ops that return 0/[]/{} and emit a RuntimeWarning;
+#   CacheManager.clear()/clear_prefix() therefore do nothing on this backend
+# - clear_path() only deletes a key exactly equal to the given path, so it
+#   cannot clear HTTP route entries
+# - clear() issues flush_all, which wipes the ENTIRE Memcached server (not just
+#   this key prefix) and emits a RuntimeWarning
+# - The synchronous pymemcache client runs in worker threads, with connection
+#   pooling and default_noreply=False
 ```
 
 ### AsyncRedisCacheBackend
 
 ```
 key:   "fastapi_cachex:GET|||example.com|||/api/users|||"
-value: 上述 JSON 內容
+value: the JSON document above
 
-# 特點：
-# - 以 SETEX 設定到期（ttl 為 None 時用 SET）
-# - 模式操作一律用 SCAN（COUNT=100）分頁走訪，不用 KEYS，不阻塞伺服器
-# - get_and_delete() 用 GETDEL（需要 Redis 6.2+），刪除以 DEL 分批送出
-# - increment() 走註冊過的 Lua script，計數與設定 TTL 是同一個原子操作
+# Characteristics:
+# - Expiry is set with SET ... EX <ttl> (plain SET when ttl is None)
+# - Pattern operations page through keys with SCAN (COUNT=100) instead of KEYS,
+#   so the server is never blocked
+# - clear() only removes keys under this backend's key prefix
+# - get_and_delete() uses GETDEL (requires Redis 6.2+); deletions are sent as
+#   batched DELs of up to 100 keys
+# - increment() runs a registered Lua script, so incrementing and setting the TTL
+#   are one atomic operation
 ```
 
 > [!NOTE]
-> **監控端點的 TTL 欄位在 Redis 後端不可用。**
-> `AsyncRedisCacheBackend.get_cache_data()` 對每個金鑰回 `(entry, None)`，沒有去查
-> 每個金鑰的實際 TTL，所以 `add_routes()` 掛出來的 `/cached-records` 會把 Redis 條目
-> 一律顯示為「永不過期」。實際過期仍由 Redis 自己執行，只是監控看不到剩餘秒數。
+> **The TTL fields of the monitoring endpoints are unavailable on the Redis
+> backend.** `AsyncRedisCacheBackend.get_cache_data()` returns `(entry, None)`
+> for every key without querying each key's actual TTL, so the
+> `/cached-hits` and `/cached-records` routes mounted by `add_routes()` show every
+> Redis entry as never expiring (`ttl_remaining: null`). Redis still enforces
+> expiry itself; the monitoring just cannot see the remaining seconds. On
+> Memcached these endpoints return no entries at all.
 
-## 快取清除策略
+## Cache clearing strategies
 
-### 自動清除
+### Automatic clearing
 
 ```python
-# MemoryBackend: 每 cleanup_interval 秒（預設 60）掃一次
+# MemoryBackend: sweeps every cleanup_interval seconds (default 60)
 async def cleanup_task():
     while True:
         await asyncio.sleep(self.cleanup_interval)
-        # 移除所有 CacheItem.expiry 已過的項目
+        # remove every item whose CacheItem.expiry has passed
 
 
-# 這個任務在第一次 get/set/increment/get_and_delete 時才延遲啟動（需要有 event loop），
-# 所以「只寫不讀」的用法（例如 StateManager.create_state）也會把它帶起來。
+# The task is only started lazily on the first get/set/set_if_absent/increment/
+# get_and_delete call (it needs a running event loop), so write-only usage (for
+# example StateManager.create_state) starts it too.
 
-# Redis/Memcached: TTL 機制
-# 使用後端的內置 TTL (SETEX, exptime)
-# 項目自動過期，無需清理任務
+# Redis/Memcached: TTL mechanism
+# Use the backend's built-in TTL (SET ... EX, exptime)
+# Items expire on their own; no cleanup task is needed
 ```
 
-### 手動清除
+### Manual clearing
+
+The clearing methods live on the backend, which you can inject with the
+`CacheBackend` dependency or fetch with `BackendProxy.get()`:
 
 ```python
-# 清除特定路徑
-await cache.clear_path("/api/users")  # 移除所有 host/method/params 組合
+from fastapi_cachex import CacheBackend
 
-# 清除模式：比對的是完整金鑰 method|||host|||path|||query
-await cache.clear_pattern("GET|||*|||/api/users/*")  # 移除 /api/users/... 的 GET 項目
-await cache.clear_pattern("cache:user:*")  # 自己組的金鑰（如 CacheManager）直接比對
 
-# 清除全部
-await cache.clear()  # 移除所有快取項目
+@app.post("/admin/clear")
+async def clear(cache: CacheBackend) -> None:
+    # Clear a specific path: only entries WITHOUT query params...
+    await cache.clear_path("/api/users")
+    # ...or every query-param variant too
+    await cache.clear_path("/api/users", include_params=True)
+
+    # Clear by pattern: matched against the whole key method|||host|||path|||query
+    await cache.clear_pattern("GET|||*|||/api/users/*")
+    # Keys you built yourself (e.g. CacheManager keys) match directly
+    await cache.clear_pattern("cache:user:*")
+
+    # Clear everything
+    await cache.clear()  # removes every cache entry
 ```
 
-單獨讓某條已快取路由失效（例如寫入後要打掉對應的 GET 快取），用 top-level 的
-`invalidate()`，它會用同一組 key_builder 重建金鑰再刪除：
+`clear_path()` matches entries for the path across every method and host. A
+pattern written as a bare path (for example `clear_pattern("/api/users/*")`)
+cannot match an HTTP key; when such a call clears nothing it emits a
+`RuntimeWarning` pointing you to `clear_path()`.
+
+To invalidate a single cached route (for example, dropping the matching GET
+entry after a write), use the top-level `invalidate()`. It rebuilds the key with
+the same key builder and deletes it:
 
 ```python
 from fastapi_cachex import invalidate
 
-removed: bool = await invalidate(request)  # 用預設 key_builder
-removed = await invalidate(request, key_builder=my_key_builder)  # 路由有自訂時要一致
+removed: bool = await invalidate(request)  # uses the default key_builder
+removed = await invalidate(
+    request, key_builder=my_key_builder
+)  # must match the route's custom builder
 ```
 
-回傳值代表「原本是否存在該條目」。未設定後端時回 `False` 而不拋例外。
+The return value tells you whether the entry existed. If no backend is
+configured it returns `False` instead of raising.
 
-## 效能最佳化
+## Performance
 
-### 快取命中路徑
+### Cache-hit path
 
 ```
-請求 → 快取查詢 (< 5ms)
-        ↓
-        返回快取 (< 1ms)
+Request → cache lookup (< 5 ms)
+          ↓
+          return cached response (< 1 ms)
 
-總耗時: ~5-10ms (無需執行端點處理器)
-相比直接執行: 節省 100-1000ms+ (取決於端點複雜度)
+Total: ~5-10 ms (the endpoint handler does not run)
+Compared with running the handler: saves 100-1000 ms+ (depending on endpoint complexity)
 ```
 
-### 後端選擇建議
+These figures are illustrative; actual numbers depend on the backend and the
+network.
 
-| 場景 | 推薦後端 | 原因 |
-|------|--------|------|
-| 開發測試 | MemoryBackend | 快速、無依賴 |
-| 分散式系統 | Redis | 非同步、高效、支援模式清除 |
-| 簡單快取 | Memcached | 穩定、成熟 |
-| 多行程部署 | Redis | 共享快取、一致性 |
+### Choosing a backend
 
-## 快取失效場景
+| Scenario | Recommended backend | Why |
+|----------|---------------------|-----|
+| Development and testing | MemoryBackend | Fast, no dependencies |
+| Distributed systems | Redis | Async, efficient, supports pattern clearing |
+| Simple caching | Memcached | Stable, mature (but no key enumeration, so no pattern/path clearing or monitoring) |
+| Multi-process deployments | Redis | Shared cache, consistency |
 
-| 場景 | 行為 |
-|------|------|
-| `no_store=True` | 不讀也不寫快取，每次都執行端點 |
-| `no_cache=True` | 每次都執行端點重算 ETag；與客戶端 `If-None-Match` 相符時仍回 304，並在 ETag 變動時更新快取 |
-| `private=True` | 不讀也不寫**共享後端**；仍輸出 `Cache-Control: private` 並以即時內容做 ETag 比對 |
-| 快取過期（TTL 到期） | 重新執行端點；`MemoryBackend` 讀到過期條目會就地刪除 |
-| 回應為非 2xx 或 206 | 原樣回傳，不寫入，也不覆蓋既有條目 |
-| 回應為串流／檔案 | 無法計算 ETag，原樣回傳且不寫入 |
-| 手動呼叫 `invalidate()` | 該路由對應金鑰被刪除 |
-| 手動呼叫 `clear_path()` / `clear_pattern()` / `clear()` | 依範圍清除（Memcached 後端的後兩者為 no-op） |
+## Cache invalidation scenarios
 
-## 實現細節
+| Scenario | Behaviour |
+|----------|-----------|
+| `no_store=True` | The cache is neither read nor written; the endpoint runs every time |
+| `no_cache=True` | The endpoint runs every time to recompute the ETag; a match with the client's `If-None-Match` still returns 304, and the cache is updated when the ETag changes |
+| `private=True` | The **shared backend** is neither read nor written; `Cache-Control: private` is still sent and the ETag is compared against fresh content |
+| No `ttl` | Entries are written without expiry but only used for `If-None-Match` revalidation; the handler runs on every request without a matching validator |
+| Cache expired (TTL elapsed) | The endpoint runs again; `MemoryBackend` deletes the expired entry in place when it reads it |
+| Non-2xx or 206 response | Returned as-is, not written, and any existing entry is left untouched |
+| Streaming/file response | No ETag can be computed; returned as-is and not written |
+| Manual `invalidate()` call | The key for that route is deleted |
+| Manual `clear_path()` / `clear_pattern()` / `clear()` call | Cleared according to scope (on Memcached, `clear_path()` only deletes an exact key, `clear_pattern()` is a no-op, and `clear()` flushes the whole server) |
 
-### 快取項目結構
+## Implementation details
 
-實際型別是 dataclass，定義在 `fastapi_cachex/types.py`：
+### Cache entry structure
+
+The actual types are dataclasses defined in
+[`fastapi_cachex/types.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/types.py):
 
 ```python
 @dataclass
 class CacheEntry:
-    fingerprint: str  # ETag，格式為 W/"<md5>"
-    content: bytes  # 原始回應位元組
+    fingerprint: str  # ETag, formatted as W/"<md5>"
+    content: bytes  # raw response bytes
     media_type: str | None = None
-    status_code: int = 200  # 重播時沿用
-    headers: dict[str, str] | None = None  # 重播時一併帶回
+    status_code: int = 200  # replayed as-is
+    headers: dict[str, str] | None = None  # sent back on replay
 
 
 @dataclass
 class CacheItem:
     value: CacheEntry
-    expiry: float | None = None  # epoch 秒；僅 MemoryBackend 使用
+    expiry: float | None = None  # epoch seconds; used by MemoryBackend only
 ```
 
-`headers` 存的是處理器自己設定的標頭，但會排除每次回應都要重算或不該重播的欄位：
-`Set-Cookie`、`Content-Length`、`Transfer-Encoding`、`Connection`、`Date`、`ETag`、
-`Cache-Control`、`Content-Type`（`Content-Type` 由 `media_type` 還原，存兩份會重複輸出）。
+`headers` stores the headers the handler set itself, excluding fields that must
+be recomputed for every response or must not be replayed: `Set-Cookie`,
+`Content-Length`, `Transfer-Encoding`, `Connection`, `Date`, `ETag`,
+`Cache-Control` and `Content-Type` (`Content-Type` is restored from
+`media_type`; storing both would emit the header twice).
 
-計數器（`backend.increment()`）也以 `CacheEntry` 呈現：fingerprint 固定為 `counter`，
-`content` 是十進位數字的位元組，因此刪除、清除與監控都能一視同仁地處理。
+Counters (`backend.increment()`) are also represented as a `CacheEntry`: the
+fingerprint is always `counter` and `content` is the decimal value as bytes, so
+deletion, clearing and monitoring all treat them the same way.
 
-### 請求流程程式碼範例
+### Request flow code example
 
-裝飾器內部的實際順序見上面〈3. 快取查詢〉的決策邏輯；使用端只需要：
+See the decision logic in "3. Cache lookup" above for the decorator's internal
+order; on the user side all you need is:
 
 ```python
+@app.get("/expensive")
 @cache(ttl=3600)
 async def expensive_endpoint():
-    # 此函式只在快取未命中（或需要重新驗證）時執行
+    # This function only runs on a cache miss (or when revalidation is needed)
     return await perform_calculation()
 ```
 
-處理器不需要自己宣告 `Request`；`@cache` 會在簽名中注入一個名為 `__cachex_request`
-的 keyword-only 參數。若處理器**已經**宣告了 `Request`（含字串註解、`Annotated[...]`
-或 `Request` 子類），就直接沿用該參數，不會重複注入。
+The handler does not have to declare a `Request` itself: `@cache` injects a
+keyword-only parameter named `__cachex_request` into the signature (placed
+before `**kwargs` if the handler has one). If the handler **already** declares a
+`Request` (including a string annotation, `Annotated[...]`, or a `Request`
+subclass), that parameter is reused and nothing is injected.
 
-## 常見問題
+## FAQ
 
-**Q: 為何快取命中不返回 200？**
-A: 不一定。如果請求帶有 `If-None-Match` 標頭且 ETag 匹配，返回 304 以節省帶寬。無標頭時返回 200 和內容。
+**Q: Why doesn't a cache hit always return 200?**
+A: It depends. If the request carries an `If-None-Match` header whose ETag
+matches, a 304 is returned to save bandwidth. Without the header, a 200 with the
+content is returned.
 
-**Q: 為何 POST/PUT 的回應沒有被快取？**
-A: `@cache` 只對 GET 生效，其餘方法一律直接執行處理器（仍會輸出 Cache-Control 標頭）。
+**Q: Why aren't POST/PUT responses cached?**
+A: `@cache` only applies to GET. Every other method runs the handler directly,
+without reading or writing the cache and without adding a `Cache-Control`
+header.
 
-**Q: 為何同一端點有多個快取項目？**
-A: 因為快取金鑰包含查詢參數，而且**不會排序**。`/users?page=1` 和 `/users?page=2`
-是不同的快取；`?a=1&b=2` 與 `?b=2&a=1` 也是。
+**Q: Why are there several cache entries for the same endpoint?**
+A: Because the cache key includes the query parameters, and they are **not
+sorted**. `/users?page=1` and `/users?page=2` are different entries, and so are
+`?a=1&b=2` and `?b=2&a=1`.
 
-**Q: MemoryBackend 如何在多行程中工作？**
-A: 不工作。每個行程有獨立快取，推薦生產環境使用 Redis。
+**Q: How does MemoryBackend work across multiple processes?**
+A: It doesn't. Each process has its own cache; use Redis in production.
 
-**Q: 快取清除是同步還是非同步？**
-A: 非同步操作。`await cache.clear_path(...)` 或 `await cache.clear_pattern(...)`。
-注意 `clear_pattern()`（以及 `get_all_keys()`、`CacheManager.clear()`）在 Memcached
-後端是 no-op，因為 Memcached 協定沒有金鑰列舉能力。
+**Q: Is clearing the cache synchronous or asynchronous?**
+A: Asynchronous: `await cache.clear_path(...)` or `await
+cache.clear_pattern(...)`. Note that `clear_pattern()` (as well as
+`get_all_keys()` and `CacheManager.clear()`) is a no-op on the Memcached
+backend, because the Memcached protocol cannot enumerate keys.
