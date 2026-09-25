@@ -33,6 +33,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   registered replaced the others and, for a while, requests used caches that
   could not see each other's entries. The lazy set-up and the `@cache`
   fallback now happen under one lock. ([#76](https://github.com/allen0099/FastAPI-CacheX/issues/76))
+- A JWT session configured with an asymmetric `jwt_algorithm` (`RS*`, `ES*`,
+  `PS*`, `EdDSA`) and the built-in serializer now fails when the
+  `SessionManager` is built, with a `ValueError` that names the fix. The
+  built-in serializer only has the `secret_key` string, so such a configuration
+  was accepted at startup and then failed inside PyJWT on the first
+  `create_session()`. Only the HMAC algorithms work without a custom
+  `token_serializer`; configurations that pass one are unaffected. ([#86](https://github.com/allen0099/FastAPI-CacheX/issues/86))
 
 ### Documentation
 

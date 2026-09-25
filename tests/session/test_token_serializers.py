@@ -5,7 +5,9 @@ from typing import cast
 import pytest
 from pydantic import SecretStr
 
+from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
+from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.token_serializers import JWTTokenSerializer
 from fastapi_cachex.session.token_serializers import SimpleTokenSerializer
@@ -242,3 +244,66 @@ def test_jwt_serializer_accepts_a_numeric_string_iat() -> None:
 
     assert token.session_id == "session-id"
     assert int(token.issued_at.timestamp()) == 1700000000
+
+
+@pytest.mark.parametrize(
+    "algorithm",
+    ["RS256", "RS512", "ES256", "ES384", "PS256", "EdDSA"],
+)
+def test_jwt_serializer_rejects_asymmetric_algorithms(algorithm: str) -> None:
+    """The built-in serializer only has `secret_key`, so it cannot sign RS/ES/PS/EdDSA.
+
+    The config accepted these, and the first `create_session()` then failed
+    inside PyJWT. They must fail when the manager is built instead.
+    """
+    config = SessionConfig(
+        secret_key=SecretStr("a" * 32),
+        token_format="jwt",
+        jwt_algorithm=algorithm,
+    )
+
+    with pytest.raises(ValueError, match="custom token_serializer"):
+        JWTTokenSerializer(config, jwt_module=StubJWTModule())
+
+
+def test_session_manager_fails_at_startup_for_asymmetric_jwt() -> None:
+    """The error surfaces when `SessionManager` is built, not on first use."""
+    config = SessionConfig(
+        secret_key=SecretStr("a" * 32),
+        token_format="jwt",
+        jwt_algorithm="RS256",
+    )
+
+    with pytest.raises(ValueError, match="RS256"):
+        SessionManager(MemoryBackend(), config)
+
+
+def test_session_manager_accepts_asymmetric_jwt_with_custom_serializer() -> None:
+    """A custom serializer that holds the key pair is still allowed."""
+    config = SessionConfig(
+        secret_key=SecretStr("a" * 32),
+        token_format="jwt",
+        jwt_algorithm="RS256",
+    )
+    serializer = SimpleTokenSerializer()
+
+    manager = SessionManager(MemoryBackend(), config, token_serializer=serializer)
+
+    assert manager._serializer is serializer
+
+
+@pytest.mark.parametrize("algorithm", ["HS256", "HS384", "HS512"])
+def test_jwt_serializer_round_trips_hmac_algorithms(algorithm: str) -> None:
+    """The HMAC algorithms work end to end with real PyJWT."""
+    pytest.importorskip("jwt")
+    config = SessionConfig(
+        secret_key=SecretStr("a" * 32),
+        token_format="jwt",
+        jwt_algorithm=algorithm,
+    )
+    serializer = JWTTokenSerializer(config)
+    token = SessionToken(
+        session_id="sid-1", signature="", issued_at=datetime.now(timezone.utc)
+    )
+
+    assert serializer.from_string(serializer.to_string(token)).session_id == "sid-1"
