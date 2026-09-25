@@ -248,6 +248,7 @@ add_routes(
     prefix="/admin/cache",  # default "" -> /cached-hits, /cached-records
     include_in_schema=False,  # default: hidden from OpenAPI
     dependencies=[Depends(verify_admin)],
+    include_content_preview=False,  # default True: show the first 100 bytes
 )
 ```
 
@@ -255,14 +256,17 @@ add_routes(
   and query, with its ETag and expiry, plus counts of valid and expired entries
   and the distinct cached paths. It does not count hits.
 - `GET {prefix}/cached-records` — every cached record with its size, expiry and
-  a preview of the cached content.
+  a preview of the first 100 bytes of the cached content. With
+  `include_content_preview=False`, `content_preview` is `null` and no response
+  body leaves the server; keys, sizes and expiry are still reported.
 
 > [!WARNING]
 > **These routes have no authentication of their own.** `include_in_schema=False`
 > only hides them from the OpenAPI document; anyone who guesses the path can read
-> them. `/cached-records` includes a preview of the cached content and exposes
-> your whole route structure. In production always pass
-> `dependencies=[Depends(your_auth)]`, or mount them on an internal-only app.
+> them. `/cached-records` includes a preview of the cached content (unless
+> `include_content_preview=False`) and exposes your whole route structure. In
+> production always pass `dependencies=[Depends(your_auth)]`, or mount them on
+> an internal-only app.
 
 > [!NOTE]
 > The `ttl_remaining` field is not available on the Redis backend.
