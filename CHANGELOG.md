@@ -40,6 +40,15 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ### Fixed
 
+- A `@cache` handler that returns plain data instead of a `Response` is
+  rendered the way FastAPI renders it. The result goes through the route's
+  response model (validation, field filtering and the `response_model_*`
+  options) or `jsonable_encoder`, so a Pydantic model, `datetime` or `UUID` no
+  longer fails to encode. The route's `status_code` applies (a `204` drops the
+  body), and the status and headers set on an injected `response: Response`
+  are kept, on cache hits as well.
+  ([#99](https://github.com/allen0099/FastAPI-CacheX/issues/99))
+
 - A sync (`def`) handler under `@cache` runs in the threadpool again. The
   cache wrapper is `async`, so FastAPI stopped offloading the handler and
   `@cache` called it on the event loop, where blocking I/O stalled every other
