@@ -524,7 +524,7 @@ async def expensive_operation():
 
 - [Cache Flow Explanation](docs/CACHE_FLOW.md)
 - [Development Guide](docs/DEVELOPMENT.md)
-- [Known Limitations and Planned Work](docs/BACKLOG.md)
+- [Known Limitations and Planned Work](https://github.com/allen0099/FastAPI-CacheX/issues)
 - [Changelog](CHANGELOG.md)
 - [Contributing Guidelines](docs/CONTRIBUTING.md)
 - [Session Management Guide](docs/SESSION.md) - Complete guide for session features
