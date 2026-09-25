@@ -166,3 +166,20 @@ def test_model_copy_update_uses_the_new_ranges():
 
     assert copied.is_trusted_proxy("192.168.1.1")
     assert not copied.is_trusted_proxy("10.0.0.1")
+
+
+def test_forwarded_chain_spans_every_header_line():
+    """A caller-sent first line must not hide the line the proxy added."""
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
+    connection = HTTPConnection(
+        {
+            "type": "http",
+            "client": ("10.0.0.9", 1234),
+            "headers": [
+                (b"x-forwarded-for", b"198.51.100.5"),  # sent by the caller
+                (b"x-forwarded-for", b"203.0.113.7"),  # added by the proxy
+            ],
+        }
+    )
+
+    assert get_client_ip(connection, config) == "203.0.113.7"
