@@ -77,6 +77,33 @@ def get_session(
     return session
 
 
+def require_user_session(session: Session = Depends(get_session)) -> Session:
+    """Get the request's session, requiring a logged-in user.
+
+    ``get_session`` only checks that a session exists. Under
+    ``FastAPICacheXSessionMiddleware`` any visitor who reaches a route that
+    writes to ``request.session`` (a cart, a CSRF value) gets an anonymous
+    session with ``user=None``, which ``get_session`` accepts. Use this
+    dependency to guard routes that need an authenticated user.
+
+    Args:
+        session: The request's session, from ``get_session``
+
+    Returns:
+        Session object whose ``user`` is set
+
+    Raises:
+        HTTPException: 401 if there is no session, or the session has no user
+    """
+    if session.user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return session
+
+
 def get_session_manager(request: Request) -> "SessionManager":
     """Get SessionManager instance from app state.
 
@@ -205,6 +232,9 @@ require_session = get_session  # Alias for required session dependency
 OptionalSession = Annotated[Session | None, Depends(get_optional_session)]
 RequiredSession = Annotated[Session, Depends(get_session)]
 SessionDep = Annotated[Session, Depends(get_session)]
+# Despite its name, UserSessionDep accepts anonymous sessions too; making it
+# require a user is a breaking change planned for 0.4.0. Use AuthenticatedSession.
 UserSessionDep = Annotated[Session, Depends(get_session)]
+AuthenticatedSession = Annotated[Session, Depends(require_user_session)]
 SessionManagerDep = Annotated["SessionManager", Depends(get_session_manager)]
 ClientIPDep = Annotated[str | None, Depends(get_session_client_ip)]

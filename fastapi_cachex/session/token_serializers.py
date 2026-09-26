@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import warnings
 from datetime import datetime
 from datetime import timezone
 from typing import TYPE_CHECKING
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Token format constant - 3 parts: session_id, signature, timestamp
 TOKEN_PARTS_COUNT = 3
+
+# RFC 7518 section 3.2: an HMAC key must be at least as long as the hash output.
+_HMAC_MIN_KEY_BYTES = {"HS256": 32, "HS384": 48, "HS512": 64}
 
 
 class TokenSerializer(Protocol):
@@ -91,6 +95,27 @@ class SimpleTokenSerializer:
         )
 
 
+def _warn_if_key_too_short(secret: str, algorithm: str) -> None:
+    """Warn once when ``secret`` is shorter than ``algorithm``'s hash output.
+
+    ``SessionConfig`` only requires 32 characters, enough for HS256 but not
+    for HS384 (48 bytes) or HS512 (64 bytes). PyJWT warns about a short key on
+    every token it signs or verifies; this names the setting to fix, once,
+    when the serializer is built.
+    """
+    min_bytes = _HMAC_MIN_KEY_BYTES[algorithm]
+    key_bytes = len(secret.encode("utf-8"))
+    if key_bytes < min_bytes:
+        warnings.warn(
+            f"secret_key is {key_bytes} bytes, shorter than the {min_bytes} "
+            f"bytes RFC 7518 section 3.2 requires for {algorithm}. Use a longer "
+            f"secret_key (e.g. secrets.token_urlsafe({min_bytes})) or "
+            f'jwt_algorithm="HS256".',
+            UserWarning,
+            stacklevel=3,
+        )
+
+
 class JWTTokenSerializer:
     """JWT-based token serializer.
 
@@ -139,6 +164,7 @@ class JWTTokenSerializer:
 
         # Copy required parameters
         self._secret = config.secret_key.get_secret_value()
+        _warn_if_key_too_short(self._secret, config.jwt_algorithm)
         self._algorithm = config.jwt_algorithm
         self._issuer = config.jwt_issuer
         self._audience = config.jwt_audience

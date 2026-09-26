@@ -156,6 +156,24 @@ The session object the dependencies return is the backend `Session` model. A ses
 `FastAPICacheXSessionMiddleware` from `request.session` (see the Migration section below) is
 anonymous, so `session.user` is `None`.
 
+`get_session` accepts such a session, so it only proves the request carries *a* session, not
+that anyone logged in. Any visitor who reaches a route that writes to `request.session` (a cart,
+a CSRF value) gets one. Guard routes that need a logged-in user with `require_user_session` (or
+its annotated form `AuthenticatedSession`), which also answers `401` when `session.user` is
+`None`:
+
+```python
+from fastapi_cachex.session.dependencies import AuthenticatedSession
+
+
+@app.get("/account")
+async def account(session: AuthenticatedSession):
+    return {"user_id": session.user.user_id}
+```
+
+`UserSessionDep` does not check for a user despite its name; it is an alias of `SessionDep`
+until 0.4.0, which is planned to make it require one.
+
 ### 3. Full Example (Redis Backend)
 
 ```python
@@ -487,6 +505,12 @@ config = SessionConfig(
 only supports `HS256`, `HS384` and `HS512`: with an asymmetric algorithm, `SessionManager` raises
 `ValueError` unless you pass a custom `token_serializer` that holds the key pair.
 
+An HMAC key must be at least as long as the hash output (RFC 7518 §3.2): 32 bytes for `HS256`,
+48 for `HS384` and 64 for `HS512`, counted after UTF-8 encoding. `secret_key` only has to be 32
+characters, so with `HS384` or `HS512` a shorter key makes the serializer emit a `UserWarning`
+once when it is built (PyJWT itself also warns with `InsecureKeyLengthWarning` whenever it signs
+or verifies a token). Use a longer key, for example `secrets.token_urlsafe(64)`.
+
 Security notes:
 
 - The server keeps **stateful** sessions (the JWT is only a credential carrying the `sid`), so no
@@ -513,7 +537,8 @@ secret_key = secrets.token_urlsafe(32)
 config = SessionConfig(secret_key=secret_key)
 ```
 
-`secret_key` is stored as a `SecretStr` and must be at least 32 characters long. Load it from the
+`secret_key` is stored as a `SecretStr` and must be at least 32 characters long (at least 48
+bytes for `jwt_algorithm="HS384"` and 64 for `"HS512"`; see the JWT section above). Load it from the
 environment or a secret store rather than hard-coding it; changing it invalidates every token
 issued so far.
 
@@ -676,6 +701,7 @@ from fastapi_cachex.session import (
     get_session,  # authentication required (401 when there is no session)
     get_optional_session,  # optional authentication (None when there is no session)
     require_session,  # alias of get_session
+    require_user_session,  # 401 also when the session has no user
     get_session_manager,  # the SessionManager registered by the middleware
     rotate_session_id,  # not a dependency: await it at login for a new session ID
 )
@@ -685,6 +711,8 @@ from fastapi_cachex.session.dependencies import (
     OptionalSession,  # Session | None
     RequiredSession,  # Session
     SessionDep,  # Session
+    UserSessionDep,  # Session; anonymous sessions pass too, see above
+    AuthenticatedSession,  # Session with a user (require_user_session)
     SessionManagerDep,  # SessionManager
 )
 ```
