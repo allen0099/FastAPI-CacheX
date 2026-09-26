@@ -53,6 +53,16 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   UTF-8; the parameter is removed in 0.4.0 (#126).
   ([#122](https://github.com/allen0099/FastAPI-CacheX/issues/122))
 
+- **Counters are recognised the same way on every backend.** On the memory
+  backend and the base-class fallback, `increment()` on a cached response
+  whose body was a number, such as `42`, returned 43 and overwrote the
+  response. It now raises `CacheXError`, as Redis and Memcached already did. A
+  counter written with `set(key, counter_entry(n))` can now be incremented on
+  Redis and Memcached too, because it is stored as a bare integer. Stored
+  values such as `" 7"` or `"1_0"`, which `int()` accepts, are no longer
+  read as counters.
+  ([#111](https://github.com/allen0099/FastAPI-CacheX/issues/111))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added

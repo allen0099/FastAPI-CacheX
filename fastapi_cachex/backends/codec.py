@@ -4,9 +4,11 @@ Both backends store a ``CacheEntry`` as a JSON document; ``orjson`` is used when
 it is installed and the standard library ``json`` module otherwise.
 """
 
+from fastapi_cachex.types import COUNTER_FINGERPRINT
 from fastapi_cachex.types import DEFAULT_STATUS_CODE
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
+from fastapi_cachex.types import parse_counter
 
 try:
     import orjson as json
@@ -27,7 +29,15 @@ def encode_entry(entry: CacheEntry) -> bytes:
 
     The raw content bytes are passed through ``latin-1`` so that arbitrary
     bytes round-trip through JSON text.
+
+    A counter entry (exactly what ``counter_entry`` builds) is stored as a bare
+    integer instead, the form the server-side ``INCR`` family works on, so a
+    counter written with ``set()`` can still be passed to ``increment()``.
     """
+    if entry.fingerprint == COUNTER_FINGERPRINT:
+        value = parse_counter(entry.content)
+        if value is not None and entry == counter_entry(value):
+            return entry.content
     serialized: str | bytes = json.dumps(
         {
             "fingerprint": entry.fingerprint,
@@ -39,14 +49,6 @@ def encode_entry(entry: CacheEntry) -> bytes:
     )
     # orjson returns bytes, stdlib json returns str
     return serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
-
-
-def _as_counter(raw: str | bytes) -> int | None:
-    """The integer a bare counter value holds, or ``None`` for anything else."""
-    try:
-        return int(raw)
-    except ValueError:
-        return None
 
 
 def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
@@ -63,7 +65,7 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
     """
     if raw is None:
         return None
-    counter = _as_counter(raw)
+    counter = parse_counter(raw)
     if counter is not None:
         return counter_entry(counter)
     try:
