@@ -7,6 +7,8 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex.backends import MemcachedBackend
+from fastapi_cachex.backends.codec import encode_entry
+from fastapi_cachex.backends.memcached import _CAS_MAX_RETRIES
 from fastapi_cachex.backends.memcached import _DEAD_TIMEOUT
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.lock import CacheLock
@@ -490,13 +492,101 @@ async def test_memcached_get_and_delete_returns_then_removes(
 
 @requires_memcached
 @pytest.mark.asyncio
-async def test_memcached_get_and_delete_loses_the_race_when_delete_fails(
+async def test_memcached_get_and_delete_loses_the_race_when_cas_reports_deletion(
     memcached_backend: MemcachedBackend, monkeypatch
 ) -> None:
     await memcached_backend.set("once", CacheEntry(fingerprint="e", content=b"x"), 60)
-    monkeypatch.setattr(memcached_backend.client, "delete", lambda *a, **kw: False)
+    monkeypatch.setattr(memcached_backend.client, "cas", lambda *a, **kw: None)
 
     assert await memcached_backend.get_and_delete("once") is None
+
+
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_retries_on_concurrent_write() -> None:
+    """When another writer updates the key before CAS, retry gets + cas."""
+    backend = stubbed_backend()
+    entry1 = CacheEntry(fingerprint="e1", content=b"first")
+    entry2 = CacheEntry(fingerprint="e2", content=b"second")
+
+    # First gets returns entry1 and token1; second gets returns entry2 and token2
+    backend.client.gets.side_effect = [
+        (encode_entry(entry1), b"101"),
+        (encode_entry(entry2), b"102"),
+    ]
+    # First cas fails (writer changed key); second cas succeeds
+    backend.client.cas.side_effect = [False, True]
+
+    result = await backend.get_and_delete("key")
+
+    assert result == entry2
+    assert backend.client.gets.call_count == 2
+    assert backend.client.cas.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_returns_none_when_key_deleted_before_cas() -> (
+    None
+):
+    """When the key is deleted/expired between gets and cas, cas returns None."""
+    backend = stubbed_backend()
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    backend.client.gets.return_value = (encode_entry(entry), b"101")
+    backend.client.cas.return_value = None
+
+    result = await backend.get_and_delete("key")
+
+    assert result is None
+    assert backend.client.gets.call_count == 1
+    assert backend.client.cas.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_exhausts_retries_when_writes_continue() -> None:
+    """When writers keep replacing the value, stop after max retries and raise."""
+    backend = stubbed_backend()
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    backend.client.gets.return_value = (encode_entry(entry), b"101")
+    backend.client.cas.return_value = False
+
+    with pytest.raises(
+        CacheXError,
+        match=f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts on key 'key'",
+    ):
+        await backend.get_and_delete("key")
+
+    assert backend.client.gets.call_count == _CAS_MAX_RETRIES
+    assert backend.client.cas.call_count == _CAS_MAX_RETRIES
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_get_and_delete_live_concurrent_write_regression(
+    memcached_backend: MemcachedBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simulate a concurrent write between gets and cas against live Memcached."""
+    initial = CacheEntry(fingerprint="e1", content=b"initial")
+    updated = CacheEntry(fingerprint="e2", content=b"updated")
+    await memcached_backend.set("race_key", initial, 60)
+
+    original_gets = memcached_backend.client.gets
+    overwrite_done = False
+
+    def gets_with_concurrent_write(key, *args, **kwargs):
+        nonlocal overwrite_done
+        res = original_gets(key, *args, **kwargs)
+        if not overwrite_done:
+            overwrite_done = True
+            # Simulate a concurrent writer replacing the value before cas runs
+            memcached_backend.client.set(key, encode_entry(updated), 60)
+        return res
+
+    monkeypatch.setattr(memcached_backend.client, "gets", gets_with_concurrent_write)
+
+    # get_and_delete should detect CAS mismatch on initial, retry, and return updated
+    result = await memcached_backend.get_and_delete("race_key")
+    assert result == updated
+    # Key should now be deleted from memcached
+    assert await memcached_backend.get("race_key") is None
 
 
 @requires_memcached

@@ -86,7 +86,7 @@ Backend keys are namespaced automatically (default prefix: `fastapi_cachex:`).
 
 Four non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see `docs/BACKENDS.md` "Atomic backend primitives"):
 - `increment(key, delta=1, ttl=None) -> int`: fixed-window counter; `ttl` applies only when the counter is created. Redis runs a registered Lua script, Memcached uses `ADD` + `INCR`/`DECR`, memory works under its lock. A counter reads back through `get()` as a `CacheEntry` with `COUNTER_FINGERPRINT` (`types.py`).
-- `get_and_delete(key) -> CacheEntry | None`: one-shot retrieval (Redis `GETDEL`, Memcached get + `delete(noreply=False)` winner check). `StateManager.consume_state`, `delete_state`, `CacheManager.delete` and `invalidate()` use it. `delete()` keeps returning `None` for 0.3.x compatibility.
+- `get_and_delete(key) -> CacheEntry | None`: one-shot retrieval (Redis `GETDEL`, Memcached `gets` + `cas(..., exptime=-1)` with retry). `StateManager.consume_state`, `delete_state`, `CacheManager.delete` and `invalidate()` use it. `delete()` keeps returning `None` for 0.3.x compatibility.
 - `set_if_absent(key, value, ttl=None) -> bool`: claim-if-free for locks/slots. Redis `SET NX EX`, Memcached `ADD`, memory under its lock.
 - `delete_if_equals(key, expected) -> bool`: release only while the key still holds `expected` (compared as decoded `CacheEntry`). Redis compares in Python then deletes via a Lua script that re-checks the raw bytes; Memcached uses `GETS` + `CAS` with exptime `-1` (immediate expiry), since classic `DELETE` has no CAS.
 

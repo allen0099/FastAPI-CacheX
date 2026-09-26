@@ -159,8 +159,8 @@ CacheXError
   Memcached. With `MemoryBackend` a state only exists in the process that created it, so an
   authorization callback that lands on a different worker fails.
 - **The one-time guarantee comes from the backend's atomic operation.** `get_and_delete()` is
-  `GETDEL` on Redis (requires Redis server 6.2 or newer), a get followed by
-  `delete(noreply=False)` where only the caller whose delete succeeded wins on Memcached,
+  `GETDEL` on Redis (requires Redis server 6.2 or newer), `gets` followed by
+  `cas(..., exptime=-1)` on Memcached (retrying if another writer replaced the value in between),
   and a `pop` under the lock on the memory backend.
   A custom backend that implements only the abstract methods falls back to
   `BaseCacheBackend`'s non-atomic version, so a concurrent replay could succeed on both
