@@ -87,6 +87,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   `delete()` and the other methods let the error through.
   ([#177](https://github.com/allen0099/FastAPI-CacheX/issues/177))
 
+- **`MemoryBackend` rejects a `cleanup_interval` that is not positive.** With
+  `0` or a negative value, `asyncio.sleep()` returned at once and the cleanup
+  loop spun, using a full CPU core and taking the cache lock on every pass. It
+  now raises `ValueError`.
+  ([#180](https://github.com/allen0099/FastAPI-CacheX/issues/180))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added
