@@ -153,7 +153,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   like a miss, `set()` dropped the write, `increment()` returned 0 and
   `delete_if_equals()` raised `TypeError`. A failed server is now taken out of
   rotation at once and tried again after one second, instead of after 60.
-  ([#197](https://github.com/allen0099/FastAPI-CacheX/issues/197))
+  ([#197](https://github.com/allen0099/FastAPI-CacheX/issues/197))- **`SessionConfig` warns when `cookie_same_site="none"` is set without
+  `cookie_https_only=True`.** Browsers reject a `SameSite=None` cookie that is
+  not `Secure`, so the session cookie was silently never stored. The
+  combination is still accepted.
+  ([#167](https://github.com/allen0099/FastAPI-CacheX/issues/167))
+
 
 ## [0.3.7] - 2026-09-25
 
