@@ -197,7 +197,9 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   `set(key, counter_entry(n))` can be incremented on every backend.
 - `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis
   uses `GETDEL` (server 6.2+) and Memcached uses `GETS` + a `CAS` write with
-  `exptime=-1` (retrying if another writer replaced the value in between).
+  `exptime=-1` (retrying if another writer replaced the value in between). If
+  writers keep replacing it for 16 attempts in a row, Memcached raises
+  `CacheXError` rather than report the key as missing.
   `StateManager.consume_state`, `StateManager.delete_state`,
   `CacheManager.delete` and `invalidate()` are built on it.
 - `set_if_absent(key, value, ttl=None) -> bool` — stores `value` only when

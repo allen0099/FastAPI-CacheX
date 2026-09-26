@@ -161,7 +161,8 @@ CacheXError
 - **The one-time guarantee comes from the backend's atomic operation.** `get_and_delete()` is
   `GETDEL` on Redis (requires Redis server 6.2 or newer), `gets` followed by
   `cas(..., exptime=-1)` on Memcached (retrying if another writer replaced the value in between),
-  and a `pop` under the lock on the memory backend.
+  and a `pop` under the lock on the memory backend. If writers keep replacing the value for
+  16 attempts in a row, Memcached raises `CacheXError` rather than report the state as missing.
   A custom backend that implements only the abstract methods falls back to
   `BaseCacheBackend`'s non-atomic version, so a concurrent replay could succeed on both
   sides. Override `get_and_delete()` in that case.
