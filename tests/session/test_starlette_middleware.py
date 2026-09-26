@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.dependencies import get_session
+from fastapi_cachex.session.dependencies import rotate_session_id
 from fastapi_cachex.session.exceptions import SessionNotFoundError
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
@@ -834,6 +835,89 @@ async def test_deprecated_middleware_sends_regenerated_token(
     assert response.status_code == 200
     new_token = response.headers[config.header_name]
     await manager.get_session(new_token)
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(old_token)
+
+
+def _rotating_login_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
+    """An app with a Starlette-style login that rotates the ID first (#225)."""
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.post("/touch")
+    async def touch(request: Request):
+        request.session["cart"] = [1]
+        return {"ok": True}
+
+    @app.post("/login")
+    async def login(request: Request):
+        rotated = await rotate_session_id(request)
+        request.session["user_id"] = "alice"
+        return {"rotated": rotated}
+
+    return app
+
+
+@pytest.mark.asyncio
+async def test_rotate_session_id_defeats_a_planted_cookie(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """A victim logging in with a planted cookie must not log the attacker in (#225).
+
+    Without rotation the login writes into the planted session and sends the
+    same token back, so the attacker's copy of the cookie now carries the
+    victim's user_id.
+    """
+    app = _rotating_login_app(manager, config)
+    attacker = TestClient(app)
+    attacker.post("/touch")
+    planted = attacker.cookies[config.cookie_name]
+
+    victim = TestClient(app)
+    victim.cookies.set(config.cookie_name, planted)
+    response = victim.post("/login")
+
+    assert response.json() == {"rotated": True}
+    victim_token = _extract_cookie_token(
+        response.headers["set-cookie"], config.cookie_name
+    )
+    assert victim_token != planted
+    session, _ = await manager.get_session(victim_token)
+    assert session.data == {"cart": [1], "user_id": "alice"}
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(planted)
+
+
+def test_rotate_session_id_without_a_session(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """A new visitor can log in: rotation is a no-op and the write starts a session."""
+    client = TestClient(_rotating_login_app(manager, config))
+
+    response = client.post("/login")
+
+    assert response.status_code == 200
+    assert response.json() == {"rotated": False}
+    assert config.cookie_name in client.cookies
+
+
+@pytest.mark.asyncio
+async def test_rotate_session_id_over_the_header(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """A header client gets the rotated token back in the response header."""
+    _session, old_token = await manager.create_session(user=SessionUser(user_id="u"))
+    client = TestClient(_rotating_login_app(manager, config))
+
+    response = client.post("/login", headers={config.header_name: old_token})
+
+    assert response.json() == {"rotated": True}
+    assert "set-cookie" not in response.headers
+    new_token = response.headers[config.header_name]
+    session, _ = await manager.get_session(new_token)
+    assert session.data == {"user_id": "alice"}
     with pytest.raises(SessionNotFoundError):
         await manager.get_session(old_token)
 

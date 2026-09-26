@@ -183,6 +183,18 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   `CacheXError` if retries run out.
   ([#175](https://github.com/allen0099/FastAPI-CacheX/issues/175))
 
+### Security
+
+- **`rotate_session_id(request)` gives the request's session a new ID at
+  login.** With `FastAPICacheXSessionMiddleware`, a Starlette-style login that
+  only writes to `request.session` keeps the session ID the request arrived
+  with, so whoever planted that cookie was logged in too. Call it before
+  attaching the user; with no session loaded it does nothing, since the first
+  write starts a fresh one. The SESSION.md example used `SessionDep` and
+  answered `401` to new visitors; it now uses the helper, and the migration
+  section warns about the difference from Starlette.
+  ([#225](https://github.com/allen0099/FastAPI-CacheX/issues/225))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added
