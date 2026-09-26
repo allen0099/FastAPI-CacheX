@@ -259,7 +259,7 @@ add_routes(
 ```
 
 - `GET {prefix}/cached-hits`：列出每筆快取項目，拆分為方法、主機、路徑與查詢，附上 ETag 與到期時間，另外統計有效與已過期的項目數，以及不重複的快取路徑。它不會計算命中次數。
-- `GET {prefix}/cached-records`：列出每筆快取紀錄的大小、到期時間，以及快取內容前 100 個位元組的預覽。設定 `include_content_preview=False` 時，`content_preview` 為 `null`，不會有任何回應本文離開伺服器；鍵、大小與到期時間仍會回報。
+- `GET {prefix}/cached-records`：列出每筆快取紀錄的大小、到期時間、`media_type`（儲存的回應的媒體類型，沒有時為 `null`），以及快取內容前 100 個位元組的預覽。設定 `include_content_preview=False` 時，`content_preview` 為 `null`，不會有任何回應本文離開伺服器；鍵、大小與到期時間仍會回報。`content_type` 一律是 `"bytes"`，只為相容而保留；請改讀 `media_type`。
 
 > [!WARNING]
 > **這些路由本身沒有任何身分驗證。** `include_in_schema=False` 只是讓它們不出現在 OpenAPI 文件中；任何猜到路徑的人都能讀取。`/cached-records` 含有快取內容的預覽（除非設定 `include_content_preview=False`），並會暴露整個路由結構。正式環境中請務必傳入 `dependencies=[Depends(your_auth)]`，或將它們掛載在僅供內部使用的應用程式上。
