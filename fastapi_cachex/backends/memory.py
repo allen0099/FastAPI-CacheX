@@ -42,6 +42,22 @@ def _is_live(item: CacheItem, now: float) -> bool:
     return item.expiry is None or item.expiry > now
 
 
+def _cancel(task: "asyncio.Task[None]") -> None:
+    """Cancel ``task`` from any thread; a task on a closed loop is left alone."""
+    loop = task.get_loop()
+    if loop.is_closed():
+        # Cancelling would schedule a callback on the closed loop and raise.
+        return
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        task.cancel()
+    else:
+        loop.call_soon_threadsafe(task.cancel)
+
+
 class MemoryBackend(BaseCacheBackend):
     """In-memory cache backend implementation.
 
@@ -71,18 +87,26 @@ class MemoryBackend(BaseCacheBackend):
         self._cleanup_task: asyncio.Task[None] | None = None
 
     def _ensure_cleanup_started(self) -> None:
-        """Ensure cleanup task is started in proper async context."""
-        if self._cleanup_task is None or self._cleanup_task.done():
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # No running event loop yet; defer until first real async call.
+        """Ensure a cleanup task runs on the current event loop.
+
+        A task left on another loop, for example one that has since been
+        closed, never runs again, so it is replaced rather than reused.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running event loop yet; defer until first real async call.
+            return
+        task = self._cleanup_task
+        if task is not None and not task.done():
+            if task.get_loop() is loop:
                 return
-            self._cleanup_task = loop.create_task(self._cleanup_task_impl())
-            logger.debug(
-                "Started memory backend cleanup task (interval=%s)",
-                self.cleanup_interval,
-            )
+            _cancel(task)
+        self._cleanup_task = loop.create_task(self._cleanup_task_impl())
+        logger.debug(
+            "Started memory backend cleanup task (interval=%s)",
+            self.cleanup_interval,
+        )
 
     def start_cleanup(self) -> None:
         """Start the cleanup task if it's not already running.
@@ -92,11 +116,29 @@ class MemoryBackend(BaseCacheBackend):
         self._ensure_cleanup_started()
 
     def stop_cleanup(self) -> None:
-        """Stop the cleanup task if it's running."""
+        """Stop the cleanup task if it's running.
+
+        This only requests cancellation. Use ``aclose()`` to also wait until
+        the task has finished.
+        """
         if self._cleanup_task is not None:
-            self._cleanup_task.cancel()
+            _cancel(self._cleanup_task)
             self._cleanup_task = None
             logger.debug("Stopped memory backend cleanup task")
+
+    async def aclose(self) -> None:
+        """Stop the cleanup task and wait until it has finished.
+
+        Safe to call more than once. A task that belongs to another event loop
+        cannot be awaited here; it is only asked to cancel, as ``stop_cleanup()``
+        does.
+        """
+        task = self._cleanup_task
+        self.stop_cleanup()
+        if task is not None and task.get_loop() is asyncio.get_running_loop():
+            # wait() does not raise the task's CancelledError, so a
+            # cancellation of aclose() itself still propagates.
+            await asyncio.wait([task])
 
     async def get(self, key: str) -> CacheEntry | None:
         """Retrieve a cached response.

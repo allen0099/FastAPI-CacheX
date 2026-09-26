@@ -27,6 +27,10 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   same `pymemcache` dependency as the old `memcache` extra.
   ([#201](https://github.com/allen0099/FastAPI-CacheX/issues/201))
 
+- **`MemoryBackend.aclose()` stops the cleanup task and waits for it.**
+  `stop_cleanup()` only requests cancellation and stays as it is.
+  ([#181](https://github.com/allen0099/FastAPI-CacheX/issues/181))
+
 ### Changed
 
 - **GitHub release notes list one line per change.** Each changelog entry now
@@ -136,6 +140,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   after it raises `SessionNotFoundError`, as after an ordinary `session_ttl`
   expiry, instead of `SessionExpiredError`.
   ([#164](https://github.com/allen0099/FastAPI-CacheX/issues/164))
+
+- **`MemoryBackend` restarts its cleanup task on a new event loop.** The task
+  stayed tied to the loop of the first cache call. If that loop was closed
+  without cancelling it, a backend reused on another loop never cleaned up
+  again. The task is now started again on the current loop, and a task left
+  on a loop that is still open is cancelled there.
+  ([#181](https://github.com/allen0099/FastAPI-CacheX/issues/181))
 
 ## [0.3.7] - 2026-09-25
 
