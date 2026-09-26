@@ -836,3 +836,88 @@ async def test_deprecated_middleware_sends_regenerated_token(
     await manager.get_session(new_token)
     with pytest.raises(SessionNotFoundError):
         await manager.get_session(old_token)
+
+
+def _vary(response: Any) -> set[str]:
+    """The response's Vary header as a set of lowercased header names."""
+    return {
+        name.strip().lower()
+        for name in response.headers.get("vary", "").split(",")
+        if name.strip()
+    }
+
+
+def _session_reading_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/read")
+    async def read_route(request: Request) -> dict[str, Any]:
+        return dict(request.session)
+
+    @app.get("/untouched")
+    async def untouched_route() -> dict[str, bool]:
+        return {"ok": True}
+
+    return app
+
+
+@pytest.mark.asyncio
+async def test_header_token_varies_on_the_token_header_not_cookie(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """The cookie is never read when the header carries the token (#168)."""
+    _session, token = await manager.create_session(user=SessionUser(user_id="u"))
+    client = TestClient(_session_reading_app(manager, config))
+
+    response = client.get("/read", headers={config.header_name: token})
+
+    assert _vary(response) == {config.header_name.lower()}
+
+
+@pytest.mark.asyncio
+async def test_bearer_token_varies_on_every_header_consulted(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """The custom header is checked first, so the response depends on it too."""
+    _session, token = await manager.create_session(user=SessionUser(user_id="u"))
+    client = TestClient(_session_reading_app(manager, config))
+
+    response = client.get("/read", headers={"Authorization": f"Bearer {token}"})
+
+    assert _vary(response) == {config.header_name.lower(), "authorization"}
+
+
+@pytest.mark.asyncio
+async def test_cookie_token_varies_on_cookie_and_the_headers_checked_first(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """A token header, had one been sent, would have won over the cookie."""
+    _session, token = await manager.create_session(user=SessionUser(user_id="u"))
+    client = TestClient(_session_reading_app(manager, config))
+    client.cookies.set(config.cookie_name, token)
+
+    response = client.get("/read")
+
+    assert _vary(response) == {config.header_name.lower(), "authorization", "cookie"}
+
+
+def test_disabled_bearer_transport_is_left_out_of_vary(manager: SessionManager) -> None:
+    config = SessionConfig(secret_key="a" * 32, use_bearer_token=False)
+    client = TestClient(_session_reading_app(manager, config))
+
+    response = client.get("/read")
+
+    assert _vary(response) == {config.header_name.lower(), "cookie"}
+
+
+def test_no_vary_when_the_session_is_not_accessed(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    client = TestClient(_session_reading_app(manager, config))
+
+    response = client.get("/untouched")
+
+    assert "vary" not in response.headers
