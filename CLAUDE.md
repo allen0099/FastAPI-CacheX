@@ -71,6 +71,7 @@ The library has four independent subsystems:
 - `SessionManagerProxy` mirrors the `BackendProxy` pattern for managing the `SessionManager` singleton.
 - Key FastAPI dependencies: `get_session`, `require_session`, `get_optional_session` (in `session/dependencies.py`).
 - `rotate_session_id(request)` (same module) regenerates the loaded session's ID at login against session fixation; a no-op when none was loaded. The middleware notices the changed ID and sends the new token.
+- `FastAPICacheXSessionMiddleware` wraps `request.session` in `_RequestSession`, which records an explicit `clear()`: that deletes the loaded session (logout) even with empty data, and later writes start a new anonymous one. Emptying via `del`/`pop()` keeps a user session (saved empty) and deletes an anonymous one.
 
 **4. State Management (`fastapi_cachex/state/`)**
 - `StateManager` provides one-time-use state tokens for OAuth flows. States are consumed (deleted) on first successful `consume_state()` call.

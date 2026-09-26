@@ -369,8 +369,12 @@ async def me(session=Depends(get_session)):
   configured) and sends its token back through the request's transport.
 - Modifying it on a loaded session saves the new contents to the backend via `update_session()`,
   replacing `Session.data` with the dict's contents.
-- Clearing it (`request.session.clear()`) on a session that had data deletes the backend session;
-  a cookie client also receives a `Set-Cookie` that expires the cookie.
+- Clearing it (`request.session.clear()`) on a loaded session logs out: the backend session is
+  deleted even if its data was already empty, and a cookie client also receives a `Set-Cookie`
+  that expires the cookie. Keys written after `clear()` in the same request go into a new
+  anonymous session under a new ID.
+- Removing the last key with `del` or `pop()` is not a logout. A session with a user is saved
+  with empty data; an anonymous one holds nothing and is deleted, as with `clear()`.
 - Logging in by writing to `request.session` keeps the session ID the request arrived with.
   With Starlette's middleware the cookie *is* the session, so the login response replaces
   whatever cookie was planted; here the cookie only names a server-side record, and a planted

@@ -202,6 +202,15 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   login CSRF although STATE.md described the states as CSRF protection. The
   quick start now sets and checks a binding cookie.
   ([#226](https://github.com/allen0099/FastAPI-CacheX/issues/226))
+- **`request.session.clear()` logs out a session whose data was empty.** With
+  `FastAPICacheXSessionMiddleware`, whether the data started out empty decided
+  what a cleared session meant, so a user session created without data
+  survived `clear()` and stayed logged in. `clear()` on a loaded session now
+  always deletes it; keys written after `clear()` go into a new anonymous
+  session. The same rule logged a user out when the last key was removed with
+  `del` or `pop()`, e.g. a flash message; such a session is now saved with
+  empty data. An emptied anonymous session is still deleted.
+  ([#227](https://github.com/allen0099/FastAPI-CacheX/issues/227))
 
 ## [0.3.7] - 2026-09-25
 

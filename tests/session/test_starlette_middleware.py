@@ -1005,3 +1005,125 @@ def test_no_vary_when_the_session_is_not_accessed(
     response = client.get("/untouched")
 
     assert "vary" not in response.headers
+
+
+def _clearing_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
+    """An app that logs out with clear(), pops single keys and writes after clearing."""
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/logout")
+    async def logout_route(request: Request) -> dict[str, bool]:
+        request.session.clear()
+        return {"ok": True}
+
+    @app.get("/pop-flash")
+    async def pop_flash_route(request: Request) -> dict[str, Any]:
+        return {"flash": request.session.pop("flash", None)}
+
+    @app.get("/clear-then-write")
+    async def clear_then_write_route(request: Request) -> dict[str, bool]:
+        request.session.clear()
+        request.session["flash"] = "signed out"
+        return {"ok": True}
+
+    return app
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["cookie", "header"])
+async def test_clear_logs_out_a_session_with_empty_data(
+    manager: SessionManager, config: SessionConfig, transport: str
+) -> None:
+    """clear() ends a logged-in session even when its data was already empty.
+
+    The emptiness of the initial data used to decide whether clear() counted,
+    so a user session created without data survived its own logout.
+    """
+    _session, token = await manager.create_session(
+        user=SessionUser(user_id="empty-data-user")
+    )
+
+    client = TestClient(_clearing_app(manager, config))
+    if transport == "cookie":
+        client.cookies.set(config.cookie_name, token)
+        response = client.get("/logout")
+        set_cookie = response.headers["set-cookie"]
+        assert f"{config.cookie_name}=;" in set_cookie
+        assert "1970" in set_cookie
+    else:
+        response = client.get("/logout", headers={config.header_name: token})
+        assert "set-cookie" not in response.headers
+        assert config.header_name.lower() not in response.headers
+
+    assert response.status_code == 200
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(token)
+
+
+@pytest.mark.asyncio
+async def test_popping_the_last_key_keeps_a_user_logged_in(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """Removing the last key is not a logout: the user session stays, with empty data."""
+    _session, token = await manager.create_session(
+        user=SessionUser(user_id="flash-user"), flash="hi"
+    )
+
+    client = TestClient(_clearing_app(manager, config))
+    response = client.get("/pop-flash", headers={config.header_name: token})
+
+    assert response.json() == {"flash": "hi"}
+    kept, _ = await manager.get_session(token)
+    assert kept.user is not None
+    assert kept.user.user_id == "flash-user"
+    assert kept.data == {}
+
+
+@pytest.mark.asyncio
+async def test_popping_the_last_key_deletes_an_anonymous_session(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """Without a user an emptied session holds nothing, so it goes, as in Starlette."""
+    _session, token = await manager.create_anonymous_session(flash="hi")
+
+    client = TestClient(_clearing_app(manager, config))
+    client.cookies.set(config.cookie_name, token)
+    response = client.get("/pop-flash")
+
+    assert response.json() == {"flash": "hi"}
+    assert "1970" in response.headers["set-cookie"]
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["cookie", "header"])
+async def test_writing_after_clear_starts_a_new_anonymous_session(
+    manager: SessionManager, config: SessionConfig, transport: str
+) -> None:
+    """Keys written after clear() go to a new session, never the logged-out one."""
+    _session, token = await manager.create_session(
+        user=SessionUser(user_id="logout-flash-user"), seen=True
+    )
+
+    client = TestClient(_clearing_app(manager, config))
+    if transport == "cookie":
+        client.cookies.set(config.cookie_name, token)
+        response = client.get("/clear-then-write")
+        new_token = _extract_cookie_token(
+            response.headers["set-cookie"], config.cookie_name
+        )
+    else:
+        response = client.get("/clear-then-write", headers={config.header_name: token})
+        new_token = response.headers[config.header_name]
+
+    assert response.status_code == 200
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(token)
+    fresh, _ = await manager.get_session(new_token)
+    assert fresh.session_id != _session.session_id
+    assert fresh.user is None
+    assert fresh.data == {"flash": "signed out"}
