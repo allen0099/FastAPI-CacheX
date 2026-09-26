@@ -29,6 +29,10 @@ _LEGAL_KEY_BYTES = frozenset(range(0x21, 0x7F))
 # not as a duration, so a longer TTL has to be converted before it is sent.
 _MAX_RELATIVE_TTL = 30 * 24 * 60 * 60
 
+# Seconds a failed server stays out of rotation before HashClient tries it
+# again. Until then every call to it raises.
+_DEAD_TIMEOUT = 1
+
 
 def _expiry(ttl: int | None) -> int:
     """Convert a TTL in seconds to the exptime Memcached expects.
@@ -84,12 +88,21 @@ class MemcachedBackend(BaseCacheBackend):
         # every write waits for the server's acknowledgement; otherwise a
         # ``set`` on one socket may still be in flight when a ``get`` on another
         # socket is served, and the caller would miss its own write.
+        #
+        # With retries enabled, HashClient answers calls to a server that just
+        # failed with each command's default (``None``, ``False``, ``0``) until
+        # the retry is due, which reads as a miss, a lost race or a fresh
+        # counter. ``retry_attempts=0`` takes a failed server out of rotation
+        # at once instead, so calls raise until it is tried again after
+        # ``_DEAD_TIMEOUT`` seconds.
         self.client = HashClient(
             servers,
             connect_timeout=5,
             timeout=5,
             use_pooling=True,
             default_noreply=False,
+            retry_attempts=0,
+            dead_timeout=_DEAD_TIMEOUT,
         )
         self.key_prefix = key_prefix
 

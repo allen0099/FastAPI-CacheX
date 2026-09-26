@@ -7,6 +7,7 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex.backends import MemcachedBackend
+from fastapi_cachex.backends.memcached import _DEAD_TIMEOUT
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.types import CacheEntry
@@ -262,6 +263,72 @@ async def test_memcached_clear_path_raises_when_the_server_is_unreachable() -> N
 
     with pytest.raises(ConnectionRefusedError):
         await backend.clear_path("/nope")
+
+
+def _unreachable_backend() -> MemcachedBackend:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    return MemcachedBackend(servers=[f"127.0.0.1:{closed_port}"])
+
+
+_ENTRY = CacheEntry(fingerprint="f", content=b"x")
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda b: b.get("k"),
+        lambda b: b.set("k", _ENTRY),
+        lambda b: b.set_if_absent("k", _ENTRY),
+        lambda b: b.increment("k"),
+        lambda b: b.get_and_delete("k"),
+        lambda b: b.delete_if_equals("k", _ENTRY),
+        lambda b: b.expire_if_equals("k", _ENTRY, 5),
+        lambda b: b.delete_many(["a", "b"]),
+        lambda b: b.delete("k"),
+        lambda b: b.clear_path("/k"),
+    ],
+    ids=[
+        "get",
+        "set",
+        "set_if_absent",
+        "increment",
+        "get_and_delete",
+        "delete_if_equals",
+        "expire_if_equals",
+        "delete_many",
+        "delete",
+        "clear_path",
+    ],
+)
+@pytest.mark.asyncio
+async def test_memcached_keeps_raising_after_a_connection_failure(call) -> None:
+    """A call right after a failed one raises instead of returning a default (#197).
+
+    With pymemcache's default retries, `HashClient` answered every call to a
+    server that had just failed with `None`/`False`/`0` for about a second, so
+    `increment` returned 0 and `set` silently dropped the write.
+    """
+    backend = _unreachable_backend()
+    with pytest.raises(ConnectionRefusedError):
+        await backend.get("trip")
+
+    with pytest.raises(Exception, match="All servers seem to be down"):
+        await call(backend)
+
+
+@pytest.mark.asyncio
+async def test_memcached_tries_a_failed_server_again_after_the_dead_timeout() -> None:
+    """A failed server is not skipped for pymemcache's default 60 seconds (#197)."""
+    backend = _unreachable_backend()
+    with pytest.raises(ConnectionRefusedError):
+        await backend.get("trip")
+
+    await asyncio.sleep(_DEAD_TIMEOUT + 0.1)
+
+    with pytest.raises(ConnectionRefusedError):
+        await backend.get("k")
 
 
 @requires_memcached
