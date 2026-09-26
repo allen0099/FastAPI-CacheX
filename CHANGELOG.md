@@ -194,6 +194,14 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   answered `401` to new visitors; it now uses the helper, and the migration
   section warns about the difference from Starlette.
   ([#225](https://github.com/allen0099/FastAPI-CacheX/issues/225))
+- **OAuth states can be bound to the browser that started the flow.**
+  `create_state(binding=...)` stores the SHA-256 of a client secret, such as a
+  nonce also set as a cookie, and `consume_state(state, binding=...)` rejects
+  the state with `InvalidStateError` unless the same value is given. Without a
+  binding any stored state completes the flow in any browser, which allowed
+  login CSRF although STATE.md described the states as CSRF protection. The
+  quick start now sets and checks a binding cookie.
+  ([#226](https://github.com/allen0099/FastAPI-CacheX/issues/226))
 
 ## [0.3.7] - 2026-09-25
 
