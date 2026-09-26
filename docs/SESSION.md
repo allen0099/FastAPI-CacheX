@@ -366,7 +366,10 @@ async def me(session=Depends(get_session)):
   replacing `Session.data` with the dict's contents.
 - Clearing it (`request.session.clear()`) on a session that had data deletes the backend session;
   a cookie client also receives a `Set-Cookie` that expires the cookie.
-- Any access to `request.session` adds `Vary: Cookie` to the response.
+- Any access to `request.session` adds `Vary` for every request header read to find the token:
+  the headers checked in `token_source_priority` order (`header_name`, and `Authorization` when
+  bearer tokens are enabled) up to the one that carried the token. `Cookie` is added only when
+  no header carried a token, because only then is the cookie read.
 
 The cookie is always `HttpOnly`; `Secure`, `SameSite`, `Domain`, `Path` and `Max-Age` follow the
 `cookie_*` settings.

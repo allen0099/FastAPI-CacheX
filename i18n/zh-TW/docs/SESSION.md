@@ -326,7 +326,7 @@ async def me(session=Depends(get_session)):
 - 在沒有載入任何 Session 時寫入 `request.session`，會建立一個新的**匿名** Session（`SessionManager.create_anonymous_session()`，並依設定套用 IP / User-Agent 綁定），並透過該請求的傳輸方式傳回其權杖。
 - 修改已載入 Session 的 `request.session`，會透過 `update_session()` 將新內容儲存到後端，以 dict 的內容取代 `Session.data`。
 - 在原本有資料的 Session 上清除它（`request.session.clear()`），會刪除後端的 Session；Cookie 用戶端還會收到一個使 Cookie 過期的 `Set-Cookie`。
-- 只要存取 `request.session`，就會在回應中加入 `Vary: Cookie`。
+- 只要存取 `request.session`，就會為了尋找權杖而讀取過的每個請求標頭加入 `Vary`：依 `token_source_priority` 順序檢查的標頭（`header_name`，以及啟用 Bearer 權杖時的 `Authorization`），直到攜帶權杖的那一個為止。只有在沒有任何標頭攜帶權杖時才會讀取 Cookie，因此也只有這時才會加入 `Cookie`。
 
 Cookie 一律為 `HttpOnly`；`Secure`、`SameSite`、`Domain`、`Path` 與 `Max-Age` 則依 `cookie_*` 設定。
 

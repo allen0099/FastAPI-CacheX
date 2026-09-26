@@ -99,18 +99,40 @@ def _extract_header_token(
     Returns:
         Session token or None
     """
+    return _read_header_token(connection, config)[0]
+
+
+def _read_header_token(
+    connection: HTTPConnection, config: SessionConfig
+) -> tuple[str | None, list[str]]:
+    """Extract a session token and name the request headers that were read.
+
+    The response depends on every header read before the token was found, so
+    those are the names it must ``Vary`` on.
+
+    Args:
+        connection: Incoming HTTP connection
+        config: Session configuration
+
+    Returns:
+        ``(token, consulted)``: the token or None, and the header names read,
+        in the order they were checked
+    """
+    consulted: list[str] = []
     # `token_source_priority` is a list of Literals, so pydantic has already
     # rejected anything that is neither branch; the chain stays an `elif` so a
     # source added later falls through instead of being read as a bearer token.
     for source in config.token_source_priority:
         if source == "header":
+            consulted.append(config.header_name)
             token = connection.headers.get(config.header_name)
             if token:
                 logger.debug("Token extracted from header")
-                return token
+                return token, consulted
 
         elif source == "bearer":
             if config.use_bearer_token:
+                consulted.append("Authorization")
                 # The scheme name is case-insensitive (RFC 9110 §11.1) and is
                 # followed by one or more spaces (RFC 6750 §2.1).
                 scheme, _, token_value = connection.headers.get(
@@ -119,9 +141,9 @@ def _extract_header_token(
                 token_value = token_value.lstrip(" ")
                 if scheme.lower() == "bearer" and token_value:
                     logger.debug("Token extracted from bearer auth")
-                    return token_value
+                    return token_value, consulted
 
-    return None
+    return None, consulted
 
 
 def _stash_session_manager(app: Any, manager: SessionManager) -> None:
@@ -340,7 +362,7 @@ class FastAPICacheXSessionMiddleware:
         # `header_token` is captured so the response is routed by transport: a
         # header-sourced token is echoed back via the response header, otherwise
         # via Set-Cookie (see send_wrapper).
-        header_token = _extract_header_token(connection, self.config)
+        header_token, vary_on = self._token_sources(connection)
         token_value = header_token or connection.cookies.get(self.config.cookie_name)
         if token_value:
             try:
@@ -381,7 +403,8 @@ class FastAPICacheXSessionMiddleware:
                 )
 
                 if session.accessed:
-                    headers.add_vary_header("Cookie")
+                    for name in vary_on:
+                        headers.add_vary_header(name)
 
                 if session.modified and session:
                     cookie_token, new_token = await self._write_session(
@@ -420,6 +443,19 @@ class FastAPICacheXSessionMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+    def _token_sources(
+        self, connection: HTTPConnection
+    ) -> tuple[str | None, list[str]]:
+        """The header-carried token, if any, and the request headers to Vary on.
+
+        The response depends on every header read to find the token. The
+        cookie is read only when no header carried one.
+        """
+        header_token, vary_on = _read_header_token(connection, self.config)
+        if header_token is None:
+            vary_on.append("Cookie")
+        return header_token, vary_on
 
     def _response_tokens(
         self,
