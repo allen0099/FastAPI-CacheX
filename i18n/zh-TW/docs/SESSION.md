@@ -296,6 +296,8 @@ def get_user_roles(username: str) -> list[str]:
 
 `delete_user_sessions()` 與 `clear_expired_sessions()` 會透過 `get_all_keys()` 列舉後端中的每一個鍵，並載入 `backend_key_prefix` 底下的每個 Session，因此其成本會隨後端的大小增加。在無法列舉鍵的 Memcached 後端上，它們找不到任何東西並回傳 `0`（後端會發出 `RuntimeWarning`）。
 
+`clear_expired_sessions()` 會移除所有已無法使用的 Session：超過 `expires_at` 的，以及不再是 `ACTIVE` 的（以 `invalidate_session()` 作廢，或先前讀取時已標記為過期），否則它們會留在後端直到 TTL 到期。兩個方法都以單一次 `backend.delete_many()` 呼叫刪除找到的 Session。
+
 ## 遷移：SessionMiddleware → FastAPICacheXSessionMiddleware {#migration-sessionmiddleware-fastapicachexsessionmiddleware}
 
 `SessionMiddleware` 自 0.3.1 起已棄用（建構時會發出 `DeprecationWarning`），並將於 0.4.0 移除。請改用 `FastAPICacheXSessionMiddleware`：
