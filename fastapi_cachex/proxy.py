@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import warnings
 from logging import getLogger
+from typing import ClassVar
 from typing import Generic
 from typing import NoReturn
 from typing import TypeVar
@@ -12,6 +13,7 @@ from typing import TypeVar
 from .backends import BaseCacheBackend
 from .backends import MemoryBackend
 from .exceptions import BackendNotFoundError
+from .exceptions import ProxyNotSetError
 
 ProxyInstance = TypeVar("ProxyInstance")
 
@@ -35,6 +37,8 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
     """Abstract base class for proxy classes."""
 
     _instance: ProxyInstance | None = None
+    # Raised by `get()` while no instance is set.
+    _not_set_error: ClassVar[type[BackendNotFoundError]] = ProxyNotSetError
 
     @classmethod
     def get(cls) -> ProxyInstance:
@@ -42,10 +46,14 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
 
         Returns:
             The current instance
+
+        Raises:
+            ProxyNotSetError: If no instance is set (``BackendNotFoundError``
+                for ``BackendProxy``)
         """
         if cls._instance is None:
             msg = f"No instance set for proxy {cls.__name__}"
-            raise BackendNotFoundError(msg)
+            raise cls._not_set_error(msg)
         return cls._instance
 
     @classmethod
@@ -64,6 +72,8 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
 
 class BackendProxy(ProxyBase[BaseCacheBackend]):
     """FastAPI CacheX Proxy for backend management."""
+
+    _not_set_error = BackendNotFoundError
 
     @staticmethod
     def get_backend() -> BaseCacheBackend:

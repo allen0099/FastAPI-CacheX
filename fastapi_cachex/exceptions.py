@@ -13,6 +13,15 @@ class BackendNotFoundError(CacheXError):
     """Exception raised when a cache backend is not found."""
 
 
+class ProxyNotSetError(BackendNotFoundError):
+    """Exception raised when a manager proxy has no instance set.
+
+    Raised by ``CacheManagerProxy``, ``SessionManagerProxy`` and
+    ``StateManagerProxy``. It subclasses ``BackendNotFoundError``, which these
+    proxies raised before 0.3.8, so existing handlers keep catching it.
+    """
+
+
 class RequestNotFoundError(CacheXError):
     """Exception raised when a request is not found."""
 

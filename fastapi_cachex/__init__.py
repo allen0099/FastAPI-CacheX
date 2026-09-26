@@ -14,6 +14,7 @@ from .dependencies import get_cache_backend as get_cache_backend
 from .exceptions import BackendNotFoundError as BackendNotFoundError
 from .exceptions import CacheXError as CacheXError
 from .exceptions import LockTimeoutError as LockTimeoutError
+from .exceptions import ProxyNotSetError as ProxyNotSetError
 from .exceptions import RequestNotFoundError as RequestNotFoundError
 from .lock import CacheLock as CacheLock
 from .manager import CacheManager as CacheManager
@@ -82,6 +83,7 @@ __all__ = [
     "FastAPICacheXSessionMiddleware",
     "InvalidStateError",
     "LockTimeoutError",
+    "ProxyNotSetError",
     "RequestNotFoundError",
     "Session",
     "SessionConfig",

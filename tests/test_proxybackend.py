@@ -10,6 +10,10 @@ from fastapi_cachex import BackendProxy
 from fastapi_cachex import cache
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.exceptions import BackendNotFoundError
+from fastapi_cachex.exceptions import ProxyNotSetError
+from fastapi_cachex.manager_proxy import CacheManagerProxy
+from fastapi_cachex.session.proxy import SessionManagerProxy
+from fastapi_cachex.state.proxy import StateManagerProxy
 from fastapi_cachex.types import CacheEntry
 
 app = FastAPI()
@@ -132,3 +136,29 @@ def test_set_backend_alias_warns_and_delegates():
 
     with pytest.raises(BackendNotFoundError):
         BackendProxy.get()
+
+
+@pytest.mark.parametrize(
+    "proxy", [CacheManagerProxy, SessionManagerProxy, StateManagerProxy]
+)
+def test_manager_proxies_raise_proxy_not_set_error(proxy) -> None:
+    """An unset manager proxy is not a missing backend (#161).
+
+    `ProxyNotSetError` subclasses `BackendNotFoundError`, which these proxies
+    raised before, so existing handlers keep catching it.
+    """
+    previous = proxy._instance
+    proxy.set(None)
+    try:
+        with pytest.raises(ProxyNotSetError, match=proxy.__name__) as exc_info:
+            proxy.get()
+        assert isinstance(exc_info.value, BackendNotFoundError)
+    finally:
+        proxy.set(previous)
+
+
+def test_backend_proxy_still_raises_backend_not_found_error() -> None:
+    BackendProxy.set(None)
+    with pytest.raises(BackendNotFoundError) as exc_info:
+        BackendProxy.get()
+    assert not isinstance(exc_info.value, ProxyNotSetError)
