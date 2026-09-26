@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import time
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -11,6 +12,7 @@ from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.backends.redis import _BATCH_SIZE
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.lock import CacheLock
+from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from tests.live_servers import REDIS_HOST
@@ -357,16 +359,62 @@ async def test_redis_clear_pattern_no_matches(
 async def test_redis_clear_pattern_with_prefixed_pattern(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
-    """Cover branch where provided pattern already includes key prefix."""
+    """A pattern that repeats the key prefix still clears, with a deprecation (#109)."""
     value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     await async_redis_backend.set("/api/users/1", value)
     await async_redis_backend.set("/api/users/2", value)
 
     prefixed = f"{async_redis_backend.key_prefix}/api/users/*"
-    cleared = await async_redis_backend.clear_pattern(prefixed)
+    with pytest.warns(DeprecationWarning, match=r"'/api/users/\*' instead"):
+        cleared = await async_redis_backend.clear_pattern(prefixed)
     assert cleared == 2
     assert await async_redis_backend.get("/api/users/1") is None
     assert await async_redis_backend.get("/api/users/2") is None
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_clear_pattern_prefixes_a_pattern_that_starts_with_the_prefix(
+    async_redis_backend: AsyncRedisCacheBackend,
+):
+    """A logical key may start with the backend prefix; it is not stripped (#109)."""
+    value = CacheEntry(fingerprint="test-etag", content=b"test-content")
+    prefix = async_redis_backend.key_prefix
+    await async_redis_backend.set(f"{prefix}user:1", value)
+    await async_redis_backend.set("user:1", value)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cleared = await async_redis_backend.clear_pattern(f"{prefix}user:*")
+
+    assert cleared == 1
+    assert await async_redis_backend.get(f"{prefix}user:1") is None
+    assert await async_redis_backend.get("user:1") == value
+
+
+@pytest.mark.asyncio
+async def test_redis_cache_manager_clear_pattern_with_matching_prefixes() -> None:
+    """The #109 reproduction: backend and CacheManager both use ``cache:``."""
+    reason = redis_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
+
+    backend = AsyncRedisCacheBackend(
+        host=REDIS_HOST, port=REDIS_PORT, key_prefix="cache:"
+    )
+    manager = CacheManager(backend=backend)
+    try:
+        await manager.set("user:1", {"name": "a"})
+        await manager.set("post:1", {"name": "b"})
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert await manager.clear_pattern("user:*") == 1
+
+        assert await manager.get("user:1") is None
+        assert await manager.get("post:1") == {"name": "b"}
+    finally:
+        await backend.clear()
 
 
 @requires_redis
@@ -1009,7 +1057,8 @@ async def test_redis_glob_characters_in_prefix_do_not_reach_other_prefixes() -> 
         assert await globbed.get_all_keys() == ["mine"]
         assert await globbed.clear_pattern("*") == 1
         await globbed.set("mine", entry)
-        assert await globbed.clear_pattern("cachex-test?*:*") == 1
+        with pytest.warns(DeprecationWarning, match="key prefix"):
+            assert await globbed.clear_pattern("cachex-test?*:*") == 1
         await globbed.set("mine", entry)
         await globbed.clear()
 
