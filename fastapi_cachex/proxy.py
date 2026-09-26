@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import warnings
 from logging import getLogger
+from typing import TYPE_CHECKING
 from typing import ClassVar
 from typing import Generic
 from typing import NoReturn
@@ -15,13 +16,12 @@ from .backends import MemoryBackend
 from .exceptions import BackendNotFoundError
 from .exceptions import ProxyNotSetError
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 ProxyInstance = TypeVar("ProxyInstance")
 
 logger = getLogger(__name__)
-
-# Serialises the lazy fallback below. `get_app_cache` is a sync dependency that
-# FastAPI runs in a worker thread, so two first requests can reach it at once.
-_fallback_lock = threading.Lock()
 
 
 class ProxyMeta(type):
@@ -39,6 +39,16 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
     _instance: ProxyInstance | None = None
     # Raised by `get()` while no instance is set.
     _not_set_error: ClassVar[type[BackendNotFoundError]] = ProxyNotSetError
+    # Serialises `get_or_create`. A threading lock, because the sync FastAPI
+    # dependencies built on it run in worker threads. One per class, so a
+    # factory may call another proxy's `get_or_create` (the default
+    # `CacheManager` needs a backend) without deadlocking.
+    _create_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Give every proxy class its own creation lock."""
+        super().__init_subclass__(**kwargs)
+        cls._create_lock = threading.Lock()
 
     @classmethod
     def get(cls) -> ProxyInstance:
@@ -55,6 +65,31 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
             msg = f"No instance set for proxy {cls.__name__}"
             raise cls._not_set_error(msg)
         return cls._instance
+
+    @classmethod
+    def get_or_create(cls, factory: Callable[[], ProxyInstance]) -> ProxyInstance:
+        """Return the current instance, creating and registering one if unset.
+
+        The check and the registration happen under the class's lock, so
+        concurrent first callers, including ones on worker threads, all get
+        the same instance: ``factory`` runs at most once. If it raises, nothing
+        is registered and the error propagates.
+
+        Args:
+            factory: Builds the instance when none is set
+
+        Returns:
+            The registered instance
+        """
+        instance = cls._instance
+        if instance is not None:
+            return instance
+        with cls._create_lock:
+            instance = cls._instance
+            if instance is None:
+                instance = factory()
+                cls.set(instance)
+            return instance
 
     @classmethod
     def set(cls, instance: ProxyInstance | None) -> None:
@@ -115,20 +150,14 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
 def get_backend_or_fallback() -> BaseCacheBackend:
     """Return the configured backend, registering a `MemoryBackend` if none is.
 
-    Used by `@cache` and the `AppCache` dependency. The check and the
-    registration happen under one lock, so concurrent first callers — including
-    ones on worker threads — all end up with the same fallback instead of each
+    Used by `@cache`, `CacheBackend` and `AppCache`. Built on
+    `BackendProxy.get_or_create`, so concurrent first callers, including ones
+    on worker threads, all end up with the same fallback instead of each
     installing its own and overwriting the others.
     """
-    try:
-        return BackendProxy.get()
-    except BackendNotFoundError:
-        pass
-    with _fallback_lock:
-        try:
-            return BackendProxy.get()
-        except BackendNotFoundError:
-            backend = MemoryBackend()
-            BackendProxy.set(backend)
-            logger.debug("No backend configured; using MemoryBackend fallback")
-            return backend
+    return BackendProxy.get_or_create(_memory_fallback)
+
+
+def _memory_fallback() -> BaseCacheBackend:
+    logger.debug("No backend configured; using MemoryBackend fallback")
+    return MemoryBackend()
