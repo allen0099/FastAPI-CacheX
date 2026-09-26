@@ -117,7 +117,7 @@ def test_not_modified_from_a_fresh_render_repeats_the_headers():
     app = FastAPI()
 
     @app.get("/fresh")
-    @cache(no_cache=True)
+    @cache(ttl=60, no_cache=True)
     async def fresh():
         return Response(
             content="body",

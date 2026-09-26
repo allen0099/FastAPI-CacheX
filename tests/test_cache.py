@@ -1,3 +1,4 @@
+import asyncio
 import threading
 from collections.abc import AsyncGenerator
 from functools import partial
@@ -76,7 +77,7 @@ def test_ttl_endpoint():
 
 def test_no_cache_endpoint():
     @app.get("/no-cache")
-    @cache(no_cache=True)
+    @cache(ttl=60, no_cache=True)
     async def no_cache_endpoint():
         return Response(
             content=b'{"message": "This endpoint should not be cached"}',
@@ -274,7 +275,7 @@ def test_handler_returning_a_coroutine_is_awaited(
 
 def test_no_cache_with_revalidate():
     @app.get("/no-cache-revalidate")
-    @cache(no_cache=True, must_revalidate=True)
+    @cache(ttl=60, no_cache=True, must_revalidate=True)
     async def no_cache_revalidate_endpoint():
         return Response(
             content=b'{"message": "This endpoint should not be cached but must revalidate"}',
@@ -452,7 +453,7 @@ def test_no_cache_with_unchanged_data():
     counter = 0
 
     @app.get("/no-cache-unchanged")
-    @cache(no_cache=True)
+    @cache(ttl=60, no_cache=True)
     async def no_cache_unchanged_endpoint():
         return {"message": "This endpoint uses no-cache", "counter": counter}
 
@@ -481,7 +482,7 @@ def test_no_cache_with_changing_data():
     counter = {"value": 0}
 
     @app.get("/no-cache-changing")
-    @cache(no_cache=True)
+    @cache(ttl=60, no_cache=True)
     async def no_cache_changing_endpoint():
         counter["value"] += 1
         return {"message": "This endpoint uses no-cache", "counter": counter["value"]}
@@ -587,7 +588,7 @@ def test_streaming_response_with_no_cache_and_if_none_match():
     stream_app2 = FastAPI()
 
     @stream_app2.get("/stream-nocache")
-    @cache(no_cache=True)
+    @cache(ttl=60, no_cache=True)
     async def streaming_nocache():
         async def gen() -> AsyncGenerator[bytes, None]:
             yield b"data"
@@ -639,43 +640,72 @@ def test_no_store_and_no_cache_combined():
     assert "no-cache" not in cc
 
 
-def test_ttl_zero_sends_max_age_zero_and_only_revalidates():
-    """ttl=0 is `max-age=0`: the body is never replayed, a matching ETag gets 304."""
-    call_count = {"n": 0}
-    ttl0_app = FastAPI()
-    ttl0_backend = MemoryBackend()
-    BackendProxy.set(ttl0_backend)
+@pytest.mark.parametrize(("ttl", "cache_control"), [(None, ""), (0, "max-age=0")])
+def test_without_a_positive_ttl_nothing_is_stored_or_served(ttl, cache_control):
+    """No positive ttl means no server-side cache, and no 304 from a stale ETag (#110).
 
-    @ttl0_app.get("/ttl-zero")
-    @cache(ttl=0)
-    async def ttl_zero_endpoint():
-        call_count["n"] += 1
-        return Response(content=b"hello", media_type="text/plain")
+    The handler runs on every request. A 304 is still sent, but only when the
+    client's validator matches the freshly rendered response: once the data
+    changes, the old ETag gets the new body instead of a 304.
+    """
+    body = {"current": b"v1"}
+    calls: list[None] = []
+    no_ttl_app = FastAPI()
+    backend = MemoryBackend()
+    BackendProxy.set(backend)
 
-    ttl0_client = TestClient(ttl0_app)
+    @no_ttl_app.get("/no-ttl")
+    @cache(ttl=ttl)
+    async def no_ttl_endpoint():
+        calls.append(None)
+        return Response(content=body["current"], media_type="text/plain")
 
-    r1 = ttl0_client.get("/ttl-zero")
+    no_ttl_client = TestClient(no_ttl_app)
+
+    r1 = no_ttl_client.get("/no-ttl")
     assert r1.status_code == 200
-    assert r1.headers["Cache-Control"] == "max-age=0"
-    etag = r1.headers["ETag"]
+    assert r1.headers["Cache-Control"] == cache_control
+    old_etag = r1.headers["ETag"]
+    assert backend.cache == {}
 
-    # The entry is kept without an expiry, like ttl=None; the backend is never
-    # handed a zero TTL, which every backend used to read differently.
-    (item,) = ttl0_backend.cache.values()
-    assert item.expiry is None
+    # An unchanged response still revalidates, against the fresh render.
+    r2 = no_ttl_client.get("/no-ttl", headers={"If-None-Match": old_etag})
+    assert r2.status_code == 304
+    assert r2.headers["Cache-Control"] == cache_control
+    assert len(calls) == 2
 
-    # Without a validator the handler runs again: nothing is served directly.
-    r2 = ttl0_client.get("/ttl-zero")
-    assert r2.status_code == 200
-    assert r2.content == b"hello"
-    assert call_count["n"] == 2
+    # The data changes: the old validator must not get a 304 any more.
+    body["current"] = b"v2"
+    r3 = no_ttl_client.get("/no-ttl", headers={"If-None-Match": old_etag})
+    assert r3.status_code == 200
+    assert r3.content == b"v2"
+    assert r3.headers["ETag"] != old_etag
+    assert len(calls) == 3
+    assert backend.cache == {}
+    backend.stop_cleanup()
 
-    # A matching validator is answered from the stored ETag.
-    r3 = ttl0_client.get("/ttl-zero", headers={"If-None-Match": etag})
-    assert r3.status_code == 304
-    assert r3.headers["Cache-Control"] == "max-age=0"
-    assert call_count["n"] == 2
-    ttl0_backend.stop_cleanup()
+
+def test_without_a_ttl_an_entry_left_by_an_older_version_is_ignored():
+    """Entries 0.3.7 stored without expiry are neither served nor refreshed (#110)."""
+    legacy_app = FastAPI()
+    backend = MemoryBackend()
+    BackendProxy.set(backend)
+
+    @legacy_app.get("/legacy")
+    @cache()
+    async def legacy_endpoint():
+        return Response(content=b"new", media_type="text/plain")
+
+    legacy_client = TestClient(legacy_app)
+    key = "GET|||testserver|||/legacy|||"
+    stale = CacheEntry(fingerprint='W/"old"', content=b"old", media_type="text/plain")
+    asyncio.run(backend.set(key, stale))
+
+    r = legacy_client.get("/legacy", headers={"If-None-Match": 'W/"old"'})
+    assert r.status_code == 200
+    assert r.content == b"new"
+    assert backend.cache[key].value == stale
+    backend.stop_cleanup()
 
 
 def test_negative_ttl_is_rejected_at_decoration():
