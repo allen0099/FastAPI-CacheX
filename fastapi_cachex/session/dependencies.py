@@ -123,6 +123,50 @@ def get_session_manager(request: Request) -> "SessionManager":
     return manager
 
 
+async def rotate_session_id(request: Request) -> bool:
+    """Give the request's session a new ID, as a defence against session fixation.
+
+    Call it at login, before attaching the user. A session token the client
+    arrived with may have been planted by someone else; after rotation the
+    old token no longer resolves, and the middleware sends the client a token
+    for the new ID through the transport the request used. The session keeps
+    its data, user and expiry.
+
+    With no session loaded there is nothing to rotate: the first write to
+    ``request.session`` (or ``create_session()``) starts a session under a
+    fresh ID anyway. So this works for a new visitor and a returning one alike.
+
+    Example:
+        ```python
+        from fastapi_cachex.session.dependencies import rotate_session_id
+
+
+        @app.post("/login")
+        async def login(request: Request):
+            ...  # verify the credentials
+            await rotate_session_id(request)
+            request.session["user_id"] = "123"
+            return {"ok": True}
+        ```
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        True if a loaded session was given a new ID, False if none was loaded
+
+    Raises:
+        HTTPException: 500 if no session middleware has registered a
+            SessionManager yet
+    """
+    manager = get_session_manager(request)
+    session: Session | None = getattr(request.state, "__fastapi_cachex_session", None)
+    if session is None:
+        return False
+    await manager.regenerate_session_id(session)
+    return True
+
+
 def get_session_client_ip(
     request: Request,
     manager: "SessionManager" = Depends(get_session_manager),

@@ -70,6 +70,7 @@ The library has four independent subsystems:
 - Session token is passed via custom header (`X-Session-Token` by default) or `Authorization: Bearer` token.
 - `SessionManagerProxy` mirrors the `BackendProxy` pattern for managing the `SessionManager` singleton.
 - Key FastAPI dependencies: `get_session`, `require_session`, `get_optional_session` (in `session/dependencies.py`).
+- `rotate_session_id(request)` (same module) regenerates the loaded session's ID at login against session fixation; a no-op when none was loaded. The middleware notices the changed ID and sends the new token.
 
 **4. State Management (`fastapi_cachex/state/`)**
 - `StateManager` provides one-time-use state tokens for OAuth flows. States are consumed (deleted) on first successful `consume_state()` call.

@@ -371,6 +371,11 @@ async def me(session=Depends(get_session)):
   replacing `Session.data` with the dict's contents.
 - Clearing it (`request.session.clear()`) on a session that had data deletes the backend session;
   a cookie client also receives a `Set-Cookie` that expires the cookie.
+- Logging in by writing to `request.session` keeps the session ID the request arrived with.
+  With Starlette's middleware the cookie *is* the session, so the login response replaces
+  whatever cookie was planted; here the cookie only names a server-side record, and a planted
+  one would be logged in along with the victim. Call `await rotate_session_id(request)` before
+  attaching the user (see [Regenerate the Session ID After Login](#5-regenerate-the-session-id-after-login)).
 - Any access to `request.session` adds `Vary` for every request header read to find the token:
   the headers checked in `token_source_priority` order (`header_name`, and `Authorization` when
   bearer tokens are enabled) up to the one that carried the token. `Cookie` is added only when
@@ -605,25 +610,34 @@ match the bound one (or has no address) is treated as having no session.
 
 ### 5. Regenerate the Session ID After Login
 
-Prevents session fixation attacks:
+Prevents session fixation. The token a client arrives with may have been planted by
+someone else (from a sibling subdomain, say); a login that keeps it hands that person a
+logged-in session. Give the session a new ID before attaching the user:
 
 ```python
-from fastapi_cachex.session.dependencies import SessionDep, SessionManagerDep
+from fastapi_cachex.session import rotate_session_id
 
 
 @app.post("/login")
-async def login(request: Request, session: SessionDep, manager: SessionManagerDep):
+async def login(request: Request):
     ...  # verify the credentials
-    await manager.regenerate_session_id(session)
+    await rotate_session_id(request)
     request.session["user_id"] = "123"
     return {"ok": True}
 ```
 
-`regenerate_session_id()` deletes the backend record under the old ID and saves the session under
-a new ID, keeping its data, user, `created_at` and expiry. When the session is the request's own
-(from `SessionDep`, `get_session` and friends), either middleware sees the new ID and sends a token
-for it through the transport the request used: `Set-Cookie` for a cookie, the response header for a
-header token. After that the old token no longer resolves to a session.
+`rotate_session_id()` calls `SessionManager.regenerate_session_id()` on the request's
+session, which deletes the backend record under the old ID and saves the session under a
+new ID, keeping its data, user, `created_at` and expiry. Either middleware sees the new ID
+and sends a token for it through the transport the request used: `Set-Cookie` for a
+cookie, the response header for a header token. After that the old token no longer
+resolves to a session. For a new visitor there is no session to rotate, so it returns
+`False` and the first write starts a session under a fresh ID.
+
+A handler that already holds the request's session object can call
+`await manager.regenerate_session_id(session)` directly, with the same effect. Get it from
+`get_optional_session` and skip the call when it is `None`; `SessionDep` answers `401` to a
+visitor who has no session yet.
 
 Outside a middleware, load the session with the same bindings the middleware would pass, and hand
 the returned token to the client yourself:
@@ -659,6 +673,7 @@ from fastapi_cachex.session import (
     get_optional_session,  # optional authentication (None when there is no session)
     require_session,  # alias of get_session
     get_session_manager,  # the SessionManager registered by the middleware
+    rotate_session_id,  # not a dependency: await it at login for a new session ID
 )
 
 # Type annotations
