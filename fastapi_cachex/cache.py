@@ -443,18 +443,19 @@ def cache(
     Args:
         ttl: How long, in seconds, a stored response may be served without
             running the handler. The same value is sent as ``max-age``.
-            ``ttl=0`` sends ``max-age=0`` and, like ``None``, keeps the entry
-            only for ETag revalidation: the body is never served from the
-            cache, but a matching ``If-None-Match`` still gets a 304. Negative
-            values are rejected.
+            Without a positive ``ttl`` (``None``, or ``0``, which sends
+            ``max-age=0``) nothing is read from or written to the backend: the
+            handler runs on every request, and ``If-None-Match`` gets a 304
+            only when it matches the freshly rendered response. Negative values
+            are rejected.
         stale_ttl: Seconds sent with the directive chosen by ``stale``. It only
             shapes the ``Cache-Control`` header; the backend entry still
             expires after ``ttl``. Must be given together with ``stale``.
         stale: ``"revalidate"`` sends ``stale-while-revalidate=<stale_ttl>``,
             ``"error"`` sends ``stale-if-error=<stale_ttl>``.
         no_cache: Run the handler on every request and send ``no-cache``. The
-            response is still stored and ``If-None-Match`` still gets a 304
-            when it matches the fresh ETag. The header then carries only
+            response is still stored when ``ttl`` is positive, and
+            ``If-None-Match`` still gets a 304 when it matches the fresh ETag. The header then carries only
             ``no-cache`` (plus ``must-revalidate`` when set); ``ttl``,
             ``stale``, ``public``/``private`` and ``immutable`` are left out.
         no_store: Run the handler, store nothing, and send ``no-store``. Takes
@@ -569,10 +570,12 @@ def cache(
         # The header only depends on the decorator arguments, so build it once.
         cache_control = build_cache_control()
         builder = key_builder or default_key_builder
-        # `max-age=0` is a legal header, but backends disagree on what a zero
-        # TTL means, so such an entry is stored like `ttl=None`: kept only to
-        # answer ETag revalidation, never served directly.
-        store_ttl = ttl or None
+        # Without a positive ttl nothing may be served from storage, and a 304
+        # answered from a stored ETag would be exactly that: it would keep
+        # confirming a copy that the handler no longer produces (#110). Such
+        # routes skip the backend like private ones. `ttl=0` is included, since
+        # `max-age=0` allows no reuse either.
+        bypass_backend = private or not ttl
 
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:
@@ -609,9 +612,10 @@ def cache(
             # A private response belongs to exactly one user, so it must never
             # be read from or written to the shared backend — the default cache
             # key carries no identity, so a stored copy would be served to the
-            # next caller. ETag revalidation still works: it compares the
-            # client's validator against freshly rendered content.
-            if private:
+            # next caller. The same path serves routes without a positive ttl
+            # (see `bypass_backend`). ETag revalidation still works: it
+            # compares the client's validator against freshly rendered content.
+            if bypass_backend:
                 response, _, etag = await _render(func, req, *args, **kwargs)
                 if not _is_cacheable_status(response.status_code):
                     return response
@@ -619,10 +623,10 @@ def cache(
                     # StreamingResponse/FileResponse — cannot compute ETag
                     return _with_cache_control(response, cache_control)
                 if _etag_matches(client_etag, etag):
-                    logger.debug("304 Not Modified (private); key=%s", cache_key)
+                    logger.debug("304 Not Modified (uncached); key=%s", cache_key)
                     return _not_modified(etag, cache_control, response.headers)
                 response.headers["ETag"] = etag
-                logger.debug("Private response; bypassed shared cache")
+                logger.debug("Bypassed the backend; key=%s", cache_key)
                 return _with_cache_control(response, cache_control)
 
             cached_data = await cache_backend.get(cache_key)
@@ -670,7 +674,7 @@ def cache(
 
             # If we don't have If-None-Match header, check if we have a valid cached copy
             # and can serve it directly (cache hit without ETag comparison)
-            if cached_data and not no_cache and store_ttl is not None:
+            if cached_data and not no_cache:
                 logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
                 return Response(
                     content=cached_data.content,
@@ -719,7 +723,7 @@ def cache(
                         status_code=current_response.status_code,
                         headers=_cacheable_headers(current_response),
                     ),
-                    ttl=store_ttl,
+                    ttl=ttl,
                 )
                 logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
 

@@ -69,15 +69,16 @@ async def test_returned_error_leaves_no_backend_entry():
 async def test_error_does_not_overwrite_a_good_cached_entry():
     """A transient failure must not evict the last good response.
 
-    Uses ETag-only mode (no ``ttl``) so the handler runs on every request; with
-    a live TTL the cached copy would be served without calling it at all.
+    Uses ``no_cache`` so the handler runs on every request while the response
+    is still stored; otherwise the cached copy would be served without calling
+    it at all.
     """
     app = FastAPI()
     client = TestClient(app)
     state = {"fail": False}
 
     @app.get("/flaky")
-    @cache()
+    @cache(ttl=60, no_cache=True)
     async def flaky():
         if state["fail"]:
             return Response(content="down", status_code=503)
@@ -169,7 +170,7 @@ def test_no_cache_with_if_none_match_serves_error_instead_of_304():
     state = {"fail": False}
 
     @app.get("/maybe")
-    @cache(no_cache=True)
+    @cache(ttl=60, no_cache=True)
     async def maybe():
         if state["fail"]:
             return Response(content="gone", status_code=410)
