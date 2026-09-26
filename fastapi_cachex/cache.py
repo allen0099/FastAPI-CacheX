@@ -30,6 +30,7 @@ from starlette.status import HTTP_206_PARTIAL_CONTENT
 from starlette.status import HTTP_300_MULTIPLE_CHOICES
 from starlette.status import HTTP_304_NOT_MODIFIED
 
+from .backends.base import MAX_TTL
 from .directives import DirectiveType
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
@@ -481,7 +482,8 @@ def cache(
     Raises:
         CacheXError: When the decorator is applied, if ``stale`` and
             ``stale_ttl`` are not given together, if ``public`` and
-            ``private`` are both set, or if ``ttl`` is negative.
+            ``private`` are both set, or if ``ttl`` is not an ``int``, is
+            negative or is larger than ``MAX_TTL``.
     """
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
@@ -495,8 +497,16 @@ def cache(
         if public and private:
             msg = "public and private are mutually exclusive"
             raise CacheXError(msg)
+        if ttl is not None and (isinstance(ttl, bool) or not isinstance(ttl, int)):
+            # Checked here: at request time the backend would reject it, and
+            # failing open would hide that the route never caches.
+            msg = f"ttl must be an int number of seconds, got {type(ttl).__name__}"
+            raise CacheXError(msg)
         if ttl is not None and ttl < 0:
             msg = "ttl must not be negative"
+            raise CacheXError(msg)
+        if ttl is not None and ttl > MAX_TTL:
+            msg = f"ttl must be at most {MAX_TTL} seconds"
             raise CacheXError(msg)
 
         # Analyze the original function's signature

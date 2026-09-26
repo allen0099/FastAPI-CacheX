@@ -679,6 +679,24 @@ async def test_redis_get_cache_data_with_entries(
 
 @requires_redis
 @pytest.mark.asyncio
+async def test_redis_increment_with_a_float_ttl_leaves_no_counter(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """A float ttl used to create the counter before EXPIRE failed (#229).
+
+    Redis does not roll back a failed script, so the counter stayed at 1 with
+    no expiry: a rate limiter locked out for good, behind an error saying the
+    key was "not a counter".
+    """
+    with pytest.raises(TypeError, match="got float"):
+        await async_redis_backend.increment("window", ttl=1.5)  # type: ignore[arg-type]
+
+    prefixed = async_redis_backend._make_key("window")
+    assert await async_redis_backend.client.exists(prefixed) == 0
+
+
+@requires_redis
+@pytest.mark.asyncio
 async def test_redis_increment_creates_then_adds(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:

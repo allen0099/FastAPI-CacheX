@@ -66,7 +66,7 @@ async def non_store_endpoint():
 - **使用 `no-cache` 指令**：先以新產生的內容強制重新驗證，再決定是否回 304
 - **使用 `private=True`**：不從共用後端讀取，也不寫入；每次都執行 handler，只有 `If-None-Match` 重新驗證有效
 - **未設定 `ttl`**（`ttl=None`）：快取的回應本文永遠不會直接回傳；每個請求都會執行 handler，唯一的例外是 `If-None-Match` 與已儲存 ETag 相符的請求，會得到 304
-- **使用 `ttl=0`**：送出 `max-age=0`，其餘行為與 `ttl=None` 相同。負數的 `ttl` 會在套用裝飾器時以 `CacheXError` 拒絕
+- **使用 `ttl=0`**：送出 `max-age=0`，其餘行為與 `ttl=None` 相同。負數、非 `int`（例如 `1.5` 或 `True`）或超過 `MAX_TTL`（見 [TTL 值](BACKENDS.md#ttl-values)）的 `ttl`，都會在套用裝飾器時以 `CacheXError` 拒絕
 
 只有成功的回應會被儲存。handler *回傳* 非 2xx 狀態的回應（例如 `Response(..., status_code=404)`）會原樣傳出、永不快取，因此暫時性的錯誤不會取代或污染上一筆正常的項目。`206 Partial Content` 同樣排除在外，因為它的本文只對產生它的那個 `Range` 請求有意義。`Set-Cookie` 永遠不會被儲存或重播。
 

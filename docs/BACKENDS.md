@@ -142,6 +142,8 @@ BackendProxy.set(backend)
 - `clear()` issues `flush_all`, which wipes the whole Memcached server, not just this namespace
 - A key Memcached would reject (over 250 bytes, whitespace, non-ASCII) is stored
   under its SHA-256 digest
+- A `ttl` whose expiry falls after 2038-01-19 raises `ValueError` (see
+  [TTL values](#ttl-values))
 - Values larger than the server's item size limit (1 MB by default, `memcached -I`)
   are rejected with an error. `@cache` logs it and serves the response unstored
   (see [When the backend fails](HTTP_CACHING.md#when-the-backend-fails)); other
@@ -198,7 +200,9 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   and the monitoring routes treat it like any other entry. Incrementing a key
   that holds anything else raises `CacheXError` on every backend, even a cached
   response whose body is a number. A counter written with
-  `set(key, counter_entry(n))` can be incremented on every backend.
+  `set(key, counter_entry(n))` can be incremented on every backend. `delta`
+  must be an `int` within the signed 64-bit range; anything else raises
+  `TypeError` or `ValueError` before the backend is touched.
 - `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis
   uses `GETDEL` (server 6.2+) and Memcached uses `GETS` + a `CAS` write with
   `exptime=-1` (retrying if another writer replaced the value in between). If
@@ -231,12 +235,22 @@ real atomicity.
 
 Every `ttl` argument (`set`, `set_if_absent`, `increment`, and the `CacheManager`
 and `StateManager` methods and defaults built on them) is either `None`, meaning
-the entry never expires, or a positive number of seconds. Zero and negative
-values raise `ValueError`. The underlying stores disagree on what they mean:
-Memcached reads an exptime of `0` as "never expire", Redis rejects `EX 0`, and
-an in-process dict would expire the entry at once. A third-party backend should
-call `fastapi_cachex.backends.base.validate_ttl(ttl)` in its `set` to follow
-the same rule. (`@cache(ttl=0)` is separate: it sends `max-age=0` and never
+the entry never expires, or an `int` number of seconds from 1 up to `MAX_TTL`
+(2**31 - 1, about 68 years). The checks run before any backend I/O:
+
+- Zero, negative and larger values raise `ValueError`. The underlying stores
+  disagree on what `0` means: Memcached reads it as "never expire", Redis
+  rejects `EX 0`, and an in-process dict would expire the entry at once.
+- A `float`, a `bool` or any other type raises `TypeError`. A float worked
+  only on the memory backend, and `True` was taken as one second. Convert a
+  `timedelta` with `int(td.total_seconds())`.
+- Memcached cannot store an expiry after 2038-01-19 (its exptime is a signed
+  32-bit timestamp), so the Memcached backend raises `ValueError` for a `ttl`
+  that reaches past it instead of accepting a write it would drop at once.
+
+A third-party backend should call `fastapi_cachex.backends.base.validate_ttl(ttl)`
+in its `set` to follow the same rules, and `validate_delta(delta)` in
+`increment`. (`@cache(ttl=0)` is separate: it sends `max-age=0` and never
 passes `0` to the backend; see [HTTP caching](HTTP_CACHING.md).)
 
 How each backend stores entries is described in

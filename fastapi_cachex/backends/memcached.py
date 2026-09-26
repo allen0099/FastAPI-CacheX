@@ -12,6 +12,7 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
+from .base import validate_delta
 from .base import validate_ttl
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,10 @@ _LEGAL_KEY_BYTES = frozenset(range(0x21, 0x7F))
 # not as a duration, so a longer TTL has to be converted before it is sent.
 _MAX_RELATIVE_TTL = 30 * 24 * 60 * 60
 
+# Memcached parses exptime as a signed 32-bit integer. An absolute timestamp
+# past this one (2038-01-19) wraps around and the item is dropped at once.
+_MAX_ABSOLUTE_EXPTIME = 2**31 - 1
+
 # Seconds a failed server stays out of rotation before HashClient tries it
 # again. Until then every call to it raises.
 _DEAD_TIMEOUT = 1
@@ -43,11 +48,22 @@ def _expiry(ttl: int | None) -> int:
     Anything past the 30-day boundary is sent as an absolute timestamp;
     passing it through as a duration would have Memcached read it as a moment
     in 1970 and expire the entry immediately. ``None`` means no expiry.
+
+    Raises:
+        ValueError: If the expiry would fall after 2038-01-19, which Memcached
+            cannot represent: it would accept the write and drop the item.
     """
     if ttl is None:
         return 0
     if ttl > _MAX_RELATIVE_TTL:
-        return int(time.time()) + ttl
+        expires_at = int(time.time()) + ttl
+        if expires_at > _MAX_ABSOLUTE_EXPTIME:
+            msg = (
+                f"ttl {ttl!r} expires after 2038-01-19, which Memcached cannot "
+                "store; use a shorter ttl or None"
+            )
+            raise ValueError(msg)
+        return expires_at
     return ttl
 
 
@@ -281,20 +297,25 @@ class MemcachedBackend(BaseCacheBackend):
         Memcached counters are unsigned, so a negative ``delta`` uses DECR,
         which stops at 0 instead of going negative.
         """
+        validate_delta(delta)
         validate_ttl(ttl)
         from pymemcache.exceptions import MemcacheClientError
 
         prefixed_key = self._make_key(key)
+        # Converted up front so a ttl Memcached cannot store fails before I/O.
+        exptime = _expiry(ttl)
         try:
             value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
             if value is None:
                 # No counter yet: ADD is atomic and a no-op when a concurrent
                 # call created it first, so the retry always finds a counter.
                 await asyncio.to_thread(
-                    self.client.add, prefixed_key, b"0", _expiry(ttl), noreply=False
+                    self.client.add, prefixed_key, b"0", exptime, noreply=False
                 )
                 value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
         except MemcacheClientError as e:
+            if "non-numeric" not in str(e):
+                raise
             msg = "Cache key holds a value that is not a counter"
             raise CacheXError(msg) from e
         if value is None:

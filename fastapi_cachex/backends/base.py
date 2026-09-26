@@ -35,6 +35,10 @@ def warn_if_path_shaped(pattern: str, cleared: int) -> None:
         )
 
 
+# The largest TTL accepted anywhere: 2**31 - 1 seconds, about 68 years.
+MAX_TTL = 2**31 - 1
+
+
 def validate_ttl(ttl: int | None) -> int | None:
     """Return ``ttl`` if it is ``None`` or a positive number of seconds.
 
@@ -43,13 +47,45 @@ def validate_ttl(ttl: int | None) -> int | None:
     entry at once), so the library refuses them instead of letting the
     meaning depend on the backend. ``None`` is the way to say "no expiry".
 
+    Only an ``int`` is a TTL. A ``float`` worked on the memory backend and
+    failed on Redis and Memcached, and ``True`` passed as one second.
+
     Raises:
-        ValueError: If ``ttl`` is zero or negative
+        TypeError: If ``ttl`` is not an ``int`` (``bool`` included)
+        ValueError: If ``ttl`` is zero, negative or larger than ``MAX_TTL``
     """
-    if ttl is not None and ttl <= 0:
+    if ttl is None:
+        return None
+    if isinstance(ttl, bool) or not isinstance(ttl, int):
+        msg = f"ttl must be an int number of seconds or None, got {type(ttl).__name__}"
+        raise TypeError(msg)
+    if ttl <= 0:
         msg = f"ttl must be a positive number of seconds or None, got {ttl!r}"
         raise ValueError(msg)
+    if ttl > MAX_TTL:
+        msg = f"ttl must be at most {MAX_TTL} seconds (about 68 years)"
+        raise ValueError(msg)
     return ttl
+
+
+def validate_delta(delta: int) -> int:
+    """Return ``delta`` if it is an ``int`` a counter can be changed by.
+
+    Redis counters are signed 64-bit integers and Memcached's are unsigned, so
+    a delta outside the signed 64-bit range fails on both, where it used to be
+    reported as the key not holding a counter.
+
+    Raises:
+        TypeError: If ``delta`` is not an ``int`` (``bool`` included)
+        ValueError: If ``delta`` does not fit in a signed 64-bit integer
+    """
+    if isinstance(delta, bool) or not isinstance(delta, int):
+        msg = f"delta must be an int, got {type(delta).__name__}"
+        raise TypeError(msg)
+    if not -(2**63) <= delta < 2**63:
+        msg = "delta must fit in a signed 64-bit integer"
+        raise ValueError(msg)
+    return delta
 
 
 class BaseCacheBackend(ABC):
@@ -210,7 +246,10 @@ class BaseCacheBackend(ABC):
 
         Raises:
             CacheXError: If ``key`` holds a cached response instead of a counter
+            TypeError: If ``delta`` or ``ttl`` is not an ``int``
+            ValueError: If ``ttl`` is out of range
         """
+        validate_delta(delta)
         validate_ttl(ttl)
         current = await self.get(key)
         value = delta if current is None else counter_value(current) + delta
