@@ -94,6 +94,8 @@ Four non-abstract atomic primitives live on the base class with non-atomic fallb
 - `set_if_absent(key, value, ttl=None) -> bool`: claim-if-free for locks/slots. Redis `SET NX EX`, Memcached `ADD`, memory under its lock.
 - `delete_if_equals(key, expected) -> bool`: release only while the key still holds `expected` (compared as decoded `CacheEntry`). Redis compares in Python then deletes via a Lua script that re-checks the raw bytes; Memcached uses `GETS` + `CAS` with exptime `-1` (immediate expiry), since classic `DELETE` has no CAS.
 
+`validate_ttl` (in `backends/base.py`) accepts `None` or an `int` from 1 to `MAX_TTL` (2**31 - 1) and raises `TypeError` for floats/bools; `validate_delta` requires an `int` in signed 64-bit range. Both run before any I/O. Memcached's `_expiry` also rejects expiries after 2038-01-19.
+
 `delete_many(keys) -> int` is the fifth non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock).
 
 `backends/codec.py` holds the JSON `CacheEntry` codec shared by Redis and Memcached; `decode_entry` maps a bare integer to a counter entry and every malformed value to `None`.

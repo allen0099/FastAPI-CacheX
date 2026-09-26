@@ -18,6 +18,7 @@ from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
+from .base import validate_delta
 from .base import validate_ttl
 from .base import warn_if_path_shaped
 
@@ -356,6 +357,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         A short Lua script makes the increment and the expiry one server-side
         operation; the key is stored as a plain Redis integer.
         """
+        validate_delta(delta)
         validate_ttl(ttl)
         from redis.exceptions import ResponseError
 
