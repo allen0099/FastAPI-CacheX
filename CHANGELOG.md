@@ -127,6 +127,16 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   still differs from Redis.
   ([#179](https://github.com/allen0099/FastAPI-CacheX/issues/179))
 
+- **Sessions no longer outlive `absolute_timeout`.** A sliding renewal, or a
+  `session_ttl` longer than `absolute_timeout`, set `expires_at`, and with it
+  the backend TTL and the JWT `exp`, past `created_at + absolute_timeout`. The
+  expiry is now capped there, and a session whose expiry already sits at the
+  cap is not renewed again, so it does not get a new token on every request.
+  Because the backend now drops the record at the cap, a token presented
+  after it raises `SessionNotFoundError`, as after an ordinary `session_ttl`
+  expiry, instead of `SessionExpiredError`.
+  ([#164](https://github.com/allen0099/FastAPI-CacheX/issues/164))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added

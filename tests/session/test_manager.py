@@ -1,5 +1,7 @@
 """Tests for session manager."""
 
+import base64
+import json
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -15,6 +17,7 @@ from fastapi_cachex.session.exceptions import SessionNotFoundError
 from fastapi_cachex.session.exceptions import SessionSecurityError
 from fastapi_cachex.session.exceptions import SessionTokenError
 from fastapi_cachex.session.manager import SessionManager
+from fastapi_cachex.session.models import Session
 from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.types import CacheEntry
@@ -496,20 +499,22 @@ async def test_save_session_without_ttl_uses_none_expiry(
 async def test_absolute_timeout_raises_session_expired_error(
     backend: MemoryBackend,
 ) -> None:
-    """absolute_timeout must expire the session even if sliding TTL would renew it."""
-    # absolute_timeout=1 means the session must not live beyond 1 second from creation
-    config = SessionConfig(secret_key="a" * 32, session_ttl=3600, absolute_timeout=1)
+    """absolute_timeout expires a record whose own expiry lies past the cap.
+
+    New records are capped at creation (#164), so this covers records stored
+    before absolute_timeout was set or lowered.
+    """
+    uncapped = SessionManager(
+        backend, SessionConfig(secret_key="a" * 32, session_ttl=3600)
+    )
+    session, token = await uncapped.create_session(user=SessionUser(user_id="abs-user"))
+    session.created_at -= timedelta(seconds=61)
+    await uncapped.update_session(session)
+
+    config = SessionConfig(secret_key="a" * 32, session_ttl=3600, absolute_timeout=60)
     manager = SessionManager(backend, config)
 
-    user = SessionUser(user_id="abs-user", username="testuser")
-    _session, token = await manager.create_session(user=user)
-
-    # Wait for the absolute timeout to pass
-    import asyncio
-
-    await asyncio.sleep(1.1)
-
-    with pytest.raises(SessionExpiredError):
+    with pytest.raises(SessionExpiredError, match="absolute timeout"):
         await manager.get_session(token)
 
 
@@ -543,6 +548,78 @@ async def test_absolute_timeout_not_triggered_before_expiry(
     # Should be valid immediately (well within 60 s absolute timeout)
     retrieved, _ = await manager.get_session(token)
     assert retrieved is not None
+
+
+async def _age(manager: SessionManager, session: Session, seconds: int) -> None:
+    """Move a stored session `seconds` into the past."""
+    session.created_at -= timedelta(seconds=seconds)
+    assert session.expires_at is not None
+    session.expires_at -= timedelta(seconds=seconds)
+    await manager.update_session(session)
+
+
+@pytest.mark.asyncio
+async def test_sliding_renewal_stops_at_absolute_timeout(
+    backend: MemoryBackend,
+) -> None:
+    """Renewal must not extend expires_at, the TTL or the JWT exp past the cap (#164)."""
+    config = SessionConfig(
+        secret_key="a" * 32,
+        token_format="jwt",
+        session_ttl=100,
+        sliding_threshold=0.5,
+        absolute_timeout=120,
+    )
+    manager = SessionManager(backend, config)
+    session, token = await manager.create_session(user=SessionUser(user_id="u"))
+    await _age(manager, session, 60)  # 40 s left of 100: renew
+
+    renewed, new_token = await manager.get_session(token)
+
+    cap = renewed.created_at + timedelta(seconds=120)
+    assert renewed.expires_at == cap
+    assert new_token is not None
+    payload = new_token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    assert claims["exp"] == int(cap.timestamp())
+    item = backend.cache[manager._get_backend_key(renewed.session_id)]
+    assert item.expiry is not None
+    assert item.expiry <= cap.timestamp()
+
+
+@pytest.mark.asyncio
+async def test_no_renewal_once_expiry_reaches_absolute_timeout(
+    backend: MemoryBackend,
+) -> None:
+    """At the cap there is nothing to extend, so no token is re-issued."""
+    config = SessionConfig(
+        secret_key="a" * 32,
+        session_ttl=100,
+        sliding_threshold=0.5,
+        absolute_timeout=120,
+    )
+    manager = SessionManager(backend, config)
+    session, token = await manager.create_session(user=SessionUser(user_id="u"))
+    await _age(manager, session, 80)  # the cap leaves 40 s, under the 50 s threshold
+    _renewed, first = await manager.get_session(token)
+    assert first is not None
+
+    _session, second = await manager.get_session(first)
+
+    assert second is None
+
+
+@pytest.mark.asyncio
+async def test_new_session_expiry_is_capped_by_absolute_timeout(
+    backend: MemoryBackend,
+) -> None:
+    """A session_ttl longer than absolute_timeout must not outlive the cap."""
+    config = SessionConfig(secret_key="a" * 32, session_ttl=3600, absolute_timeout=60)
+    manager = SessionManager(backend, config)
+
+    session, _token = await manager.create_session(user=SessionUser(user_id="u"))
+
+    assert session.expires_at == session.created_at + timedelta(seconds=60)
 
 
 @pytest.mark.asyncio

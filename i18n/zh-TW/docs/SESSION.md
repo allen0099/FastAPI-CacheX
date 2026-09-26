@@ -373,7 +373,7 @@ SessionConfig(
 )
 ```
 
-Session 會在 `session_ttl` 秒後過期。啟用 `sliding_expiration` 時，每個發現剩餘時間少於 `session_ttl * sliding_threshold` 秒的請求，都會將過期時間重新延長為完整的 `session_ttl`，並發行一個更新後的權杖，由中介軟體傳回給用戶端（回應標頭或 `Set-Cookie`，見上表）。標頭／Bearer 用戶端在回應帶有 `header_name` 標頭時，應以它取代已保存的權杖。`absolute_timeout` 會在 Session 建立後經過該秒數時結束 Session，不論是否有滑動更新。
+Session 會在 `session_ttl` 秒後過期。啟用 `sliding_expiration` 時，每個發現剩餘時間少於 `session_ttl * sliding_threshold` 秒的請求，都會將過期時間重新延長為完整的 `session_ttl`，並發行一個更新後的權杖，由中介軟體傳回給用戶端（回應標頭或 `Set-Cookie`，見上表）。標頭／Bearer 用戶端在回應帶有 `header_name` 標頭時，應以它取代已保存的權杖。`absolute_timeout` 會在 Session 建立後經過該秒數時結束 Session，不論是否有滑動更新：過期時間、後端 TTL 與 JWT 的 `exp` 都不會超過 `created_at + absolute_timeout`，過期時間到達這個上限後也不再發行更新後的權杖。
 
 #### `token_source_priority` 只接受 `"header"` 與 `"bearer"` {#token_source_priority-accepts-only-header-and-bearer}
 
