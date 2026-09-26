@@ -328,6 +328,7 @@ async def me(session=Depends(get_session)):
 - 在沒有載入任何 Session 時寫入 `request.session`，會建立一個新的**匿名** Session（`SessionManager.create_anonymous_session()`，並依設定套用 IP / User-Agent 綁定），並透過該請求的傳輸方式傳回其權杖。
 - 修改已載入 Session 的 `request.session`，會透過 `update_session()` 將新內容儲存到後端，以 dict 的內容取代 `Session.data`。
 - 在原本有資料的 Session 上清除它（`request.session.clear()`），會刪除後端的 Session；Cookie 用戶端還會收到一個使 Cookie 過期的 `Set-Cookie`。
+- 以寫入 `request.session` 的方式登入時，會沿用請求帶來的 Session ID。Starlette 的中介軟體中 Cookie *就是* Session，因此登入回應會取代任何被植入的 Cookie；這裡的 Cookie 只是指向伺服器端紀錄的名稱，被植入的 Cookie 會跟著受害者一起登入。請在附加使用者之前呼叫 `await rotate_session_id(request)`（見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)）。
 - 只要存取 `request.session`，就會為了尋找權杖而讀取過的每個請求標頭加入 `Vary`：依 `token_source_priority` 順序檢查的標頭（`header_name`，以及啟用 Bearer 權杖時的 `Authorization`），直到攜帶權杖的那一個為止。只有在沒有任何標頭攜帶權杖時才會讀取 Cookie，因此也只有這時才會加入 `Cookie`。
 
 Cookie 一律為 `HttpOnly`；`Secure`、`SameSite`、`Domain`、`Path` 與 `Max-Age` 則依 `cookie_*` 設定。
@@ -507,21 +508,23 @@ config = SessionConfig(
 
 ### 5. 登入後重新產生 Session ID {#5-regenerate-the-session-id-after-login}
 
-防止 Session 固定攻擊（session fixation）：
+防止 Session 固定攻擊（session fixation）。用戶端帶來的權杖可能是別人預先植入的（例如從同網域的其他子網域）；若登入時沿用它，植入者就會拿到一個已登入的 Session。請在附加使用者之前為 Session 換一個新 ID：
 
 ```python
-from fastapi_cachex.session.dependencies import SessionDep, SessionManagerDep
+from fastapi_cachex.session import rotate_session_id
 
 
 @app.post("/login")
-async def login(request: Request, session: SessionDep, manager: SessionManagerDep):
+async def login(request: Request):
     ...  # 驗證帳號密碼
-    await manager.regenerate_session_id(session)
+    await rotate_session_id(request)
     request.session["user_id"] = "123"
     return {"ok": True}
 ```
 
-`regenerate_session_id()` 會刪除舊 ID 底下的後端紀錄，並以新 ID 儲存該 Session，保留其資料、使用者、`created_at` 與過期時間。當該 Session 是請求本身的 Session（來自 `SessionDep`、`get_session` 等）時，任一個中介軟體都會看到新 ID，並透過該請求使用的傳輸方式送出對應的權杖：Cookie 使用 `Set-Cookie`，標頭權杖則使用回應標頭。之後舊的權杖就無法再解析出 Session。
+`rotate_session_id()` 會對請求的 Session 呼叫 `SessionManager.regenerate_session_id()`，刪除舊 ID 底下的後端紀錄，並以新 ID 儲存該 Session，保留其資料、使用者、`created_at` 與過期時間。任一個中介軟體都會看到新 ID，並透過該請求使用的傳輸方式送出對應的權杖：Cookie 使用 `Set-Cookie`，標頭權杖則使用回應標頭。之後舊的權杖就無法再解析出 Session。新訪客沒有可換 ID 的 Session，因此它會回傳 `False`，第一次寫入時會以全新的 ID 建立 Session。
+
+已經取得請求 Session 物件的 handler，也可以直接呼叫 `await manager.regenerate_session_id(session)`，效果相同。請從 `get_optional_session` 取得 Session，並在它為 `None` 時略過呼叫；`SessionDep` 會對還沒有 Session 的訪客回應 `401`。
 
 在中介軟體之外，請以中介軟體會傳入的相同綁定值載入 Session，並自行將回傳的權杖交給用戶端：
 
@@ -546,6 +549,7 @@ from fastapi_cachex.session import (
     get_optional_session,  # 可選驗證（沒有 Session 時為 None）
     require_session,  # get_session 的別名
     get_session_manager,  # 中介軟體註冊的 SessionManager
+    rotate_session_id,  # 不是依賴項：在登入時 await 它以取得新的 Session ID
 )
 
 # 型別註記

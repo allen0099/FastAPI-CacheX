@@ -6,6 +6,7 @@ from .dependencies import get_session
 from .dependencies import get_session_client_ip
 from .dependencies import get_session_manager
 from .dependencies import require_session
+from .dependencies import rotate_session_id
 from .manager import SessionManager
 from .middleware import FastAPICacheXSessionMiddleware
 from .middleware import SessionMiddleware
@@ -28,4 +29,5 @@ __all__ = [
     "get_session_client_ip",
     "get_session_manager",
     "require_session",
+    "rotate_session_id",
 ]
