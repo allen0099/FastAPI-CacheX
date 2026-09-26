@@ -111,10 +111,13 @@ def _extract_header_token(
 
         elif source == "bearer":
             if config.use_bearer_token:
-                auth_header = connection.headers.get("authorization")
-                if auth_header and auth_header.startswith("Bearer "):
-                    bearer_prefix_len = 7
-                    token_value = auth_header[bearer_prefix_len:]
+                # The scheme name is case-insensitive (RFC 9110 §11.1) and is
+                # followed by one or more spaces (RFC 6750 §2.1).
+                scheme, _, token_value = connection.headers.get(
+                    "authorization", ""
+                ).partition(" ")
+                token_value = token_value.lstrip(" ")
+                if scheme.lower() == "bearer" and token_value:
                     logger.debug("Token extracted from bearer auth")
                     return token_value
 

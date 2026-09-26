@@ -588,6 +588,38 @@ def test_bearer_is_used_when_the_header_source_finds_nothing(
     assert token == "from-bearer"
 
 
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        "Bearer from-bearer",
+        "bearer from-bearer",
+        "BEARER from-bearer",
+        "Bearer   from-bearer",
+    ],
+)
+def test_bearer_scheme_is_matched_case_insensitively(
+    config: SessionConfig, authorization: str
+) -> None:
+    """Auth schemes are case-insensitive (RFC 9110 §11.1), and RFC 6750 allows
+    more than one space before the token (#166).
+    """
+    token = _extract_header_token(_connection({"Authorization": authorization}), config)
+
+    assert token == "from-bearer"
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    ["Bearer", "Bearer ", "Bearer   ", "Basic from-bearer", "Bearerfrom-bearer"],
+)
+def test_an_empty_or_non_bearer_authorization_header_yields_no_token(
+    config: SessionConfig, authorization: str
+) -> None:
+    token = _extract_header_token(_connection({"Authorization": authorization}), config)
+
+    assert token is None
+
+
 def test_header_wins_over_bearer_when_both_are_present(
     config: SessionConfig,
 ) -> None:
