@@ -136,7 +136,7 @@ class CacheLock:
                 else:
                     sleep_time = interval
                 await asyncio.sleep(sleep_time)
-        except Exception:
+        except BaseException:
             self._is_held = False
             raise
 

@@ -222,3 +222,27 @@ async def test_lock_shared_instance_raises_runtime_error() -> None:
     results = await asyncio.gather(task_worker(), task_worker(), return_exceptions=True)
     assert any(isinstance(res, RuntimeError) for res in results)
     assert any(res is None for res in results)
+
+
+@pytest.mark.asyncio
+async def test_lock_acquire_cancelled_resets_is_held() -> None:
+    backend = MemoryBackend()
+    BackendProxy.set(backend)
+
+    lock1 = CacheLock("job", ttl=30)
+    lock2 = CacheLock("job", ttl=30, poll_interval=0.01)
+
+    assert await lock1.acquire(blocking=False) is True
+
+    task = asyncio.create_task(lock2.acquire(blocking=True, poll_interval=0.01))
+    await asyncio.sleep(0.02)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await lock1.release()
+
+    assert await lock2.acquire(blocking=False) is True
+    assert await lock2.release() is True
+
