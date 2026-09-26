@@ -5,6 +5,7 @@ description = "A caching library for FastAPI with support for Cache-Control, ETa
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "allen0099", email = "s96016641@gmail.com" }
 ]
@@ -22,6 +23,7 @@ classifiers = [
     "Framework :: FastAPI",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Typing :: Typed",
 ]
 keywords = ["fastapi", "cache", "etag", "cache-control", "redis", "memcached", "in-memory"]
 dependencies = [

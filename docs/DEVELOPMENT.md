@@ -265,22 +265,37 @@ The workflow runs in this order:
    it, rewrites the compare links at the bottom, and writes the release body:
    each entry's bold summary and issue links, and a link to the full entries
    on the documentation site.
-4. **The permanent part**, kept together at the end: commit the version bump
-   and the promoted changelog, push it, tag, push the tag by refspec, create
-   the GitHub release from the promoted section, publish to PyPI.
+4. **The build.** `uv build`. The bumped files, the release notes and
+   `dist/` are uploaded as one artifact, which the next two jobs download
+   instead of building anything again.
+5. **The permanent part**, kept together at the end: commit the version bump
+   and the promoted changelog, push it to master, tag, push the tag by refspec,
+   create the GitHub release from the promoted section, publish to PyPI.
+
+Steps 1–4 are the `build` job, which installs every dev dependency and so gets
+read access to the repository and nothing else: no git credentials, no PyPI
+token. The commit, tag and GitHub release are the `release` job, the only one
+that can write to the repository, and it installs nothing. Publishing is the
+`publish` job, the only one that can mint a PyPI token, running in the `pypi`
+environment so the trusted publisher and any protection rules can be tied to it.
+
+A release runs from `master` only. Dispatched on any other ref, the run fails
+at its first step, and the `release` and `publish` jobs check the ref again.
 
 ### Rehearsing a release
 
-Dispatch it with **dry run** ticked. Everything runs — the gate, the version
-bump, the tag check, the changelog promotion, `uv build` — and the four steps
-that write somewhere permanent (commit, tag, GitHub release, PyPI) are skipped.
-Until this existed, the first real exercise of the release path was a release.
+Dispatch it with **dry run** ticked. Everything in `build` runs — the gate,
+the version bump, the tag check, the changelog promotion, `uv build` — and the
+`release` and `publish` jobs, which write somewhere permanent (commit, tag,
+GitHub release, PyPI), are skipped. Until this existed, the first real exercise
+of the release path was a release. A dry run may be dispatched on any branch,
+which is how a change to the workflow itself is rehearsed before it is merged.
 
 A dry run answers two questions, and the job summary reports both: whether the
 bump and the promotion actually landed in `pyproject.toml`, `uv.lock` and
 `CHANGELOG.md` (shown as a `git diff --stat`, staged by nothing), and what
-would have been published. The release notes and the built `dist/` are attached
-to the run as an artifact, because the notes are markdown and reading them in
+would have been published. The release notes, the built `dist/` and the bumped
+files are attached to the run as an artifact, because the notes are markdown and reading them in
 the job summary renders them a second time — which is not what the release page
 would show.
 
