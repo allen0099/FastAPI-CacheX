@@ -20,7 +20,7 @@ The implementation lives in [`fastapi_cachex/session/token_serializers.py`](http
 |-------|------|----------|----------|-------------|
 | `sid` | Session ID | ✅ | ✅ | Custom claim that maps to the server-side session |
 | `iat` | Issued At | ✅ | ✅ | Time the token was issued (RFC 7519); rejected if it lies in the future (beyond `jwt_leeway`) |
-| `exp` | Expiration | ✅ | ✅ | Token expiry: the session's `expires_at` (so it follows sliding expiration), falling back to `iat + session_ttl` |
+| `exp` | Expiration | ✅ | ✅ | Token expiry: the session's `expires_at` (so it follows sliding expiration and never passes `absolute_timeout`), falling back to `iat + session_ttl` |
 | `iss` | Issuer | ⚠️ | ✅ | Token issuer (optional; only issued and verified when `jwt_issuer` is set) |
 | `aud` | Audience | ⚠️ | ✅ | Intended audience (optional; only issued and verified when `jwt_audience` is set) |
 

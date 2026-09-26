@@ -421,7 +421,9 @@ less than `session_ttl * sliding_threshold` seconds remaining extends the expiry
 `session_ttl` again and issues a renewed token, which the middleware sends back to the client
 (response header or `Set-Cookie`, see the table above). Header/bearer clients should replace their
 stored token when the response carries the `header_name` header. `absolute_timeout` ends the
-session that many seconds after it was created, regardless of sliding renewals.
+session that many seconds after it was created, regardless of sliding renewals: the expiry,
+the backend TTL and a JWT's `exp` never go past `created_at + absolute_timeout`, and once
+the expiry reaches that cap no further renewed tokens are issued.
 
 #### `token_source_priority` accepts only `"header"` and `"bearer"`
 

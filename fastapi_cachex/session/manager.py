@@ -65,6 +65,18 @@ class SessionManager:
             config.backend_key_prefix,
         )
 
+    def _expiry_for(self, session: Session) -> datetime:
+        """Return now + session_ttl, capped at the session's absolute_timeout.
+
+        Without the cap, the backend TTL and a JWT's exp would outlive the
+        session, which get_session rejects once absolute_timeout passes.
+        """
+        expires_at = _now() + timedelta(seconds=self.config.session_ttl)
+        if self.config.absolute_timeout is not None:
+            cap = session.created_at + timedelta(seconds=self.config.absolute_timeout)
+            expires_at = min(expires_at, cap)
+        return expires_at
+
     def _get_backend_key(self, session_id: str) -> str:
         """Get backend storage key for a session.
 
@@ -130,7 +142,7 @@ class SessionManager:
 
         # Set expiry
         if self.config.session_ttl:
-            session.expires_at = _now() + timedelta(seconds=self.config.session_ttl)
+            session.expires_at = self._expiry_for(session)
 
         # Bind IP and User-Agent if configured
         if self.config.ip_binding:
@@ -273,8 +285,11 @@ class SessionManager:
             time_remaining = (session.expires_at - _now()).total_seconds()
             threshold = self.config.session_ttl * self.config.sliding_threshold
 
-            if time_remaining < threshold:
-                session.renew(self.config.session_ttl)
+            expires_at = self._expiry_for(session)
+            # Once expires_at sits at the absolute_timeout cap, renewing would
+            # only re-issue a token with the same expiry on every request.
+            if time_remaining < threshold and expires_at > session.expires_at:
+                session.expires_at = expires_at
                 renewed_token = self.issue_token(session)
                 logger.debug(
                     "Session renewed (sliding expiration); id=%s ttl=%s",
