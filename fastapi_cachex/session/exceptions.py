@@ -1,8 +1,14 @@
 """Session-related exceptions."""
 
+from fastapi_cachex.exceptions import CacheXError
 
-class SessionError(Exception):
-    """Base exception for session errors."""
+
+class SessionError(CacheXError):
+    """Base exception for session errors.
+
+    Derives from ``CacheXError`` since 0.3.8, like ``StateError``, so
+    ``except CacheXError`` also catches session errors.
+    """
 
 
 class SessionNotFoundError(SessionError):

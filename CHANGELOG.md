@@ -44,6 +44,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   summaries with their issue links, grouped as in the changelog, and links to
   the full entries on the documentation site. The changelog itself keeps the
   details.
+- **`SessionError` derives from `CacheXError`.** It derived from `Exception`,
+  while `StateError` already derived from `CacheXError`, so `except CacheXError`
+  caught state errors but not session errors. Handlers for `SessionError` or
+  `Exception` keep working. A `try` block that lists `except CacheXError`
+  before `except SessionError` now takes the `CacheXError` branch for session
+  errors. ([#162](https://github.com/allen0099/FastAPI-CacheX/issues/162))
 
 ### Deprecated
 
@@ -146,7 +152,6 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   after it raises `SessionNotFoundError`, as after an ordinary `session_ttl`
   expiry, instead of `SessionExpiredError`.
   ([#164](https://github.com/allen0099/FastAPI-CacheX/issues/164))
-
 - **`MemoryBackend` restarts its cleanup task on a new event loop.** The task
   stayed tied to the loop of the first cache call. If that loop was closed
   without cancelling it, a backend reused on another loop never cleaned up
@@ -160,14 +165,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   `delete_if_equals()` raised `TypeError`. A failed server is now taken out of
   rotation at once and tried again after one second, instead of after 60.
   ([#197](https://github.com/allen0099/FastAPI-CacheX/issues/197))
-
 - **`SessionConfig` warns when `cookie_same_site="none"` is set without
   `cookie_https_only=True`.** Browsers reject a `SameSite=None` cookie that is
   not `Secure`, so the session cookie was silently never stored. The
   combination is still accepted.
   ([#167](https://github.com/allen0099/FastAPI-CacheX/issues/167))
-
-- **Memcached `get_and_delete()` uses CAS deletion to avoid deleting concurrent writes.**
+- **Memcached `get_and_delete()` uses CAS deletion to avoid deleting concurrent
+  writes.**
   The get-then-delete sequence allowed a concurrent writer to update the key
   between the two calls, causing `get_and_delete()` to delete the new value
   while returning the old one. It now issues `gets` and a `cas` write with
@@ -175,7 +179,6 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   to retrieve and remove the current value, matching Redis `GETDEL`, and raises
   `CacheXError` if retries run out.
   ([#175](https://github.com/allen0099/FastAPI-CacheX/issues/175))
-
 
 ## [0.3.7] - 2026-09-25
 

@@ -645,6 +645,8 @@ be sent back to the client. `get_session()` raises a `SessionError` subclass on
 failure: `SessionTokenError` (malformed token), `SessionSecurityError` (bad
 signature or binding mismatch), `SessionNotFoundError`, `SessionInvalidError`
 (session not active) or `SessionExpiredError` (TTL or absolute timeout exceeded).
+Since 0.3.8, `SessionError` derives from `CacheXError`, so `except CacheXError`
+catches session errors too.
 
 Every method with its signature is in the generated
 [Session API reference](api/session.md).
