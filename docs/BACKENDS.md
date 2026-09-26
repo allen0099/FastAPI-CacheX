@@ -71,7 +71,7 @@ config = RedisConfig(
     port=6379,
     password=None,  # SecretStr | None
     db=0,
-    encoding="utf-8",  # how the client decodes server responses
+    encoding="utf-8",  # keep UTF-8; see below
     socket_timeout=1.0,  # seconds; applies to reads/writes
     socket_connect_timeout=1.0,
     key_prefix="fastapi_cachex:",
@@ -80,6 +80,12 @@ config = RedisConfig(
 backend = AsyncRedisCacheBackend.load_from_config(config)
 BackendProxy.set(backend)
 ```
+
+Keep `encoding="utf-8"`. Entries are always written as UTF-8 JSON, and the client
+decodes replies with `encoding`, so any other value corrupts non-ASCII content on the way
+back (with `"latin-1"`, a stored `b"\xe9"` reads back as `b"\xc3\xa9"`). The backend
+emits a `RuntimeWarning` for a non-UTF-8 encoding, and the parameter will be removed in
+0.4.0.
 
 Keep `protocol=2` unless you need RESP3 features *and* your `hiredis` build
 supports it (RESP3 needs hiredis >= 3.0). Redis 8.0 speaks RESP3, but an older

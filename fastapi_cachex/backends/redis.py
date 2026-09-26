@@ -1,5 +1,6 @@
 """Redis cache backend implementation."""
 
+import codecs
 import logging
 import time
 import warnings
@@ -71,6 +72,28 @@ return 0
 """
 
 
+def _warn_if_not_utf8(encoding: str) -> None:
+    r"""Warn when replies would be decoded with anything but UTF-8.
+
+    The shared codec writes UTF-8 JSON, and the client decodes each reply with
+    ``encoding``, so under e.g. latin-1 a stored ``b"\xe9"`` reads back as
+    ``b"\xc3\xa9"``. Aliases such as ``"UTF8"`` and ``"utf_8"`` are accepted.
+    """
+    try:
+        name = codecs.lookup(encoding).name
+    except LookupError:
+        return  # the client rejects an unknown encoding itself
+    if name != "utf-8":
+        warnings.warn(
+            f"AsyncRedisCacheBackend(encoding={encoding!r}) will corrupt non-ASCII "
+            "cached content: entries are always written as UTF-8, and replies "
+            "are decoded with this encoding. Use encoding='utf-8'. The encoding "
+            "parameter will be removed in version 0.4.0.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+
 class AsyncRedisCacheBackend(BaseCacheBackend):
     """Async Redis cache backend implementation.
 
@@ -102,7 +125,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             port: Redis port
             password: Redis password
             db: Redis database number
-            encoding: Character encoding to use
+            encoding: Character encoding the client decodes replies with.
+                Leave it as UTF-8: entries are always written as UTF-8 JSON, so
+                any other encoding corrupts non-ASCII content on the way back,
+                and a ``RuntimeWarning`` says so. The parameter will be removed
+                in 0.4.0.
             decode_responses: Whether to decode response automatically
             socket_timeout: Timeout for socket operations (in seconds)
             socket_connect_timeout: Timeout for socket connection (in seconds)
@@ -123,6 +150,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 "'pip install \"redis[hiredis]\"' "
             )
             raise CacheXError(msg)
+
+        _warn_if_not_utf8(encoding)
 
         # `protocol` is not in the types-redis stubs (added in redis-py 5.x).
         # Pass it via **kwargs so mypy doesn't complain about an unknown keyword.

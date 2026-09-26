@@ -30,6 +30,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   the full entries on the documentation site. The changelog itself keeps the
   details.
 
+### Deprecated
+
+- **Passing the Redis key prefix in a `clear_pattern()` pattern.** When such a
+  pattern clears nothing, the prefix-stripped form is still tried and emits a
+  `DeprecationWarning` if it clears anything. The retry will be removed in
+  0.4.0. ([#125](https://github.com/allen0099/FastAPI-CacheX/issues/125))
+
 ### Fixed
 
 - **Redis `clear_pattern()` no longer strips a pattern that starts with the key
@@ -38,12 +45,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   keys also start with `cache:`, `clear_pattern("user:*")` used to clear
   nothing. ([#109](https://github.com/allen0099/FastAPI-CacheX/issues/109))
 
-### Deprecated
-
-- **Passing the Redis key prefix in a `clear_pattern()` pattern.** When such a
-  pattern clears nothing, the prefix-stripped form is still tried and emits a
-  `DeprecationWarning` if it clears anything. The retry will be removed in
-  0.4.0. ([#125](https://github.com/allen0099/FastAPI-CacheX/issues/125))
+- **The Redis backend warns when `encoding` is not UTF-8.** Entries are always
+  written as UTF-8 JSON, but the client decoded replies with the configured
+  encoding, so under `encoding="latin-1"` non-ASCII content came back
+  corrupted without any error. `AsyncRedisCacheBackend` and
+  `load_from_config()` now emit a `RuntimeWarning` for any encoding other than
+  UTF-8; the parameter is removed in 0.4.0 (#126).
+  ([#122](https://github.com/allen0099/FastAPI-CacheX/issues/122))
 
 ## [0.3.7] - 2026-09-25
 
