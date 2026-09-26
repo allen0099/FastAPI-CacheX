@@ -713,6 +713,20 @@ def test_negative_ttl_is_rejected_at_decoration():
         cache(ttl=-1)(lambda: None)
 
 
+@pytest.mark.parametrize(
+    ("ttl", "match"),
+    [
+        pytest.param(1.5, "got float", id="float"),
+        pytest.param(True, "got bool", id="bool"),
+        pytest.param(2**31, "at most", id="too-large"),
+    ],
+)
+def test_invalid_ttl_is_rejected_at_decoration(ttl, match):
+    """The backend would reject it per request, and fail-open would hide that (#229)."""
+    with pytest.raises(CacheXError, match=match):
+        cache(ttl=ttl)(lambda: None)
+
+
 def test_stale_client_etag_with_changed_cache():
     """If the client sends an ETag that doesn't match the cached one, return 200 with new ETag."""
     import time

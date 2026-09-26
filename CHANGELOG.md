@@ -220,6 +220,18 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   `del` or `pop()`, e.g. a flash message; such a session is now saved with
   empty data. An emptied anonymous session is still deleted.
   ([#227](https://github.com/allen0099/FastAPI-CacheX/issues/227))
+- **A `ttl` must be an `int` up to `MAX_TTL`, and `delta` an `int` in 64-bit
+  range.** On Redis, `increment(key, ttl=1.5)` created the counter and then
+  failed at `EXPIRE`, leaving a counter that never expired (a permanent
+  lockout for a rate limiter) behind an error saying the key was "not a
+  counter". `validate_ttl` now raises `TypeError` for `float`, `bool` and
+  other types, and `ValueError` above `MAX_TTL` (2**31 - 1 seconds), before
+  any backend I/O. A float TTL used to work on the memory backend only.
+  `increment` checks `delta` the same way. Memcached now raises `ValueError`
+  for a `ttl` whose expiry falls after 2038-01-19, which it used to accept and
+  then drop at once, and reports only non-numeric values as "not a counter".
+  `@cache` rejects such a `ttl` when the decorator is applied.
+  ([#229](https://github.com/allen0099/FastAPI-CacheX/issues/229))
 
 ## [0.3.7] - 2026-09-25
 

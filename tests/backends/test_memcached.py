@@ -10,6 +10,7 @@ from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.backends.memcached import _CAS_MAX_RETRIES
 from fastapi_cachex.backends.memcached import _DEAD_TIMEOUT
+from fastapi_cachex.backends.memcached import _expiry
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.types import CacheEntry
@@ -454,6 +455,26 @@ async def test_memcached_increment_honors_ttl(
     assert await memcached_backend.increment("window", ttl=1) == 1
 
 
+@pytest.mark.asyncio
+async def test_memcached_increment_only_maps_non_numeric_errors_to_not_a_counter() -> (
+    None
+):
+    """Other client errors are about the request, not the stored value (#229)."""
+    backend = stubbed_backend()
+    # Looked up rather than imported: the tests do not import optional packages.
+    client_error = sys.modules["pymemcache.exceptions"].MemcacheClientError
+    backend.client.incr.side_effect = client_error(b"invalid numeric delta argument")
+
+    with pytest.raises(client_error, match="invalid numeric delta argument"):
+        await backend.increment("n")
+
+    backend.client.incr.side_effect = client_error(
+        b"cannot increment or decrement non-numeric value"
+    )
+    with pytest.raises(CacheXError, match="not a counter"):
+        await backend.increment("n")
+
+
 @requires_memcached
 @pytest.mark.asyncio
 async def test_memcached_increment_rejects_a_cached_response(
@@ -895,3 +916,26 @@ async def test_lock_lifecycle_with_memcached(
     assert await lock2.acquire(blocking=False) is False
     assert await lock1.extend(60) is True
     assert await lock1.release() is True
+
+
+def test_expiry_up_to_2038_is_sent_as_a_timestamp(monkeypatch) -> None:
+    """Memcached reads exptime as a signed 32-bit int: 2**31 - 1 is the last second."""
+    monkeypatch.setattr("fastapi_cachex.backends.memcached.time.time", lambda: 2e9)
+
+    assert _expiry(2**31 - 1 - 2_000_000_000) == 2**31 - 1
+    with pytest.raises(ValueError, match="expires after 2038-01-19"):
+        _expiry(2**31 - 2_000_000_000)
+
+
+@pytest.mark.parametrize("operation", ["set", "set_if_absent", "increment"])
+@pytest.mark.asyncio
+async def test_ttl_past_2038_is_rejected_before_io(operation: str) -> None:
+    """Such a write used to succeed while Memcached dropped the item at once (#229)."""
+    backend = stubbed_backend()
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    args = ("k",) if operation == "increment" else ("k", entry)
+
+    with pytest.raises(ValueError, match="expires after 2038-01-19"):
+        await getattr(backend, operation)(*args, ttl=2**31 - 1)
+    assert isinstance(backend.client, MagicMock)
+    assert backend.client.method_calls == []

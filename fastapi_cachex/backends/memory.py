@@ -14,6 +14,7 @@ from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
 
 from .base import BaseCacheBackend
+from .base import validate_delta
 from .base import validate_ttl
 from .base import warn_if_path_shaped
 
@@ -262,6 +263,7 @@ class MemoryBackend(BaseCacheBackend):
         The read-modify-write happens under the backend lock, so concurrent
         callers on the same event loop never lose an increment.
         """
+        validate_delta(delta)
         validate_ttl(ttl)
         self._ensure_cleanup_started()
 

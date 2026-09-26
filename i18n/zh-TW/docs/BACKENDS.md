@@ -107,6 +107,7 @@ BackendProxy.set(backend)
 - `clear_path()` 只會刪除完全相符的那個鍵；`include_params` 沒有作用
 - `clear()` 會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存
+- 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
 - 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕並拋出錯誤。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）；其他呼叫端則會收到該錯誤
 - 若需要依模式清除快取，請考慮使用 Redis 後端
 
@@ -143,7 +144,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
         await backend.delete_if_equals(f"stream:{user_id}", owner)
 ```
 
-- `increment(key, delta=1, ttl=None) -> int`：記憶體後端在鎖內執行讀取—修改—寫入，Redis 執行 Lua 腳本（`EXISTS` + `INCRBY` + `EXPIRE`），Memcached 則使用 `ADD` + `INCR`/`DECR`（Memcached 的計數器最低停在 0）。計數器可透過 `get()` 讀到，形式為 fingerprint 為 `COUNTER_FINGERPRINT`、內容為十進位數值的 `CacheEntry`，因此 `delete`／`clear*` 與監控路由都會把它當成一般項目處理。對存放快取回應的鍵執行 increment 會拋出 `CacheXError`。
+- `increment(key, delta=1, ttl=None) -> int`：記憶體後端在鎖內執行讀取—修改—寫入，Redis 執行 Lua 腳本（`EXISTS` + `INCRBY` + `EXPIRE`），Memcached 則使用 `ADD` + `INCR`/`DECR`（Memcached 的計數器最低停在 0）。計數器可透過 `get()` 讀到，形式為 fingerprint 為 `COUNTER_FINGERPRINT`、內容為十進位數值的 `CacheEntry`，因此 `delete`／`clear*` 與監控路由都會把它當成一般項目處理。對存放快取回應的鍵執行 increment 會拋出 `CacheXError`。`delta` 必須是 signed 64 位元範圍內的 `int`，否則會在存取後端之前拋出 `TypeError` 或 `ValueError`。
 - `get_and_delete(key) -> CacheEntry | None`：記憶體後端在鎖內 pop，Redis 使用 `GETDEL`（伺服器 6.2 以上），Memcached 使用 `GETS` + `exptime=-1` 的 `CAS` 寫入（若中間有其他寫入者替換了值則會重試；連續 16 次都被替換時會拋出 `CacheXError`，而不是當成鍵不存在）。`StateManager.consume_state`、`StateManager.delete_state`、`CacheManager.delete` 與 `invalidate()` 都建立在它之上。
 - `set_if_absent(key, value, ttl=None) -> bool`：只在 `key` 不存在時儲存 `value`（已過期的鍵視為不存在），並回報是否有寫入。記憶體後端在鎖內檢查，Redis 使用 `SET NX EX`，Memcached 使用 `ADD`。
 - `delete_if_equals(key, expected) -> bool`：只在 `key` 仍存放 `expected` 時才移除它，因此項目已過期的持有者無法釋放已被他人取得的鎖。請在你儲存的項目中放入唯一的權杖，並以同一個項目釋放。記憶體後端在鎖內比較，Redis 透過 Lua 腳本刪除，並在腳本中重新檢查先前比較過的值，Memcached 則使用 `GETS` + 一個讓項目立即過期的 `CAS` 寫入（傳統協定的 `DELETE` 不接受 CAS 權杖）。
@@ -152,6 +153,12 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 
 ## TTL 值 {#ttl-values}
 
-每個 `ttl` 參數（`set`、`set_if_absent`、`increment`，以及建立在它們之上的 `CacheManager` 與 `StateManager` 方法和預設值）只能是 `None`（表示項目永不過期），或正數秒數。零與負值會拋出 `ValueError`。底層儲存對這些值的解讀各不相同：Memcached 把 exptime `0` 視為「永不過期」，Redis 拒絕 `EX 0`，而行程內的 dict 則會立即讓項目過期。第三方後端應在其 `set` 中呼叫 `fastapi_cachex.backends.base.validate_ttl(ttl)`，以遵循相同規則。（`@cache(ttl=0)` 是另一回事：它會送出 `max-age=0`，且絕不會把 `0` 傳給後端；見 [HTTP 快取](HTTP_CACHING.md)。）
+每個 `ttl` 參數（`set`、`set_if_absent`、`increment`，以及建立在它們之上的 `CacheManager` 與 `StateManager` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的 `int` 秒數。這些檢查都在存取後端之前進行：
+
+- 零、負值與更大的值會拋出 `ValueError`。底層儲存對 `0` 的解讀各不相同：Memcached 把 exptime `0` 視為「永不過期」，Redis 拒絕 `EX 0`，而行程內的 dict 則會立即讓項目過期。
+- `float`、`bool` 或其他型別會拋出 `TypeError`。float 過去只在記憶體後端上有效，而 `True` 會被當成一秒。`timedelta` 請以 `int(td.total_seconds())` 轉換。
+- Memcached 無法儲存 2038-01-19 之後的過期時間（它的 exptime 是 signed 32 位元時間戳），因此 Memcached 後端遇到超過這個時間點的 `ttl` 會拋出 `ValueError`，而不是接受一筆會立即被丟棄的寫入。
+
+第三方後端應在其 `set` 中呼叫 `fastapi_cachex.backends.base.validate_ttl(ttl)`，並在 `increment` 中呼叫 `validate_delta(delta)`，以遵循相同規則。（`@cache(ttl=0)` 是另一回事：它會送出 `max-age=0`，且絕不會把 `0` 傳給後端；見 [HTTP 快取](HTTP_CACHING.md)。）
 
 各後端如何儲存項目，請見[快取流程](CACHE_FLOW.md#backend-storage-formats)；類別本身請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/backends/)（英文）。
