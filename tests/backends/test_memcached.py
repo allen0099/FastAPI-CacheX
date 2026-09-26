@@ -7,6 +7,7 @@ import pytest_asyncio
 
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from tests.live_servers import MEMCACHED_SERVER
@@ -667,3 +668,58 @@ async def test_memcached_delete_if_equals_keeps_a_value_written_after_the_compar
 
     raw = await asyncio.to_thread(client.get, memcached_backend._make_key("slot"))
     assert raw == b'{"overwritten": true}'
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_expire_if_equals_updates_ttl_only_when_matching(
+    memcached_backend: MemcachedBackend,
+):
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await memcached_backend.set("slot", theirs, 30)
+
+    assert await memcached_backend.expire_if_equals("slot", mine, 60) is False
+    assert await memcached_backend.expire_if_equals("slot", theirs, 60) is True
+    assert await memcached_backend.get("slot") == theirs
+    assert await memcached_backend.expire_if_equals("missing", theirs, 60) is False
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_expire_if_equals_keeps_a_value_written_after_the_compare(
+    memcached_backend: MemcachedBackend,
+):
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    await memcached_backend.set("slot", mine, 60)
+
+    client = memcached_backend.client
+    original_gets = client.gets
+
+    def gets_then_overwrite(key):
+        result = original_gets(key)
+        client.set(key, b'{"overwritten": true}', 60)
+        return result
+
+    client.gets = gets_then_overwrite
+    try:
+        assert await memcached_backend.expire_if_equals("slot", mine, 120) is False
+    finally:
+        client.gets = original_gets
+
+    raw = await asyncio.to_thread(client.get, memcached_backend._make_key("slot"))
+    assert raw == b'{"overwritten": true}'
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_lock_lifecycle_with_memcached(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    lock1 = CacheLock("memcached_job", ttl=30, backend=memcached_backend)
+    lock2 = CacheLock("memcached_job", ttl=30, backend=memcached_backend)
+
+    assert await lock1.acquire(blocking=False) is True
+    assert await lock2.acquire(blocking=False) is False
+    assert await lock1.extend(60) is True
+    assert await lock1.release() is True

@@ -15,3 +15,7 @@ class BackendNotFoundError(CacheXError):
 
 class RequestNotFoundError(CacheXError):
     """Exception raised when a request is not found."""
+
+
+class LockTimeoutError(CacheXError):
+    """Exception raised when acquiring a lock times out."""

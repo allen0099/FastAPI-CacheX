@@ -159,6 +159,32 @@ class BaseCacheBackend(ABC):
         await self.delete(key)
         return True
 
+    async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
+        """Update expiry on ``key`` to ``ttl`` seconds only while it still holds ``expected``.
+
+        Re-setting a lock's TTL with a plain ``set`` is unsafe: if the holder's
+        entry expired and someone else claimed the key in the meantime, a plain
+        ``set`` overwrites the new holder's entry. Comparing against the value
+        the caller stored makes the renewal a no-op in that case.
+
+        The base implementation is a best-effort, NON-atomic get-compare-set
+        fallback for third-party backends; the built-in backends override it
+        with an atomic implementation.
+
+        Args:
+            key: Cache key to update expiry for
+            expected: The entry the caller stored (compared with ``==``)
+            ttl: Time to live in seconds
+
+        Returns:
+            Whether the expiry was updated
+        """
+        validate_ttl(ttl)
+        if await self.get(key) != expected:
+            return False
+        await self.set(key, expected, ttl=ttl)
+        return True
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the integer counter stored at ``key``.
 

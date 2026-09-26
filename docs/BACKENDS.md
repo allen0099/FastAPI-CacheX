@@ -161,8 +161,14 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   through a Lua script that re-checks the value it compared, and Memcached uses
   `GETS` + a `CAS` write that expires the entry immediately (the classic
   protocol's `DELETE` takes no CAS token).
+- `expire_if_equals(key, expected, ttl) -> bool` — updates the TTL on `key` to `ttl`
+  seconds only while it still holds `expected`, so a long-running lock holder can
+  renew its lease without risking overwriting someone else's lock if it expired.
+  Memory updates under its lock, Redis compares in Python then executes a Lua
+  script (`GET` compare + `EXPIRE`), and Memcached uses `GETS` + `CAS` writing the
+  same bytes with the new exptime (`TOUCH` takes no CAS token).
 
-All four have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
+All five have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
 that only implements the abstract methods keeps working; override them to get
 real atomicity.
 

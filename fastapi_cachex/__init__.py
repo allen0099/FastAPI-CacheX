@@ -11,6 +11,8 @@ from .dependencies import AppCache as AppCache
 from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_app_cache as get_app_cache
 from .dependencies import get_cache_backend as get_cache_backend
+from .exceptions import LockTimeoutError as LockTimeoutError
+from .lock import CacheLock as CacheLock
 from .manager import CacheManager as CacheManager
 from .manager_proxy import CacheManagerProxy as CacheManagerProxy
 from .proxy import BackendProxy as BackendProxy
@@ -69,10 +71,12 @@ __all__ = [
     "BackendProxy",
     "CacheBackend",
     "CacheKeyBuilder",
+    "CacheLock",
     "CacheManager",
     "CacheManagerProxy",
     "FastAPICacheXSessionMiddleware",
     "InvalidStateError",
+    "LockTimeoutError",
     "Session",
     "SessionConfig",
     "SessionError",
