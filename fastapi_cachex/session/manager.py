@@ -26,6 +26,10 @@ from .token_serializers import TokenSerializer
 
 logger = logging.getLogger(__name__)
 
+# Session entries are never compared by fingerprint, so a constant saves
+# hashing the payload on every write.
+_SESSION_FINGERPRINT = "session"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -181,13 +185,23 @@ class SessionManager:
         token_string: str,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        *,
+        touch: bool = False,
     ) -> tuple[Session, str | None]:
         """Retrieve and validate a session.
+
+        A lookup writes to the backend only when sliding expiration renewed
+        the session, since that is the only change to its expiry or TTL. The
+        returned session's ``last_accessed`` is always the current time, but
+        it is stored only when the session is next written, unless ``touch``
+        is set.
 
         Args:
             token_string: Session token string
             ip_address: Current request IP address
             user_agent: Current request User-Agent
+            touch: Save the session even when it was not renewed, so the
+                stored ``last_accessed`` is exact
 
         Returns:
             Tuple of (session, new_token_string). new_token_string is non-None
@@ -297,7 +311,8 @@ class SessionManager:
                     self.config.session_ttl,
                 )
 
-        await self._save_session(session)
+        if renewed_token is not None or touch:
+            await self._save_session(session)
 
         return session, renewed_token
 
@@ -486,7 +501,7 @@ class SessionManager:
             ttl = max(ttl, 1)  # Ensure at least 1 second
 
         entry = CacheEntry(
-            fingerprint=self.security.hash_data(payload),
+            fingerprint=_SESSION_FINGERPRINT,
             content=payload.encode("utf-8"),
         )
         await self.backend.set(
