@@ -13,6 +13,13 @@ name: Release
 # since the last tag, skipping every step when it found none. A dispatched
 # release is already someone saying "release this"; the guess only turned a
 # deliberate run into a silent no-op that looks identical to a successful one.
+#
+# It runs as three jobs so that the credentials are held only where they are
+# used. `build` installs every dev dependency and runs the gate, and can read
+# the repository and nothing else. `release` pushes the release commit and tag
+# and creates the GitHub release; it installs nothing. `publish` is the only
+# job that can mint a PyPI token, runs in the `pypi` environment, and does
+# nothing but upload the `dist/` that `build` produced.
 on:
   workflow_dispatch:
     inputs:
@@ -35,9 +42,9 @@ on:
         default: false
         type: boolean
 
+# Each job asks for what it needs; nothing is granted workflow-wide.
 permissions:
-  contents: write
-  id-token: write # Required for PyPI trusted publishing
+  contents: read
 
 # Two releases at once would race on the tag and on PyPI.
 concurrency:
@@ -49,8 +56,12 @@ defaults:
     shell: bash
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      previous_tag: ${{ steps.previous.outputs.tag }}
 
     services:
       memcached:
@@ -64,9 +75,23 @@ jobs:
           - 6379:6379
 
     steps:
+      # A release pushes its commit to the branch it was dispatched on and tags
+      # that code, so a run on a feature branch would publish unmerged work.
+      # A dry run writes nothing, which is what makes it the way to rehearse a
+      # change to this workflow before it is merged, so it may run anywhere.
+      - name: Refuse to release from anything but master
+        if: ${{ github.ref != 'refs/heads/master' && !inputs.dry_run }}
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Releases run from refs/heads/master only, not $REF. Tick dry run to rehearse elsewhere." >&2
+          exit 1
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # Tags, for the "already released" check below
+          # This job runs every dev dependency; leave it no git credentials.
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -225,40 +250,59 @@ jobs:
 
       # The release body is markdown, and pasting it into the step summary
       # renders it a second time, which is not what a GitHub release page shows.
-      # The artifact is the copy you can actually compare against.
-      - name: Upload the rehearsal output
-        if: ${{ inputs.dry_run }}
+      # The artifact is the copy you can actually compare against. It is also
+      # how the later jobs get the release: the files the release commit
+      # carries, the notes and `dist/`, exactly as this job produced them, so
+      # nothing after the gate builds or bumps anything a second time.
+      - name: Upload the release files
         uses: actions/upload-artifact@v7
         with:
-          name: dry-run-v${{ steps.version.outputs.version }}
+          name: release-v${{ steps.version.outputs.version }}
           path: |
+            pyproject.toml
+            uv.lock
+            CHANGELOG.md
             release-notes.md
             dist/
           if-no-files-found: error
+
+  # The jobs below change the four things a cancelled run cannot take back:
+  # the branch, the tags, the GitHub releases, PyPI. `build` touches none of
+  # them. (A dry run does leave an artifact attached to the run, and setup-uv
+  # may write an Actions cache. Both expire on their own and neither is
+  # repository state, which is why they belong to `build`.)
+  #
+  # EVERY JOB BELOW THIS LINE MUST CARRY THE SAME `if:`, which skips it on a
+  # dry run and off master, including any job added later. The master check
+  # repeats the guard in `build` so that it does not rest on one step.
+  release:
+    needs: build
+    if: ${{ !inputs.dry_run && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # The same commit `build` checked out and tested: both default to
+      # `github.sha`. If master has moved since, the push below is rejected as
+      # a non-fast-forward and nothing is tagged.
+      - uses: actions/checkout@v7
+
+      # Overwrites pyproject.toml, uv.lock and CHANGELOG.md with the bumped
+      # and promoted copies, and adds release-notes.md and dist/.
+      - name: Download the release files
+        uses: actions/download-artifact@v8
+        with:
+          name: release-v${{ needs.build.outputs.version }}
 
       - name: Configure git
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      # Below this line are the steps that change the four things a cancelled
-      # run cannot take back: the branch, the tags, the GitHub releases, PyPI.
-      # Nothing above the line touches any of them. (A dry run does leave a
-      # build artifact attached to the run, and setup-uv may write an Actions
-      # cache. Both expire on their own and neither is repository state, which
-      # is why they sit above the line.)
-      #
-      # EVERY STEP BELOW THIS LINE MUST CARRY `if: ${{ !inputs.dry_run }}`,
-      # including any step added later, and a new step of that kind belongs
-      # here rather than above. `Summary` carries the guard as well, even
-      # though all it writes is the job summary: it *describes* those four
-      # effects, and a rule with no exceptions to remember is worth more than
-      # a correctly narrow one.
       - name: Commit the release
-        if: ${{ !inputs.dry_run }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          BRANCH: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
           git add pyproject.toml uv.lock CHANGELOG.md
@@ -266,24 +310,22 @@ jobs:
             echo "Nothing to commit; releasing HEAD as it is."
           else
             git commit -m "chore: release v$VERSION"
-            git push origin "HEAD:$BRANCH"
+            git push origin HEAD:refs/heads/master
           fi
 
       - name: Tag the release
-        if: ${{ !inputs.dry_run }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
           git tag -a "v$VERSION" -m "Release v$VERSION"
           git push origin "refs/tags/v$VERSION"
 
       - name: Create GitHub Release
-        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.build.outputs.version }}
+          name: v${{ needs.build.outputs.version }}
           body_path: release-notes.md
           draft: false
           prerelease: false
@@ -292,15 +334,31 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
 
+  publish:
+    needs: [build, release]
+    if: ${{ !inputs.dry_run && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    # The trusted publisher can be tied to this environment, and the
+    # environment can carry protection rules (required reviewers, a wait).
+    environment:
+      name: pypi
+      url: https://pypi.org/project/fastapi-cachex/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write # Required for PyPI trusted publishing
+
+    steps:
+      - name: Download the release files
+        uses: actions/download-artifact@v8
+        with:
+          name: release-v${{ needs.build.outputs.version }}
+
       - name: Publish to PyPI
-        if: ${{ !inputs.dry_run }}
         uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Summary
-        if: ${{ !inputs.dry_run }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PREVIOUS_TAG: ${{ needs.build.outputs.previous_tag }}
         run: |
           {
             echo "### Released v$VERSION"
