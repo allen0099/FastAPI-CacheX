@@ -147,6 +147,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   again. The task is now started again on the current loop, and a task left
   on a loop that is still open is cancelled there.
   ([#181](https://github.com/allen0099/FastAPI-CacheX/issues/181))
+- **`MemcachedBackend` raises while a server is unreachable instead of
+  returning made-up results.** pymemcache's default retries answered calls in
+  the second after a failure with each command's default, so `get()` looked
+  like a miss, `set()` dropped the write, `increment()` returned 0 and
+  `delete_if_equals()` raised `TypeError`. A failed server is now taken out of
+  rotation at once and tried again after one second, instead of after 60.
+  ([#197](https://github.com/allen0099/FastAPI-CacheX/issues/197))
 
 ## [0.3.7] - 2026-09-25
 

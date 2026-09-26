@@ -149,6 +149,13 @@ so concurrent requests never share a socket. Writes wait for the server's
 acknowledgement (`default_noreply=False`), which keeps a value readable from
 any pooled connection as soon as `set()` returns.
 
+When a server cannot be reached, every call that would go to it raises, and the
+server is tried again after one second. Before 0.3.8, calls in the second after a
+failure returned made-up results instead: `get()` a miss, `set()` nothing (the write
+was lost), `increment()` a fresh counter of 0. With several servers, a failed one is
+taken out of rotation at once and its keys go to the remaining servers until it
+answers again.
+
 ## Atomic backend primitives
 
 Every backend exposes atomic operations on top of `get`/`set`/`delete`, for
