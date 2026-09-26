@@ -104,6 +104,18 @@ async def report():
 
 查詢參數依用戶端送出的順序取用，不會排序，因此 `?a=1&b=2` 與 `?b=2&a=1` 對同一個邏輯上的請求而言是兩筆不同的快取項目。
 
+host 與路徑來自用戶端，因此其中的 `|` 與 `%` 會以百分比編碼寫入（`%7C` 與 `%25`）。含有 `|||` 的 `Host` 標頭或路徑因此無法讓各段錯位，使某個請求的快取鍵與另一個請求相同。查詢字串本來就經過 URL 編碼。`clear_path()` 接受應用程式看到的路徑（`request.url.path`），並以同樣方式編碼；`clear_pattern()` 比對的是儲存的快取鍵，所以在模式中要把 `|` 寫成 `%7C`。0.3.8 之前兩者都照原樣儲存，因此升級後，host 或路徑含有 `|` 或 `%` 的項目會重新快取一次。
+
+host 仍是用戶端送來的任何值。除非應用程式前方的反向代理或負載平衡器已會拒絕未知的 host，否則請加上 Starlette 的 `TrustedHostMiddleware`，讓偽造的 `Host` 得到 `400`，而不是在快取中塞滿沒有其他人會請求的項目：
+
+```python
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+app.add_middleware(
+    TrustedHostMiddleware, allowed_hosts=["example.com", "*.example.com"]
+)
+```
+
 所有後端都會自動替鍵加上前綴（例如 `fastapi_cachex:`）作為命名空間，以避免與其他應用程式衝突。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|||` 分隔的格式，因為它的鍵與 HTTP 請求無關。
 
 ### 需驗證身分的端點 {#authenticated-endpoints}
@@ -121,6 +133,7 @@ from fastapi import Request, Response
 
 from fastapi_cachex import cache
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+from fastapi_cachex.types import escape_key_component
 
 
 # 1. 完全不放進共用快取。
@@ -137,8 +150,9 @@ def per_user_key(request: Request) -> str:
     user_id = getattr(request.state, "user_id", "anonymous")
     return (
         f"{request.method}{CACHE_KEY_SEPARATOR}"
-        f"{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}"
-        f"{request.url.path}{CACHE_KEY_SEPARATOR}"
+        f"{escape_key_component(request.headers.get('host', 'unknown'))}"
+        f"{CACHE_KEY_SEPARATOR}"
+        f"{escape_key_component(request.url.path)}{CACHE_KEY_SEPARATOR}"
         f"{request.query_params}{CACHE_KEY_SEPARATOR}{user_id}"
     )
 

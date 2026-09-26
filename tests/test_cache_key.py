@@ -1,13 +1,17 @@
 """Tests for cache key generation and parsing."""
 
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.cache import cache
+from fastapi_cachex.cache import default_key_builder
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.routes import _parse_cache_key
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+from fastapi_cachex.types import escape_key_component
+from fastapi_cachex.types import unescape_key_component
 
 
 class TestCacheKeyGeneration:
@@ -228,3 +232,84 @@ class TestCacheKeyDifferentiation:
 
         assert key1_method == key2_method == "GET"
         assert key1_path == key2_path == "/api/data"
+
+
+class TestCacheKeySeparatorInComponents:
+    """A ``|||`` in the Host header or path must not shift the key components."""
+
+    def test_host_header_cannot_poison_another_path(self) -> None:
+        """Host ``h|||/p`` + path ``/x`` used to share a key with path ``/p|||/x``."""
+        app = FastAPI()
+        backend = MemoryBackend()
+        BackendProxy.set(backend)
+
+        @app.get("/{p:path}")
+        @cache(ttl=60)
+        async def echo(p: str) -> dict[str, str]:
+            return {"p": p}
+
+        client = TestClient(app)
+        poisoned = client.get("/x", headers={"host": "testserver|||/p"})
+        assert poisoned.json() == {"p": "x"}
+
+        victim = client.get("/p%7C%7C%7C/x")
+        assert victim.json() == {"p": "p|||/x"}
+        assert len(backend.cache) == 2
+
+    def test_percent_is_encoded_so_the_encoding_is_unambiguous(self) -> None:
+        """A path holding a literal ``%7C`` keeps its own key, apart from ``|``.
+
+        Built from a raw scope: TestClient decodes the path twice, so it cannot
+        send a decoded path containing ``%7C`` the way a real server does.
+        """
+
+        def key_for(path: str) -> str:
+            scope = {
+                "type": "http",
+                "method": "GET",
+                "path": path,
+                "query_string": b"",
+                "headers": [(b"host", b"h")],
+            }
+            return default_key_builder(Request(scope))
+
+        assert key_for("/a|") == "GET|||h|||/a%7C|||"
+        assert key_for("/a%7C") == "GET|||h|||/a%257C|||"
+
+    def test_ordinary_keys_are_unchanged(self) -> None:
+        """Only components with ``|`` or ``%`` change, so existing entries still hit."""
+        app = FastAPI()
+        backend = MemoryBackend()
+        BackendProxy.set(backend)
+
+        @app.get("/api/items")
+        @cache(ttl=60)
+        async def items() -> dict[str, str]:
+            return {"ok": "yes"}
+
+        client = TestClient(app, base_url="http://127.0.0.1:8000")
+        client.get("/api/items", params={"q": "a|b%c"})
+        assert list(backend.cache) == [
+            "GET|||127.0.0.1:8000|||/api/items|||q=a%7Cb%25c"
+        ]
+
+    def test_escape_round_trips_and_never_contains_the_separator(self) -> None:
+        """Distinct inputs get distinct encodings, and decoding restores them."""
+        values = ["", "|", "|||", "%", "%7C", "%257C", "%25", "a|%b", "%%||", "%7c"]
+        encoded = [escape_key_component(value) for value in values]
+        assert len(set(encoded)) == len(values)
+        for value, escaped in zip(values, encoded, strict=True):
+            assert "|" not in escaped
+            assert unescape_key_component(escaped) == value
+
+    def test_monitoring_parser_decodes_host_and_path(self) -> None:
+        """The monitoring routes show the host and path as the client sent them."""
+        key = CACHE_KEY_SEPARATOR.join(
+            [
+                "GET",
+                escape_key_component("evil|||host"),
+                escape_key_component("/p|||/100%"),
+                "q=1",
+            ]
+        )
+        assert _parse_cache_key(key) == ("GET", "evil|||host", "/p|||/100%", "q=1")

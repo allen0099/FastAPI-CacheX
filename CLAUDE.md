@@ -53,7 +53,7 @@ The library has four independent subsystems:
 - Cache flow: check `no-store` → check `no-cache` → check ETag (`If-None-Match`) → check TTL-based cache hit → execute handler → store result.
 - Fails open by default (`fail_open=True`): a backend error on `get` is logged and treated as a miss, one on `set` is logged and the response served unstored. `fail_open=False` propagates the error.
 - Only GET requests are cached; other methods bypass the cache entirely.
-- Cache keys follow the format `method|||host|||path|||query_params` (separator defined in `types.py`).
+- Cache keys follow the format `method|||host|||path|||query_params` (separator defined in `types.py`). Host and path go through `escape_key_component` (`|` → `%7C`, `%` → `%25`) so client input cannot inject the separator; `clear_path` encodes its argument and `routes.py` decodes for display.
 - `BackendProxy` is a non-instantiable class-level singleton (via `ProxyMeta`). Call `BackendProxy.set(backend)` at app startup; `BackendProxy.get()` raises `BackendNotFoundError` if unset. Falls back to `MemoryBackend` automatically inside `@cache` if no backend is set.
 - Cache values are stored as `CacheEntry(fingerprint, content, media_type)` dataclass (defined in `types.py`).
 

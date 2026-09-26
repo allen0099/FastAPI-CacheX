@@ -14,6 +14,26 @@ CACHE_KEY_SEPARATOR = "|||"
 # Type for custom cache key builder function
 CacheKeyBuilder = Callable[[Request], str]
 
+_KEY_ESCAPES = {"%": "%25", "|": "%7C"}
+_KEY_UNESCAPES = {escaped: char for char, escaped in _KEY_ESCAPES.items()}
+_KEY_UNESCAPE_RE = re.compile("%25|%7C")
+
+
+def escape_key_component(value: str) -> str:
+    """Percent-encode ``|`` and ``%`` so ``value`` cannot contain the separator.
+
+    The host header and the decoded URL path are client-controlled and may
+    contain ``|||``; left as is, one request's components could line up into
+    another request's key. Encoding ``%`` as well keeps the mapping reversible,
+    so two different values never share an encoding.
+    """
+    return value.replace("%", "%25").replace("|", "%7C")
+
+
+def unescape_key_component(value: str) -> str:
+    """Reverse ``escape_key_component``."""
+    return _KEY_UNESCAPE_RE.sub(lambda match: _KEY_UNESCAPES[match.group()], value)
+
 
 # Status replayed for entries stored before ``CacheEntry`` carried a status code.
 DEFAULT_STATUS_CODE = 200

@@ -146,3 +146,20 @@ async def test_cache_manager_clear_pattern_is_relative_to_its_namespace(
     assert await manager.clear_pattern("user:*") == 2
     assert await manager.get("user:1") is None
     assert await manager.get("post:1") == {"title": "c"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
+async def test_clear_path_finds_paths_with_encoded_characters(
+    backend: BaseCacheBackend,
+) -> None:
+    """``clear_path`` takes the decoded path and matches the encoded key."""
+    entry = CacheEntry(fingerprint="etag", content=b"x")
+    # Keys as default_key_builder writes them for "/a|b/100%" and a neighbour.
+    await backend.set("GET|||h|||/a%7Cb/100%25|||", entry)
+    await backend.set("GET|||h|||/a%7Cb/100%25|||v=1", entry)
+    await backend.set("GET|||h|||/a|||b/100%25|||", entry)
+
+    assert await backend.clear_path("/a|b/100%") == 1
+    assert await backend.clear_path("/a|b/100%", include_params=True) == 1
+    assert await backend.get_all_keys() == ["GET|||h|||/a|||b/100%25|||"]
