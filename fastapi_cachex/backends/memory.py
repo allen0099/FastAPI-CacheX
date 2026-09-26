@@ -56,7 +56,15 @@ class MemoryBackend(BaseCacheBackend):
 
         Args:
             cleanup_interval: Interval in seconds between cleanup runs (default: 60)
+
+        Raises:
+            ValueError: If ``cleanup_interval`` is not positive
         """
+        if cleanup_interval <= 0:
+            # asyncio.sleep() returns at once for these, so the cleanup loop
+            # would spin, taking the cache lock on every pass.
+            msg = f"cleanup_interval must be positive, got {cleanup_interval!r}"
+            raise ValueError(msg)
         self.cache: dict[str, CacheItem] = {}
         self.lock = asyncio.Lock()
         self.cleanup_interval = cleanup_interval
