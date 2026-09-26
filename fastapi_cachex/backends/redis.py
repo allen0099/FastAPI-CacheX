@@ -146,12 +146,12 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             # builtins.__import__("redis") can simulate absence reliably.
             import redis  # noqa: F401
             from redis.asyncio import Redis as AsyncRedis
-        except ImportError:
+        except ImportError as exc:
             msg = (
                 "redis[hiredis] is not installed. Please install it with "
                 "'pip install \"redis[hiredis]\"' "
             )
-            raise CacheXError(msg)
+            raise CacheXError(msg) from exc
 
         _warn_if_not_utf8(encoding)
 
