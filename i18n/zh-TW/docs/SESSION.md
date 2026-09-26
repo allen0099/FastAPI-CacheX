@@ -327,7 +327,8 @@ async def me(session=Depends(get_session)):
 
 - 在沒有載入任何 Session 時寫入 `request.session`，會建立一個新的**匿名** Session（`SessionManager.create_anonymous_session()`，並依設定套用 IP / User-Agent 綁定），並透過該請求的傳輸方式傳回其權杖。
 - 修改已載入 Session 的 `request.session`，會透過 `update_session()` 將新內容儲存到後端，以 dict 的內容取代 `Session.data`。
-- 在原本有資料的 Session 上清除它（`request.session.clear()`），會刪除後端的 Session；Cookie 用戶端還會收到一個使 Cookie 過期的 `Set-Cookie`。
+- 在已載入的 Session 上清除它（`request.session.clear()`）即為登出：即使資料原本就是空的，也會刪除後端的 Session；Cookie 用戶端還會收到一個使 Cookie 過期的 `Set-Cookie`。同一個請求中在 `clear()` 之後寫入的鍵，會存進一個使用新 ID 的新匿名 Session。
+- 以 `del` 或 `pop()` 移除最後一個鍵並不是登出。帶有使用者的 Session 會以空資料儲存；匿名 Session 已無任何內容，會和 `clear()` 一樣被刪除。
 - 以寫入 `request.session` 的方式登入時，會沿用請求帶來的 Session ID。Starlette 的中介軟體中 Cookie *就是* Session，因此登入回應會取代任何被植入的 Cookie；這裡的 Cookie 只是指向伺服器端紀錄的名稱，被植入的 Cookie 會跟著受害者一起登入。請在附加使用者之前呼叫 `await rotate_session_id(request)`（見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)）。
 - 只要存取 `request.session`，就會為了尋找權杖而讀取過的每個請求標頭加入 `Vary`：依 `token_source_priority` 順序檢查的標頭（`header_name`，以及啟用 Bearer 權杖時的 `Authorization`），直到攜帶權杖的那一個為止。只有在沒有任何標頭攜帶權杖時才會讀取 Cookie，因此也只有這時才會加入 `Cookie`。
 

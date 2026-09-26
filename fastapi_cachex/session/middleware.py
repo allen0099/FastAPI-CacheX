@@ -286,6 +286,21 @@ class SessionMiddleware(BaseHTTPMiddleware):
         return get_client_ip(request, self.config)
 
 
+class _RequestSession(StarletteSession):
+    """``request.session`` that remembers an explicit ``clear()``.
+
+    ``clear()`` is the logout idiom, so it has to end the loaded session even
+    when its data was already empty, while removing the last key with
+    ``del``/``pop`` must not log a user out.
+    """
+
+    cleared: bool = False
+
+    def clear(self) -> None:
+        self.cleared = True
+        super().clear()
+
+
 class FastAPICacheXSessionMiddleware:
     """Drop-in-compatible replacement for Starlette's ``SessionMiddleware``.
 
@@ -343,7 +358,6 @@ class FastAPICacheXSessionMiddleware:
         _stash_session_manager(scope["app"], self.session_manager)
 
         connection = HTTPConnection(scope)
-        initial_session_was_empty = True
         loaded_token: str | None = None
         renewed_token: str | None = None
         backend_session: Session | None = None
@@ -368,16 +382,15 @@ class FastAPICacheXSessionMiddleware:
                 )
                 loaded_token = renewed_token or token_value
                 loaded_session_id = backend_session.session_id
-                scope["session"] = StarletteSession(backend_session.data)
-                initial_session_was_empty = not backend_session.data
+                scope["session"] = _RequestSession(backend_session.data)
             except SessionError:
                 logger.debug(
                     "FastAPICacheXSessionMiddleware: token invalid/expired; "
                     "starting empty session",
                 )
-                scope["session"] = StarletteSession()
+                scope["session"] = _RequestSession()
         else:
-            scope["session"] = StarletteSession()
+            scope["session"] = _RequestSession()
 
         scope.setdefault("state", {})["__fastapi_cachex_session"] = backend_session
 
@@ -388,7 +401,7 @@ class FastAPICacheXSessionMiddleware:
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
-                session: StarletteSession = scope["session"]
+                session: _RequestSession = scope["session"]
                 headers = MutableHeaders(scope=message)
 
                 current_token, fresh_token = self._response_tokens(
@@ -399,43 +412,71 @@ class FastAPICacheXSessionMiddleware:
                     for name in vary_on:
                         headers.add_vary_header(name)
 
-                if session.modified and session:
-                    cookie_token, new_token = await self._write_session(
-                        session,
-                        connection,
-                        backend_session,
-                        current_token,
-                        fresh_token,
-                    )
-                    # Header clients only need a genuinely new/renewed token (an
-                    # unchanged one is already held); cookie clients always get a
-                    # refreshed cookie.
-                    token_to_emit = new_token if from_header else cookie_token
-                    if token_to_emit is not None:
-                        self._emit_token(
-                            headers, token_to_emit, from_header=from_header
-                        )
-                elif session.modified and not initial_session_was_empty:
-                    # Cleared -> delete backend session. backend_session is always
-                    # set when initial_session_was_empty is False (both are only set
-                    # together, after a successful get_session() call above).
-                    assert backend_session is not None  # noqa: S101
-                    await self.session_manager.delete_session(
-                        backend_session.session_id
-                    )
-                    if not from_header:
-                        # Cookie transport: expire the cookie. A header-based client
-                        # simply drops its now-dangling token (record is deleted).
-                        headers.append("Set-Cookie", self._build_clear_cookie_header())
-                elif fresh_token is not None:
-                    # Sliding expiration renewed the token, or the ID was
-                    # regenerated, even though the dict itself was untouched;
-                    # propagate it via the same transport.
-                    self._emit_token(headers, fresh_token, from_header=from_header)
+                await self._persist(
+                    session,
+                    headers,
+                    connection,
+                    backend_session,
+                    current_token,
+                    fresh_token,
+                    from_header=from_header,
+                )
 
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+    async def _persist(  # noqa: PLR0913
+        self,
+        session: _RequestSession,
+        headers: MutableHeaders,
+        connection: HTTPConnection,
+        backend_session: "Session | None",
+        current_token: str | None,
+        fresh_token: str | None,
+        *,
+        from_header: bool,
+    ) -> None:
+        """Save, delete or renew the session according to what the request did to it."""
+        target = backend_session
+        if session.cleared and target is not None:
+            # clear() logs out, whatever the data held. Anything
+            # written after it goes into a new anonymous session.
+            await self.session_manager.delete_session(target.session_id)
+            target = current_token = fresh_token = None
+            if not session and not from_header:
+                # Cookie transport: expire the cookie. A header-based
+                # client simply drops its now-dangling token.
+                headers.append("Set-Cookie", self._build_clear_cookie_header())
+
+        if session.modified and (
+            session or (target is not None and target.user is not None)
+        ):
+            # A logged-in session emptied with del/pop keeps its user
+            # and is saved with empty data.
+            cookie_token, new_token = await self._write_session(
+                session,
+                connection,
+                target,
+                current_token,
+                fresh_token,
+            )
+            # Header clients only need a genuinely new/renewed token (an
+            # unchanged one is already held); cookie clients always get a
+            # refreshed cookie.
+            token_to_emit = new_token if from_header else cookie_token
+            if token_to_emit is not None:
+                self._emit_token(headers, token_to_emit, from_header=from_header)
+        elif session.modified and target is not None:
+            # An anonymous session left empty holds nothing to keep.
+            await self.session_manager.delete_session(target.session_id)
+            if not from_header:
+                headers.append("Set-Cookie", self._build_clear_cookie_header())
+        elif fresh_token is not None:
+            # Sliding expiration renewed the token, or the ID was
+            # regenerated, even though the dict itself was untouched;
+            # propagate it via the same transport.
+            self._emit_token(headers, fresh_token, from_header=from_header)
 
     def _token_sources(
         self, connection: HTTPConnection
