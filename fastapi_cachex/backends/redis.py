@@ -227,6 +227,29 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             if cursor == 0:
                 return list(keys)
 
+    async def _delete_matching(self, pattern: str) -> int:
+        """Delete every key matching ``pattern``, one SCAN page at a time.
+
+        Each page is deleted as it arrives, so the keyspace is never held in
+        memory. Deleting keys SCAN already returned is safe: SCAN still returns
+        every key present for the whole iteration. A key SCAN repeats is
+        already gone by then, and DEL counts only keys that existed, so it is
+        not counted twice.
+
+        Returns:
+            How many keys were deleted
+        """
+        cursor = 0
+        deleted = 0
+        while True:
+            cursor, page = await self.client.scan(
+                cursor, match=pattern, count=_BATCH_SIZE
+            )
+            if page:
+                deleted += await self.client.delete(*page)
+            if cursor == 0:
+                return deleted
+
     async def _delete_keys(self, keys: list[str]) -> int:
         """Delete prefixed keys in batches; returns how many existed."""
         deleted = 0
@@ -353,9 +376,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         Only deletes keys within this backend's prefix.
         """
-        removed = await self._delete_keys(
-            await self._scan_keys(f"{self._prefix_pattern}*")
-        )
+        removed = await self._delete_matching(f"{self._prefix_pattern}*")
         logger.debug("Redis CLEAR; removed=%s", removed)
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
@@ -377,15 +398,12 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             f"{self._prefix_pattern}*{CACHE_KEY_SEPARATOR}"
             f"{_escape_glob(path)}{CACHE_KEY_SEPARATOR}{suffix}"
         )
-        keys = await self._scan_keys(pattern)
+        cleared_count = await self._delete_matching(pattern)
 
         # Also match direct keys (custom key formats without separators)
-        # e.g. key_prefix + "gitlab:template" stored directly via backend.set()
-        direct_key = self._make_key(path)
-        if await self.client.exists(direct_key):
-            keys.append(direct_key)
-
-        cleared_count = await self._delete_keys(keys)
+        # e.g. key_prefix + "gitlab:template" stored directly via backend.set().
+        # DEL returns 0 for a missing key, so no EXISTS check is needed.
+        cleared_count += await self.client.delete(self._make_key(path))
         logger.debug(
             "Redis CLEAR_PATH; path=%s include_params=%s removed=%s",
             path,
@@ -413,14 +431,14 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             Number of cache entries cleared
         """
         full_pattern = self._prefix_pattern + pattern
-        cleared_count = await self._delete_keys(await self._scan_keys(full_pattern))
+        cleared_count = await self._delete_matching(full_pattern)
         if (
             cleared_count == 0
             and self.key_prefix
             and pattern.startswith(self.key_prefix)
         ):
             full_pattern = self._prefix_pattern + pattern.removeprefix(self.key_prefix)
-            cleared_count = await self._delete_keys(await self._scan_keys(full_pattern))
+            cleared_count = await self._delete_matching(full_pattern)
             if cleared_count:
                 warnings.warn(
                     f"clear_pattern({pattern!r}) matched only with the backend's "
