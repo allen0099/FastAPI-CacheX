@@ -100,9 +100,9 @@ class MemcachedBackend(BaseCacheBackend):
         """
         try:
             from pymemcache import HashClient
-        except ImportError:
+        except ImportError as exc:
             msg = "pymemcache is not installed. Install it with the extra: pip install 'fastapi-cachex[memcached]'"
-            raise CacheXError(msg)
+            raise CacheXError(msg) from exc
 
         # Pooled connections have no ordering guarantee between each other, so
         # every write waits for the server's acknowledgement; otherwise a

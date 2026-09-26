@@ -426,7 +426,7 @@ class FastAPICacheXSessionMiddleware:
 
         await self.app(scope, receive, send_wrapper)
 
-    async def _persist(  # noqa: PLR0913
+    async def _persist(  # noqa: PLR0913, PLR0917
         self,
         session: _RequestSession,
         headers: MutableHeaders,

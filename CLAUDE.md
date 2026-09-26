@@ -107,7 +107,7 @@ Four non-abstract atomic primitives live on the base class with non-atomic fallb
 
 ### Code Quality Rules
 
-- Ruff is configured with `extend-select = ['ALL']` with specific ignores (see `pyproject.toml`). Notable: E501 (line length), B008 (function calls in defaults), FBT001/FBT002 (boolean args — intentional for Cache-Control API).
+- Ruff is configured with `extend-select = ['ALL']` with specific ignores (see `pyproject.toml`). Notable: E501 (line length), FBT001/FBT002 (boolean args — intentional for Cache-Control API). `fastapi.Depends` is allowed in argument defaults via `flake8-bugbear.extend-immutable-calls` rather than ignoring B008.
 - mypy runs in strict mode on the package (not tests).
 - pydocstring convention is Google style.
 - Forward references are mostly quoted annotations with `TYPE_CHECKING` imports; only a couple of modules use `from __future__ import annotations`.
