@@ -232,6 +232,16 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   then drop at once, and reports only non-numeric values as "not a counter".
   `@cache` rejects such a `ttl` when the decorator is applied.
   ([#229](https://github.com/allen0099/FastAPI-CacheX/issues/229))
+- **A `|||` in the `Host` header or path can no longer poison another
+  path's cache entry.** The default key builder joined the raw host and
+  decoded path with `|||`, so `GET /x` with `Host: example.com|||/p` stored
+  its response under the key of `GET /p%7C%7C%7C/x`. `|` and `%` in the host
+  and path are now percent-encoded (`escape_key_component` in
+  `fastapi_cachex.types`); `clear_path()` encodes its argument the same way
+  and the monitoring routes decode for display. Keys whose host or path
+  contains `|` or `%` change, so those entries are cached afresh once. The
+  HTTP caching guide now recommends `TrustedHostMiddleware`.
+  ([#230](https://github.com/allen0099/FastAPI-CacheX/issues/230))
 
 ## [0.3.7] - 2026-09-25
 

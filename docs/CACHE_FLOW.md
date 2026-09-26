@@ -49,10 +49,16 @@ When a request arrives, the `@cache` decorator does the following:
 
 ```python
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR  # "|||"
+from fastapi_cachex.types import escape_key_component
 
 # Cache key format (default_key_builder in fastapi_cachex/cache.py)
 cache_key = CACHE_KEY_SEPARATOR.join(
-    [request.method, request.headers.get("host", "unknown"), request.url.path, query]
+    [
+        request.method,
+        escape_key_component(request.headers.get("host", "unknown")),
+        escape_key_component(request.url.path),
+        query,
+    ]
 )
 
 # For example:
@@ -63,6 +69,12 @@ cache_key = CACHE_KEY_SEPARATOR.join(
 The separator is `|||` rather than a colon because the host itself may contain a
 port (`127.0.0.1:8000`); with a colon the key could not be split reliably, and
 `clear_path()` needs to recover the path from the key.
+
+The host and path are percent-encoded first: `|` becomes `%7C` and `%` becomes
+`%25` (`escape_key_component` in `fastapi_cachex/types.py`). Both come from the
+client, and a raw `|||` in either would shift the components so that one
+request's key could equal another's. The query string is URL-encoded already.
+The monitoring routes decode them again for display.
 
 Query parameters are joined in the order the request sent them
 (`str(request.query_params)`) and are **not sorted**, so `?page=1&limit=10` and

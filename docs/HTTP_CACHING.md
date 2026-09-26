@@ -137,6 +137,28 @@ This ensures that:
 Query parameters are taken in the order the client sent them, without sorting, so
 `?a=1&b=2` and `?b=2&a=1` are two distinct cache entries for the same logical request.
 
+The host and path come from the client, so `|` and `%` in them are percent-encoded
+(`%7C` and `%25`). A `Host` header or path containing `|||` therefore cannot shift
+the components and make one request's key equal another's. The query string is
+URL-encoded already. `clear_path()` takes the path as your application sees it
+(`request.url.path`) and encodes it the same way; `clear_pattern()` matches the
+stored key, so write `%7C` there for a `|`. Before 0.3.8 both were stored as sent,
+so after upgrading, entries for a host or path containing `|` or `%` are cached
+afresh once.
+
+The host is still whatever the client sends. Unless a reverse proxy or load
+balancer in front of the app already rejects unknown hosts, add Starlette's
+`TrustedHostMiddleware`, so a forged `Host` gets a `400` instead of filling the
+cache with entries no one else will request:
+
+```python
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+app.add_middleware(
+    TrustedHostMiddleware, allowed_hosts=["example.com", "*.example.com"]
+)
+```
+
 All backends automatically namespace keys with a prefix (e.g., `fastapi_cachex:`)
 to avoid conflicts with other applications. `CacheManager` (see
 [Application cache](APP_CACHE.md)) uses a separate, simpler `cache:`-prefixed key
@@ -166,6 +188,7 @@ from fastapi import Request, Response
 
 from fastapi_cachex import cache
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+from fastapi_cachex.types import escape_key_component
 
 
 # 1. Keep it out of the shared cache entirely.
@@ -183,8 +206,9 @@ def per_user_key(request: Request) -> str:
     user_id = getattr(request.state, "user_id", "anonymous")
     return (
         f"{request.method}{CACHE_KEY_SEPARATOR}"
-        f"{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}"
-        f"{request.url.path}{CACHE_KEY_SEPARATOR}"
+        f"{escape_key_component(request.headers.get('host', 'unknown'))}"
+        f"{CACHE_KEY_SEPARATOR}"
+        f"{escape_key_component(request.url.path)}{CACHE_KEY_SEPARATOR}"
         f"{request.query_params}{CACHE_KEY_SEPARATOR}{user_id}"
     )
 
