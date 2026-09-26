@@ -245,4 +245,3 @@ async def test_lock_acquire_cancelled_resets_is_held() -> None:
 
     assert await lock2.acquire(blocking=False) is True
     assert await lock2.release() is True
-
