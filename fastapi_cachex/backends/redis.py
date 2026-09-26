@@ -60,6 +60,15 @@ end
 return 0
 """
 
+# EXPIRE that only fires while the key still holds the exact bytes the caller read,
+# so a value replaced in the meantime survives. KEYS[1] = key, ARGV[1] = bytes, ARGV[2] = ttl.
+_EXPIRE_IF_EQUALS_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
+
 
 class AsyncRedisCacheBackend(BaseCacheBackend):
     """Async Redis cache backend implementation.
@@ -134,6 +143,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         self._increment_script = self.client.register_script(_INCREMENT_SCRIPT)
         self._delete_if_equals_script = self.client.register_script(
             _DELETE_IF_EQUALS_SCRIPT
+        )
+        self._expire_if_equals_script = self.client.register_script(
+            _EXPIRE_IF_EQUALS_SCRIPT
         )
 
     @staticmethod
@@ -258,6 +270,30 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             "Redis DELETE_IF_EQUALS %s; key=%s", "HIT" if deleted else "LOST RACE", key
         )
         return bool(deleted)
+
+    async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
+        """Atomically update expiry on ``key`` while it holds ``expected`` (see base class).
+
+        The stored value is decoded and compared here, then a Lua script
+        updates the expiry on the key only if it still holds the bytes that
+        were compared, so a value written in between is never overwritten.
+        """
+        validate_ttl(ttl)
+        prefixed_key = self._make_key(key)
+        raw = await self.client.get(prefixed_key)
+        if raw is None or decode_entry(raw) != expected:
+            logger.debug("Redis EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        updated = await self._expire_if_equals_script(
+            keys=[prefixed_key], args=[raw, ttl]
+        )
+        logger.debug(
+            "Redis EXPIRE_IF_EQUALS %s; key=%s ttl=%s",
+            "HIT" if updated else "LOST RACE",
+            key,
+            ttl,
+        )
+        return bool(updated)
 
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).

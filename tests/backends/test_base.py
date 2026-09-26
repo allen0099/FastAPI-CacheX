@@ -113,3 +113,18 @@ async def test_delete_if_equals_fallback_removes_only_a_matching_entry(
     assert await backend.delete_if_equals("slot", theirs) is True
     assert "slot" not in backend.store
     assert await backend.delete_if_equals("slot", theirs) is False
+
+
+@pytest.mark.asyncio
+async def test_expire_if_equals_fallback_updates_ttl_only_when_matching(
+    backend: DictBackend,
+) -> None:
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await backend.set("slot", theirs, ttl=30)
+
+    assert await backend.expire_if_equals("slot", mine, ttl=60) is False
+    assert backend.store["slot"] == (theirs, 30)
+    assert await backend.expire_if_equals("slot", theirs, ttl=60) is True
+    assert backend.store["slot"] == (theirs, 60)
+    assert await backend.expire_if_equals("missing", theirs, ttl=60) is False

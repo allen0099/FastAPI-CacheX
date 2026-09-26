@@ -26,11 +26,13 @@ nav = [
     { "Session management" = "SESSION.md" },
     { "JWT claims" = "JWT_CLAIMS.md" },
     { "State management" = "STATE.md" },
+    { "Distributed lock" = "LOCK.md" },
   ] },
   { "API reference" = [
     { "HTTP caching" = "api/http-caching.md" },
     { "Backends" = "api/backends.md" },
     { "CacheManager" = "api/cache-manager.md" },
+    { "CacheLock" = "api/lock.md" },
     { "Session" = "api/session.md" },
     { "State" = "api/state.md" },
     { "Types and exceptions" = "api/types.md" },

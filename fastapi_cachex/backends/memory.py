@@ -191,6 +191,21 @@ class MemoryBackend(BaseCacheBackend):
             logger.debug("Memory cache DELETE_IF_EQUALS HIT; key=%s", key)
             return True
 
+    async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
+        """Atomically update expiry on ``key`` while it holds ``expected`` (see base class)."""
+        validate_ttl(ttl)
+        async with self.lock:
+            item = self.cache.get(key)
+            if item is None or not _is_live(item, time.time()):
+                logger.debug("Memory cache EXPIRE_IF_EQUALS MISS; key=%s", key)
+                return False
+            if item.value != expected:
+                logger.debug("Memory cache EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
+                return False
+            item.expiry = time.time() + ttl
+            logger.debug("Memory cache EXPIRE_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
+            return True
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 

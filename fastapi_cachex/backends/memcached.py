@@ -215,6 +215,29 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return bool(deleted)
 
+    async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
+        """Atomically update expiry on ``key`` while it holds ``expected`` (see base class).
+
+        TOUCH in the Memcached protocol takes no CAS token, so the renewal is a
+        CAS write with the same bytes read by GETS and the new exptime.
+        """
+        validate_ttl(ttl)
+        prefixed_key = self._make_key(key)
+        raw, cas_token = await asyncio.to_thread(self.client.gets, prefixed_key)
+        if raw is None or decode_entry(raw) != expected:
+            logger.debug("Memcached EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        updated = await asyncio.to_thread(
+            self.client.cas, prefixed_key, raw, cas_token, _expiry(ttl), noreply=False
+        )
+        logger.debug(
+            "Memcached EXPIRE_IF_EQUALS %s; key=%s ttl=%s",
+            "HIT" if updated else "LOST RACE",
+            key,
+            ttl,
+        )
+        return bool(updated)
+
     def _add_delta(self, prefixed_key: str, delta: int) -> int | None:
         """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist."""
         if delta < 0:

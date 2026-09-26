@@ -799,3 +799,28 @@ async def test_memory_lock_release_after_expiry_keeps_the_new_holder(
 
     assert await memory_backend.delete_if_equals("slot", owner_a) is False
     assert await memory_backend.get("slot") == owner_b
+
+
+@pytest.mark.asyncio
+async def test_memory_expire_if_equals_updates_ttl_only_when_matching(
+    memory_backend: MemoryBackend,
+):
+    mine = CacheEntry(fingerprint="lock", content=b"owner-a")
+    theirs = CacheEntry(fingerprint="lock", content=b"owner-b")
+    await memory_backend.set("slot", theirs, 30)
+
+    assert await memory_backend.expire_if_equals("slot", mine, 60) is False
+    assert await memory_backend.expire_if_equals("slot", theirs, 60) is True
+    assert memory_backend.cache["slot"].expiry is not None
+    assert await memory_backend.expire_if_equals("missing", theirs, 60) is False
+
+
+@pytest.mark.asyncio
+async def test_memory_expire_if_equals_ignores_an_expired_entry(
+    memory_backend: MemoryBackend,
+):
+    entry = CacheEntry(fingerprint="lock", content=b"owner-a")
+    await memory_backend.set("slot", entry, 60)
+    memory_backend.cache["slot"].expiry = time.time() - 1
+
+    assert await memory_backend.expire_if_equals("slot", entry, 60) is False
