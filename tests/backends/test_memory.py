@@ -1,4 +1,6 @@
 import asyncio
+import ntpath
+import os
 import time
 from collections.abc import Awaitable
 from collections.abc import Callable
@@ -283,6 +285,20 @@ async def test_memory_backend_clear_pattern_separator_less_keys(
     assert await memory_backend.get("cache:user:123") is None
     assert await memory_backend.get("cache:user:456") is None
     assert await memory_backend.get("cache:post:789") == value3
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_clear_pattern_is_case_sensitive_on_windows(
+    memory_backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+):
+    """fnmatch.fnmatch folds case through os.path.normcase on Windows (#179)."""
+    monkeypatch.setattr(os.path, "normcase", ntpath.normcase)
+    value = CacheEntry(fingerprint="e1", content=b"v1")
+    await memory_backend.set("cache:User:1", value)
+
+    assert await memory_backend.clear_pattern("cache:user:*") == 0
+    assert await memory_backend.get("cache:User:1") == value
+    assert await memory_backend.clear_pattern("cache:User:*") == 1
 
 
 @pytest.mark.asyncio

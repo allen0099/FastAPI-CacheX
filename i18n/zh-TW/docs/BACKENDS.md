@@ -28,6 +28,8 @@ BackendProxy.set(backend)
 > [!NOTE]
 > 記憶體快取不適合用於多行程的正式環境。每個行程都各自維護獨立的快取。
 
+`clear_pattern()` 在所有平台上都以區分大小寫的方式比對完整的鍵，與 Redis 相同。萬用字元語法採用 Python 的 `fnmatch`，與 Redis 有兩處不同：否定字元類別要寫 `[!...]`（Redis 為 `[^...]`）；跳脫特殊字元要放進中括號，例如 `[*]`（Redis 另外也接受 `\*`）。`*`、`?` 與 `[abc]` 在兩者上的行為相同。
+
 ## Redis {#redis}
 
 以 `uv add "fastapi-cachex[redis]"` 安裝此 extra。
