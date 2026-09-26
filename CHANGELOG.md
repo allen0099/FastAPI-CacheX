@@ -57,11 +57,14 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   pattern clears nothing, the prefix-stripped form is still tried and emits a
   `DeprecationWarning` if it clears anything. The retry will be removed in
   0.4.0. ([#125](https://github.com/allen0099/FastAPI-CacheX/issues/125))
-
 - **The `memcache` extra.** Use `memcached` instead. The old name keeps working
   until 0.4.0 removes it; after that, pip and uv only warn about the unknown
   extra and install without `pymemcache`.
   ([#202](https://github.com/allen0099/FastAPI-CacheX/issues/202))
+- **`fastapi_cachex.exceptions.CacheError`.** Nothing in the package raises it.
+  Accessing or importing it emits a `DeprecationWarning`; catch `CacheXError`
+  instead. It will be removed in 0.4.0.
+  ([#163](https://github.com/allen0099/FastAPI-CacheX/issues/163))
 
 ### Fixed
 
