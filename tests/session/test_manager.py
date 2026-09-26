@@ -11,6 +11,7 @@ import pytest
 from pydantic import SecretStr
 
 from fastapi_cachex.backends.memory import MemoryBackend
+from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.exceptions import SessionExpiredError
 from fastapi_cachex.session.exceptions import SessionInvalidError
@@ -118,6 +119,17 @@ async def test_get_invalid_token(manager: SessionManager) -> None:
     """Test getting session with invalid token."""
     with pytest.raises(SessionTokenError):
         await manager.get_session("invalid-token")
+
+
+@pytest.mark.asyncio
+async def test_session_errors_are_caught_as_cachex_errors(
+    manager: SessionManager,
+) -> None:
+    """Test a session error is caught by ``except CacheXError`` (#162)."""
+    with pytest.raises(CacheXError) as exc_info:
+        await manager.get_session("invalid-token")
+
+    assert isinstance(exc_info.value, SessionTokenError)
 
 
 @pytest.mark.asyncio

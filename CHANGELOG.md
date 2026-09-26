@@ -44,6 +44,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   summaries with their issue links, grouped as in the changelog, and links to
   the full entries on the documentation site. The changelog itself keeps the
   details.
+- **`SessionError` derives from `CacheXError`.** It derived from `Exception`,
+  while `StateError` already derived from `CacheXError`, so `except CacheXError`
+  caught state errors but not session errors. Handlers for `SessionError` or
+  `Exception` keep working. A `try` block that lists `except CacheXError`
+  before `except SessionError` now takes the `CacheXError` branch for session
+  errors. ([#162](https://github.com/allen0099/FastAPI-CacheX/issues/162))
 
 ### Deprecated
 
