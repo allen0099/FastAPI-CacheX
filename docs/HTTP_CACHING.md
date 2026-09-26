@@ -246,7 +246,11 @@ something a shared cache cannot see, use option 1 instead.
 ### By path or pattern
 
 The clearing methods live on the backend, which you can inject with the
-`CacheBackend` dependency or fetch with `BackendProxy.get()`:
+`CacheBackend` dependency or fetch with `BackendProxy.get()`. With no backend
+configured, `CacheBackend` registers the same `MemoryBackend` fallback that
+`@cache` would, so it works before any cached route has run (before 0.3.8 it
+answered `500` until then); `BackendProxy.get()` still raises
+`BackendNotFoundError`.
 
 ```python
 from fastapi_cachex import CacheBackend

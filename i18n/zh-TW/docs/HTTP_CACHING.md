@@ -183,7 +183,7 @@ async def my_dashboard(user: CurrentUser, response: Response):
 
 ### 依路徑或模式 {#by-path-or-pattern}
 
-清除用的方法位於後端上，可以透過 `CacheBackend` 依賴項注入，或以 `BackendProxy.get()` 取得：
+清除用的方法位於後端上，可以透過 `CacheBackend` 依賴項注入，或以 `BackendProxy.get()` 取得。尚未設定後端時，`CacheBackend` 會註冊與 `@cache` 相同的 `MemoryBackend` 後備後端，因此在任何快取路由執行之前也能使用（0.3.8 之前在那之前會回應 `500`）；`BackendProxy.get()` 則仍會引發 `BackendNotFoundError`。
 
 ```python
 from fastapi_cachex import CacheBackend

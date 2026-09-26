@@ -1,23 +1,24 @@
 """FastAPI dependency injection utilities for cache control."""
 
-import threading
 from typing import Annotated
 
 from fastapi import Depends
 
 from .backends.base import BaseCacheBackend
-from .exceptions import ProxyNotSetError
 from .manager import CacheManager
 from .manager_proxy import CacheManagerProxy
-from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
-
-_manager_lock = threading.Lock()
 
 
 def get_cache_backend() -> BaseCacheBackend:
-    """Dependency to get the current cache backend instance."""
-    return BackendProxy.get()
+    """Dependency to get the current cache backend instance.
+
+    With no backend configured this falls back to a `MemoryBackend` and
+    registers it, the same way `@cache` and `AppCache` do. It used to raise
+    `BackendNotFoundError` (a 500) until some `@cache` route had run and
+    installed the fallback first.
+    """
+    return get_backend_or_fallback()
 
 
 CacheBackend = Annotated[BaseCacheBackend, Depends(get_cache_backend)]
@@ -36,20 +37,11 @@ def get_app_cache() -> CacheManager:
     dependency worked depended on whether some `@cache` route had already run
     and installed the fallback first.
     """
-    try:
-        return CacheManagerProxy.get()
-    except ProxyNotSetError:
-        pass
-    # Checked again under the lock: FastAPI runs this sync dependency in a
-    # worker thread, so concurrent first requests would otherwise each build
-    # and register their own manager (and fallback backend).
-    with _manager_lock:
-        try:
-            return CacheManagerProxy.get()
-        except ProxyNotSetError:
-            manager = CacheManager(backend=get_backend_or_fallback())
-            CacheManagerProxy.set(manager)
-            return manager
+    return CacheManagerProxy.get_or_create(_default_manager)
+
+
+def _default_manager() -> CacheManager:
+    return CacheManager(backend=get_backend_or_fallback())
 
 
 AppCache = Annotated[CacheManager, Depends(get_app_cache)]

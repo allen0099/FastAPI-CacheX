@@ -6,7 +6,6 @@ from fastapi_cachex import BackendProxy
 from fastapi_cachex import CacheBackend
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.dependencies import get_app_cache
-from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 
@@ -23,11 +22,21 @@ async def backend_endpoint(backend: CacheBackend):
 
 # Actual test functions
 @pytest.mark.asyncio
-async def test_get_cache_backend_no_backend():
-    """Test that get_cache_backend raises BackendNotFoundError when no backend is set."""
+async def test_get_cache_backend_falls_back_to_memory_without_a_backend():
+    """`CacheBackend` must work before any `@cache` route has run.
+
+    It used to answer 500 (`BackendNotFoundError`) until a `@cache` route had
+    installed the fallback, the order dependence `AppCache` no longer had.
+    """
     BackendProxy.set(None)
-    with pytest.raises(BackendNotFoundError):
-        client.get("/test-backend")
+
+    response = client.get("/test-backend")
+
+    assert response.status_code == 200
+    assert response.json() == {"backend_type": "MemoryBackend"}
+    # The fallback is registered, so `@cache` and `AppCache` share it.
+    assert isinstance(BackendProxy.get(), MemoryBackend)
+    assert get_app_cache().backend is BackendProxy.get()
 
 
 @pytest.mark.asyncio
