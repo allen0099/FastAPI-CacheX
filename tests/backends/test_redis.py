@@ -971,6 +971,44 @@ async def test_redis_get_cache_data_reports_absolute_expiry(
 
 @requires_redis
 @pytest.mark.asyncio
+async def test_redis_get_cache_data_uses_chunked_non_transactional_pipelines(
+    async_redis_backend: AsyncRedisCacheBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One MULTI/EXEC over the whole keyspace would block the server (#171)."""
+    total = _BATCH_SIZE * 2 + 10
+    for index in range(total):
+        await async_redis_backend.set(
+            f"chunk:{index}", CacheEntry(fingerprint="e", content=b"v"), ttl=60
+        )
+
+    real_pipeline = async_redis_backend.client.pipeline
+    pipelines: list[tuple[bool, int]] = []
+
+    def recording_pipeline(*args: Any, **kwargs: Any) -> Any:
+        pipe = real_pipeline(*args, **kwargs)
+        real_execute = pipe.execute
+
+        async def execute(*e_args: Any, **e_kwargs: Any) -> Any:
+            pipelines.append((kwargs.get("transaction", True), len(pipe)))
+            return await real_execute(*e_args, **e_kwargs)
+
+        monkeypatch.setattr(pipe, "execute", execute)
+        return pipe
+
+    monkeypatch.setattr(async_redis_backend.client, "pipeline", recording_pipeline)
+
+    data = await async_redis_backend.get_cache_data()
+
+    assert len(data) == total
+    assert all(expiry is not None for _entry, expiry in data.values())
+    assert [transaction for transaction, _ in pipelines] == [False] * 3
+    assert sum(size for _, size in pipelines) == 2 * total
+    assert max(size for _, size in pipelines) <= 2 * _BATCH_SIZE
+
+
+@requires_redis
+@pytest.mark.asyncio
 async def test_redis_get_cache_data_skips_keys_gone_after_scan(
     async_redis_backend: AsyncRedisCacheBackend,
     monkeypatch: pytest.MonkeyPatch,

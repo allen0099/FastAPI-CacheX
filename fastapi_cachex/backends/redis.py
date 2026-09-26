@@ -478,28 +478,29 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         all_keys = await self.get_all_keys()
         cache_data: dict[str, tuple[CacheEntry, float | None]] = {}
 
-        if not all_keys:
-            return cache_data
+        # Fetch values and remaining lifetimes in pipelines of _BATCH_SIZE
+        # keys instead of 2N round trips. The pipelines are not transactional:
+        # a MULTI/EXEC over the whole keyspace would block the server for its
+        # duration, and a consistent snapshot is not needed for monitoring.
+        for start in range(0, len(all_keys), _BATCH_SIZE):
+            chunk = all_keys[start : start + _BATCH_SIZE]
+            pipe = self.client.pipeline(transaction=False)
+            for key in chunk:
+                redis_key = self._make_key(key)
+                pipe.get(redis_key)
+                pipe.pttl(redis_key)
+            replies: list[Any] = await pipe.execute()
+            now = time.time()
 
-        # Fetch every value and its remaining lifetime in a single pipeline
-        # round-trip instead of 2N commands.
-        pipe = self.client.pipeline()
-        for key in all_keys:
-            redis_key = self._make_key(key)
-            pipe.get(redis_key)
-            pipe.pttl(redis_key)
-        replies: list[Any] = await pipe.execute()
-        now = time.time()
-
-        for key, raw, pttl in zip(all_keys, replies[::2], replies[1::2], strict=True):
-            # -2: the key expired or was deleted between SCAN and this fetch.
-            if pttl == _PTTL_MISSING:
-                continue
-            value = decode_entry(raw)
-            if value is None:
-                continue
-            expiry = None if pttl == _PTTL_NO_EXPIRY else now + pttl / 1000
-            cache_data[key] = (value, expiry)
+            for key, raw, pttl in zip(chunk, replies[::2], replies[1::2], strict=True):
+                # -2: the key expired or was deleted between SCAN and this fetch.
+                if pttl == _PTTL_MISSING:
+                    continue
+                value = decode_entry(raw)
+                if value is None:
+                    continue
+                expiry = None if pttl == _PTTL_NO_EXPIRY else now + pttl / 1000
+                cache_data[key] = (value, expiry)
 
         logger.debug("Redis GET_CACHE_DATA; keys=%s", len(cache_data))
         return cache_data
