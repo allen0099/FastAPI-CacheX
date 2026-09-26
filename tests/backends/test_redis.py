@@ -1033,4 +1033,3 @@ async def test_lock_lifecycle_with_redis(
     assert await lock2.acquire(blocking=False) is False
     assert await lock1.extend(60) is True
     assert await lock1.release() is True
-
