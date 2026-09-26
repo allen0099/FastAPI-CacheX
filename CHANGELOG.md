@@ -82,6 +82,11 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   accepted too, and a header without a token no longer yields an empty one.
   ([#166](https://github.com/allen0099/FastAPI-CacheX/issues/166))
 
+- **Memcached `clear_path()` no longer reports a connection failure as
+  "nothing to clear".** It caught every exception and returned `0`, while
+  `delete()` and the other methods let the error through.
+  ([#177](https://github.com/allen0099/FastAPI-CacheX/issues/177))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added
