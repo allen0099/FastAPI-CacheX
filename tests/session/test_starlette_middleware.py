@@ -19,6 +19,8 @@ from fastapi.testclient import TestClient
 
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
+from fastapi_cachex.session.dependencies import AuthenticatedSession
+from fastapi_cachex.session.dependencies import RequiredSession
 from fastapi_cachex.session.dependencies import get_session
 from fastapi_cachex.session.dependencies import rotate_session_id
 from fastapi_cachex.session.exceptions import SessionNotFoundError
@@ -1127,3 +1129,39 @@ async def test_writing_after_clear_starts_a_new_anonymous_session(
     assert fresh.session_id != _session.session_id
     assert fresh.user is None
     assert fresh.data == {"flash": "signed out"}
+
+
+@pytest.mark.asyncio
+async def test_require_user_session_rejects_anonymous_sessions(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """An anonymous cart session passes get_session but not require_user_session (#114)."""
+    app = FastAPI()
+    app.add_middleware(FastAPICacheXSessionMiddleware, session_manager=manager)
+
+    @app.post("/cart")
+    async def add_to_cart(request: Request) -> dict[str, bool]:
+        request.session["cart"] = [1]
+        return {"ok": True}
+
+    @app.get("/any")
+    async def any_session(session: RequiredSession) -> dict[str, bool]:
+        return {"user": session.user is not None}
+
+    @app.get("/account")
+    async def account(session: AuthenticatedSession) -> dict[str, str]:
+        assert session.user is not None
+        return {"user_id": session.user.user_id}
+
+    visitor = TestClient(app)
+    assert visitor.get("/account").status_code == 401
+    visitor.post("/cart")
+    assert visitor.get("/any").json() == {"user": False}
+    response = visitor.get("/account")
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+    _session, token = await manager.create_session(user=SessionUser(user_id="alice"))
+    member = TestClient(app)
+    response = member.get("/account", headers={config.header_name: token})
+    assert response.json() == {"user_id": "alice"}
