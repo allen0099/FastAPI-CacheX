@@ -54,7 +54,8 @@ The library has four independent subsystems:
 - Fails open by default (`fail_open=True`): a backend error on `get` is logged and treated as a miss, one on `set` is logged and the response served unstored. `fail_open=False` propagates the error.
 - Only GET requests are cached; other methods bypass the cache entirely.
 - Cache keys follow the format `method|||host|||path|||query_params` (separator defined in `types.py`). Host and path go through `escape_key_component` (`|` → `%7C`, `%` → `%25`) so client input cannot inject the separator; `clear_path` encodes its argument and `routes.py` decodes for display.
-- `BackendProxy` is a non-instantiable class-level singleton (via `ProxyMeta`). Call `BackendProxy.set(backend)` at app startup; `BackendProxy.get()` raises `BackendNotFoundError` if unset. Falls back to `MemoryBackend` automatically inside `@cache` if no backend is set.
+- `BackendProxy` is a non-instantiable class-level singleton (via `ProxyMeta`). Call `BackendProxy.set(backend)` at app startup; `BackendProxy.get()` raises `BackendNotFoundError` if unset. `get_backend_or_fallback()` registers a `MemoryBackend` when none is set; `@cache`, `CacheBackend` and `AppCache` use it.
+- `ProxyBase.get_or_create(factory)` is the one lazy get-or-create: a per-class `threading.Lock` (sync dependencies run in worker threads; per class so a factory can call another proxy's `get_or_create`). Used by `get_backend_or_fallback`, `get_app_cache` and `get_state_manager` (no memory fallback for states).
 - Cache values are stored as `CacheEntry(fingerprint, content, media_type)` dataclass (defined in `types.py`).
 
 **2. Application-Level Caching (`fastapi_cachex/manager.py`, `manager_proxy.py`)**
