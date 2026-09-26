@@ -317,6 +317,11 @@ Changes made to a `Session` object inside a handler (flash messages, `session.da
 size of the backend. On the Memcached backend, which cannot enumerate keys, they find nothing and
 return `0` (with a `RuntimeWarning` from the backend).
 
+`clear_expired_sessions()` removes every session that can no longer be used: those past their
+`expires_at`, and those no longer `ACTIVE` (invalidated with `invalidate_session()`, or marked
+expired by an earlier read) that would otherwise stay in the backend until their TTL runs out.
+Both methods delete what they find with a single `backend.delete_many()` call.
+
 ## Migration: SessionMiddleware → FastAPICacheXSessionMiddleware
 
 `SessionMiddleware` has been deprecated since 0.3.1 (it emits a `DeprecationWarning` when

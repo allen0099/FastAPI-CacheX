@@ -2,6 +2,7 @@
 
 import base64
 import json
+from collections.abc import Iterable
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -18,6 +19,7 @@ from fastapi_cachex.session.exceptions import SessionSecurityError
 from fastapi_cachex.session.exceptions import SessionTokenError
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.models import Session
+from fastapi_cachex.session.models import SessionStatus
 from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.types import CacheEntry
@@ -769,3 +771,55 @@ async def test_session_sweeps_skip_entries_they_cannot_read() -> None:
     )
 
     assert await manager.delete_user_sessions("u1") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [SessionStatus.INVALIDATED, SessionStatus.EXPIRED])
+async def test_clear_expired_sessions_removes_sessions_no_longer_active(
+    status: SessionStatus,
+) -> None:
+    """A record marked invalidated or expired is unusable before its TTL (#165)."""
+    backend = MemoryBackend()
+    manager = SessionManager(backend, SessionConfig(secret_key="a" * 32))
+    marked, _ = await manager.create_session(user=SessionUser(user_id="u1"))
+    _, active_token = await manager.create_session(user=SessionUser(user_id="u2"))
+    marked.status = status
+    await manager.update_session(marked)
+
+    assert await manager.clear_expired_sessions() == 1
+
+    assert await backend.get(manager._get_backend_key(marked.session_id)) is None
+    assert await manager.get_session(active_token) is not None
+
+
+@pytest.mark.asyncio
+async def test_session_sweeps_delete_in_one_batch() -> None:
+    """Both sweeps hand every matching key to a single delete_many (#165)."""
+
+    class CountingBackend(MemoryBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.deletes = 0
+            self.batches: list[int] = []
+
+        async def delete(self, key: str) -> None:
+            self.deletes += 1
+            await super().delete(key)
+
+        async def delete_many(self, keys: Iterable[str]) -> int:
+            keys = list(keys)
+            self.batches.append(len(keys))
+            return await super().delete_many(keys)
+
+    backend = CountingBackend()
+    manager = SessionManager(backend, SessionConfig(secret_key="a" * 32))
+    for _ in range(3):
+        session, _ = await manager.create_session(user=SessionUser(user_id="u1"))
+    for _ in range(2):
+        session, _ = await manager.create_session(user=SessionUser(user_id="u2"))
+        await manager.invalidate_session(session)
+
+    assert await manager.clear_expired_sessions() == 2
+    assert await manager.delete_user_sessions("u1") == 3
+    assert backend.batches == [2, 3]
+    assert backend.deletes == 0
