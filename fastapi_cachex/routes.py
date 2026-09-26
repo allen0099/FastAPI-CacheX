@@ -17,7 +17,11 @@ if TYPE_CHECKING:
 
 # Constants
 CACHE_KEY_MIN_PARTS = 3
-CACHE_KEY_MAX_PARTS = 3
+# A ``maxsplit`` count for ``str.split``, not a number of parts: splitting at
+# most three times keeps a query string containing the separator in one piece.
+CACHE_KEY_MAX_SPLIT = 3
+# Former name, kept so existing imports keep working.
+CACHE_KEY_MAX_PARTS = CACHE_KEY_MAX_SPLIT
 _PREVIEW_BYTES = 100
 
 
@@ -61,7 +65,12 @@ class CacheHitsResponse:
 
 @dataclass
 class CachedRecord:
-    """Record for a single cached item."""
+    """Record for a single cached item.
+
+    ``media_type`` is the stored response's media type (``None`` when it had
+    none). ``content_type`` is always ``"bytes"``, the type of the stored body,
+    and is kept for compatibility.
+    """
 
     cache_key: str
     method: str
@@ -74,6 +83,7 @@ class CachedRecord:
     is_expired: bool
     ttl_remaining: float | None
     content_preview: str | None
+    media_type: str | None
 
 
 @dataclass
@@ -106,7 +116,7 @@ def _parse_cache_key(cache_key: str) -> tuple[str, str, str, str]:
     Returns:
         Tuple of (method, host, path, query_params)
     """
-    key_parts = cache_key.split(CACHE_KEY_SEPARATOR, CACHE_KEY_MAX_PARTS)
+    key_parts = cache_key.split(CACHE_KEY_SEPARATOR, CACHE_KEY_MAX_SPLIT)
     if len(key_parts) >= CACHE_KEY_MIN_PARTS:
         method = key_parts[0]
         host = unescape_key_component(key_parts[1])
@@ -218,6 +228,7 @@ def _cached_records(
                 if include_content_preview
                 else None
             ),
+            media_type=e.entry.media_type,
         )
         for e in entries
     ]

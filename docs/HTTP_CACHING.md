@@ -335,10 +335,13 @@ add_routes(
 - `GET {prefix}/cached-hits` — every cached entry split into method, host, path
   and query, with its ETag and expiry, plus counts of valid and expired entries
   and the distinct cached paths. It does not count hits.
-- `GET {prefix}/cached-records` — every cached record with its size, expiry and
-  a preview of the first 100 bytes of the cached content. With
+- `GET {prefix}/cached-records` — every cached record with its size, expiry,
+  `media_type` (the stored response's media type, `null` if it had none) and a
+  preview of the first 100 bytes of the cached content. With
   `include_content_preview=False`, `content_preview` is `null` and no response
   body leaves the server; keys, sizes and expiry are still reported.
+  `content_type` is always `"bytes"` and is kept for compatibility; read
+  `media_type` instead.
 
 > [!WARNING]
 > **These routes have no authentication of their own.** `include_in_schema=False`
