@@ -927,7 +927,9 @@ def test_expiry_up_to_2038_is_sent_as_a_timestamp(monkeypatch) -> None:
         _expiry(2**31 - 2_000_000_000)
 
 
-@pytest.mark.parametrize("operation", ["set", "set_if_absent", "increment"])
+@pytest.mark.parametrize(
+    "operation", ["set", "set_if_absent", "increment", "expire_if_equals"]
+)
 @pytest.mark.asyncio
 async def test_ttl_past_2038_is_rejected_before_io(operation: str) -> None:
     """Such a write used to succeed while Memcached dropped the item at once (#229)."""
@@ -939,3 +941,96 @@ async def test_ttl_past_2038_is_rejected_before_io(operation: str) -> None:
         await getattr(backend, operation)(*args, ttl=2**31 - 1)
     assert isinstance(backend.client, MagicMock)
     assert backend.client.method_calls == []
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_delete_many_counts_only_existing_keys(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """It used to report how many keys it was given, not how many it removed (#174)."""
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    long_key = "k" * 300  # hashed by _make_key
+    for key in ("dm-a", "dm-b", long_key, "dm-keep"):
+        await memcached_backend.set(key, entry, 60)
+
+    removed = await memcached_backend.delete_many(
+        ["dm-a", "dm-b", long_key, "dm-a", "dm-missing"]
+    )
+
+    assert removed == 3
+    for key in ("dm-a", "dm-b", long_key):
+        assert await memcached_backend.get(key) is None
+    assert await memcached_backend.get("dm-keep") == entry
+
+
+@pytest.mark.asyncio
+async def test_memcached_delete_many_sends_each_namespaced_key_once() -> None:
+    backend = stubbed_backend()
+    backend.client.delete.side_effect = [True, False, True]
+    long_key = "k" * 300
+
+    assert await backend.delete_many(["a", "missing", "a", long_key]) == 2
+
+    sent = [call.args[0] for call in backend.client.delete.call_args_list]
+    assert sent == [
+        backend._make_key("a"),
+        backend._make_key("missing"),
+        backend._make_key(long_key),
+    ]
+    assert all(
+        call.kwargs == {"noreply": False}
+        for call in backend.client.delete.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_memcached_delete_many_with_no_keys_does_no_io() -> None:
+    backend = stubbed_backend()
+
+    assert await backend.delete_many([]) == 0
+    assert backend.client.method_calls == []
+
+
+def _stub_for_single_hop(backend: MemcachedBackend) -> None:
+    """Script the stub so each operation takes its longest path."""
+    entry = encode_entry(_ENTRY)
+    # increment: INCR misses, ADD creates, INCR succeeds.
+    backend.client.incr.side_effect = [None, 1]
+    # get_and_delete: the first CAS loses to a writer, the second wins.
+    # The *_if_equals calls read a match and CAS once.
+    backend.client.gets.return_value = (entry, b"1")
+    backend.client.cas.side_effect = [False, True]
+
+
+@pytest.mark.parametrize(
+    ("operation", "args"),
+    [
+        ("increment", ("k",)),
+        ("get_and_delete", ("k",)),
+        ("delete_if_equals", ("k", _ENTRY)),
+        ("expire_if_equals", ("k", _ENTRY, 5)),
+        ("delete_many", (["a", "b", "c"],)),
+    ],
+)
+@pytest.mark.asyncio
+async def test_memcached_multi_step_operations_take_one_thread_hop(
+    operation: str, args: tuple[object, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each round trip used to be its own asyncio.to_thread call (#176)."""
+    backend = stubbed_backend()
+    _stub_for_single_hop(backend)
+    hops = 0
+    real_to_thread = asyncio.to_thread
+
+    async def counting_to_thread(func, /, *a, **kw):
+        nonlocal hops
+        hops += 1
+        return await real_to_thread(func, *a, **kw)
+
+    monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
+
+    await getattr(backend, operation)(*args)
+
+    assert hops == 1
+    assert len(backend.client.method_calls) > 1

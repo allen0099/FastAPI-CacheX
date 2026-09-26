@@ -96,7 +96,7 @@ Four non-abstract atomic primitives live on the base class with non-atomic fallb
 
 `validate_ttl` (in `backends/base.py`) accepts `None` or an `int` from 1 to `MAX_TTL` (2**31 - 1) and raises `TypeError` for floats/bools; `validate_delta` requires an `int` in signed 64-bit range. Both run before any I/O. Memcached's `_expiry` also rejects expiries after 2038-01-19.
 
-`delete_many(keys) -> int` is the fifth non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock).
+`delete_many(keys) -> int` is the fifth non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock). Memcached sends one acknowledged `DELETE` per key inside a single worker call and counts the ones that existed (pymemcache's `delete_many` returns `True` regardless). Every Memcached multi-step op (`increment`, `get_and_delete`, `*_if_equals`) also runs as one sync helper in one `asyncio.to_thread` call.
 
 `backends/codec.py` holds the JSON `CacheEntry` codec shared by Redis and Memcached; `decode_entry` maps a bare integer to a counter entry and every malformed value to `None`.
 

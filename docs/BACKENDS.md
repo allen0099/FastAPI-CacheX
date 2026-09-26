@@ -153,7 +153,12 @@ BackendProxy.set(backend)
 The synchronous pymemcache client runs in worker threads and is connection-pooled,
 so concurrent requests never share a socket. Writes wait for the server's
 acknowledgement (`default_noreply=False`), which keeps a value readable from
-any pooled connection as soon as `set()` returns.
+any pooled connection as soon as `set()` returns. Each call takes a single trip
+to a worker thread, including the multi-step
+[atomic operations](#atomic-backend-primitives).
+`delete_many()` sends one `DELETE` per key within that call and returns how many
+of the keys existed; before 0.3.8 it took one thread trip per key and returned
+how many keys it was given.
 
 When a server cannot be reached, every call that would go to it raises, and the
 server is tried again after one second. Before 0.3.8, calls in the second after a
