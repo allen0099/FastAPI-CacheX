@@ -64,6 +64,8 @@ docs = [
 ]
 
 [project.optional-dependencies]
+memcached = ["pymemcache"]
+# Deprecated alias of `memcached`, removed in 0.4.0 (#202).
 memcache = ["pymemcache"]
 redis = ["redis[hiredis]>=5.3.0", "orjson"]
 jwt = ["PyJWT>=2.9.0"]

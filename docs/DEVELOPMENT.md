@@ -109,7 +109,7 @@ Worth doing whenever a test is written for something security-relevant.
 ## Using tox
 
 tox ensures the code works across different Python versions (3.10-3.14, the
-`env_list` in `tox.ini`). Each environment installs the `redis` and `memcache`
+`env_list` in `tox.ini`). Each environment installs the `redis` and `memcached`
 extras through `tox-uv` and passes the `CACHEX_TEST_*` and
 `CACHEX_REQUIRE_LIVE_SERVERS` variables through, so the opt-in rules above apply
 unchanged.

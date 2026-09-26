@@ -22,6 +22,11 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 - **`CacheLock`, a distributed lock built on backend primitives.** Usable as an async context manager or with direct `acquire`/`release`/`extend`/`locked` calls, raising `LockTimeoutError` on timeout. ([#64](https://github.com/allen0099/FastAPI-CacheX/issues/64))
 - **`expire_if_equals()` backend primitive for owner-checked TTL renewal.** Added to `BaseCacheBackend`, `MemoryBackend`, `AsyncRedisCacheBackend`, and `MemcachedBackend`. ([#64](https://github.com/allen0099/FastAPI-CacheX/issues/64))
 
+- **`memcached` extra for `MemcachedBackend`.** Install with
+  `fastapi-cachex[memcached]`, matching the backend's name. It pulls in the
+  same `pymemcache` dependency as the old `memcache` extra.
+  ([#201](https://github.com/allen0099/FastAPI-CacheX/issues/201))
+
 ### Changed
 
 - **GitHub release notes list one line per change.** Each changelog entry now
@@ -36,6 +41,11 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   pattern clears nothing, the prefix-stripped form is still tried and emits a
   `DeprecationWarning` if it clears anything. The retry will be removed in
   0.4.0. ([#125](https://github.com/allen0099/FastAPI-CacheX/issues/125))
+
+- **The `memcache` extra.** Use `memcached` instead. The old name keeps working
+  until 0.4.0 removes it; after that, pip and uv only warn about the unknown
+  extra and install without `pymemcache`.
+  ([#202](https://github.com/allen0099/FastAPI-CacheX/issues/202))
 
 ### Fixed
 
