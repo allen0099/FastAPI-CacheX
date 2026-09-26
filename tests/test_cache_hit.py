@@ -143,7 +143,7 @@ def test_no_cache_still_returns_304_on_etag_match():
     execution_count = {"value": 0}
 
     @app.get("/no-cache-with-etag")
-    @cache(no_cache=True)
+    @cache(ttl=60, no_cache=True)
     async def no_cache_endpoint():
         execution_count["value"] += 1
         return Response(

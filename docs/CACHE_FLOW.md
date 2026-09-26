@@ -113,10 +113,11 @@ The header value is built once per decorated route:
 | anything else | in order: `public` or `private`, `max-age=<ttl>`, `must-revalidate`, `stale-while-revalidate=<n>` or `stale-if-error=<n>`, `immutable` |
 
 > [!NOTE]
-> Without `ttl` (or with `ttl=0`, which sends `max-age=0`), an entry is still
-> written (with no expiry) but is never served directly: it is only used to
-> answer a matching `If-None-Match` with `304`. Set a positive `ttl` to have the
-> server replay cached responses.
+> Without `ttl` (or with `ttl=0`, which sends `max-age=0`), the backend is
+> neither read nor written: the handler runs on every request, and a matching
+> `If-None-Match` is answered with `304` only after comparing it against the
+> freshly rendered response. Set a positive `ttl` to have the server store and
+> replay responses.
 
 > [!WARNING]
 > **The default cache key does not include the user's identity**, and the backend
@@ -169,8 +170,8 @@ if request.method != "GET":
 if no_store:
     return await render()                    # no read, no write
 
-if private:
-    response, etag = await render()          # shared backend neither read nor written
+if private or not ttl:
+    response, etag = await render()          # backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
 entry = await backend.get(cache_key)         # expired entries are already skipped here
@@ -182,7 +183,7 @@ if client_etag and no_cache:
 elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
     return not_modified(...)                 # 304, handler does not run
 
-if entry and not no_cache and ttl is not None:
+if entry and not no_cache:
     return Response(                         # 200, handler does not run
         content=entry.content,
         status_code=entry.status_code,
@@ -373,7 +374,7 @@ lookup. Which backend to pick is covered in [Backends](BACKENDS.md#choosing-a-ba
 | `no_store=True` | The cache is neither read nor written; the endpoint runs every time |
 | `no_cache=True` | The endpoint runs every time to recompute the ETag; a match with the client's `If-None-Match` still returns 304, and the cache is updated when the ETag changes |
 | `private=True` | The **shared backend** is neither read nor written; `Cache-Control: private` is still sent and the ETag is compared against fresh content |
-| No `ttl` | Entries are written without expiry but only used for `If-None-Match` revalidation; the handler runs on every request without a matching validator |
+| No `ttl` (or `ttl=0`) | The backend is neither read nor written, as with `private=True`; the endpoint runs every time and the ETag is compared against fresh content |
 | Cache expired (TTL elapsed) | The endpoint runs again; `MemoryBackend` deletes the expired entry in place when it reads it |
 | Non-2xx or 206 response | Returned as-is, not written, and any existing entry is left untouched |
 | Streaming/file response | No ETag can be computed; returned as-is and not written |

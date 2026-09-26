@@ -45,7 +45,7 @@ header, and the server-side cache behaves the same with or without them.
 
 | Directive                | Set with                                 | Sent in header     | Effect on the server-side cache                                                                                |
 |--------------------------|------------------------------------------|--------------------|----------------------------------------------------------------------------------------------------------------|
-| `max-age`                | `ttl=N`                                  | :white_check_mark: | The stored response is served for `N` seconds without running the handler (`ttl=0` or unset: never served directly). |
+| `max-age`                | `ttl=N`                                  | :white_check_mark: | The stored response is served for `N` seconds without running the handler (`ttl=0` or unset: nothing is stored). |
 | `no-cache`               | `no_cache=True`                          | :white_check_mark: | The handler runs on every request; the response is still stored, and a matching `If-None-Match` gets a 304.   |
 | `no-store`               | `no_store=True`                          | :white_check_mark: | Nothing is read or stored, and no ETag is set.                                                                  |
 | `private`                | `private=True`                           | :white_check_mark: | The backend is bypassed; the handler runs on every request, and ETag revalidation still works.                 |
@@ -80,7 +80,7 @@ When a cached entry is valid (within TTL):
 - **With `If-None-Match` header**: Returns HTTP 304 Not Modified if the ETag matches
 - **With `no-cache` directive**: Forces revalidation with fresh content before deciding on 304
 - **With `private=True`**: Nothing is read from or written to the shared backend; the handler runs every time and only `If-None-Match` revalidation applies
-- **Without `ttl`** (`ttl=None`): The cached body is never served directly; the handler runs on every request except one whose `If-None-Match` matches the stored ETag, which gets a 304
+- **Without `ttl`** (`ttl=None`): Nothing is read from or written to the backend, as with `private=True`. The handler runs on every request, and `If-None-Match` gets a 304 only when it matches the freshly rendered response, so an old ETag never gets a 304 once the content has changed
 - **With `ttl=0`**: Sends `max-age=0` and otherwise behaves like `ttl=None`. A negative `ttl` is rejected with `CacheXError` when the decorator is applied
 
 Only successful responses are stored. A response the handler *returns* with a

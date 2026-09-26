@@ -63,6 +63,18 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   read as counters.
   ([#111](https://github.com/allen0099/FastAPI-CacheX/issues/111))
 
+- **`@cache` without a positive `ttl` no longer stores responses or answers
+  304 from a stored ETag.** With `ttl=None` or `ttl=0`, the response was stored
+  without expiry, and a request whose `If-None-Match` matched the stored ETag
+  got a 304 without the handler running. After the data changed, a client
+  revalidating with the old ETag kept getting 304 until another request
+  rewrote the entry, and entries for every query string accumulated. These
+  routes now skip the backend like `private=True` ones: the handler runs on
+  every request, and a 304 is sent only when `If-None-Match` matches the
+  freshly rendered response. Entries that earlier versions stored for them
+  are no longer read; `clear()` removes them.
+  ([#110](https://github.com/allen0099/FastAPI-CacheX/issues/110))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added
