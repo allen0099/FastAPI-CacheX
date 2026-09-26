@@ -28,6 +28,23 @@ BackendProxy.set(backend)
 > [!NOTE]
 > 記憶體快取不適合用於多行程的正式環境。每個行程都各自維護獨立的快取。
 
+清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束；`stop_cleanup()` 只會要求取消。
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await backend.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
+```
+
 `clear_pattern()` 在所有平台上都以區分大小寫的方式比對完整的鍵，與 Redis 相同。萬用字元語法採用 Python 的 `fnmatch`，與 Redis 有兩處不同：否定字元類別要寫 `[!...]`（Redis 為 `[^...]`）；跳脫特殊字元要放進中括號，例如 `[*]`（Redis 另外也接受 `\*`）。`*`、`?` 與 `[abc]` 在兩者上的行為相同。
 
 ## Redis {#redis}

@@ -174,6 +174,93 @@ async def test_memory_backend_stop_cleanup_when_not_running(
     assert memory_backend._cleanup_task is None
 
 
+def _run(loop: asyncio.AbstractEventLoop, backend: MemoryBackend) -> None:
+    """Start the backend's cleanup task on ``loop`` and return."""
+
+    async def start() -> None:
+        backend.start_cleanup()
+
+    loop.run_until_complete(start())
+
+
+def _close(loop: asyncio.AbstractEventLoop) -> None:
+    """Close ``loop`` after letting its cancelled tasks finish."""
+    loop.run_until_complete(asyncio.sleep(0))
+    loop.close()
+
+
+def test_cleanup_restarts_on_a_new_loop_after_the_old_one_closed():
+    """A task left on a closed loop never runs; it must be replaced (#181)."""
+    backend = MemoryBackend()
+    first = asyncio.new_event_loop()
+    _run(first, backend)
+    stale = backend._cleanup_task
+    first.close()  # without cancelling the task, as some runners do
+
+    second = asyncio.new_event_loop()
+    try:
+        _run(second, backend)
+        task = backend._cleanup_task
+        assert task is not None
+        assert task is not stale
+        assert task.get_loop() is second
+        backend.stop_cleanup()  # the stale task's loop is closed: must not raise
+    finally:
+        _close(second)
+
+
+def test_cleanup_moving_loops_cancels_the_task_on_a_loop_still_open():
+    backend = MemoryBackend()
+    first = asyncio.new_event_loop()
+    second = asyncio.new_event_loop()
+    try:
+        _run(first, backend)
+        stale = backend._cleanup_task
+        assert stale is not None
+
+        _run(second, backend)
+        first.run_until_complete(asyncio.sleep(0))
+
+        assert stale.cancelled() or stale.done()
+        assert backend._cleanup_task is not stale
+        backend.stop_cleanup()
+    finally:
+        _close(first)
+        _close(second)
+
+
+@pytest.mark.asyncio
+async def test_aclose_waits_for_the_cleanup_task(memory_backend: MemoryBackend):
+    memory_backend.start_cleanup()
+    task = memory_backend._cleanup_task
+    assert task is not None
+
+    await memory_backend.aclose()
+
+    assert task.done()
+    assert memory_backend._cleanup_task is None
+    await memory_backend.aclose()  # a second call is a no-op
+
+
+def test_aclose_only_cancels_a_task_on_another_loop():
+    backend = MemoryBackend()
+    other = asyncio.new_event_loop()
+    current = asyncio.new_event_loop()
+    try:
+        _run(other, backend)
+        task = backend._cleanup_task
+        assert task is not None
+
+        current.run_until_complete(backend.aclose())  # cannot await it there
+
+        assert backend._cleanup_task is None
+        other.run_until_complete(asyncio.sleep(0))
+        assert task.done()
+    finally:
+        _close(other)
+        _close(current)
+
+
 @pytest.mark.asyncio
 async def test_memory_backend_cleanup_task_impl():
     """The sweeper itself has to drop expired entries.
