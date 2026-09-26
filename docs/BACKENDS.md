@@ -34,6 +34,26 @@ BackendProxy.set(backend)
 > The in-memory cache is not suitable for production with multiple processes.
 > Each process maintains its own separate cache.
 
+The cleanup task starts on the event loop of the first cache call. If a later call
+runs on a different loop, for example after the first loop was closed, the task is
+started again there. To stop it on shutdown, `await backend.aclose()` cancels the
+task and waits until it has finished. `stop_cleanup()` only requests cancellation.
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await backend.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
+```
+
 `clear_pattern()` matches whole keys case-sensitively on every platform, like Redis.
 The glob syntax is Python's `fnmatch`, which differs from Redis in two places: negate
 a character class with `[!...]` (Redis uses `[^...]`), and escape a special character
