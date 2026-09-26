@@ -33,6 +33,9 @@ _MAX_RELATIVE_TTL = 30 * 24 * 60 * 60
 # again. Until then every call to it raises.
 _DEAD_TIMEOUT = 1
 
+# Maximum retries for CAS operations when another writer replaces the value.
+_CAS_MAX_RETRIES = 16
+
 
 def _expiry(ttl: int | None) -> int:
     """Convert a TTL in seconds to the exptime Memcached expects.
@@ -164,23 +167,36 @@ class MemcachedBackend(BaseCacheBackend):
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry (see base class).
 
-        Memcached has no combined primitive, but DELETE is atomic: the value is
-        returned only when this call is the one that removed it, so exactly one
-        concurrent caller wins.
+        Uses ``gets`` and ``cas`` with negative ``exptime`` to ensure the entry
+        is deleted only if it was not modified after reading. If another writer
+        replaces the value between ``gets`` and ``cas``, the operation retries
+        up to a bounded number of times to return and remove the current value.
+
+        Raises:
+            CacheXError: If concurrent writes cause the CAS deletion to exceed
+                the maximum retry attempts.
         """
         prefixed_key = self._make_key(key)
-        raw = await asyncio.to_thread(self.client.get, prefixed_key)
-        if raw is None:
-            logger.debug("Memcached GET_AND_DELETE MISS; key=%s", key)
-            return None
-        deleted = await asyncio.to_thread(
-            self.client.delete, prefixed_key, noreply=False
-        )
-        if not deleted:
-            logger.debug("Memcached GET_AND_DELETE LOST RACE; key=%s", key)
-            return None
-        logger.debug("Memcached GET_AND_DELETE HIT; key=%s", key)
-        return decode_entry(raw)
+        for _ in range(_CAS_MAX_RETRIES):
+            raw, cas_token = await asyncio.to_thread(self.client.gets, prefixed_key)
+            if raw is None:
+                logger.debug("Memcached GET_AND_DELETE MISS; key=%s", key)
+                return None
+            cas_result = await asyncio.to_thread(
+                self.client.cas, prefixed_key, b"", cas_token, -1, noreply=False
+            )
+            if cas_result is True:
+                logger.debug("Memcached GET_AND_DELETE HIT; key=%s", key)
+                return decode_entry(raw)
+            if cas_result is None:
+                logger.debug(
+                    "Memcached GET_AND_DELETE LOST RACE (DELETED); key=%s", key
+                )
+                return None
+            logger.debug("Memcached GET_AND_DELETE RETRY; key=%s", key)
+
+        msg = f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts on key {key!r}"
+        raise CacheXError(msg)
 
     async def set_if_absent(
         self, key: str, value: CacheEntry, ttl: int | None = None
