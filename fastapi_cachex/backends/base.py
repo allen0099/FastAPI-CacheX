@@ -113,9 +113,8 @@ class BaseCacheBackend(ABC):
 
         The base implementation deletes one key at a time and reports how
         many were attempted, since ``delete`` does not say whether the key
-        existed. The memory and Redis backends override it with a single
-        batched operation that counts what was actually removed; Memcached
-        keeps this per-key loop.
+        existed. The built-in backends override it and count what was
+        actually removed.
         """
         count = 0
         for key in keys:
