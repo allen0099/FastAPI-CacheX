@@ -55,9 +55,9 @@ class CacheManager:
 
     @staticmethod
     def _encode(value: Any) -> CacheEntry:
-        json_content = json.dumps(value)
-        fingerprint = hashlib.sha256(json_content.encode()).hexdigest()
-        return CacheEntry(fingerprint=fingerprint, content=json_content.encode("utf-8"))
+        content = json.dumps(value).encode("utf-8")
+        fingerprint = hashlib.sha256(content).hexdigest()
+        return CacheEntry(fingerprint=fingerprint, content=content)
 
     async def get(self, key: str, default: Any = None) -> Any:
         """Retrieve and JSON-decode a cached value.
