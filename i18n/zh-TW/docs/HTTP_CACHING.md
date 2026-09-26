@@ -72,6 +72,21 @@ async def non_store_endpoint():
 
 handler 回傳一般資料而非 `Response` 時，得到的處理與沒有 `@cache` 時相同：回傳值會經過路由的 response model 驗證與過濾（明確宣告的，或由回傳型別註記推斷，並套用 `response_model_*` 選項），套用路由的 `status_code`，而在注入的 `response: Response` 參數上設定的狀態碼與標頭也會保留。
 
+### 後端發生錯誤時 {#when-the-backend-fails}
+
+`@cache` 採取 fail open。讀取時後端拋出錯誤（例如 Redis 或 Memcached 無法連線），該請求會被當成快取未命中，照常執行 handler。儲存回應時拋出錯誤（例如回應超過 Memcached 的項目大小上限，預設為 1 MB），回應會照常送出，只是不會被儲存。兩種情況都會在 `fastapi_cachex.cache` logger 記錄一則警告，因此後端中斷不會讓有快取的路由變成 500；負載會轉到你的 handler 上，請留意這些警告。
+
+傳入 `fail_open=False` 則會讓後端錯誤直接往外拋出，使該請求失敗：
+
+```python
+@app.get("/report")
+@cache(ttl=300, fail_open=False)
+async def report():
+    return await build_report()
+```
+
+這只適用於 `@cache`。`invalidate()`、`CacheManager`、`StateManager`、`CacheLock` 與 Session 仍會把後端錯誤拋給呼叫端。
+
 ## 快取鍵 {#cache-keys}
 
 快取鍵以下列格式產生，以避免衝突：
