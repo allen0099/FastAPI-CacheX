@@ -11,7 +11,10 @@ from .dependencies import AppCache as AppCache
 from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_app_cache as get_app_cache
 from .dependencies import get_cache_backend as get_cache_backend
+from .exceptions import BackendNotFoundError as BackendNotFoundError
+from .exceptions import CacheXError as CacheXError
 from .exceptions import LockTimeoutError as LockTimeoutError
+from .exceptions import RequestNotFoundError as RequestNotFoundError
 from .lock import CacheLock as CacheLock
 from .manager import CacheManager as CacheManager
 from .manager_proxy import CacheManagerProxy as CacheManagerProxy
@@ -68,15 +71,18 @@ _package_logger.addHandler(
 
 __all__ = [
     "AppCache",
+    "BackendNotFoundError",
     "BackendProxy",
     "CacheBackend",
     "CacheKeyBuilder",
     "CacheLock",
     "CacheManager",
     "CacheManagerProxy",
+    "CacheXError",
     "FastAPICacheXSessionMiddleware",
     "InvalidStateError",
     "LockTimeoutError",
+    "RequestNotFoundError",
     "Session",
     "SessionConfig",
     "SessionError",
