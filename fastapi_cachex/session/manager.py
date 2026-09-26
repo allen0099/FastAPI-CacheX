@@ -390,26 +390,32 @@ class SessionManager:
         Returns:
             Number of sessions deleted
         """
-        count = 0
-        async for key, session in self._iter_sessions():
-            if session.user and session.user.user_id == user_id:
-                await self.backend.delete(key)
-                count += 1
+        keys = [
+            key
+            async for key, session in self._iter_sessions()
+            if session.user and session.user.user_id == user_id
+        ]
+        count = await self.backend.delete_many(keys)
 
         logger.debug("User sessions deleted; user_id=%s count=%s", user_id, count)
         return count
 
     async def clear_expired_sessions(self) -> int:
-        """Clear all expired sessions.
+        """Clear every session that can no longer be used.
+
+        That is any session past its ``expires_at`` and any session no longer
+        ``ACTIVE``: one that ``invalidate_session()`` or an expired read already
+        marked, which would otherwise stay in the backend until its TTL.
 
         Returns:
             Number of sessions cleared
         """
-        count = 0
-        async for key, session in self._iter_sessions():
-            if session.is_expired():
-                await self.backend.delete(key)
-                count += 1
+        keys = [
+            key
+            async for key, session in self._iter_sessions()
+            if session.status != SessionStatus.ACTIVE or session.is_expired()
+        ]
+        count = await self.backend.delete_many(keys)
 
         logger.debug("Expired sessions cleared; count=%s", count)
         return count
