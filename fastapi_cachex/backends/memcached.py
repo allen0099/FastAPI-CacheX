@@ -331,20 +331,16 @@ class MemcachedBackend(BaseCacheBackend):
 
         # Try to delete the prefixed key (exact match only)
         prefixed_key = self._make_key(path)
-        try:
-            result = await asyncio.to_thread(
-                self.client.delete, prefixed_key, noreply=False
-            )
-        except Exception:  # noqa: BLE001
-            return 0
-        else:
-            logger.debug(
-                "Memcached CLEAR_PATH; path=%s include_params=%s removed=%s",
-                path,
-                include_params,
-                1 if result else 0,
-            )
-            return 1 if result else 0
+        result = await asyncio.to_thread(
+            self.client.delete, prefixed_key, noreply=False
+        )
+        logger.debug(
+            "Memcached CLEAR_PATH; path=%s include_params=%s removed=%s",
+            path,
+            include_params,
+            1 if result else 0,
+        )
+        return 1 if result else 0
 
     async def clear_pattern(self, pattern: str) -> int:
         """Clear cached responses matching a pattern.

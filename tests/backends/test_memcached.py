@@ -1,4 +1,5 @@
 import asyncio
+import socket
 import sys
 from unittest.mock import MagicMock
 
@@ -247,21 +248,35 @@ async def test_memcached_get_invalid_and_missing_fields(
     assert res2 is None
 
 
+@pytest.mark.asyncio
+async def test_memcached_clear_path_raises_when_the_server_is_unreachable() -> None:
+    """A connection failure is not "nothing to clear" (#177).
+
+    `clear_path()` used to return 0 for any exception, while `delete()` and
+    every other method let it through.
+    """
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    backend = MemcachedBackend(servers=[f"127.0.0.1:{closed_port}"])
+
+    with pytest.raises(ConnectionRefusedError):
+        await backend.clear_path("/nope")
+
+
 @requires_memcached
 @pytest.mark.asyncio
-async def test_memcached_clear_path_exception(
+async def test_memcached_clear_path_propagates_client_errors(
     monkeypatch,
     memcached_backend: MemcachedBackend,
 ) -> None:
-    """Simulate client.delete raising to hit exception branch in clear_path()."""
-
     def boom(*args, **kwargs) -> None:
         msg = "delete failed"
         raise RuntimeError(msg)
 
     monkeypatch.setattr(memcached_backend.client, "delete", boom)
-    cleared = await memcached_backend.clear_path("/nope", include_params=False)
-    assert cleared == 0
+    with pytest.raises(RuntimeError, match="delete failed"):
+        await memcached_backend.clear_path("/nope", include_params=False)
 
 
 @requires_memcached
