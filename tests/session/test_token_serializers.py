@@ -1,3 +1,4 @@
+import warnings
 from datetime import datetime
 from datetime import timezone
 from typing import cast
@@ -307,3 +308,36 @@ def test_jwt_serializer_round_trips_hmac_algorithms(algorithm: str) -> None:
     )
 
     assert serializer.from_string(serializer.to_string(token)).session_id == "sid-1"
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "secret", "warns"),
+    [
+        ("HS256", "a" * 32, False),
+        ("HS384", "a" * 47, True),
+        ("HS384", "a" * 48, False),
+        ("HS512", "a" * 63, True),
+        ("HS512", "a" * 64, False),
+        # 32 characters but 64 UTF-8 bytes: the key length is counted in bytes.
+        ("HS512", "é" * 32, False),
+    ],
+)
+def test_jwt_serializer_warns_once_about_a_short_hmac_key(
+    algorithm: str, secret: str, warns: bool
+) -> None:
+    """A secret shorter than the hash output warns when the serializer is built (#116)."""
+    config = SessionConfig(
+        secret_key=SecretStr(secret), token_format="jwt", jwt_algorithm=algorithm
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        JWTTokenSerializer(config, jwt_module=StubJWTModule())
+
+    messages = [str(w.message) for w in caught if w.category is UserWarning]
+    if warns:
+        assert len(messages) == 1
+        assert f"requires for {algorithm}" in messages[0]
+        assert caught[0].filename == __file__
+    else:
+        assert messages == []
