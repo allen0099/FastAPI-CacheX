@@ -32,6 +32,7 @@ from .session import get_optional_session as get_optional_session
 from .session import get_session as get_session
 from .session import get_session_manager as get_session_manager
 from .session import require_session as require_session
+from .session import require_user_session as require_user_session
 from .session.exceptions import SessionError as SessionError
 from .session.exceptions import SessionExpiredError as SessionExpiredError
 from .session.exceptions import SessionInvalidError as SessionInvalidError
@@ -116,4 +117,5 @@ __all__ = [
     "get_state_manager",
     "invalidate",
     "require_session",
+    "require_user_session",
 ]

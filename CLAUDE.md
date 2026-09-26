@@ -70,7 +70,8 @@ The library has four independent subsystems:
 - Token signing: `simple` format uses HMAC-SHA256 (`SecurityManager`); `jwt` format uses PyJWT (optional dependency `fastapi-cachex[jwt]`).
 - Session token is passed via custom header (`X-Session-Token` by default) or `Authorization: Bearer` token.
 - `SessionManagerProxy` mirrors the `BackendProxy` pattern for managing the `SessionManager` singleton.
-- Key FastAPI dependencies: `get_session`, `require_session`, `get_optional_session` (in `session/dependencies.py`).
+- Key FastAPI dependencies: `get_session`, `require_session`, `get_optional_session` (in `session/dependencies.py`). These accept anonymous sessions (`user=None`); `require_user_session` / `AuthenticatedSession` also require a user. `UserSessionDep` is still an alias of `SessionDep` until 0.4.0.
+- `JWTTokenSerializer` emits one `UserWarning` at construction when `secret_key` is shorter (in UTF-8 bytes) than the HMAC hash output (48 for HS384, 64 for HS512).
 - `rotate_session_id(request)` (same module) regenerates the loaded session's ID at login against session fixation; a no-op when none was loaded. The middleware notices the changed ID and sends the new token.
 - `FastAPICacheXSessionMiddleware` wraps `request.session` in `_RequestSession`, which records an explicit `clear()`: that deletes the loaded session (logout) even with empty data, and later writes start a new anonymous one. Emptying via `del`/`pop()` keeps a user session (saved empty) and deletes an anonymous one.
 

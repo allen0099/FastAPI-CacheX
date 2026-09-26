@@ -139,6 +139,19 @@ async def logout(session=Depends(get_session)):
 
 依賴項回傳的 Session 物件是後端的 `Session` 模型。由 `FastAPICacheXSessionMiddleware` 從 `request.session` 建立的 Session（見下方的遷移一節）是匿名的，因此 `session.user` 為 `None`。
 
+`get_session` 也接受這種 Session，因此它只能證明請求帶著「某個」Session，而不能證明有人登入。任何訪客只要進入會寫入 `request.session` 的路由（購物車、CSRF 值），就會得到一個。需要已登入使用者的路由，請改用 `require_user_session`（或其型別註記形式 `AuthenticatedSession`）保護，它在 `session.user` 為 `None` 時同樣回應 `401`：
+
+```python
+from fastapi_cachex.session.dependencies import AuthenticatedSession
+
+
+@app.get("/account")
+async def account(session: AuthenticatedSession):
+    return {"user_id": session.user.user_id}
+```
+
+`UserSessionDep` 雖然名稱如此，卻不會檢查使用者；在 0.4.0 之前它是 `SessionDep` 的別名，0.4.0 預計改為要求使用者。
+
 ### 3. 完整範例（Redis 後端） {#3-full-example-redis-backend}
 
 ```python
@@ -408,6 +421,8 @@ config = SessionConfig(
 
 `jwt_algorithm` 必須是 `HS256`、`HS384`、`HS512`、`RS256`、`RS384`、`RS512`、`ES256`、`ES384`、`ES512`、`PS256`、`PS384`、`PS512` 或 `EdDSA` 其中之一；其他任何值（包括 `none`）都會拋出 `ValidationError`。內建的序列化器以同一把 `secret_key` 簽署與驗證，因此只支援 `HS256`、`HS384` 與 `HS512`：使用非對稱演算法時，除非你傳入持有金鑰對的自訂 `token_serializer`，否則 `SessionManager` 會拋出 `ValueError`。
 
+HMAC 金鑰的長度至少須等於雜湊輸出（RFC 7518 §3.2）：`HS256` 為 32 位元組、`HS384` 為 48、`HS512` 為 64，以 UTF-8 編碼後計算。`secret_key` 只要求 32 個字元，因此搭配 `HS384` 或 `HS512` 時，較短的金鑰會讓序列化器在建立時發出一次 `UserWarning`（PyJWT 本身每次簽署或驗證權杖時也會發出 `InsecureKeyLengthWarning`）。請使用更長的金鑰，例如 `secrets.token_urlsafe(64)`。
+
 安全性注意事項：
 
 - 伺服器保存的是**有狀態**的 Session（JWT 只是帶著 `sid` 的憑證），因此權杖中不需要放入任何敏感資料
@@ -429,7 +444,7 @@ secret_key = secrets.token_urlsafe(32)
 config = SessionConfig(secret_key=secret_key)
 ```
 
-`secret_key` 以 `SecretStr` 儲存，且長度至少須為 32 個字元。請從環境變數或密鑰儲存服務載入，而不要寫死在程式碼中；變更它會使至今發行的所有權杖失效。
+`secret_key` 以 `SecretStr` 儲存，且長度至少須為 32 個字元（`jwt_algorithm="HS384"` 時至少 48 位元組，`"HS512"` 時至少 64；見上方的 JWT 一節）。請從環境變數或密鑰儲存服務載入，而不要寫死在程式碼中；變更它會使至今發行的所有權杖失效。
 
 ### 2. 僅限 HTTPS {#2-https-only}
 
@@ -549,6 +564,7 @@ from fastapi_cachex.session import (
     get_session,  # 需要驗證（沒有 Session 時回應 401）
     get_optional_session,  # 可選驗證（沒有 Session 時為 None）
     require_session,  # get_session 的別名
+    require_user_session,  # Session 沒有使用者時也回應 401
     get_session_manager,  # 中介軟體註冊的 SessionManager
     rotate_session_id,  # 不是依賴項：在登入時 await 它以取得新的 Session ID
 )
@@ -558,6 +574,8 @@ from fastapi_cachex.session.dependencies import (
     OptionalSession,  # Session | None
     RequiredSession,  # Session
     SessionDep,  # Session
+    UserSessionDep,  # Session；匿名 Session 也會通過，見上文
+    AuthenticatedSession,  # 帶有使用者的 Session（require_user_session）
     SessionManagerDep,  # SessionManager
 )
 ```
