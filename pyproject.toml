@@ -91,17 +91,17 @@ ignore = [
     "E501",
     "ANN401",
     "COM812", # redundant rule, use formatter to fix
-    "B008", # do not perform function calls in argument defaults
-    "B904", # Allow raising exceptions without from e, for HTTPException
     "FBT001", "FBT002", # Boolean arguments are part of Cache-Control API design
-    "S105", # false-positive on token_format strings
     "C901", # allow slightly complex session flow
     "CPY001", # no copyright header convention in this project (stabilized in ruff 0.16)
-    "PLR0917", # backend constructors take many positional options; keyword-only would break the API
 ]
 preview = true
 explicit-preview-rules = true
 extend-select = ['ALL']
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency markers are meant to be called in argument defaults.
+extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
@@ -115,6 +115,7 @@ keep-runtime-typing = true
 "tests/**" = [
     "D",
     "S101",
+    "S105",
     "S106",
     "ARG",
     "ANN",
@@ -130,10 +131,14 @@ keep-runtime-typing = true
     "S101", # Internal invariant guard, not a validation shortcut
 ]
 "fastapi_cachex/backends/memcached.py" = ["PLC0415"]  # Optional dependency
-"fastapi_cachex/backends/redis.py" = ["PLR0913", "PLC0415"]  # Optional dependency, Redis config
-"fastapi_cachex/lock.py" = ["PLR0913"]  # Configurable lock parameters
-"fastapi_cachex/proxy.py" = ["PLW0603"]  # Global backend management by design
-"fastapi_cachex/session/manager.py" = ["PLR0915"]  # Session/security validation branches needed
+# PLR0917: these constructors take many positional options; making them
+# keyword-only would break the public API.
+"fastapi_cachex/backends/redis.py" = ["PLR0913", "PLR0917", "PLC0415"]  # Optional dependency, Redis config
+"fastapi_cachex/lock.py" = ["PLR0913", "PLR0917"]  # Configurable lock parameters
+"fastapi_cachex/session/manager.py" = [
+    "PLR0915", # Session/security validation branches needed
+    "S105", # token_format = "simple" / "jwt" is not a password
+]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -158,8 +163,10 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
-    "pass",
-    "\\.\\.\\.",
+    # Anchored: a bare "pass" or "..." would also exclude any line (and the
+    # block it opens) containing "password", "bypass" or "Field(...".
+    "^\\s*pass\\s*(#.*)?$",
+    "^\\s*\\.\\.\\.\\s*(#.*)?$",
 ]
 fail_under = 90
 show_missing = true
