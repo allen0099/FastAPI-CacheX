@@ -666,6 +666,13 @@ signature or binding mismatch), `SessionNotFoundError`, `SessionInvalidError`
 Since 0.3.8, `SessionError` derives from `CacheXError`, so `except CacheXError`
 catches session errors too.
 
+`get_session()` writes to the backend only when sliding expiration renewed the session, so a
+request that only reads its session costs a single backend read. The returned
+session's `last_accessed` is the current time, but the stored value is updated
+only when the session is next written (created, modified, renewed or
+regenerated). Pass `touch=True` to save it on every lookup. Before 0.3.8 every
+lookup saved the session.
+
 Every method with its signature is in the generated
 [Session API reference](api/session.md).
 

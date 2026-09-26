@@ -540,6 +540,8 @@ session, new_token = await manager.regenerate_session_id(session)
 
 `SessionManager(backend, config, token_serializer=None)` 處理整個生命週期：`create_session()`／`create_anonymous_session()` 回傳 `(session, token)`；`get_session()` 回傳 `(session, renewed_token)`，其中 `renewed_token` 只有在滑動過期更新了權杖時才會有值，並應傳回給用戶端。`get_session()` 失敗時會拋出 `SessionError` 的子類別：`SessionTokenError`（權杖格式錯誤）、`SessionSecurityError`（簽章錯誤或綁定不符）、`SessionNotFoundError`、`SessionInvalidError`（Session 不是啟用狀態）或 `SessionExpiredError`（超過 TTL 或絕對逾時）。從 0.3.8 起，`SessionError` 繼承自 `CacheXError`，因此 `except CacheXError` 也會捕捉 Session 錯誤。
 
+`get_session()` 只有在滑動過期更新了 Session 時才寫入後端，因此只讀取 Session 的請求只需一次後端讀取。回傳的 Session 中 `last_accessed` 是目前時間，但儲存的值只會在 Session 下一次被寫入（建立、修改、更新或重新產生）時更新。傳入 `touch=True` 可在每次查詢時都儲存它。0.3.8 之前，每次查詢都會儲存 Session。
+
 每個方法及其簽名請見自動產生的 [Session API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/session/)（英文）。
 
 ## 依賴項 {#dependencies}
