@@ -914,3 +914,67 @@ async def test_malformed_state_data_is_logged_once_without_the_state(
     assert records[0].levelno == logging.WARNING
     assert records[0].exc_info is None
     assert state not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_bound_state_is_accepted_with_its_binding(
+    state_manager: StateManager,
+) -> None:
+    """The client that started the flow completes it (#226)."""
+    state = await state_manager.create_state(binding="nonce-a")
+
+    data = await state_manager.consume_state(state, binding="nonce-a")
+
+    assert data.state == state
+    assert data.binding_hash == hashlib.sha256(b"nonce-a").hexdigest()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("binding", ["nonce-b", None])
+async def test_bound_state_is_rejected_for_another_client(
+    state_manager: StateManager, binding: str | None
+) -> None:
+    """Login CSRF: a state issued to the attacker must not complete in the victim's browser (#226).
+
+    The victim's callback carries the victim's binding (or none), not the
+    attacker's, and the state is consumed so it cannot be retried.
+    """
+    state = await state_manager.create_state(binding="nonce-a")
+
+    with pytest.raises(InvalidStateError, match="different client"):
+        await state_manager.consume_state(state, binding=binding)
+
+    with pytest.raises(InvalidStateError):
+        await state_manager.consume_state(state, binding="nonce-a")
+
+
+@pytest.mark.asyncio
+async def test_unbound_state_is_rejected_with_a_binding(
+    state_manager: StateManager,
+) -> None:
+    """A caller that checks bindings must not accept a state issued without one."""
+    state = await state_manager.create_state()
+
+    with pytest.raises(InvalidStateError, match="different client"):
+        await state_manager.consume_state(state, binding="nonce-a")
+
+
+@pytest.mark.asyncio
+async def test_empty_binding_is_rejected(state_manager: StateManager) -> None:
+    """An empty binding (a missing cookie read as "") would bind everyone alike."""
+    with pytest.raises(ValueError, match="binding must not be empty"):
+        await state_manager.create_state(binding="")
+
+
+@pytest.mark.asyncio
+async def test_binding_is_not_stored_in_plain_text(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Only the SHA-256 of the binding reaches the backend."""
+    manager = StateManager(backend=memory_backend)
+    state = await manager.create_state(binding="nonce-secret")
+
+    entry = await memory_backend.get(f"{manager.key_prefix}{state}")
+
+    assert entry is not None
+    assert b"nonce-secret" not in entry.content

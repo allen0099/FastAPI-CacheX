@@ -75,6 +75,7 @@ The library has four independent subsystems:
 **4. State Management (`fastapi_cachex/state/`)**
 - `StateManager` provides one-time-use state tokens for OAuth flows. States are consumed (deleted) on first successful `consume_state()` call.
 - Uses the same cache backends, with key prefix `oauth_state:` by default.
+- `create_state(binding=...)` / `consume_state(state, binding=...)` bind a state to the client that started the flow (SHA-256 stored, `hmac.compare_digest`); a mismatch in either direction raises `InvalidStateError`, and the state is consumed either way.
 
 ### Backends (`fastapi_cachex/backends/`)
 

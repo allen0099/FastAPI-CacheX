@@ -24,6 +24,13 @@ class StateData(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata associated with state"
     )
+    binding_hash: str | None = Field(
+        default=None,
+        description=(
+            "SHA-256 of the binding the state was created with, or None for an "
+            "unbound state"
+        ),
+    )
 
     @field_serializer("created_at", "expires_at", when_used="json")
     def serialize_datetime(self, value: datetime) -> str:
