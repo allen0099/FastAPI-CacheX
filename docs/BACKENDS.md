@@ -19,7 +19,8 @@ All backends namespace their keys with a prefix (`fastapi_cachex:` by default,
 
 If you don't specify a backend, FastAPI-CacheX will use the in-memory cache by default.
 This is suitable for development and testing purposes. The backend automatically runs
-a cleanup task to remove expired entries every 60 seconds (`MemoryBackend(cleanup_interval=60)`).
+a cleanup task to remove expired entries every 60 seconds (`MemoryBackend(cleanup_interval=60)`;
+the interval must be positive).
 
 ```python
 from fastapi_cachex.backends import MemoryBackend

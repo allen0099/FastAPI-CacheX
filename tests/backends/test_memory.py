@@ -16,6 +16,13 @@ def memory_backend():
     return MemoryBackend()
 
 
+@pytest.mark.parametrize("interval", [0, -5])
+def test_cleanup_interval_must_be_positive(interval: int) -> None:
+    """A non-positive interval made the cleanup loop spin (#180)."""
+    with pytest.raises(ValueError, match="cleanup_interval must be positive"):
+        MemoryBackend(cleanup_interval=interval)
+
+
 @pytest.mark.asyncio
 async def test_memory_backend_set_get(memory_backend: MemoryBackend):
     key = "test_key"
