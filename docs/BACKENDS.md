@@ -34,6 +34,12 @@ BackendProxy.set(backend)
 > The in-memory cache is not suitable for production with multiple processes.
 > Each process maintains its own separate cache.
 
+`clear_pattern()` matches whole keys case-sensitively on every platform, like Redis.
+The glob syntax is Python's `fnmatch`, which differs from Redis in two places: negate
+a character class with `[!...]` (Redis uses `[^...]`), and escape a special character
+by putting it in brackets, as in `[*]` (Redis also accepts `\*`). `*`, `?` and
+`[abc]` behave the same on both.
+
 ## Redis
 
 Install the extra with `uv add "fastapi-cachex[redis]"`.

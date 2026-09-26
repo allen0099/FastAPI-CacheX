@@ -120,6 +120,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   entry that expires while the route runs.
   ([#178](https://github.com/allen0099/FastAPI-CacheX/issues/178))
 
+- **`MemoryBackend.clear_pattern()` is case-sensitive on Windows.** It used
+  `fnmatch.fnmatch`, which folds case through `os.path.normcase` on Windows, so
+  `cache:user:*` also cleared `cache:User:1`. It now uses `fnmatch.fnmatchcase`,
+  like Redis on every platform. The backends docs list where the glob syntax
+  still differs from Redis.
+  ([#179](https://github.com/allen0099/FastAPI-CacheX/issues/179))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added

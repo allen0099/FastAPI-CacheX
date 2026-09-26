@@ -291,6 +291,8 @@ class MemoryBackend(BaseCacheBackend):
         Matches ``fnmatch`` against the whole key, which is what the Redis
         backend's SCAN does. Matching only the path component, as this used to,
         made the same call clear different things on different backends.
+        Matching is case-sensitive on every platform, as on Redis; plain
+        ``fnmatch.fnmatch`` folds case on Windows.
 
         Args:
             pattern: A glob pattern to match whole cache keys against
@@ -298,7 +300,7 @@ class MemoryBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        cleared_count = await self._evict(lambda key: fnmatch.fnmatch(key, pattern))
+        cleared_count = await self._evict(lambda key: fnmatch.fnmatchcase(key, pattern))
         warn_if_path_shaped(pattern, cleared_count)
         logger.debug(
             "Memory cache CLEAR_PATTERN; pattern=%s removed=%s", pattern, cleared_count
