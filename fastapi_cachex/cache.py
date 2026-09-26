@@ -434,6 +434,7 @@ def cache(
     immutable: bool = False,
     must_revalidate: bool = False,
     key_builder: CacheKeyBuilder | None = None,
+    fail_open: bool = True,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -469,6 +470,10 @@ def cache(
         must_revalidate: Send ``must-revalidate``.
         key_builder: Custom function to build cache keys. If None, uses
             ``default_key_builder``.
+        fail_open: When the backend raises, log a warning and answer without
+            the cache: a failed read counts as a miss and a failed write
+            leaves the response unstored. ``False`` lets the error propagate,
+            so the request fails.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -629,7 +634,17 @@ def cache(
                 logger.debug("Bypassed the backend; key=%s", cache_key)
                 return _with_cache_control(response, cache_control)
 
-            cached_data = await cache_backend.get(cache_key)
+            try:
+                cached_data = await cache_backend.get(cache_key)
+            except Exception as e:
+                if not fail_open:
+                    raise
+                logger.warning(
+                    "Cache backend read failed; serving uncached. key=%s error=%r",
+                    cache_key,
+                    e,
+                )
+                cached_data = None
 
             current_response: Response | None = None
             current_body: bytes | None = None
@@ -714,18 +729,28 @@ def cache(
                 assert (
                     current_body is not None
                 )  # guaranteed by early-return guards above
-                await cache_backend.set(
-                    cache_key,
-                    CacheEntry(
-                        fingerprint=current_etag,
-                        content=current_body,
-                        media_type=_media_type_of(current_response),
-                        status_code=current_response.status_code,
-                        headers=_cacheable_headers(current_response),
-                    ),
-                    ttl=ttl,
-                )
-                logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
+                try:
+                    await cache_backend.set(
+                        cache_key,
+                        CacheEntry(
+                            fingerprint=current_etag,
+                            content=current_body,
+                            media_type=_media_type_of(current_response),
+                            status_code=current_response.status_code,
+                            headers=_cacheable_headers(current_response),
+                        ),
+                        ttl=ttl,
+                    )
+                except Exception as e:
+                    if not fail_open:
+                        raise
+                    logger.warning(
+                        "Cache backend write failed; response not stored. key=%s error=%r",
+                        cache_key,
+                        e,
+                    )
+                else:
+                    logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
 
             return _with_cache_control(current_response, cache_control)
 

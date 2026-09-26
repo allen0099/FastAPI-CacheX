@@ -96,6 +96,29 @@ route's response model (declared or inferred from the return annotation, with
 the `response_model_*` options), the route's `status_code` applies, and the
 status and headers set on an injected `response: Response` parameter are kept.
 
+### When the backend fails
+
+`@cache` fails open. If the backend raises while reading, for example because
+Redis or Memcached is unreachable, the request is treated as a cache miss and
+the handler runs. If storing the response raises, for example because it is
+larger than Memcached's item size limit (1 MB by default), the response is
+served unstored. Either way a warning is logged on the `fastapi_cachex.cache`
+logger, and a backend outage cannot turn cached routes into 500s. The load
+goes to your handlers instead, so watch for those warnings.
+
+Pass `fail_open=False` to let the backend error propagate and fail the request
+instead:
+
+```python
+@app.get("/report")
+@cache(ttl=300, fail_open=False)
+async def report():
+    return await build_report()
+```
+
+This only covers `@cache`. `invalidate()`, `CacheManager`, `StateManager`,
+`CacheLock` and sessions still raise backend errors to the caller.
+
 ## Cache keys
 
 Cache keys are generated in the following format to avoid collisions:

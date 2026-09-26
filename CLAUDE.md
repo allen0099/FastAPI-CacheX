@@ -51,6 +51,7 @@ The library has four independent subsystems:
 **1. HTTP Caching (`fastapi_cachex/cache.py`, `proxy.py`, `backends/`)**
 - `@cache(...)` decorator wraps FastAPI route handlers. It injects a `Request` parameter into the handler signature if not already present, so the handler does not need to declare it.
 - Cache flow: check `no-store` → check `no-cache` → check ETag (`If-None-Match`) → check TTL-based cache hit → execute handler → store result.
+- Fails open by default (`fail_open=True`): a backend error on `get` is logged and treated as a miss, one on `set` is logged and the response served unstored. `fail_open=False` propagates the error.
 - Only GET requests are cached; other methods bypass the cache entirely.
 - Cache keys follow the format `method|||host|||path|||query_params` (separator defined in `types.py`).
 - `BackendProxy` is a non-instantiable class-level singleton (via `ProxyMeta`). Call `BackendProxy.set(backend)` at app startup; `BackendProxy.get()` raises `BackendNotFoundError` if unset. Falls back to `MemoryBackend` automatically inside `@cache` if no backend is set.

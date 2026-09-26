@@ -50,6 +50,15 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   `Exception` keep working. A `try` block that lists `except CacheXError`
   before `except SessionError` now takes the `CacheXError` branch for session
   errors. ([#162](https://github.com/allen0099/FastAPI-CacheX/issues/162))
+- **`@cache` serves uncached responses when the backend fails.** A backend
+  error on read or write turned every cached route into a 500, even after the
+  handler had produced a good response; this includes a healthy Memcached
+  rejecting a response over its 1 MB item size. A failed read now counts as a
+  miss and a failed write leaves the response unstored, each logged as a
+  warning on `fastapi_cachex.cache`. `@cache(fail_open=False)` restores the
+  old behaviour. `invalidate()`, `CacheManager`, `StateManager`, `CacheLock`
+  and sessions still raise.
+  ([#228](https://github.com/allen0099/FastAPI-CacheX/issues/228))
 
 ### Deprecated
 

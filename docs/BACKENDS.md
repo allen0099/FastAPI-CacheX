@@ -142,6 +142,10 @@ BackendProxy.set(backend)
 - `clear()` issues `flush_all`, which wipes the whole Memcached server, not just this namespace
 - A key Memcached would reject (over 250 bytes, whitespace, non-ASCII) is stored
   under its SHA-256 digest
+- Values larger than the server's item size limit (1 MB by default, `memcached -I`)
+  are rejected with an error. `@cache` logs it and serves the response unstored
+  (see [When the backend fails](HTTP_CACHING.md#when-the-backend-fails)); other
+  callers get the error
 - Consider using the Redis backend if you need pattern-based cache clearing
 
 The synchronous pymemcache client runs in worker threads and is connection-pooled,
