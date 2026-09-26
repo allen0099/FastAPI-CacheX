@@ -93,6 +93,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   now raises `ValueError`.
   ([#180](https://github.com/allen0099/FastAPI-CacheX/issues/180))
 
+- **Redis `get_all_keys()` no longer lists a key twice.** SCAN may return a
+  key more than once when the keyspace shrinks during the iteration, and the
+  duplicates were passed through to `get_all_keys()`, `CacheManager` and the
+  monitoring routes. Scanned keys are now deduplicated.
+  ([#173](https://github.com/allen0099/FastAPI-CacheX/issues/173))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added

@@ -822,6 +822,40 @@ async def test_redis_scan_walks_every_page(
 
 @requires_redis
 @pytest.mark.asyncio
+async def test_redis_scan_results_are_deduplicated(
+    async_redis_backend: AsyncRedisCacheBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCAN may return a key twice when the keyspace shrinks mid-scan (#173).
+
+    That only happens under a concurrent resize, so the client here repeats
+    the first key it returned on every later page.
+    """
+    total = _BATCH_SIZE * 3
+    for index in range(total):
+        await async_redis_backend.set(
+            f"dup|||localhost|||/item/{index}|||",
+            CacheEntry(fingerprint="e", content=b"v"),
+        )
+
+    real_scan = async_redis_backend.client.scan
+    returned: list[str] = []
+
+    async def scan_with_repeats(*args: Any, **kwargs: Any) -> tuple[int, list[str]]:
+        cursor, page = await real_scan(*args, **kwargs)
+        page = [*page, *returned[:1]]
+        returned.extend(page)
+        return cursor, page
+
+    monkeypatch.setattr(async_redis_backend.client, "scan", scan_with_repeats)
+
+    keys = await async_redis_backend.get_all_keys()
+    assert len(returned) > total  # the repeat was actually injected
+    assert len(keys) == len(set(keys)) == total
+
+
+@requires_redis
+@pytest.mark.asyncio
 async def test_redis_get_cache_data_reports_absolute_expiry(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
