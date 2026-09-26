@@ -854,6 +854,101 @@ async def test_redis_scan_results_are_deduplicated(
     assert len(keys) == len(set(keys)) == total
 
 
+def _record_calls(
+    backend: AsyncRedisCacheBackend, monkeypatch: pytest.MonkeyPatch, *names: str
+) -> list[str]:
+    """Record, in order, which of the client methods ``names`` are called."""
+    calls: list[str] = []
+    for name in names:
+        real = getattr(backend.client, name)
+
+        async def spy(
+            *args: Any, _real: Any = real, _name: str = name, **kwargs: Any
+        ) -> Any:
+            calls.append(_name)
+            return await _real(*args, **kwargs)
+
+        monkeypatch.setattr(backend.client, name, spy)
+    return calls
+
+
+async def _fill_pages(backend: AsyncRedisCacheBackend) -> int:
+    total = _BATCH_SIZE * 3
+    for index in range(total):
+        await backend.set(
+            f"GET|||localhost|||/item|||page={index}",
+            CacheEntry(fingerprint="e", content=b"v"),
+        )
+    return total
+
+
+@requires_redis
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "clear",
+    [
+        lambda backend: backend.clear(),
+        lambda backend: backend.clear_pattern("GET|||*"),
+        lambda backend: backend.clear_path("/item", include_params=True),
+    ],
+    ids=["clear", "clear_pattern", "clear_path"],
+)
+async def test_redis_clear_deletes_each_scan_page_as_it_arrives(
+    async_redis_backend: AsyncRedisCacheBackend,
+    monkeypatch: pytest.MonkeyPatch,
+    clear: Any,
+) -> None:
+    """Keys are deleted page by page, not collected for the whole keyspace (#172)."""
+    await _fill_pages(async_redis_backend)
+    calls = _record_calls(async_redis_backend, monkeypatch, "scan", "delete")
+
+    await clear(async_redis_backend)
+
+    last_scan = len(calls) - 1 - calls[::-1].index("scan")
+    assert calls.index("delete") < last_scan
+    assert await async_redis_backend.get_all_keys() == []
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_clear_path_does_not_check_exists(
+    async_redis_backend: AsyncRedisCacheBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEL already counts only keys that existed, so EXISTS is a wasted trip (#172)."""
+    await async_redis_backend.set(
+        "direct:key", CacheEntry(fingerprint="e", content=b"v")
+    )
+    calls = _record_calls(async_redis_backend, monkeypatch, "exists")
+
+    assert await async_redis_backend.clear_path("direct:key") == 1
+    assert await async_redis_backend.clear_path("direct:key") == 0
+    assert calls == []
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_clear_counts_a_key_scan_repeats_once(
+    async_redis_backend: AsyncRedisCacheBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key SCAN returns again on a later page is already deleted (#173, #172)."""
+    total = await _fill_pages(async_redis_backend)
+    real_scan = async_redis_backend.client.scan
+    returned: list[str] = []
+
+    async def scan_with_repeats(*args: Any, **kwargs: Any) -> tuple[int, list[str]]:
+        cursor, page = await real_scan(*args, **kwargs)
+        page = [*page, *returned[:1]]
+        returned.extend(page)
+        return cursor, page
+
+    monkeypatch.setattr(async_redis_backend.client, "scan", scan_with_repeats)
+
+    assert await async_redis_backend.clear_pattern("GET|||*") == total
+    assert len(returned) > total  # the repeat was actually injected
+
+
 @requires_redis
 @pytest.mark.asyncio
 async def test_redis_get_cache_data_reports_absolute_expiry(
