@@ -1,9 +1,16 @@
 # State Management Extension
 
-`fastapi_cachex.state` provides **one-time state tokens** that protect OAuth / OIDC
-authorization flows against CSRF. Before starting the authorization, generate a random
-state and store it in the cache backend. When the callback comes back, **consume** it.
-A consumed state cannot be used a second time.
+`fastapi_cachex.state` provides **one-time state tokens** for OAuth / OIDC authorization
+flows. Before starting the authorization, generate a random state and store it in the cache
+backend. When the callback comes back, **consume** it. A consumed state cannot be used a
+second time.
+
+A state protects the flow against CSRF (RFC 6749 §10.12) only when it is **bound to the
+browser that started the flow**. Storage alone is not enough: an attacker can start a flow
+in their own browser and send the victim to the callback with the attacker's state and
+code, which logs the victim in to the attacker's account. Pass a `binding` (a random nonce
+you also set as a cookie) when creating the state and the same value when consuming it, as
+in the quick start below.
 
 States live on the same backend as the HTTP cache but under their own key prefix
 (`oauth_state:` by default), so namespaced operations such as `CacheManager.clear_prefix()`
@@ -15,7 +22,9 @@ Everything in this guide can also be imported from the top-level `fastapi_cachex
 ## Quick start
 
 ```python
-from fastapi import FastAPI, HTTPException
+import secrets
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from fastapi_cachex import BackendProxy
@@ -25,25 +34,43 @@ from fastapi_cachex.state import StateError, StateManagerDep
 app = FastAPI()
 BackendProxy.set(MemoryBackend())
 
+BINDING_COOKIE = "oauth_binding"
+
 
 @app.get("/login")
 async def login(states: StateManagerDep):
-    state = await states.create_state(metadata={"next": "/dashboard"})
-    return RedirectResponse(
+    nonce = secrets.token_urlsafe(32)
+    state = await states.create_state(binding=nonce, metadata={"next": "/dashboard"})
+    response = RedirectResponse(
         f"https://provider.example.com/authorize?state={state}&client_id=..."
     )
+    # Lax, not Strict: the callback is a cross-site navigation from the provider.
+    response.set_cookie(
+        BINDING_COOKIE, nonce, max_age=600, httponly=True, secure=True, samesite="lax"
+    )
+    return response
 
 
 @app.get("/callback")
-async def callback(state: str, code: str, states: StateManagerDep):
+async def callback(request: Request, state: str, code: str, states: StateManagerDep):
     try:
-        data = await states.consume_state(state)  # one-time: deleted on retrieval
-    except StateError as e:  # unknown, expired or malformed state
+        # One-time: deleted on retrieval. Rejected unless this browser started the flow.
+        data = await states.consume_state(
+            state, binding=request.cookies.get(BINDING_COOKIE)
+        )
+    except StateError as e:  # unknown, expired, malformed or issued to another browser
         raise HTTPException(status_code=400, detail="Invalid state") from e
 
     # Exchange the code for tokens, create a session ...
-    return {"next": data.metadata.get("next", "/")}
+    response = RedirectResponse(data.metadata.get("next", "/"))
+    response.delete_cookie(BINDING_COOKIE)
+    return response
 ```
+
+If the provider posts the callback (`response_mode=form_post`), a `SameSite=Lax` cookie is
+not sent with that cross-site POST; use `samesite="none"` (which requires `secure=True`)
+for the binding cookie. Starting a second login in another tab overwrites the cookie, so
+the first tab's callback is then rejected; the user simply logs in again.
 
 ## StateManager
 
@@ -61,7 +88,7 @@ With `backend=None` the backend is resolved **when the `StateManager` is constru
 not on each call. If `BackendProxy.set(...)` has not been called yet, the constructor
 raises `BackendNotFoundError`. Configure the backend first.
 
-### `create_state(ttl=None, metadata=None) -> str`
+### `create_state(ttl=None, metadata=None, *, binding=None) -> str`
 
 Generates a state string with `secrets.token_urlsafe(32)` (256 bits of entropy), stores it
 in the backend and returns it. `metadata` is an arbitrary JSON-serializable dict stored
@@ -69,7 +96,12 @@ alongside the state (for example, the path to redirect to after authorization). 
 is omitted, `default_ttl` is used. The same TTL is applied both as the backend TTL and as
 the state's `expires_at`.
 
-### `consume_state(state) -> StateData`
+`binding` ties the state to the client that starts the flow: a random nonce you also set
+as a cookie, or any other secret only that client presents on the callback. Only its
+SHA-256 is stored. An empty string raises `ValueError`, since a missing cookie read as `""`
+would bind every such client to the same value.
+
+### `consume_state(state, *, binding=None) -> StateData`
 
 **One-time consumption.** The entry is retrieved and removed with the backend's atomic
 `get_and_delete()`, so when several concurrent calls present the same state **only one**
@@ -78,6 +110,7 @@ gets it. A replayed callback cannot pass a second time.
 | Situation | Behavior |
 |------|------|
 | Missing, already consumed, or already evicted by the backend TTL | `InvalidStateError` |
+| Created with a binding and consumed with a different one or none, or created without a binding and consumed with one | `InvalidStateError` (the entry has been deleted too) |
 | Retrieved but past its `expires_at` | `StateExpiredError` (the entry has been deleted too, nothing is left behind) |
 | Retrieved but the content is not valid `StateData` JSON | `StateDataError` (the entry has been deleted too) |
 | Otherwise | Returns `StateData` |
@@ -116,6 +149,7 @@ class StateData(BaseModel):
     created_at: datetime  # creation time (UTC)
     expires_at: datetime  # expiry time (UTC)
     metadata: dict[str, Any]  # metadata attached at creation
+    binding_hash: str | None  # SHA-256 of the binding, None for an unbound state
 ```
 
 `expires_at` is a logical expiry stored inside the data, independent of the backend TTL.

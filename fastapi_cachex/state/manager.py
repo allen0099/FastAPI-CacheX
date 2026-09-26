@@ -1,6 +1,7 @@
 """State manager for OAuth and session state handling."""
 
 import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -36,6 +37,21 @@ def _state_ref(state: str) -> str:
     would leak live tokens and let a caller forge log lines with CR/LF.
     """
     return hashlib.sha256(state.encode("utf-8", "surrogatepass")).hexdigest()[:12]
+
+
+def _binding_hash(binding: str) -> str:
+    return hashlib.sha256(binding.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _binding_matches(stored: str | None, binding: str | None) -> bool:
+    """Whether ``binding`` is the one a state was created with.
+
+    An unbound state matches only an absent binding and a bound one only its own,
+    so neither side can drop the check by leaving its binding out.
+    """
+    if stored is None or binding is None:
+        return stored is None and binding is None
+    return hmac.compare_digest(stored, _binding_hash(binding))
 
 
 def _log_decode_failure(state: str) -> None:
@@ -131,18 +147,25 @@ class StateManager:
         self,
         ttl: int | None = None,
         metadata: dict[str, Any] | None = None,
+        *,
+        binding: str | None = None,
     ) -> str:
         """Create a new random OAuth state and store it with metadata.
 
         Args:
             ttl: Time-to-live in seconds (uses default_ttl if not provided)
             metadata: Additional metadata to store with the state (e.g., callback_url, user_info)
+            binding: A secret tied to the client that starts the flow, such as a
+                random nonce also set as a cookie. ``consume_state()`` then
+                accepts the state only with the same binding, so a state issued
+                to one browser cannot complete the flow in another (login
+                CSRF). Only its SHA-256 is stored.
 
         Returns:
             The generated state string
 
         Raises:
-            ValueError: If ``ttl`` is zero or negative.
+            ValueError: If ``ttl`` is zero or negative, or ``binding`` is empty.
 
         Backend errors (for example a Redis connection error) propagate
         unchanged; they are not wrapped in ``StateDataError``.
@@ -153,12 +176,18 @@ class StateManager:
         # Use provided TTL or default
         effective_ttl = ttl if ttl is not None else self.default_ttl
         validate_ttl(effective_ttl)
+        if binding == "":
+            # A missing cookie read as "" would otherwise bind every such
+            # client to the same value.
+            msg = "binding must not be empty"
+            raise ValueError(msg)
 
         # Create state data model
         state_data = StateData(
             state=state,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=effective_ttl),
             metadata=metadata or {},
+            binding_hash=None if binding is None else _binding_hash(binding),
         )
 
         content = state_data.model_dump_json().encode("utf-8")
@@ -172,17 +201,24 @@ class StateManager:
         )
         return state
 
-    async def consume_state(self, state: str) -> StateData:
+    async def consume_state(
+        self, state: str, *, binding: str | None = None
+    ) -> StateData:
         """Consume and validate an OAuth state, removing it from storage.
 
         Args:
             state: The state string to validate and consume
+            binding: The binding the state was created with, if any. A state
+                created with a binding is accepted only with that binding, and
+                one created without is rejected when a binding is given. The
+                state is consumed either way.
 
         Returns:
             StateData object containing state data and metadata
 
         Raises:
-            InvalidStateError: If state is invalid or not found
+            InvalidStateError: If state is invalid or not found, or the binding
+                does not match
             StateExpiredError: If state has expired
             StateDataError: If state data format is invalid
         """
@@ -208,6 +244,14 @@ class StateManager:
             logger.info("OAuth state expired; state_ref=%s", _state_ref(state))
             msg = "State has expired"
             raise StateExpiredError(msg)
+
+        if not _binding_matches(state_data.binding_hash, binding):
+            logger.info(
+                "OAuth state presented with a different binding; state_ref=%s",
+                _state_ref(state),
+            )
+            msg = "State was issued to a different client"
+            raise InvalidStateError(msg)
 
         logger.debug(
             "OAuth state consumed and deleted; state_ref=%s", _state_ref(state)
