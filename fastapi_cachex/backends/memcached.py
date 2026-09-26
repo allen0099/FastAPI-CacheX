@@ -5,6 +5,7 @@ import hashlib
 import logging
 import time
 import warnings
+from collections.abc import Iterable
 
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
@@ -192,14 +193,18 @@ class MemcachedBackend(BaseCacheBackend):
             CacheXError: If concurrent writes cause the CAS deletion to exceed
                 the maximum retry attempts.
         """
+        return await asyncio.to_thread(self._get_and_delete, key)
+
+    def _get_and_delete(self, key: str) -> CacheEntry | None:
+        """Run ``get_and_delete``'s GETS/CAS loop in one worker thread."""
         prefixed_key = self._make_key(key)
         for _ in range(_CAS_MAX_RETRIES):
-            raw, cas_token = await asyncio.to_thread(self.client.gets, prefixed_key)
+            raw, cas_token = self.client.gets(prefixed_key)
             if raw is None:
                 logger.debug("Memcached GET_AND_DELETE MISS; key=%s", key)
                 return None
-            cas_result = await asyncio.to_thread(
-                self.client.cas, prefixed_key, b"", cas_token, -1, noreply=False
+            cas_result = self.client.cas(
+                prefixed_key, b"", cas_token, -1, noreply=False
             )
             if cas_result is True:
                 logger.debug("Memcached GET_AND_DELETE HIT; key=%s", key)
@@ -245,14 +250,16 @@ class MemcachedBackend(BaseCacheBackend):
         immediately": it succeeds only if nothing wrote the key since ``GETS``
         read the value that was compared.
         """
+        return await asyncio.to_thread(self._delete_if_equals, key, expected)
+
+    def _delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+        """Run ``delete_if_equals``'s GETS, compare and CAS in one worker thread."""
         prefixed_key = self._make_key(key)
-        raw, cas_token = await asyncio.to_thread(self.client.gets, prefixed_key)
+        raw, cas_token = self.client.gets(prefixed_key)
         if raw is None or decode_entry(raw) != expected:
             logger.debug("Memcached DELETE_IF_EQUALS MISMATCH; key=%s", key)
             return False
-        deleted = await asyncio.to_thread(
-            self.client.cas, prefixed_key, b"", cas_token, -1, noreply=False
-        )
+        deleted = self.client.cas(prefixed_key, b"", cas_token, -1, noreply=False)
         logger.debug(
             "Memcached DELETE_IF_EQUALS %s; key=%s",
             "HIT" if deleted else "LOST RACE",
@@ -267,14 +274,22 @@ class MemcachedBackend(BaseCacheBackend):
         CAS write with the same bytes read by GETS and the new exptime.
         """
         validate_ttl(ttl)
+        # Converted up front so a ttl Memcached cannot store fails before I/O.
+        exptime = _expiry(ttl)
+        return await asyncio.to_thread(
+            self._expire_if_equals, key, expected, ttl, exptime
+        )
+
+    def _expire_if_equals(
+        self, key: str, expected: CacheEntry, ttl: int, exptime: int
+    ) -> bool:
+        """Run ``expire_if_equals``'s GETS, compare and CAS in one worker thread."""
         prefixed_key = self._make_key(key)
-        raw, cas_token = await asyncio.to_thread(self.client.gets, prefixed_key)
+        raw, cas_token = self.client.gets(prefixed_key)
         if raw is None or decode_entry(raw) != expected:
             logger.debug("Memcached EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
             return False
-        updated = await asyncio.to_thread(
-            self.client.cas, prefixed_key, raw, cas_token, _expiry(ttl), noreply=False
-        )
+        updated = self.client.cas(prefixed_key, raw, cas_token, exptime, noreply=False)
         logger.debug(
             "Memcached EXPIRE_IF_EQUALS %s; key=%s ttl=%s",
             "HIT" if updated else "LOST RACE",
@@ -291,6 +306,16 @@ class MemcachedBackend(BaseCacheBackend):
             result = self.client.incr(prefixed_key, delta, noreply=False)
         return None if result is None else int(result)
 
+    def _increment(self, prefixed_key: str, delta: int, exptime: int) -> int | None:
+        """Run ``increment``'s INCR, ADD and retried INCR in one worker thread."""
+        value = self._add_delta(prefixed_key, delta)
+        if value is None:
+            # No counter yet: ADD is atomic and a no-op when a concurrent
+            # call created it first, so the retry always finds a counter.
+            self.client.add(prefixed_key, b"0", exptime, noreply=False)
+            value = self._add_delta(prefixed_key, delta)
+        return value
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 
@@ -305,14 +330,9 @@ class MemcachedBackend(BaseCacheBackend):
         # Converted up front so a ttl Memcached cannot store fails before I/O.
         exptime = _expiry(ttl)
         try:
-            value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
-            if value is None:
-                # No counter yet: ADD is atomic and a no-op when a concurrent
-                # call created it first, so the retry always finds a counter.
-                await asyncio.to_thread(
-                    self.client.add, prefixed_key, b"0", exptime, noreply=False
-                )
-                value = await asyncio.to_thread(self._add_delta, prefixed_key, delta)
+            value = await asyncio.to_thread(
+                self._increment, prefixed_key, delta, exptime
+            )
         except MemcacheClientError as e:
             if "non-numeric" not in str(e):
                 raise
@@ -333,6 +353,30 @@ class MemcachedBackend(BaseCacheBackend):
         prefixed = self._make_key(key)
         await asyncio.to_thread(self.client.delete, prefixed)
         logger.debug("Memcached DELETE; key=%s", key)
+
+    async def delete_many(self, keys: Iterable[str]) -> int:
+        """Remove every key in ``keys`` in one worker call; returns how many existed.
+
+        pymemcache's own ``delete_many`` always returns ``True`` and, on
+        ``HashClient``, still sends one DELETE per key, so it cannot say what
+        was removed. Each DELETE here waits for its reply instead, which costs
+        the same round trips and counts only keys that were present. A
+        duplicate key is sent once.
+        """
+        prefixed_keys = list(dict.fromkeys(self._make_key(key) for key in keys))
+        removed = await asyncio.to_thread(self._delete_each, prefixed_keys)
+        logger.debug(
+            "Memcached DELETE_MANY; requested=%s removed=%s",
+            len(prefixed_keys),
+            removed,
+        )
+        return removed
+
+    def _delete_each(self, prefixed_keys: list[str]) -> int:
+        """Delete ``prefixed_keys`` one by one; returns how many were present."""
+        return sum(
+            bool(self.client.delete(key, noreply=False)) for key in prefixed_keys
+        )
 
     async def clear(self) -> None:
         """Clear all values from cache.
