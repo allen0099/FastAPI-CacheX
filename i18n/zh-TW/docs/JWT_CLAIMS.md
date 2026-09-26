@@ -20,7 +20,7 @@ FastAPI-CacheX 的 JWT 權杖序列化器只實作了最小的一組 JWT claim�
 |-------|------|------|------|------|
 | `sid` | Session ID | ✅ | ✅ | 自訂 claim，對應到伺服器端的 Session |
 | `iat` | Issued At | ✅ | ✅ | 權杖的發行時間（RFC 7519）；若位於未來（超出 `jwt_leeway`）則拒絕 |
-| `exp` | Expiration | ✅ | ✅ | 權杖的過期時間：Session 的 `expires_at`（因此會跟著滑動過期），沒有時退回 `iat + session_ttl` |
+| `exp` | Expiration | ✅ | ✅ | 權杖的過期時間：Session 的 `expires_at`（因此會跟著滑動過期，且不會超過 `absolute_timeout`），沒有時退回 `iat + session_ttl` |
 | `iss` | Issuer | ⚠️ | ✅ | 權杖發行者（選用；只有設定 `jwt_issuer` 時才會發行並驗證） |
 | `aud` | Audience | ⚠️ | ✅ | 預期的受眾（選用；只有設定 `jwt_audience` 時才會發行並驗證） |
 
