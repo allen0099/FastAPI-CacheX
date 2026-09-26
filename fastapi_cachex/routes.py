@@ -10,6 +10,7 @@ from .exceptions import BackendNotFoundError
 from .proxy import BackendProxy
 from .types import CACHE_KEY_SEPARATOR
 from .types import CacheEntry
+from .types import unescape_key_component
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -107,7 +108,9 @@ def _parse_cache_key(cache_key: str) -> tuple[str, str, str, str]:
     """
     key_parts = cache_key.split(CACHE_KEY_SEPARATOR, CACHE_KEY_MAX_PARTS)
     if len(key_parts) >= CACHE_KEY_MIN_PARTS:
-        method, host, path = key_parts[0], key_parts[1], key_parts[2]
+        method = key_parts[0]
+        host = unescape_key_component(key_parts[1])
+        path = unescape_key_component(key_parts[2])
         query_params = key_parts[3] if len(key_parts) > CACHE_KEY_MIN_PARTS else ""
         return method, host, path, query_params
 

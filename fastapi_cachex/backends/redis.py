@@ -16,6 +16,7 @@ from fastapi_cachex.backends.config import RedisConfig
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import escape_key_component
 
 from .base import BaseCacheBackend
 from .base import validate_delta
@@ -395,10 +396,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         # exact path is matched: default_key_builder always appends a separator
         # after the path, so keys with no query params end with "|||". The
         # path is a literal, not a glob: "/files/[draft]" means those brackets.
+        # It is stored with "|" and "%" percent-encoded, so match it that way.
         suffix = "*" if include_params else ""
         pattern = (
             f"{self._prefix_pattern}*{CACHE_KEY_SEPARATOR}"
-            f"{_escape_glob(path)}{CACHE_KEY_SEPARATOR}{suffix}"
+            f"{_escape_glob(escape_key_component(path))}{CACHE_KEY_SEPARATOR}{suffix}"
         )
         cleared_count = await self._delete_matching(pattern)
 

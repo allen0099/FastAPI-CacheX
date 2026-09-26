@@ -40,6 +40,7 @@ from .proxy import get_backend_or_fallback
 from .types import CACHE_KEY_SEPARATOR
 from .types import CacheEntry
 from .types import CacheKeyBuilder
+from .types import escape_key_component
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
@@ -60,6 +61,11 @@ def default_key_builder(request: Request) -> str:
 
     Generates cache key in format: method|||host|||path|||query_params
 
+    ``|`` and ``%`` in the host and path are percent-encoded (see
+    ``escape_key_component``), so a ``Host`` header or path containing
+    ``|||`` cannot make one request's key equal another's. The query string
+    is already URL-encoded and never contains ``|``.
+
     Args:
         request: The FastAPI Request object
 
@@ -68,8 +74,9 @@ def default_key_builder(request: Request) -> str:
     """
     key = (
         f"{request.method}{CACHE_KEY_SEPARATOR}"
-        f"{request.headers.get('host', 'unknown')}{CACHE_KEY_SEPARATOR}"
-        f"{request.url.path}{CACHE_KEY_SEPARATOR}"
+        f"{escape_key_component(request.headers.get('host', 'unknown'))}"
+        f"{CACHE_KEY_SEPARATOR}"
+        f"{escape_key_component(request.url.path)}{CACHE_KEY_SEPARATOR}"
         f"{request.query_params}"
     )
     logger.debug("Built cache key: %s", key)

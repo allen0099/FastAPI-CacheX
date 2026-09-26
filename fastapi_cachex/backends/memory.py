@@ -12,6 +12,7 @@ from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import CacheItem
 from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
+from fastapi_cachex.types import escape_key_component
 
 from .base import BaseCacheBackend
 from .base import validate_delta
@@ -311,6 +312,7 @@ class MemoryBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
+        key_path = escape_key_component(path)
 
         def matches(key: str) -> bool:
             parsed = _split_http_key(key)
@@ -318,7 +320,7 @@ class MemoryBackend(BaseCacheBackend):
                 # Direct key match (custom key format without separators)
                 return key == path
             cache_path, has_params = parsed
-            return cache_path == path and (include_params or not has_params)
+            return cache_path == key_path and (include_params or not has_params)
 
         cleared_count = await self._evict(matches)
         logger.debug(
