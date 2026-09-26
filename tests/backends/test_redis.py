@@ -10,6 +10,7 @@ import pytest_asyncio
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.backends.redis import _BATCH_SIZE
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from tests.live_servers import REDIS_HOST
@@ -1017,3 +1018,19 @@ async def test_redis_glob_characters_in_prefix_do_not_reach_other_prefixes() -> 
     finally:
         await globbed.clear()
         await other.clear()
+
+
+@requires_redis
+@requires_redis_package
+@pytest.mark.asyncio
+async def test_lock_lifecycle_with_redis(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    lock1 = CacheLock("redis_job", ttl=30, backend=async_redis_backend)
+    lock2 = CacheLock("redis_job", ttl=30, backend=async_redis_backend)
+
+    assert await lock1.acquire(blocking=False) is True
+    assert await lock2.acquire(blocking=False) is False
+    assert await lock1.extend(60) is True
+    assert await lock1.release() is True
+

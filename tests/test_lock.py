@@ -2,7 +2,6 @@
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,13 +11,6 @@ from fastapi_cachex.exceptions import LockTimeoutError
 from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
-from tests.live_servers import requires_memcached
-from tests.live_servers import requires_redis
-from tests.live_servers import requires_redis_package
-
-if TYPE_CHECKING:
-    from fastapi_cachex.backends import AsyncRedisCacheBackend
-    from fastapi_cachex.backends import MemcachedBackend
 
 
 @pytest.mark.asyncio
@@ -230,32 +222,3 @@ async def test_lock_shared_instance_raises_runtime_error() -> None:
     results = await asyncio.gather(task_worker(), task_worker(), return_exceptions=True)
     assert any(isinstance(res, RuntimeError) for res in results)
     assert any(res is None for res in results)
-
-
-@requires_redis
-@requires_redis_package
-@pytest.mark.asyncio
-async def test_lock_lifecycle_with_redis(
-    async_redis_backend: "AsyncRedisCacheBackend",
-) -> None:
-    lock1 = CacheLock("redis_job", ttl=30, backend=async_redis_backend)
-    lock2 = CacheLock("redis_job", ttl=30, backend=async_redis_backend)
-
-    assert await lock1.acquire(blocking=False) is True
-    assert await lock2.acquire(blocking=False) is False
-    assert await lock1.extend(60) is True
-    assert await lock1.release() is True
-
-
-@requires_memcached
-@pytest.mark.asyncio
-async def test_lock_lifecycle_with_memcached(
-    memcached_backend: "MemcachedBackend",
-) -> None:
-    lock1 = CacheLock("memcached_job", ttl=30, backend=memcached_backend)
-    lock2 = CacheLock("memcached_job", ttl=30, backend=memcached_backend)
-
-    assert await lock1.acquire(blocking=False) is True
-    assert await lock2.acquire(blocking=False) is False
-    assert await lock1.extend(60) is True
-    assert await lock1.release() is True

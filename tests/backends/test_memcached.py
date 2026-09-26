@@ -7,6 +7,7 @@ import pytest_asyncio
 
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from tests.live_servers import MEMCACHED_SERVER
@@ -708,3 +709,18 @@ async def test_memcached_expire_if_equals_keeps_a_value_written_after_the_compar
 
     raw = await asyncio.to_thread(client.get, memcached_backend._make_key("slot"))
     assert raw == b'{"overwritten": true}'
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_lock_lifecycle_with_memcached(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    lock1 = CacheLock("memcached_job", ttl=30, backend=memcached_backend)
+    lock2 = CacheLock("memcached_job", ttl=30, backend=memcached_backend)
+
+    assert await lock1.acquire(blocking=False) is True
+    assert await lock2.acquire(blocking=False) is False
+    assert await lock1.extend(60) is True
+    assert await lock1.release() is True
+
