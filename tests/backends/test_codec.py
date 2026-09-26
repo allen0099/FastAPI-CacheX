@@ -55,9 +55,38 @@ def test_decode_entry_treats_malformed_documents_as_a_miss(raw):
     assert codec.decode_entry(raw) is None
 
 
-@pytest.mark.parametrize("raw", ["7", b"7", b"7   ", " 7\n"])
+@pytest.mark.parametrize("raw", ["7", b"7", b"7   ", "7 "])
 def test_decode_entry_reads_a_bare_integer_as_a_counter(raw):
+    """Trailing spaces are Memcached's padding after a shrinking DECR."""
     assert codec.decode_entry(raw) == counter_entry(7)
+
+
+@pytest.mark.parametrize("raw", [b" 7", b" 7 ", "7\n", b"1_0", b"+7", chr(0x0667), b""])
+def test_decode_entry_rejects_what_int_accepts_but_no_server_writes(raw):
+    """``int()`` reads all of these; none of them is a counter (#111)."""
+    assert codec.decode_entry(raw) is None
+
+
+def test_encode_entry_stores_a_counter_as_a_bare_integer():
+    """So ``increment()`` works on a counter written with ``set()`` (#111)."""
+    assert codec.encode_entry(counter_entry(-5)) == b"-5"
+    assert codec.decode_entry(codec.encode_entry(counter_entry(-5))) == counter_entry(
+        -5
+    )
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        CacheEntry(fingerprint="etag", content=b"42"),
+        CacheEntry(fingerprint="counter", content=b"42", media_type="text/plain"),
+        CacheEntry(fingerprint="counter", content=b"042"),
+        CacheEntry(fingerprint="counter", content=b"abc"),
+    ],
+)
+def test_encode_entry_keeps_anything_else_as_a_document(entry):
+    """Only exactly what ``counter_entry`` builds is stored bare."""
+    assert codec.decode_entry(codec.encode_entry(entry)) == entry
 
 
 def test_decode_entry_reads_a_negative_counter():
