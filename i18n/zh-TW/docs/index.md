@@ -37,7 +37,7 @@ uv add fastapi-cachex
 | Extra | 安裝 | 帶入套件 | 用途 |
 |-------|------|---------|------|
 | `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`、`orjson` | `AsyncRedisCacheBackend` |
-| `memcache` | `uv add "fastapi-cachex[memcache]"` | `pymemcache` | `MemcachedBackend`（注意是 `memcache`，不是 `memcached`） |
+| `memcached` | `uv add "fastapi-cachex[memcached]"` | `pymemcache` | `MemcachedBackend`（舊名稱 `memcache` 在 0.4.0 之前仍可使用） |
 | `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
 
 Extra 可以組合：`uv add "fastapi-cachex[redis,jwt]"`。

@@ -94,8 +94,10 @@ hiredis will fail to negotiate it.
 
 ## Memcached
 
-Install the extra with `uv add "fastapi-cachex[memcache]"` (note: `memcache`, not
-`memcached`).
+Install the extra with `uv add "fastapi-cachex[memcached]"`. Before 0.3.8 it was
+called `memcache`; that name still works but is deprecated and will be removed in
+0.4.0. An unknown extra only produces a warning at install time, so after 0.4.0
+`fastapi-cachex[memcache]` would install without `pymemcache`.
 
 ```python
 from fastapi_cachex.backends import MemcachedBackend

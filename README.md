@@ -42,7 +42,7 @@ backends and the optional session transports ship as extras:
 | Extra | Install | Pulls in | Needed for |
 |-------|---------|----------|------------|
 | `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`, `orjson` | `AsyncRedisCacheBackend` |
-| `memcache` | `uv add "fastapi-cachex[memcache]"` | `pymemcache` | `MemcachedBackend` (note: `memcache`, not `memcached`) |
+| `memcached` | `uv add "fastapi-cachex[memcached]"` | `pymemcache` | `MemcachedBackend` (the older `memcache` name still works until 0.4.0) |
 | `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
 
 Extras combine: `uv add "fastapi-cachex[redis,jwt]"`.

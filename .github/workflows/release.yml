@@ -81,7 +81,7 @@ jobs:
       # a missing backend package would turn the gate below into a formality,
       # so it does not rely on a dev-group entry staying put.
       - name: Sync dependencies
-        run: uv sync --group dev --extra jwt --extra redis --extra memcache
+        run: uv sync --group dev --extra jwt --extra redis --extra memcached
 
       # The gate. A release is the one run where a red test result arrives too
       # late to matter, so everything CI checks elsewhere is checked here too,
