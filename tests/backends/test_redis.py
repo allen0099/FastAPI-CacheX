@@ -53,6 +53,63 @@ def test_redis_load_from_config_initializes_client_and_prefix() -> None:
 
 
 @requires_redis_package
+@pytest.mark.parametrize("encoding", ["utf-8", "UTF8", "utf_8"])
+def test_redis_utf8_encoding_does_not_warn(encoding: str) -> None:
+    """UTF-8 under any of its aliases is accepted silently (#122)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        AsyncRedisCacheBackend(port=UNCONNECTED_PORT, encoding=encoding)
+
+
+@requires_redis_package
+@pytest.mark.parametrize("encoding", ["latin-1", "utf-16", "ascii"])
+def test_redis_non_utf8_encoding_warns(encoding: str) -> None:
+    """Replies decoded as anything but UTF-8 corrupt cached content (#122)."""
+    with pytest.warns(RuntimeWarning, match="corrupt non-ASCII") as record:
+        AsyncRedisCacheBackend(port=UNCONNECTED_PORT, encoding=encoding)
+    ours = [w for w in record if "corrupt non-ASCII" in str(w.message)]
+    assert [w.filename for w in ours] == [__file__]
+
+
+@requires_redis_package
+def test_redis_unknown_encoding_is_left_to_the_client() -> None:
+    """An unknown codec is rejected by redis-py, not warned about (#122)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(LookupError):
+            AsyncRedisCacheBackend(port=UNCONNECTED_PORT, encoding="no-such-codec")
+
+
+@requires_redis_package
+def test_redis_load_from_config_warns_on_non_utf8_encoding() -> None:
+    """RedisConfig goes through the same check (#122)."""
+    from fastapi_cachex.backends.config import RedisConfig
+
+    with pytest.warns(RuntimeWarning, match="encoding='latin-1'"):
+        AsyncRedisCacheBackend.load_from_config(RedisConfig(encoding="latin-1"))
+
+
+@pytest.mark.asyncio
+async def test_redis_latin1_encoding_corrupts_non_ascii_content() -> None:
+    """What the warning is about, on a live server (#122)."""
+    reason = redis_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
+
+    with pytest.warns(RuntimeWarning):
+        backend = AsyncRedisCacheBackend(
+            host=REDIS_HOST, port=REDIS_PORT, encoding="latin-1"
+        )
+    try:
+        await backend.set("k", CacheEntry(fingerprint="f", content=b"\xe9"))
+        entry = await backend.get("k")
+        assert entry is not None
+        assert entry.content == b"\xc3\xa9"
+    finally:
+        await backend.clear()
+
+
+@requires_redis_package
 def test_redis_load_from_config_passes_all_fields() -> None:
     """load_from_config must forward all RedisConfig fields to the backend."""
     from pydantic import SecretStr
