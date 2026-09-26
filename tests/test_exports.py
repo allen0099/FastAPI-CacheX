@@ -7,7 +7,8 @@ from fastapi_cachex import exceptions
 
 
 @pytest.mark.parametrize(
-    "name", ["BackendNotFoundError", "CacheXError", "RequestNotFoundError"]
+    "name",
+    ["BackendNotFoundError", "CacheXError", "ProxyNotSetError", "RequestNotFoundError"],
 )
 def test_core_exception_is_exported(name: str) -> None:
     assert name in fastapi_cachex.__all__
