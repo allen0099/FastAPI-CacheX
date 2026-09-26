@@ -243,12 +243,15 @@ class MemoryBackend(BaseCacheBackend):
             logger.debug("Memory cache CLEAR; all entries removed")
 
     async def _evict(self, matches: Callable[[str], bool]) -> int:
-        """Remove every entry whose key satisfies ``matches``; returns the count."""
+        """Remove every entry whose key satisfies ``matches``.
+
+        Returns how many of them had not expired yet: an expired entry is
+        already gone as far as callers can tell, as it is on Redis.
+        """
         async with self.lock:
+            now = time.time()
             doomed = [key for key in self.cache if matches(key)]
-            for key in doomed:
-                del self.cache[key]
-        return len(doomed)
+            return sum(_is_live(self.cache.pop(key), now) for key in doomed)
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
@@ -306,19 +309,26 @@ class MemoryBackend(BaseCacheBackend):
         """Get all cache keys in the backend.
 
         Returns:
-            List of all cache keys currently stored in the backend
+            List of every cache key that has not expired
         """
         async with self.lock:
-            return list(self.cache.keys())
+            now = time.time()
+            return [key for key, item in self.cache.items() if _is_live(item, now)]
 
     async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
 
         Returns:
-            Dictionary mapping cache keys to (CacheEntry, expiry) tuples
+            Dictionary mapping cache keys to (CacheEntry, expiry) tuples, for
+            entries that have not expired
         """
         async with self.lock:
-            return {key: (item.value, item.expiry) for key, item in self.cache.items()}
+            now = time.time()
+            return {
+                key: (item.value, item.expiry)
+                for key, item in self.cache.items()
+                if _is_live(item, now)
+            }
 
     async def _cleanup_task_impl(self) -> None:
         try:

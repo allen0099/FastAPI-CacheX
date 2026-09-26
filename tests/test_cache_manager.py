@@ -1,6 +1,7 @@
 """Tests for CacheManager application-level caching."""
 
 import asyncio
+import time
 from collections.abc import AsyncGenerator
 from functools import partial
 from typing import TYPE_CHECKING
@@ -441,6 +442,24 @@ async def test_clear_prefix_removes_only_matching_keys(
     assert await manager.get("a") is None
     assert await manager.get("b") is None
     assert await memory_backend.get("unrelated:key") is not None
+
+
+@pytest.mark.asyncio
+async def test_clear_prefix_does_not_count_expired_keys(
+    cache_manager: CacheManager,
+) -> None:
+    """Every backend reports the same count for the same live keys (#178)."""
+    await cache_manager.set("kept", 1)
+    await cache_manager.set("lapsed", 2, ttl=60)
+    backend = cache_manager.backend
+    key = "cache:lapsed"
+    if isinstance(backend, MemoryBackend):
+        backend.cache[key].expiry = time.time() - 1
+    else:
+        await backend.client.pexpire(backend._make_key(key), 1)  # type: ignore[attr-defined]
+        await asyncio.sleep(0.01)
+
+    assert await cache_manager.clear_prefix() == 1
 
 
 @pytest.mark.asyncio
