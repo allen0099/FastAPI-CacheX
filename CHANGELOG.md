@@ -30,6 +30,12 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 - **`MemoryBackend.aclose()` stops the cleanup task and waits for it.**
   `stop_cleanup()` only requests cancellation and stays as it is.
   ([#181](https://github.com/allen0099/FastAPI-CacheX/issues/181))
+- **`ProxyNotSetError` for an unset manager proxy.** `CacheManagerProxy`,
+  `SessionManagerProxy` and `StateManagerProxy` raise it from `get()` when no
+  instance is set, instead of `BackendNotFoundError`, whose name points at a
+  backend that is not involved. It subclasses `BackendNotFoundError`, so
+  existing handlers keep catching it. `BackendProxy` is unchanged.
+  ([#161](https://github.com/allen0099/FastAPI-CacheX/issues/161))
 
 ### Changed
 

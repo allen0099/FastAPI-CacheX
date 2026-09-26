@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from fastapi_cachex.exceptions import BackendNotFoundError
+from fastapi_cachex.exceptions import ProxyNotSetError
 
 from .manager import StateManager
 from .proxy import StateManagerProxy
@@ -19,7 +19,7 @@ def get_state_manager() -> StateManager:
     """
     try:
         return StateManagerProxy.get()
-    except BackendNotFoundError:
+    except ProxyNotSetError:
         manager = StateManager()
         StateManagerProxy.set(manager)
         return manager

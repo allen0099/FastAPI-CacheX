@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from .backends.base import BaseCacheBackend
-from .exceptions import BackendNotFoundError
+from .exceptions import ProxyNotSetError
 from .manager import CacheManager
 from .manager_proxy import CacheManagerProxy
 from .proxy import BackendProxy
@@ -38,7 +38,7 @@ def get_app_cache() -> CacheManager:
     """
     try:
         return CacheManagerProxy.get()
-    except BackendNotFoundError:
+    except ProxyNotSetError:
         pass
     # Checked again under the lock: FastAPI runs this sync dependency in a
     # worker thread, so concurrent first requests would otherwise each build
@@ -46,7 +46,7 @@ def get_app_cache() -> CacheManager:
     with _manager_lock:
         try:
             return CacheManagerProxy.get()
-        except BackendNotFoundError:
+        except ProxyNotSetError:
             manager = CacheManager(backend=get_backend_or_fallback())
             CacheManagerProxy.set(manager)
             return manager
