@@ -534,7 +534,7 @@ session, new_token = await manager.regenerate_session_id(session)
 
 ## SessionManager 概覽 {#sessionmanager-at-a-glance}
 
-`SessionManager(backend, config, token_serializer=None)` 處理整個生命週期：`create_session()`／`create_anonymous_session()` 回傳 `(session, token)`；`get_session()` 回傳 `(session, renewed_token)`，其中 `renewed_token` 只有在滑動過期更新了權杖時才會有值，並應傳回給用戶端。`get_session()` 失敗時會拋出 `SessionError` 的子類別：`SessionTokenError`（權杖格式錯誤）、`SessionSecurityError`（簽章錯誤或綁定不符）、`SessionNotFoundError`、`SessionInvalidError`（Session 不是啟用狀態）或 `SessionExpiredError`（超過 TTL 或絕對逾時）。
+`SessionManager(backend, config, token_serializer=None)` 處理整個生命週期：`create_session()`／`create_anonymous_session()` 回傳 `(session, token)`；`get_session()` 回傳 `(session, renewed_token)`，其中 `renewed_token` 只有在滑動過期更新了權杖時才會有值，並應傳回給用戶端。`get_session()` 失敗時會拋出 `SessionError` 的子類別：`SessionTokenError`（權杖格式錯誤）、`SessionSecurityError`（簽章錯誤或綁定不符）、`SessionNotFoundError`、`SessionInvalidError`（Session 不是啟用狀態）或 `SessionExpiredError`（超過 TTL 或絕對逾時）。從 0.3.8 起，`SessionError` 繼承自 `CacheXError`，因此 `except CacheXError` 也會捕捉 Session 錯誤。
 
 每個方法及其簽名請見自動產生的 [Session API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/session/)（英文）。
 
