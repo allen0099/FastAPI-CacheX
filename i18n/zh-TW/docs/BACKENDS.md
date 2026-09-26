@@ -107,6 +107,7 @@ BackendProxy.set(backend)
 - `clear_path()` 只會刪除完全相符的那個鍵；`include_params` 沒有作用
 - `clear()` 會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存
+- 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕並拋出錯誤。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）；其他呼叫端則會收到該錯誤
 - 若需要依模式清除快取，請考慮使用 Redis 後端
 
 同步的 pymemcache 用戶端在工作執行緒中執行，並使用連線池，因此並行的請求絕不會共用同一個 socket。寫入會等待伺服器確認（`default_noreply=False`），因此只要 `set()` 返回，就能從連線池中的任何連線讀到該值。
