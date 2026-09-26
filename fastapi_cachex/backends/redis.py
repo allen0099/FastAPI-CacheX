@@ -2,6 +2,7 @@
 
 import logging
 import time
+import warnings
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from typing import Any
@@ -366,7 +367,13 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Clear cached responses matching a pattern.
 
         Only ``pattern`` is a live glob; the backend's key prefix is matched
-        literally, whether or not ``pattern`` repeats it.
+        literally and always added, so ``pattern`` matches the logical key like
+        on every other backend.
+
+        Before 0.3.8 a pattern that started with the key prefix was matched
+        with the prefix stripped instead. When a pattern like that clears
+        nothing, the old form is still tried, and a ``DeprecationWarning`` is
+        emitted if it clears anything. That retry will be removed in 0.4.0.
 
         Args:
             pattern: A glob pattern to match cache keys against
@@ -374,8 +381,25 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        full_pattern = self._prefix_pattern + pattern.removeprefix(self.key_prefix)
+        full_pattern = self._prefix_pattern + pattern
         cleared_count = await self._delete_keys(await self._scan_keys(full_pattern))
+        if (
+            cleared_count == 0
+            and self.key_prefix
+            and pattern.startswith(self.key_prefix)
+        ):
+            full_pattern = self._prefix_pattern + pattern.removeprefix(self.key_prefix)
+            cleared_count = await self._delete_keys(await self._scan_keys(full_pattern))
+            if cleared_count:
+                warnings.warn(
+                    f"clear_pattern({pattern!r}) matched only with the backend's "
+                    f"key prefix {self.key_prefix!r} stripped. Patterns match the "
+                    "logical key, without the backend prefix; pass "
+                    f"{pattern.removeprefix(self.key_prefix)!r} instead. The "
+                    "stripped retry will be removed in version 0.4.0.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
         warn_if_path_shaped(pattern, cleared_count)
         logger.debug(
             "Redis CLEAR_PATTERN; pattern=%s removed=%s", full_pattern, cleared_count
