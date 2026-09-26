@@ -1,5 +1,6 @@
 """Type definitions and type aliases for FastAPI-CacheX."""
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -59,15 +60,31 @@ def counter_entry(value: int) -> CacheEntry:
     return CacheEntry(fingerprint=COUNTER_FINGERPRINT, content=str(value).encode())
 
 
+# Trailing spaces are allowed because Memcached pads a value that DECR made
+# shorter instead of resizing it (DECR on "10" leaves "9 ").
+_COUNTER_PATTERN = re.compile(rb"-?[0-9]+ *")
+
+
+def parse_counter(raw: str | bytes) -> int | None:
+    """The integer ``raw`` spells as a plain decimal, or ``None`` otherwise.
+
+    Stricter than ``int()``: leading whitespace, underscores, a ``+`` sign and
+    non-ASCII digits are rejected. Only the shapes the server-side ``INCR``
+    family of Redis and Memcached leaves behind are accepted.
+    """
+    data = raw.encode() if isinstance(raw, str) else raw
+    return int(data) if _COUNTER_PATTERN.fullmatch(data) else None
+
+
 def counter_value(entry: CacheEntry) -> int:
     """Read the integer a counter entry holds.
 
     Raises:
-        CacheXError: If the content is not a decimal integer, i.e. the key
-            holds a cached response rather than a counter.
+        CacheXError: If the entry is not a counter, e.g. the key holds a
+            cached response, even one whose body is a number.
     """
-    try:
-        return int(entry.content)
-    except ValueError as e:
+    value = parse_counter(entry.content)
+    if entry.fingerprint != COUNTER_FINGERPRINT or value is None:
         msg = "Cache key holds a value that is not a counter"
-        raise CacheXError(msg) from e
+        raise CacheXError(msg)
+    return value

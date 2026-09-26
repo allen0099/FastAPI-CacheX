@@ -156,7 +156,9 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   counter is visible through `get()` as a `CacheEntry` with fingerprint
   `COUNTER_FINGERPRINT` and the decimal value as content, so `delete`/`clear*`
   and the monitoring routes treat it like any other entry. Incrementing a key
-  that holds a cached response raises `CacheXError`.
+  that holds anything else raises `CacheXError` on every backend, even a cached
+  response whose body is a number. A counter written with
+  `set(key, counter_entry(n))` can be incremented on every backend.
 - `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis
   uses `GETDEL` (server 6.2+) and Memcached returns the value only when its own
   `DELETE` won. `StateManager.consume_state`, `StateManager.delete_state`,
