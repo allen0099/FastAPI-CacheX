@@ -514,6 +514,20 @@ class TestRoutesIntegration:
         assert response.status_code == 200
 
 
+def _report_expired(backend: MemoryBackend, key: str, entry: CacheEntry) -> None:
+    """Make ``get_cache_data`` return an entry whose expiry has passed.
+
+    The built-in backends never list an expired entry (#178), but one can
+    expire between the listing and the route reading the clock, and a
+    third-party backend may list them.
+    """
+
+    async def get_cache_data() -> dict[str, tuple[CacheEntry, float | None]]:
+        return {key: (entry, time.time() - 1.0)}
+
+    backend.get_cache_data = get_cache_data  # type: ignore[method-assign]
+
+
 class TestExpiredEntryMonitoring:
     """Test monitoring routes show expired entries correctly."""
 
@@ -521,15 +535,12 @@ class TestExpiredEntryMonitoring:
         """/cached-hits marks is_expired=True for entries whose TTL has passed."""
         add_routes(app)
 
-        # Directly inject an already-expired entry into the backend's internal dict
         # TestClient sends Host: testserver by default
         cache_key = "GET|||testserver|||/expired-route|||"
         expired_entry = CacheEntry(
             fingerprint='W/"expiredtag"', content=b"old data", media_type="text/plain"
         )
-        setup_cache.cache[cache_key] = CacheItem(
-            value=expired_entry, expiry=time.time() - 1.0
-        )
+        _report_expired(setup_cache, cache_key, expired_entry)
 
         response = client.get("/cached-hits")
         assert response.status_code == 200
@@ -550,9 +561,7 @@ class TestExpiredEntryMonitoring:
         expired_entry = CacheEntry(
             fingerprint='W/"expireddata"', content=b"stale", media_type="text/plain"
         )
-        setup_cache.cache[cache_key] = CacheItem(
-            value=expired_entry, expiry=time.time() - 1.0
-        )
+        _report_expired(setup_cache, cache_key, expired_entry)
 
         response = client.get("/cached-records")
         assert response.status_code == 200

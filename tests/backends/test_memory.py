@@ -1,5 +1,7 @@
 import asyncio
 import time
+from collections.abc import Awaitable
+from collections.abc import Callable
 
 import pytest
 import pytest_asyncio
@@ -445,29 +447,44 @@ async def test_memory_backend_get_cache_data_with_entries(
     assert expiry2 is None
 
 
+async def _with_one_expired_entry(backend: MemoryBackend) -> None:
+    """Store "live" and "stale", then expire "stale" without sleeping."""
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    await backend.set("live", entry)
+    await backend.set("stale", entry, ttl=60)
+    backend.cache["stale"].expiry = time.time() - 1
+
+
 @pytest.mark.asyncio
-async def test_memory_backend_get_cache_data_expired_entries(
+async def test_memory_backend_enumeration_skips_expired_entries(
     memory_backend: MemoryBackend,
 ) -> None:
-    """Test get_cache_data includes expired entries."""
-    key = "GET|||localhost|||/test"
-    value = CacheEntry(fingerprint="test_etag", content=b"test_value")
+    """Redis never lists an expired key, and neither does this backend (#178)."""
+    await _with_one_expired_entry(memory_backend)
 
-    # Set with very short TTL
-    await memory_backend.set(key, value, ttl=1)
+    assert await memory_backend.get_all_keys() == ["live"]
+    assert list(await memory_backend.get_cache_data()) == ["live"]
 
-    # Wait for expiry
-    await asyncio.sleep(1.1)
 
-    cache_data = await memory_backend.get_cache_data()
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "clear",
+    [
+        lambda backend: backend.clear_pattern("stale"),
+        lambda backend: backend.clear_path("stale"),
+        lambda backend: backend.delete_many(["stale"]),
+    ],
+    ids=["clear_pattern", "clear_path", "delete_many"],
+)
+async def test_memory_backend_does_not_count_expired_entries_as_cleared(
+    memory_backend: MemoryBackend, clear: Callable[[MemoryBackend], Awaitable[int]]
+) -> None:
+    """An expired entry is removed but not counted, as Redis DEL would (#178)."""
+    await _with_one_expired_entry(memory_backend)
 
-    # Expired entries should still be in the raw cache data
-    # but get() won't return them
-    assert key in cache_data
-    retrieved_value, expiry = cache_data[key]
-    assert retrieved_value == value
-    assert expiry is not None
-    assert expiry <= time.time()
+    assert await clear(memory_backend) == 0
+    assert "stale" not in memory_backend.cache
+    assert "live" in memory_backend.cache
 
 
 def test_ensure_cleanup_started_without_event_loop() -> None:

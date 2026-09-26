@@ -99,6 +99,17 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   monitoring routes. Scanned keys are now deduplicated.
   ([#173](https://github.com/allen0099/FastAPI-CacheX/issues/173))
 
+- **`MemoryBackend` no longer lists or counts expired entries.** Entries
+  that had expired but not yet been swept showed up in `get_all_keys()` and
+  `get_cache_data()`, and `clear_pattern()`, `clear_path()` and
+  `delete_many()` counted them as removed. Redis never returns an expired key,
+  so `CacheManager.clear_prefix()` and the monitoring routes reported
+  different numbers for the same live keys depending on the backend. The
+  expired entries are still removed; they are just not reported. As on Redis,
+  the monitoring routes' `expired_*` counts now stay at zero, apart from an
+  entry that expires while the route runs.
+  ([#178](https://github.com/allen0099/FastAPI-CacheX/issues/178))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added
