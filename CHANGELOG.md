@@ -75,6 +75,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   are no longer read; `clear()` removes them.
   ([#110](https://github.com/allen0099/FastAPI-CacheX/issues/110))
 
+- **The session middleware reads `Authorization: bearer <token>` in any
+  letter case.** Authentication scheme names are case-insensitive (RFC 9110
+  §11.1), but only the exact `Bearer ` prefix was recognised, so a client
+  sending `bearer` got no session. More than one space before the token is
+  accepted too, and a header without a token no longer yields an empty one.
+  ([#166](https://github.com/allen0099/FastAPI-CacheX/issues/166))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added
