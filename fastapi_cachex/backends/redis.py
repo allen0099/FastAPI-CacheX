@@ -213,17 +213,19 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
     async def _scan_keys(self, pattern: str) -> list[str]:
         """Collect every key matching ``pattern`` (a full, prefixed glob).
 
-        Uses SCAN instead of KEYS so the server is never blocked.
+        Uses SCAN instead of KEYS so the server is never blocked. SCAN may
+        return a key more than once (when the keyspace shrinks mid-iteration),
+        so the result is deduplicated, keeping the order keys were first seen.
         """
         cursor = 0
-        keys: list[str] = []
+        keys: dict[str, None] = {}
         while True:
             cursor, page = await self.client.scan(
                 cursor, match=pattern, count=_BATCH_SIZE
             )
-            keys.extend(page)
+            keys.update(dict.fromkeys(page))
             if cursor == 0:
-                return keys
+                return list(keys)
 
     async def _delete_keys(self, keys: list[str]) -> int:
         """Delete prefixed keys in batches; returns how many existed."""
