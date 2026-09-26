@@ -369,7 +369,7 @@ SessionConfig(
     * 60
     * 60,  # None = 不設 Max-Age（Cookie 隨瀏覽器工作階段結束）
     cookie_path="/",
-    cookie_same_site="lax",  # "lax" / "strict" / "none"
+    cookie_same_site="lax",  # "lax" / "strict" / "none"（"none" 需要 cookie_https_only=True）
     cookie_https_only=False,  # True 會加上 Secure 旗標
     cookie_domain=None,  # None = 不設 Domain 屬性
 )

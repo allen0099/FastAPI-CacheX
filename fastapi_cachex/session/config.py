@@ -1,6 +1,7 @@
 """Session configuration settings."""
 
 import ipaddress
+import warnings
 from functools import lru_cache
 from typing import Literal
 
@@ -9,6 +10,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
 from pydantic import field_validator
+from pydantic import model_validator
 
 SameSitePolicy = Literal["lax", "strict", "none"]
 
@@ -223,6 +225,23 @@ class SessionConfig(BaseModel):
             if network is not None and parsed in network:
                 return True
         return False
+
+    @model_validator(mode="after")
+    def _warn_insecure_same_site_none(self) -> "SessionConfig":
+        """Warn about a SameSite=None cookie without the Secure flag.
+
+        Browsers drop such a cookie, so the session would silently never stick.
+        Rejecting the combination would break existing configurations.
+        """
+        if self.cookie_same_site == "none" and not self.cookie_https_only:
+            warnings.warn(
+                'cookie_same_site="none" requires cookie_https_only=True: browsers '
+                "reject a SameSite=None cookie without the Secure flag, so the "
+                "session cookie would never be stored.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return self
 
     @field_validator("jwt_algorithm")
     @classmethod

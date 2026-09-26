@@ -418,7 +418,7 @@ SessionConfig(
     * 60
     * 60,  # None = no Max-Age (cookie ends with the browser session)
     cookie_path="/",
-    cookie_same_site="lax",  # "lax" / "strict" / "none"
+    cookie_same_site="lax",  # "lax" / "strict" / "none" ("none" needs cookie_https_only=True)
     cookie_https_only=False,  # True adds the Secure flag
     cookie_domain=None,  # None = no Domain attribute
 )
