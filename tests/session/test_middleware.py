@@ -21,19 +21,6 @@ from fastapi_cachex.session.middleware import _extract_header_token
 from fastapi_cachex.session.models import SessionUser
 
 
-@pytest.fixture
-def config() -> SessionConfig:
-    """Create session config for testing."""
-    return SessionConfig(secret_key="a" * 32)
-
-
-@pytest.fixture
-def manager(config: SessionConfig) -> SessionManager:
-    """Create session manager for testing."""
-    backend = MemoryBackend()
-    return SessionManager(backend, config)
-
-
 def test_middleware_initialization(
     manager: SessionManager, config: SessionConfig
 ) -> None:

@@ -30,19 +30,6 @@ from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.models import SessionUser
 
 
-@pytest.fixture
-def config() -> SessionConfig:
-    """Create session config for testing."""
-    return SessionConfig(secret_key="a" * 32)
-
-
-@pytest.fixture
-def manager(config: SessionConfig) -> SessionManager:
-    """Create session manager for testing."""
-    backend = MemoryBackend()
-    return SessionManager(backend, config)
-
-
 def _extract_cookie_token(set_cookie_header: str, cookie_name: str) -> str:
     """Pull the cookie value out of a raw Set-Cookie header string."""
     first_pair = set_cookie_header.split(";", maxsplit=1)[0]
