@@ -438,12 +438,23 @@ async def test_memcached_increment_decrement_stops_at_zero(
 async def test_memcached_increment_honors_ttl(
     memcached_backend: MemcachedBackend,
 ) -> None:
-    await memcached_backend.increment("window", ttl=1)
-    await memcached_backend.increment("window", ttl=3600)
-    await asyncio.sleep(2)
+    """The ttl of the first call sets the window; later ttls do not extend it.
 
-    assert await memcached_backend.get("window") is None
-    assert await memcached_backend.increment("window", ttl=1) == 1
+    Memcached keeps time in whole seconds, so an item stored with exptime N
+    lives somewhere between N - 1 and N + 1 seconds. ttl=2 keeps the counter
+    alive across the next call, and polling with a deadline waits for expiry
+    without depending on where the clock tick lands.
+    """
+    assert await memcached_backend.increment("window", ttl=2) == 1
+    assert await memcached_backend.increment("window", ttl=3600) == 2
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5
+    while await memcached_backend.get("window") is not None:
+        assert loop.time() < deadline, "counter outlived its 2 s window"
+        await asyncio.sleep(0.2)
+
+    assert await memcached_backend.increment("window", ttl=2) == 1
 
 
 async def test_memcached_increment_only_maps_non_numeric_errors_to_not_a_counter() -> (
@@ -722,17 +733,42 @@ def test_cached_route_with_a_space_in_the_path_is_served() -> None:
 async def test_increment_reports_a_counter_that_vanished_mid_call() -> None:
     """ADD then INCR is two round-trips; the entry can expire in between.
 
-    Memcached has no way to make the pair atomic, so `increment` has to
-    surface the loss instead of returning `None` as if it were a count.
+    Memcached has no way to make the pair atomic, so `increment` retries a
+    bounded number of times and then surfaces the loss instead of returning
+    `None` as if it were a count.
     """
     backend = stubbed_backend()
-    # INCR keeps missing: the key is gone again by the time ADD's retry runs.
+    # INCR keeps missing: the key is gone again by the time each retry runs.
     backend.client.incr.return_value = None
 
-    with pytest.raises(CacheXError, match="Counter vanished between ADD and INCR"):
-        await backend.increment("k")
+    with pytest.raises(
+        CacheXError,
+        match=f"Counter vanished between ADD and INCR on each of {_CAS_MAX_RETRIES} attempts",
+    ):
+        await backend.increment("k", ttl=1)
 
-    assert backend.client.add.call_count == 1
+    assert backend.client.add.call_count == _CAS_MAX_RETRIES
+    # The first INCR, then one after every ADD.
+    assert backend.client.incr.call_count == _CAS_MAX_RETRIES + 1
+
+
+async def test_increment_retries_when_the_new_counter_expires_before_incr() -> None:
+    """Issue #315: a ttl=1 counter can expire between its ADD and the INCR.
+
+    Memcached's clock has one-second resolution, so the tick can land between
+    the two. The counter expired inside its own window, so the retry starts
+    a new window at `delta`.
+    """
+    backend = stubbed_backend()
+    # Miss (no counter), miss (expired right after ADD), then the retry lands.
+    backend.client.incr.side_effect = [None, None, 3]
+
+    assert await backend.increment("k", 3, ttl=1) == 3
+
+    assert backend.client.add.call_count == 2
+    for call in backend.client.add.call_args_list:
+        assert call.args == ("fastapi_cachex:k", b"0", 1)
+    assert backend.client.incr.call_count == 3
 
 
 @requires_memcached
