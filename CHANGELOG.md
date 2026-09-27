@@ -339,6 +339,22 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   per-token `InsecureKeyLengthWarning`.
   ([#116](https://github.com/allen0099/FastAPI-CacheX/issues/116))
 
+### Documentation
+
+- **Runnable examples.** `examples/` holds one complete FastAPI app per
+  feature: HTTP caching, `CacheManager`, cookie and JWT sessions, OAuth
+  state, `CacheLock`, a rate limiter on `increment()` and a Redis backend.
+  `tests/test_examples.py` runs each one's main flow, so they keep working
+  as the library changes. The guide pages link to the matching example.
+  ([#241](https://github.com/allen0099/FastAPI-CacheX/issues/241))
+- **Guides checked against 0.3.8.** The distributed lock and contributing
+  guides are now available in Traditional Chinese. The JWT claims guide uses
+  `FastAPICacheXSessionMiddleware`, and its custom serializer no longer reads
+  private attributes. Corrected statements: `invalidate()` raises backend
+  errors, only the Redis and Memcached backends prefix their keys, and
+  `CacheLock` is a lease rather than a guarantee of mutual exclusion.
+  ([#214](https://github.com/allen0099/FastAPI-CacheX/issues/214))
+
 ## [0.3.7] - 2026-09-25
 
 ### Added
