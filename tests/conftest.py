@@ -8,8 +8,6 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from pymemcache import HashClient
-from redis.asyncio import Redis
 
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends import memory
@@ -63,8 +61,9 @@ async def close_network_clients(
     `__new__` records rather than `__init__`, so the constructor's warnings
     still point at the test that called it.
 
-    Both client libraries are imported at the top of this module: a test that
-    hides them from `import` is still patched while this teardown runs.
+    Clients are recognised by the module of their type rather than with
+    `isinstance`, so this file imports neither optional client library, and
+    a mock a test swapped in is left alone.
     """
     opened: list[AsyncRedisCacheBackend | MemcachedBackend] = []
 
@@ -78,10 +77,11 @@ async def close_network_clients(
     yield
     for backend in opened:
         # Missing if the constructor raised; a test may swap in a mock.
-        client = getattr(backend, "client", None)
-        if isinstance(client, Redis):
-            await client.aclose()  # type: ignore[attr-defined]  # not in types-redis
-        elif isinstance(client, HashClient):
+        client: Any = getattr(backend, "client", None)
+        module = type(client).__module__
+        if module.startswith("redis."):
+            await client.aclose()
+        elif module.startswith("pymemcache."):
             client.close()
 
 
