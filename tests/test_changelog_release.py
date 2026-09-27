@@ -8,8 +8,10 @@ from pathlib import Path
 import pytest
 
 from scripts.changelog_release import ChangelogError
+from scripts.changelog_release import assemble
 from scripts.changelog_release import main
 from scripts.changelog_release import promote
+from scripts.changelog_release import read_fragments
 from scripts.changelog_release import release_notes
 
 BASE = "https://github.com/allen0099/FastAPI-CacheX"
@@ -179,8 +181,14 @@ def test_the_repository_changelog_can_be_released():
     latest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", text, re.MULTILINE)
     assert latest is not None
 
-    # Right after a release `## [Unreleased]` is empty, which promote()
-    # rightly refuses. Give it an entry so the rest of the file is still checked.
+    # The pending fragments go in first, exactly as the release merges them,
+    # so a malformed fragment fails the pull request that adds it.
+    fragments = read_fragments(changelog.parent / "changelog.d")
+    text = assemble(text, fragments)
+
+    # Between releases `## [Unreleased]` is usually empty and every entry
+    # waits in a fragment. With neither, promote() rightly refuses; give it an
+    # entry so the rest of the file is still checked.
     text = re.sub(
         r"^## \[Unreleased\]\n\s*(?=^## \[)",
         "## [Unreleased]\n\n### Fixed\n\n- **Placeholder entry.**\n\n",
@@ -196,7 +204,11 @@ def test_the_repository_changelog_can_be_released():
     assert f"[0.9.9]: {BASE}/compare/v{latest[1]}...v0.9.9" in rewritten
     assert body.startswith("### ")
     # Every entry waiting in `Unreleased` has the summary the release page needs.
-    assert release_notes(body, "0.9.9", "2026-09-14").startswith("### ")
+    notes = release_notes(body, "0.9.9", "2026-09-14")
+    assert notes.startswith("### ")
+    # Every pending fragment reaches the release page with its issue link.
+    for fragment in fragments:
+        assert f"[#{fragment.issue}]({BASE}/issues/{fragment.issue})" in notes
     # Every released heading still has a link definition, and vice versa.
     headings = {
         line.removeprefix("## [").split("]")[0]
@@ -382,3 +394,389 @@ def test_main_refuses_to_release_an_entry_without_a_summary(
     assert "bold one-line summary" in capsys.readouterr().err
     assert "## [0.3.5]" not in changelog.read_text(encoding="utf-8")
     assert not notes.exists()
+
+
+# Changelog fragments
+
+
+def _fragments(tmp_path: Path, files: dict[str, str]) -> Path:
+    directory = tmp_path / "changelog.d"
+    directory.mkdir(exist_ok=True)
+    for name, text in files.items():
+        (directory / name).write_text(text, encoding="utf-8")
+    return directory
+
+
+def _link(issue: int) -> str:
+    return f"([#{issue}]({BASE}/issues/{issue}))"
+
+
+def test_fragments_are_ordered_by_section_issue_and_number(tmp_path: Path):
+    directory = _fragments(
+        tmp_path,
+        {
+            "9.security.md": "**Nine.**",
+            "65.added.2.md": "**Sixty-five, second.**",
+            "65.added.md": "**Sixty-five.**",
+            "7.added.md": "**Seven.**",
+            "8.fixed.md": "**Eight.**",
+            "65.added.10.md": "**Sixty-five, tenth.**",
+        },
+    )
+
+    fragments = read_fragments(directory)
+
+    assert [fragment.path.name for fragment in fragments] == [
+        "7.added.md",
+        "65.added.md",
+        "65.added.2.md",
+        "65.added.10.md",
+        "8.fixed.md",
+        "9.security.md",
+    ]
+
+
+def test_a_missing_fragment_directory_holds_no_fragments(tmp_path: Path):
+    assert read_fragments(tmp_path / "changelog.d") == []
+
+
+def test_the_readme_and_dotfiles_are_not_fragments(tmp_path: Path):
+    directory = _fragments(
+        tmp_path,
+        {"README.md": "# Not an entry\n", ".gitkeep": "", "1.added.md": "**A.**"},
+    )
+
+    assert [fragment.path.name for fragment in read_fragments(directory)] == [
+        "1.added.md"
+    ]
+
+
+def test_assemble_puts_fragments_under_their_headings_in_keep_a_changelog_order(
+    tmp_path: Path,
+):
+    empty = CHANGELOG.replace(f"### Added\n\n{ENTRY}\n", "")
+    directory = _fragments(
+        tmp_path,
+        {
+            "5.security.md": "**Five.** Details.",
+            "3.fixed.md": "**Three.** Details.",
+            "4.removed.md": "**Four.**",
+            "2.changed.md": "**Two.**",
+            "6.deprecated.md": "**Six.**",
+            "1.added.md": "**One.**",
+        },
+    )
+
+    assembled = assemble(empty, read_fragments(directory))
+
+    assert assembled.split("## [0.3.4]")[0] == (
+        "# Changelog\n\n## [Unreleased]\n\n"
+        f"### Added\n\n- **One.** {_link(1)}\n\n"
+        f"### Changed\n\n- **Two.** {_link(2)}\n\n"
+        f"### Deprecated\n\n- **Six.** {_link(6)}\n\n"
+        f"### Removed\n\n- **Four.** {_link(4)}\n\n"
+        f"### Fixed\n\n- **Three.** Details. {_link(3)}\n\n"
+        f"### Security\n\n- **Five.** Details. {_link(5)}\n\n"
+    )
+    # Nothing below the Unreleased section is touched.
+    assert assembled.split("## [0.3.4]")[1] == empty.split("## [0.3.4]")[1]
+
+
+def test_assemble_indents_the_rest_of_a_multi_line_fragment(tmp_path: Path):
+    directory = _fragments(
+        tmp_path,
+        {
+            "12.fixed.md": (
+                "**Stop `z()` from losing\nentries.** It dropped them.\n\n"
+                "  - nested\n    - deeper\n\nMore.\n"
+            ),
+        },
+    )
+
+    assembled = assemble(CHANGELOG, read_fragments(directory))
+
+    assert (
+        "### Fixed\n\n- **Stop `z()` from losing\n  entries.** It dropped them.\n\n"
+        f"    - nested\n      - deeper\n\n  More. {_link(12)}\n\n## [0.3.4]"
+    ) in assembled
+    _, body = promote(assembled, "0.3.5", "2026-09-14")
+    assert f"- Stop `z()` from losing entries. {_link(12)}\n" in release_notes(
+        body, "0.3.5", "2026-09-14"
+    )
+
+
+def test_a_fragment_ending_in_a_nested_list_gets_its_link_on_its_own(
+    tmp_path: Path,
+):
+    directory = _fragments(
+        tmp_path, {"12.fixed.md": "**X.** Either:\n\n  - a\n  - b\n"}
+    )
+
+    assembled = assemble(CHANGELOG, read_fragments(directory))
+
+    assert (
+        f"- **X.** Either:\n\n    - a\n    - b\n\n  {_link(12)}\n\n## [0.3.4]"
+    ) in assembled
+    _, body = promote(assembled, "0.3.5", "2026-09-14")
+    assert f"- X. {_link(12)}\n" in release_notes(body, "0.3.5", "2026-09-14")
+
+
+def test_assemble_merges_with_entries_written_by_hand(tmp_path: Path):
+    handwritten = CHANGELOG.replace(
+        f"### Added\n\n{ENTRY}\n",
+        "### Documentation\n\n- **Docs.**\n\n"
+        f"### Added\n\n{ENTRY}\n\n"
+        "### Fixed\n\n- **By hand.**\n  Wrapped. ([#3](x))\n",
+    )
+    directory = _fragments(
+        tmp_path,
+        {
+            "2.added.md": "**From a fragment.**",
+            "4.fixed.md": "**Fixed by a fragment.**",
+            "5.changed.md": "**Changed by a fragment.**",
+        },
+    )
+
+    assembled = assemble(handwritten, read_fragments(directory))
+
+    assert assembled.split("## [0.3.4]")[0] == (
+        "# Changelog\n\n## [Unreleased]\n\n"
+        f"### Added\n\n{ENTRY}\n- **From a fragment.** {_link(2)}\n\n"
+        f"### Changed\n\n- **Changed by a fragment.** {_link(5)}\n\n"
+        "### Fixed\n\n- **By hand.**\n  Wrapped. ([#3](x))\n"
+        f"- **Fixed by a fragment.** {_link(4)}\n\n"
+        # A heading Keep a Changelog does not define stays, after its sections.
+        "### Documentation\n\n- **Docs.**\n\n"
+    )
+
+
+def test_assemble_keeps_loose_entries_above_the_first_heading(tmp_path: Path):
+    loose = CHANGELOG.replace(
+        f"### Added\n\n{ENTRY}\n", "- **Loose.**\n\n### Added\n\n- **Kept.**\n"
+    )
+    directory = _fragments(tmp_path, {"1.added.md": "**New.**"})
+
+    assembled = assemble(loose, read_fragments(directory))
+
+    assert (
+        "## [Unreleased]\n\n- **Loose.**\n\n"
+        f"### Added\n\n- **Kept.**\n- **New.** {_link(1)}\n\n## [0.3.4]"
+    ) in assembled
+
+
+def test_assemble_without_fragments_changes_nothing():
+    assert assemble(CHANGELOG, []) == CHANGELOG
+
+
+def test_assemble_takes_the_issue_link_base_from_the_changelog(tmp_path: Path):
+    fork = CHANGELOG.replace(BASE, "https://github.com/someone/fork")
+    directory = _fragments(tmp_path, {"7.added.md": "**Seven.**"})
+
+    assembled = assemble(fork, read_fragments(directory))
+
+    assert "- **Seven.** ([#7](https://github.com/someone/fork/issues/7))" in assembled
+
+
+def test_fragments_flow_into_the_release_notes(tmp_path: Path):
+    directory = _fragments(
+        tmp_path,
+        {
+            "20.added.md": "**Twenty.**\nWith details that the notes drop.",
+            "21.fixed.md": f"**Twenty-one.** See also [#22]({BASE}/pull/22).",
+        },
+    )
+    assembled = assemble(CHANGELOG, read_fragments(directory))
+
+    _, body = promote(assembled, "0.3.5", "2026-09-14")
+
+    assert release_notes(body, "0.3.5", "2026-09-14") == (
+        f"### Added\n\n- A thing. ([#1]({BASE}/issues/1))\n"
+        f"- Twenty. {_link(20)}\n\n"
+        f"### Fixed\n\n- Twenty-one. {_link(21)}\n\n"
+        "**Full changelog**: "
+        "https://fastapi-cachex.readthedocs.io/en/stable/changelog/#035-2026-09-14\n"
+    )
+
+
+def test_an_empty_unreleased_section_with_fragments_can_be_released(tmp_path: Path):
+    empty = CHANGELOG.replace(f"### Added\n\n{ENTRY}\n", "")
+    directory = _fragments(tmp_path, {"1.fixed.md": "**One.**"})
+
+    rewritten, body = promote(
+        assemble(empty, read_fragments(directory)), "0.3.5", "2026-09-14"
+    )
+
+    assert body == f"### Fixed\n\n- **One.** {_link(1)}\n"
+    assert "## [Unreleased]\n\n## [0.3.5] - 2026-09-14\n\n### Fixed\n" in rewritten
+
+
+def test_fragments_need_the_unreleased_link_for_their_issue_links(tmp_path: Path):
+    without_link = CHANGELOG.replace(
+        f"[Unreleased]: {BASE}/compare/v0.3.4...HEAD\n", ""
+    )
+    directory = _fragments(tmp_path, {"1.fixed.md": "**One.**"})
+
+    with pytest.raises(ChangelogError, match="link definition"):
+        assemble(without_link, read_fragments(directory))
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "error"),
+    [
+        ("12.md", "**X.**", "not a fragment name"),
+        ("12.added.txt", "**X.**", "not a fragment name"),
+        ("issue-12.added.md", "**X.**", "not a fragment name"),
+        ("012.added.md", "**X.**", "not a fragment name"),
+        ("12.added.1.md", "**X.**", "not a fragment name"),
+        ("12.added.two.md", "**X.**", "not a fragment name"),
+        ("12.feature.md", "**X.**", "unknown section `feature`"),
+        ("12.Added.md", "**X.**", "unknown section `Added`"),
+        ("12.added.md", " \n\n", "the file is empty"),
+        ("12.added.md", "- **X.** Details.", "drop the leading `- `"),
+        ("12.added.md", "X. Details.", "bold one-line summary"),
+        ("12.added.md", "Details. **X.**", "bold one-line summary"),
+        ("12.added.md", "**X.**\n- **Y.**", "would start a new entry"),
+        ("12.added.md", "**X.**\n### Fixed", "would start a new entry or heading"),
+        ("12.added.md", f"**X.** ([#12]({BASE}/issues/12))", "remove the link to #12"),
+        ("12.added.md", b"**\xff**", "not UTF-8"),
+    ],
+)
+def test_a_malformed_fragment_fails_the_release_before_anything_changes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+    text: str | bytes,
+    error: str,
+):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(CHANGELOG, encoding="utf-8")
+    directory = _fragments(tmp_path, {"1.added.md": "**Fine.**"})
+    bad = directory / name
+    if isinstance(text, bytes):
+        bad.write_bytes(text)
+    else:
+        bad.write_text(text, encoding="utf-8")
+    notes = tmp_path / "release-notes.md"
+
+    exit_code = main(
+        [
+            "--version",
+            "0.3.5",
+            "--changelog",
+            str(changelog),
+            "--release-notes",
+            str(notes),
+        ]
+    )
+
+    assert exit_code == 1
+    stderr = capsys.readouterr().err
+    assert "malformed changelog fragments" in stderr
+    assert name in stderr
+    assert error in stderr
+    assert changelog.read_text(encoding="utf-8") == CHANGELOG
+    assert sorted(path.name for path in directory.iterdir()) == sorted(
+        ["1.added.md", name]
+    )
+    assert not notes.exists()
+
+
+def test_a_directory_in_the_fragment_directory_is_an_error(tmp_path: Path):
+    directory = _fragments(tmp_path, {})
+    (directory / "12.added.md").mkdir()
+
+    with pytest.raises(ChangelogError, match="not a fragment name"):
+        read_fragments(directory)
+
+
+def test_every_malformed_fragment_is_listed_at_once(tmp_path: Path):
+    directory = _fragments(
+        tmp_path,
+        {"1.feature.md": "**A.**", "2.added.md": "B.", "3.added.md": "**C.**"},
+    )
+
+    with pytest.raises(ChangelogError) as error:
+        read_fragments(directory)
+
+    assert "1.feature.md" in str(error.value)
+    assert "2.added.md" in str(error.value)
+    assert "3.added.md" not in str(error.value)
+
+
+def test_main_merges_the_fragments_and_then_deletes_them(tmp_path: Path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(CHANGELOG, encoding="utf-8")
+    directory = _fragments(
+        tmp_path,
+        {
+            "README.md": "# Fragments\n",
+            ".gitkeep": "",
+            "2.added.md": "**Two.**",
+            "3.fixed.md": "**Three.**",
+        },
+    )
+    notes = tmp_path / "release-notes.md"
+
+    exit_code = main(
+        [
+            "--version",
+            "0.3.5",
+            "--date",
+            "2026-09-14",
+            "--changelog",
+            str(changelog),
+            "--release-notes",
+            str(notes),
+        ]
+    )
+
+    assert exit_code == 0
+    text = changelog.read_text(encoding="utf-8")
+    assert (
+        f"## [0.3.5] - 2026-09-14\n\n### Added\n\n{ENTRY}\n- **Two.** {_link(2)}\n\n"
+        f"### Fixed\n\n- **Three.** {_link(3)}\n\n## [0.3.4]"
+    ) in text
+    assert f"- Two. {_link(2)}" in notes.read_text(encoding="utf-8")
+    assert f"- Three. {_link(3)}" in notes.read_text(encoding="utf-8")
+    assert sorted(path.name for path in directory.iterdir()) == [
+        ".gitkeep",
+        "README.md",
+    ]
+
+
+def test_main_reads_fragments_from_the_given_directory(tmp_path: Path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(CHANGELOG, encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "2.added.md").write_text("**Two.**", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--version",
+            "0.3.5",
+            "--changelog",
+            str(changelog),
+            "--fragments",
+            str(elsewhere),
+        ]
+    )
+
+    assert exit_code == 0
+    assert f"- **Two.** {_link(2)}" in changelog.read_text(encoding="utf-8")
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_main_dry_run_keeps_the_fragments(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(CHANGELOG, encoding="utf-8")
+    directory = _fragments(tmp_path, {"2.added.md": "**Two.**"})
+
+    exit_code = main(["--version", "0.3.5", "--changelog", str(changelog), "--dry-run"])
+
+    assert exit_code == 0
+    assert f"- Two. {_link(2)}" in capsys.readouterr().out
+    assert changelog.read_text(encoding="utf-8") == CHANGELOG
+    assert (directory / "2.added.md").exists()

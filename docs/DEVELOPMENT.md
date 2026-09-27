@@ -310,7 +310,9 @@ The workflow runs in this order:
    written.
 2. **The version.** `uv version` applies the bump or the exact version. If
    `vX.Y.Z` is already tagged, locally or on the remote, the run stops here.
-3. **The changelog.** `scripts/changelog_release.py` renames `## [Unreleased]`
+3. **The changelog.** `scripts/changelog_release.py` merges the fragments in
+   `changelog.d/` into `## [Unreleased]` (see
+   [Changelog fragments](#changelog-fragments)), renames it
    to `## [X.Y.Z] - YYYY-MM-DD`, opens a fresh empty `## [Unreleased]` above
    it, rewrites the compare links at the bottom, and writes the release body:
    each entry's bold summary and issue links, and a link to the full entries
@@ -318,8 +320,8 @@ The workflow runs in this order:
 4. **The build.** `uv build`. The bumped files, the release notes and
    `dist/` are uploaded as one artifact, which the next two jobs download
    instead of building anything again.
-5. **The permanent part**, kept together at the end: commit the version bump
-   and the promoted changelog, push it to master, tag, push the tag by refspec,
+5. **The permanent part**, kept together at the end: commit the version bump,
+   the promoted changelog and the removal of the merged fragments, push it to master, tag, push the tag by refspec,
    create the GitHub release from the promoted section, publish to PyPI.
 
 Steps 1–4 are the `build` job, which installs every dev dependency and so gets
@@ -342,8 +344,9 @@ of the release path was a release. A dry run may be dispatched on any branch,
 which is how a change to the workflow itself is rehearsed before it is merged.
 
 A dry run answers two questions, and the job summary reports both: whether the
-bump and the promotion actually landed in `pyproject.toml`, `uv.lock` and
-`CHANGELOG.md` (shown as a `git diff --stat`, staged by nothing), and what
+bump and the promotion actually landed in `pyproject.toml`, `uv.lock`,
+`CHANGELOG.md` and `changelog.d/` (shown as a `git diff --stat`, staged by
+nothing), and what
 would have been published. The release notes, the built `dist/` and the bumped
 files are attached to the run as an artifact, because the notes are markdown and reading them in
 the job summary renders them a second time — which is not what the release page
@@ -361,9 +364,9 @@ different path, not of this one.
 `CHANGELOG.md` used to be maintained entirely by hand and nothing enforced it:
 the release notes came from `git log --pretty=format:"- %s (%h)"`, so a release
 happened whether or not anyone had written down what it meant. That is no
-longer true. The release body is built from the `## [Unreleased]` section, and
-an empty one fails the run — for a hand-maintained file, "nobody wrote it down"
-is far more likely than "nothing changed". The commit list has not been lost:
+longer true. The release body is built from the `## [Unreleased]` section,
+fragments included, and an empty one fails the run — for entries written by
+hand, "nobody wrote it down" is far more likely than "nothing changed". The commit list has not been lost:
 the release body ends with a compare link against the previous tag.
 
 The changelog and the release page serve different readers. The changelog
@@ -411,6 +414,50 @@ A hand-bump is also what broke the release on 2026-09-05, back when the commit
 step treated "nothing to commit" as a failure.
 
 When a pull request changes behaviour, adds public API, or fixes something a
-user could have hit, add the entry to `## [Unreleased]` in the same PR. The
-release will fail on an empty section, but it cannot tell you *which* PR forgot
-its entry — only that somebody did.
+user could have hit, add its entry in the same PR, as a fragment. The release
+will fail when there is nothing to release, but it cannot tell you *which* PR
+forgot its entry — only that somebody did.
+
+### Changelog fragments
+
+Pull requests do not edit `CHANGELOG.md`. When every PR appended to
+`## [Unreleased]`, merging one put every other open PR in conflict. Instead,
+each PR adds one file per entry to `changelog.d/`:
+
+- **Name:** `<issue>.<section>.md`, where `<section>` is `added`, `changed`,
+  `deprecated`, `removed`, `fixed` or `security`. A second entry for the same
+  issue and section is `<issue>.<section>.2.md`, then `.3.md`, and so on; a
+  file holds exactly one entry.
+- **Content:** the entry, opening with its bold one-line summary, *without*
+  the leading `- ` and *without* the issue link. The release adds both, taking
+  the link from the file name. Line breaks are up to you; indent a nested list
+  by two spaces.
+
+`changelog.d/65.added.md`:
+
+```markdown
+**Add `CacheManager.add()` for store-if-absent writes.** It uses the same
+key prefix, JSON encoding and `default_ttl` as `set()`.
+```
+
+is released under `### Added` as:
+
+```markdown
+- **Add `CacheManager.add()` for store-if-absent writes.** It uses the same
+  key prefix, JSON encoding and `default_ttl` as `set()`. ([#65](https://github.com/allen0099/FastAPI-CacheX/issues/65))
+```
+
+At release time `scripts/changelog_release.py` checks every fragment before it
+writes anything, merges them into `## [Unreleased]` — sections in Keep a
+Changelog order (Added, Changed, Deprecated, Removed, Fixed, Security), each
+after any entry already written there by hand, fragments ordered by issue
+number — then promotes the section and deletes the fragments. The `release`
+job commits the deletions with `CHANGELOG.md`. `changelog.d/README.md` and
+dotfiles are not fragments; any other file there that is not a well-formed
+fragment (a bad name, an unknown section, no bold summary, a leading `- `, its
+own issue link) fails the release with nothing changed.
+`test_the_repository_changelog_can_be_released` merges the pending fragments
+the same way, so such a file fails CI in the pull request that adds it.
+
+An entry that belongs to no issue can still be written straight into
+`## [Unreleased]` by hand; the release merges it with the fragments.

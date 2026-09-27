@@ -123,3 +123,4 @@ Five non-abstract atomic primitives live on the base class with non-atomic fallb
 - Forward references are mostly quoted annotations with `TYPE_CHECKING` imports; only a couple of modules use `from __future__ import annotations`.
 - All public functions must have complete type annotations.
 - Coverage threshold is 90% (enforced by `pytest-cov`).
+- Changelog entries go in `changelog.d/<issue>.<section>.md` fragments (bold summary first, no leading `- `, no issue link), not in `CHANGELOG.md`; the release merges them. See `docs/DEVELOPMENT.md#changelog-fragments`.
