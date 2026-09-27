@@ -1,9 +1,11 @@
 """Generic application-level cache manager for FastAPI-CacheX."""
 
+import fnmatch
 import hashlib
 import inspect
 import json
 import logging
+import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
 from typing import Any
@@ -16,6 +18,11 @@ from .types import CacheEntry
 logger = logging.getLogger(__name__)
 
 _DECODE_ERRORS = (AttributeError, UnicodeDecodeError, json.JSONDecodeError)
+
+# Characters that are live in a glob pattern: the Redis set, mirrored from
+# ``backends/redis.py`` (fnmatch treats the backslash literally, but a prefix
+# holding one still cannot be passed through to Redis unescaped).
+_GLOB_SPECIAL = frozenset("*?[]\\")
 
 
 class CacheManager:
@@ -33,7 +40,7 @@ class CacheManager:
         key_prefix: str = "cache:",
         default_ttl: int | None = None,
     ) -> None:
-        """Initialize CacheManager.
+        r"""Initialize CacheManager.
 
         Args:
             backend: Cache backend instance. If None, uses BackendProxy.get().
@@ -45,10 +52,30 @@ class CacheManager:
             BackendNotFoundError: If ``backend`` is None and no backend has
                 been set with ``BackendProxy.set()``.
             ValueError: If ``default_ttl`` is zero or negative.
+
+        Warns:
+            UserWarning: If ``key_prefix`` contains a glob metacharacter
+                (``*``, ``?``, ``[``, ``]`` or ``\``). ``clear_pattern()`` then
+                lists every key and filters in Python instead of handing the
+                pattern to the backend.
         """
         self.backend = backend if backend is not None else BackendProxy.get()
         self.key_prefix = key_prefix
         self.default_ttl = validate_ttl(default_ttl)
+        if self._prefix_has_glob:
+            warnings.warn(
+                f"CacheManager key_prefix {key_prefix!r} contains a glob "
+                "metacharacter, so clear_pattern() will list every key in the "
+                "backend and filter them in Python, which is slower on Redis "
+                "than a server-side SCAN MATCH. Use a prefix without any of "
+                "*?[]\\ to keep the fast path.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    @property
+    def _prefix_has_glob(self) -> bool:
+        return not _GLOB_SPECIAL.isdisjoint(self.key_prefix)
 
     def _cache_key(self, key: str) -> str:
         return f"{self.key_prefix}{key}"
@@ -204,12 +231,25 @@ class CacheManager:
         return value
 
     async def clear_pattern(self, pattern: str) -> int:
-        """Clear all keys under this manager's namespace matching a glob pattern.
+        r"""Clear all keys under this manager's namespace matching a glob pattern.
 
-        Delegates to the backend's native ``clear_pattern`` (e.g. Redis ``SCAN``),
-        which can be more efficient than ``clear_prefix``'s full key-space scan.
-        Note that backends without key-enumeration support (e.g. Memcached)
-        cannot honor this and will return 0 with a ``RuntimeWarning``.
+        Only ``pattern`` is a glob; ``self.key_prefix`` is always matched
+        literally.
+
+        When ``key_prefix`` holds no glob metacharacter (``*?[]\``), this
+        delegates to the backend's native ``clear_pattern`` (e.g. Redis
+        ``SCAN MATCH``), and ``pattern`` uses the backend's glob syntax.
+
+        Otherwise it cannot pass the prefix to the backend as a glob, so it
+        lists every key with ``get_all_keys()``, keeps those that start with
+        ``key_prefix`` and whose remainder matches ``pattern`` under
+        ``fnmatch.fnmatchcase``, and removes them with ``delete_many()``. That
+        is slower on Redis, and ``pattern`` is then fnmatch syntax rather than
+        Redis glob: no backslash escapes, and ``[!a]`` rather than ``[^a]``
+        for negation. The constructor warns about such a prefix.
+
+        Backends without key enumeration (e.g. Memcached) cannot honor either
+        path and return 0 with a ``RuntimeWarning``.
 
         Args:
             pattern: Glob pattern (relative to ``self.key_prefix``) to match
@@ -219,7 +259,17 @@ class CacheManager:
             Number of cache entries cleared.
         """
         match_pattern = self._cache_key(pattern)
-        cleared = await self.backend.clear_pattern(match_pattern)
+        if self._prefix_has_glob:
+            prefix = self.key_prefix
+            keys = await self.backend.get_all_keys()
+            cleared = await self.backend.delete_many(
+                key
+                for key in keys
+                if key.startswith(prefix)
+                and fnmatch.fnmatchcase(key.removeprefix(prefix), pattern)
+            )
+        else:
+            cleared = await self.backend.clear_pattern(match_pattern)
         logger.debug(
             "Cache CLEAR_PATTERN; pattern=%s removed=%s", match_pattern, cleared
         )

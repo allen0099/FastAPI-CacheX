@@ -30,8 +30,9 @@ profile = await manager.get_or_set("user:42", lambda: load_user(42), ttl=300)
 if await manager.add(f"webhook:{event_id}", True, ttl=86400):
     await deliver_webhook(event_id)
 
-# 在此 manager 的命名空間內做萬用字元（glob）比對，使用後端原生的模式比對
-# 支援（Redis SCAN），而不是列舉所有鍵。
+# 在此 manager 的命名空間內做萬用字元（glob）比對。只有 pattern 是 glob，
+# 前綴一律照字面比對。前綴不含 *?[]\ 時，會使用後端原生的模式比對支援
+# （Redis SCAN），而不是列舉所有鍵。
 await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 ```
 
@@ -45,6 +46,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 - `add()` 只在鍵尚未被占用時寫入值，並回傳是否有寫入。檢查與寫入是同一個後端原子操作（`set_if_absent`），因此適合「每個鍵只做一次」的工作，例如 webhook 或電子郵件的去重。已過期的鍵視為未被占用；存放無法解碼之值的鍵則不算，即使 `get()` 會把它當成未命中。
 - 鍵預設位於獨立、以 `cache:` 為前綴的命名空間，與 HTTP 路由快取及 OAuth state 分開，因此 `clear()`／`clear_prefix()` 絕不會動到無關的快取項目。
 - 前綴是以單純的字串前綴比對。因此 `key_prefix="cache:"` 的 manager 也會清除 `key_prefix="cache:users:"` 的 manager 的項目；而空的 `key_prefix` 會讓 `clear()` 移除後端中的所有內容，包括 HTTP 回應、鎖、OAuth state 與 Session。請讓每個 manager 的前綴都不以另一個 manager 的前綴開頭。
+- `clear_pattern(pattern)` 只把 `pattern` 當成 glob；`key_prefix` 一律照字面比對。前綴不含 glob 特殊字元（`*`、`?`、`[`、`]`、`\`）時，會把 `key_prefix + pattern` 交給後端的 `clear_pattern()`（Redis `SCAN MATCH`），`pattern` 採用後端的 glob 語法。前綴含有這些字元時（例如 `cache[1]:`），無法把它當成 glob 傳給後端，因此 `clear_pattern()` 會以 `get_all_keys()` 列出所有鍵，保留以該前綴開頭、且其餘部分以 `fnmatch.fnmatchcase` 符合 `pattern` 的鍵，再以 `delete_many()` 刪除。這在 Redis 上較慢，而且此時 `pattern` 採用 fnmatch 語法而非 Redis glob：區分大小寫、不支援反斜線跳脫，否定用 `[!a]` 而非 `[^a]`。以這種前綴建立 `CacheManager` 時會發出 `UserWarning`；請改用不含 `*?[]\` 的前綴以維持快速路徑。
 - `AppCache` 依賴項在第一次使用時會建立並註冊一個預設的 `CacheManager`；`CacheManagerProxy.set()` 則可改為註冊你自己的實例。
 
 > [!NOTE]
