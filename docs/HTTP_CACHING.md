@@ -187,6 +187,40 @@ app.add_middleware(
 )
 ```
 
+### Adding components to the key
+
+A custom `key_builder` that needs one more dimension (a user ID, a tenant, a
+locale) should call `build_cache_key(request, *components)` rather than
+rebuilding the format by hand. With no components it returns exactly the
+default key; each component is appended after the query string:
+
+```
+{method}|||{host}|||{path}|||{query_params}|||{component}|||...
+```
+
+```python
+from fastapi import Request
+
+from fastapi_cachex import build_cache_key
+
+
+def per_tenant_key(request: Request) -> str:
+    return build_cache_key(request, request.state.tenant_id)
+```
+
+Components are `str` or `int` (an `int` is written in decimal, so `1` and `"1"`
+are the same component); anything else, `None` included, raises `TypeError`, so
+a missing ID cannot quietly put every such caller under one `"None"` key. Each
+component is percent-encoded like the host and path, so a value containing
+`|||` cannot shift the components. An empty string is still a component:
+`build_cache_key(request, "")` is not the default key.
+
+Because the path stays the third component, `clear_path()` still finds these
+keys: without `include_params` it clears every entry for the path with an empty
+query string whatever its extra components, and with it every entry for the
+path. The monitoring routes show the extra components, decoded, in
+`extra_components`. `default_key_builder(request)` is `build_cache_key(request)`.
+
 The Redis and Memcached backends also put their own prefix (`fastapi_cachex:` by
 default) in front of every key, so other applications can share the server;
 `MemoryBackend` has no prefix. `CacheManager` (see
@@ -217,9 +251,8 @@ HTTP requests.
 ```python
 from fastapi import Request, Response
 
+from fastapi_cachex import build_cache_key
 from fastapi_cachex import cache
-from fastapi_cachex.types import CACHE_KEY_SEPARATOR
-from fastapi_cachex.types import escape_key_component
 
 
 # 1. Keep it out of the shared cache entirely.
@@ -235,13 +268,8 @@ def per_user_key(request: Request) -> str:
     # it has verified the caller — never read the identity straight off an
     # unverified request header (see the note below).
     user_id = getattr(request.state, "user_id", "anonymous")
-    return (
-        f"{request.method}{CACHE_KEY_SEPARATOR}"
-        f"{escape_key_component(request.headers.get('host', 'unknown'))}"
-        f"{CACHE_KEY_SEPARATOR}"
-        f"{escape_key_component(request.url.path)}{CACHE_KEY_SEPARATOR}"
-        f"{request.query_params}{CACHE_KEY_SEPARATOR}{user_id}"
-    )
+    # The default key plus the user ID, escaped like the host and path.
+    return build_cache_key(request, user_id)
 
 
 @app.get("/me/dashboard")

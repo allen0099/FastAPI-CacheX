@@ -56,15 +56,68 @@ logger = logging.getLogger(__name__)
 _NO_STORE = DirectiveType.NO_STORE.value
 
 
+def build_cache_key(request: Request, *components: str | int) -> str:
+    """Build the default cache key for ``request``, plus extra components.
+
+    With no ``components`` the key is ``method|||host|||path|||query_params``,
+    exactly what ``@cache`` uses by default. Each extra component is appended
+    after another separator, so a custom ``key_builder`` can add a dimension
+    (user ID, tenant, locale) without rebuilding the default key by hand::
+
+        def per_user_key(request: Request) -> str:
+            return build_cache_key(request, request.state.user_id)
+
+    ``|`` and ``%`` in the host, the path and every extra component are
+    percent-encoded (see ``escape_key_component``), so none of them can
+    contain the separator and make one request's key equal another's. The
+    query string is already URL-encoded and never contains ``|``.
+
+    Keys built this way keep the path in the third component, so
+    ``clear_path()`` still finds them and the monitoring routes still show
+    their method, host, path and query.
+
+    Args:
+        request: The FastAPI Request object
+        *components: Extra key components, appended in order. A ``str`` is
+            used as is and an ``int`` is written in decimal, so ``1`` and
+            ``"1"`` give the same key. An empty string is a component of its
+            own: ``build_cache_key(request, "")`` differs from
+            ``build_cache_key(request)``.
+
+    Returns:
+        Generated cache key string
+
+    Raises:
+        TypeError: If a component is not a ``str`` or ``int`` (``bool`` is
+            rejected too), e.g. ``None`` from a missing user ID, which would
+            otherwise put every such caller under one ``"None"`` key.
+    """
+    parts = [
+        request.method,
+        escape_key_component(request.headers.get("host", "unknown")),
+        escape_key_component(request.url.path),
+        str(request.query_params),
+    ]
+    for component in components:
+        if isinstance(component, bool) or not isinstance(component, (str, int)):
+            msg = (
+                "build_cache_key components must be str or int, "
+                f"got {type(component).__name__}"
+            )
+            raise TypeError(msg)
+        parts.append(escape_key_component(str(component)))
+    key = CACHE_KEY_SEPARATOR.join(parts)
+    logger.debug("Built cache key: %s", key)
+    return key
+
+
 def default_key_builder(request: Request) -> str:
-    """Default cache key builder function.
+    """Default cache key builder function: ``build_cache_key(request)``.
 
     Generates cache key in format: method|||host|||path|||query_params
 
-    ``|`` and ``%`` in the host and path are percent-encoded (see
-    ``escape_key_component``), so a ``Host`` header or path containing
-    ``|||`` cannot make one request's key equal another's. The query string
-    is already URL-encoded and never contains ``|``.
+    Kept as the name ``@cache`` and ``invalidate()`` fall back to. To add
+    components to the default key, call ``build_cache_key`` instead.
 
     Args:
         request: The FastAPI Request object
@@ -72,15 +125,7 @@ def default_key_builder(request: Request) -> str:
     Returns:
         Generated cache key string
     """
-    key = (
-        f"{request.method}{CACHE_KEY_SEPARATOR}"
-        f"{escape_key_component(request.headers.get('host', 'unknown'))}"
-        f"{CACHE_KEY_SEPARATOR}"
-        f"{escape_key_component(request.url.path)}{CACHE_KEY_SEPARATOR}"
-        f"{request.query_params}"
-    )
-    logger.debug("Built cache key: %s", key)
-    return key
+    return build_cache_key(request)
 
 
 async def invalidate(
@@ -588,7 +633,9 @@ def cache(
         immutable: Send ``immutable``.
         must_revalidate: Send ``must-revalidate``.
         key_builder: Custom function to build cache keys. If None, uses
-            ``default_key_builder``.
+            ``default_key_builder``. To add a component (user ID, tenant,
+            locale) to the default key, return
+            ``build_cache_key(request, component)``.
         fail_open: When the backend raises, log a warning and answer without
             the cache: a failed read counts as a miss and a failed write
             leaves the response unstored. ``False`` lets the error propagate,

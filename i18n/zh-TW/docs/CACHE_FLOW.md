@@ -55,7 +55,7 @@ handler 自己送出的 private／no-store Cache-Control 永遠不會被取代�
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR  # "|||"
 from fastapi_cachex.types import escape_key_component
 
-# 快取鍵格式（fastapi_cachex/cache.py 中的 default_key_builder）
+# 快取鍵格式（fastapi_cachex/cache.py 中的 build_cache_key）
 cache_key = CACHE_KEY_SEPARATOR.join(
     [
         request.method,
@@ -73,6 +73,8 @@ cache_key = CACHE_KEY_SEPARATOR.join(
 分隔符號使用 `|||` 而不是冒號，是因為 host 本身可能包含連接埠（`127.0.0.1:8000`）；若使用冒號，快取鍵就無法可靠地拆分，而 `clear_path()` 需要從快取鍵中取回路徑。
 
 host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`（`fastapi_cachex/types.py` 中的 `escape_key_component`）。兩者都來自用戶端，其中若出現未編碼的 `|||`，各段就會錯位，使某個請求的快取鍵可能與另一個請求相同。查詢字串本來就經過 URL 編碼。監控路由顯示時會再解碼。
+
+自訂的 `key_builder` 可以用 `build_cache_key(request, *components)` 在查詢字串之後加入其他段；這些段以同樣方式編碼，`clear_path()` 也仍會比對路徑（見 [HTTP 快取](HTTP_CACHING.md#adding-components-to-the-key)中的「在鍵中加入其他段」）。
 
 查詢參數依請求送出的順序串接（`str(request.query_params)`），**不會排序**，因此 `?page=1&limit=10` 與 `?limit=10&page=1` 是兩個不同的快取項目。若希望兩者視為同一個，請傳入自訂的 `key_builder` 將查詢字串正規化。
 

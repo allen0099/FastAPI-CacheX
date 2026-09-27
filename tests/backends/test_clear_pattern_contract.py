@@ -158,3 +158,25 @@ async def test_clear_path_finds_paths_with_encoded_characters(
     assert await backend.clear_path("/a|b/100%") == 1
     assert await backend.clear_path("/a|b/100%", include_params=True) == 1
     assert await backend.get_all_keys() == ["GET|||h|||/a|||b/100%25|||"]
+
+
+@pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
+async def test_clear_path_finds_keys_with_extra_components(
+    backend: BaseCacheBackend,
+) -> None:
+    """Keys from ``build_cache_key(request, ...)`` are cleared by their path (#264)."""
+    entry = CacheEntry(fingerprint="etag", content=b"x")
+    await backend.set("GET|||h|||/me|||", entry)
+    await backend.set("GET|||h|||/me|||||||user-1", entry)
+    await backend.set("GET|||h|||/me|||||||user-1|||de", entry)
+    await backend.set("GET|||h|||/me|||page=2|||user-1", entry)
+    # The path appears elsewhere in these keys, but not as the path.
+    await backend.set("GET|||h|||/other|||||||/me|||", entry)
+    await backend.set("GET|||/me|||/other|||", entry)
+
+    assert await backend.clear_path("/me") == 3
+    assert await backend.clear_path("/me", include_params=True) == 1
+    assert sorted(await backend.get_all_keys()) == [
+        "GET|||/me|||/other|||",
+        "GET|||h|||/other|||||||/me|||",
+    ]

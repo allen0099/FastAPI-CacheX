@@ -4,6 +4,7 @@ import logging
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
 
+from .cache import build_cache_key as build_cache_key
 from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
 from .cache import invalidate as invalidate
@@ -107,6 +108,7 @@ __all__ = [
     "StateManagerProxy",
     "__version__",
     "add_routes",
+    "build_cache_key",
     "cache",
     "default_key_builder",
     "get_app_cache",
