@@ -362,6 +362,12 @@ add_routes(
 > `include_content_preview=False`) and exposes your whole route structure. In
 > production always pass `dependencies=[Depends(your_auth)]`, or mount them on
 > an internal-only app.
+>
+> Calling `add_routes()` without `dependencies` emits a `UserWarning`. Version
+> 0.4.0 will require the parameter and turn `include_content_preview` off by
+> default ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)). For
+> a local or test app that should stay open, pass `dependencies=[]` to opt out
+> deliberately without the warning.
 
 > [!NOTE]
 > On Memcached, which cannot enumerate keys, both routes return nothing.

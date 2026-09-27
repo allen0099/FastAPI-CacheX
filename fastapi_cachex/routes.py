@@ -1,6 +1,7 @@
 """Optional routes for cache monitoring and management."""
 
 import time
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -261,7 +262,10 @@ def add_routes(
     Mounts two read-only routes that report what the configured backend
     currently holds. They inspect stored entries; nothing counts cache hits.
     The routes have no authentication of their own, so pass ``dependencies``
-    in production.
+    in production. Leaving ``dependencies`` unset (``None``) emits a
+    ``UserWarning``: 0.4.0 will require it. Pass ``dependencies=[]`` to mount
+    the routes unguarded on purpose (local or test setups) without the
+    warning.
 
     Args:
         app: FastAPI application instance
@@ -269,10 +273,12 @@ def add_routes(
                 Defaults to "" (no prefix).
         include_in_schema: Whether to include routes in OpenAPI schema.
                           Defaults to False.
-        dependencies: Optional list of FastAPI ``Depends`` objects applied to
-                      all monitoring routes.  Useful for adding authentication
-                      or authorization guards (e.g.
-                      ``[Depends(verify_api_key)]``).
+        dependencies: FastAPI ``Depends`` objects applied to all monitoring
+                      routes, for authentication or authorization guards
+                      (e.g. ``[Depends(verify_api_key)]``). ``None`` (the
+                      default) mounts the routes unguarded and emits a
+                      ``UserWarning``; an explicit ``[]`` does the same
+                      without the warning.
         include_content_preview: Whether ``/cached-records`` includes the first
                       bytes of each cached response body. When False,
                       ``content_preview`` is ``null`` while keys, sizes and
@@ -280,16 +286,27 @@ def add_routes(
 
     Example:
         ```python
-        from fastapi import FastAPI
+        from fastapi import Depends, FastAPI
         from fastapi_cachex import add_routes
 
         app = FastAPI()
-        add_routes(app)  # Routes at /cached-hits and /cached-records
-
-        # Or with a prefix: /api/cache/cached-hits and /api/cache/cached-records
-        add_routes(app, prefix="/api/cache")
+        # Routes at /api/cache/cached-hits and /api/cache/cached-records,
+        # guarded by your own dependency
+        add_routes(app, prefix="/api/cache", dependencies=[Depends(verify_admin)])
         ```
     """
+    if dependencies is None:
+        warnings.warn(
+            "add_routes() is mounting the cache monitoring routes without access "
+            "control: anyone who can reach the app can read every cached key "
+            "(including query strings) and previews of the cached responses. "
+            "Pass dependencies=[Depends(your_auth)] to guard them, or "
+            "dependencies=[] to opt out deliberately. Version 0.4.0 will require "
+            "dependencies and turn include_content_preview off by default "
+            "(https://github.com/allen0099/FastAPI-CacheX/issues/298).",
+            UserWarning,
+            stacklevel=2,
+        )
 
     @app.get(
         f"{prefix}/cached-hits",
