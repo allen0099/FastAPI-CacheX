@@ -39,7 +39,6 @@ async def _receive() -> dict[str, Any]:
     return {"type": "http.request", "body": b"", "more_body": False}
 
 
-@pytest.mark.asyncio
 async def test_missing_request_raises_request_not_found():
     """Calling the wrapper without the injected request is an error."""
 
@@ -51,7 +50,6 @@ async def test_missing_request_raises_request_not_found():
         await handler()
 
 
-@pytest.mark.asyncio
 async def test_declared_request_left_unbound_raises_request_not_found():
     """The `found_request` branch reads the parameter instead of popping it."""
 
@@ -63,7 +61,6 @@ async def test_declared_request_left_unbound_raises_request_not_found():
         await handler(request=None)
 
 
-@pytest.mark.asyncio
 async def test_missing_route_in_scope_raises_cachex_error():
     """Building a response needs the route's `response_class`."""
     app = FastAPI()
@@ -80,7 +77,6 @@ async def test_missing_route_in_scope_raises_cachex_error():
         await handler(__cachex_request=Request(scope, _receive))
 
 
-@pytest.mark.asyncio
 async def test_response_returning_handler_does_not_need_the_route():
     """A handler that already returns a `Response` never looks the route up."""
     app = FastAPI()

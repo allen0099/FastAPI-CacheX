@@ -1,4 +1,3 @@
-import asyncio
 import threading
 from collections.abc import AsyncGenerator
 from functools import partial
@@ -685,7 +684,7 @@ def test_without_a_positive_ttl_nothing_is_stored_or_served(ttl, cache_control):
     backend.stop_cleanup()
 
 
-def test_without_a_ttl_an_entry_left_by_an_older_version_is_ignored():
+async def test_without_a_ttl_an_entry_left_by_an_older_version_is_ignored():
     """Entries 0.3.7 stored without expiry are neither served nor refreshed (#110)."""
     legacy_app = FastAPI()
     backend = MemoryBackend()
@@ -699,7 +698,7 @@ def test_without_a_ttl_an_entry_left_by_an_older_version_is_ignored():
     legacy_client = TestClient(legacy_app)
     key = "GET|||testserver|||/legacy|||"
     stale = CacheEntry(fingerprint='W/"old"', content=b"old", media_type="text/plain")
-    asyncio.run(backend.set(key, stale))
+    await backend.set(key, stale)
 
     r = legacy_client.get("/legacy", headers={"If-None-Match": 'W/"old"'})
     assert r.status_code == 200

@@ -8,7 +8,6 @@ depending on whether it came from cache.
 
 import json
 
-import pytest
 from fastapi import FastAPI
 from fastapi import Response
 from fastapi.testclient import TestClient
@@ -20,6 +19,7 @@ from fastapi_cachex.types import CacheEntry
 from tests.live_servers import MEMCACHED_SERVER
 from tests.live_servers import REDIS_HOST
 from tests.live_servers import REDIS_PORT
+from tests.live_servers import flush_memcached
 from tests.live_servers import requires_memcached
 from tests.live_servers import requires_redis
 
@@ -50,7 +50,6 @@ def test_returned_error_is_not_cached_and_keeps_its_status():
     assert calls["n"] == 3
 
 
-@pytest.mark.asyncio
 async def test_returned_error_leaves_no_backend_entry():
     """The failing key must be absent from the backend entirely."""
     app = FastAPI()
@@ -65,7 +64,6 @@ async def test_returned_error_leaves_no_backend_entry():
     assert await BackendProxy.get().get(_key("/boom")) is None
 
 
-@pytest.mark.asyncio
 async def test_error_does_not_overwrite_a_good_cached_entry():
     """A transient failure must not evict the last good response.
 
@@ -223,7 +221,6 @@ def test_decode_entry_defaults_pre_v2_documents():
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_reads_pre_v2_documents():
     """A pre-upgrade Redis entry is served as a plain 200."""
     from fastapi_cachex.backends import AsyncRedisCacheBackend
@@ -244,13 +241,12 @@ async def test_redis_reads_pre_v2_documents():
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_reads_pre_v2_documents():
     """A pre-upgrade Memcached entry is served as a plain 200."""
     from fastapi_cachex.backends import MemcachedBackend
 
     backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
-    await backend.clear()
+    await flush_memcached(backend)
     legacy = json.dumps(
         {"fingerprint": 'W/"old"', "content": "legacy", "media_type": "text/plain"}
     )
@@ -262,11 +258,10 @@ async def test_memcached_reads_pre_v2_documents():
     assert entry.status_code == 200
     assert entry.headers is None
     assert entry.content == b"legacy"
-    await backend.clear()
+    await flush_memcached(backend)
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_round_trips_status_and_headers():
     """Status and headers survive JSON serialization."""
     from fastapi_cachex.backends import AsyncRedisCacheBackend
@@ -287,13 +282,12 @@ async def test_redis_round_trips_status_and_headers():
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_round_trips_status_and_headers():
     """Status and headers survive JSON serialization."""
     from fastapi_cachex.backends import MemcachedBackend
 
     backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
-    await backend.clear()
+    await flush_memcached(backend)
     entry = CacheEntry(
         fingerprint="f",
         content=b"body",
@@ -305,4 +299,4 @@ async def test_memcached_round_trips_status_and_headers():
     await backend.set("v2-key", entry)
 
     assert await backend.get("v2-key") == entry
-    await backend.clear()
+    await flush_memcached(backend)

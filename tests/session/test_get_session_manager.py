@@ -41,7 +41,6 @@ def test_get_session_manager_dependency(
 
 
 @pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
-@pytest.mark.asyncio
 async def test_get_session_manager_allows_create_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -92,7 +91,6 @@ def test_get_session_manager_without_middleware_raises_error() -> None:
 
 
 @pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
-@pytest.mark.asyncio
 async def test_get_session_manager_full_workflow(
     manager: SessionManager, config: SessionConfig
 ) -> None:

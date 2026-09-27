@@ -16,6 +16,7 @@ from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from tests.live_servers import MEMCACHED_SERVER
+from tests.live_servers import flush_memcached
 from tests.live_servers import requires_memcached
 
 
@@ -57,7 +58,7 @@ def test_memcached_without_pymemcache(monkeypatch):
 @pytest_asyncio.fixture
 async def memcached_backend():
     backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
-    await backend.clear()
+    await flush_memcached(backend)
     return backend
 
 
@@ -71,7 +72,6 @@ def test_memcached_client_waits_for_write_acknowledgements() -> None:
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_set_get(memcached_backend: MemcachedBackend):
     key = "test_key"
     value = CacheEntry(fingerprint="test_etag", content=b"test_content")
@@ -86,7 +86,6 @@ async def test_memcached_set_get(memcached_backend: MemcachedBackend):
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_set_without_ttl(memcached_backend: MemcachedBackend):
     key = "test_key"
     value = CacheEntry(fingerprint="test_etag", content=b"test_content")
@@ -100,7 +99,6 @@ async def test_memcached_set_without_ttl(memcached_backend: MemcachedBackend):
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_delete(memcached_backend: MemcachedBackend):
     key = "test_key"
     value = CacheEntry(fingerprint="test_etag", content=b"test_content")
@@ -113,7 +111,6 @@ async def test_memcached_delete(memcached_backend: MemcachedBackend):
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_clear(memcached_backend: MemcachedBackend):
     key1 = "test_key1"
     value1 = CacheEntry(fingerprint="test_etag1", content=b"test_content1")
@@ -122,7 +119,8 @@ async def test_memcached_clear(memcached_backend: MemcachedBackend):
 
     await memcached_backend.set(key1, value1)
     await memcached_backend.set(key2, value2)
-    await memcached_backend.clear()
+    with pytest.warns(RuntimeWarning, match=r"Memcached\.clear\(\) flushes ALL"):
+        await memcached_backend.clear()
 
     retrieved_value1 = await memcached_backend.get(key1)
     retrieved_value2 = await memcached_backend.get(key2)
@@ -132,7 +130,6 @@ async def test_memcached_clear(memcached_backend: MemcachedBackend):
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_clear_path(memcached_backend: MemcachedBackend):
     # Set up test data
     path = "/test"
@@ -150,12 +147,12 @@ async def test_memcached_clear_path(memcached_backend: MemcachedBackend):
     assert result is None
 
     # Test include_params=True (should return 0 as this is not supported)
-    cleared = await memcached_backend.clear_path(path, include_params=True)
+    with pytest.warns(RuntimeWarning, match="does not support pattern-based"):
+        cleared = await memcached_backend.clear_path(path, include_params=True)
     assert cleared == 0  # Should return 0 as this operation is not supported
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_clear_path_not_match(memcached_backend: MemcachedBackend):
     # Set up test data
     path = "/test"
@@ -175,7 +172,6 @@ async def test_memcached_clear_path_not_match(memcached_backend: MemcachedBacken
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_clear_pattern(memcached_backend: MemcachedBackend):
     # Set up test data
     path = "/users/123"
@@ -185,7 +181,8 @@ async def test_memcached_clear_pattern(memcached_backend: MemcachedBackend):
     await memcached_backend.set(path, value)
 
     # Test pattern clearing (should always return 0 as not supported)
-    cleared = await memcached_backend.clear_pattern("/users/*")
+    with pytest.warns(RuntimeWarning, match="does not support pattern matching"):
+        cleared = await memcached_backend.clear_pattern("/users/*")
     assert cleared == 0  # Should return 0 as pattern matching is not supported
 
     # Verify the original data still exists (as pattern matching is not supported)
@@ -195,7 +192,6 @@ async def test_memcached_clear_pattern(memcached_backend: MemcachedBackend):
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_clear_path_warning(memcached_backend: MemcachedBackend):
     # Test that warning is raised when using include_params=True
     with pytest.warns(
@@ -207,7 +203,6 @@ async def test_memcached_clear_path_warning(memcached_backend: MemcachedBackend)
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_clear_pattern_warning(memcached_backend: MemcachedBackend):
     # Test that warning is raised when using pattern matching
     with pytest.warns(
@@ -219,11 +214,10 @@ async def test_memcached_clear_pattern_warning(memcached_backend: MemcachedBacke
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_set_content_bytes(monkeypatch) -> None:
     """Test bytes content round-trip through set/get."""
     backend = MemcachedBackend(servers=[MEMCACHED_SERVER])
-    await backend.clear()
+    await flush_memcached(backend)
     value = CacheEntry(fingerprint="c", content=b"bytes-content")
 
     await backend.set("bytes-key", value)
@@ -234,7 +228,6 @@ async def test_memcached_set_content_bytes(monkeypatch) -> None:
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_invalid_and_missing_fields(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -252,7 +245,6 @@ async def test_memcached_get_invalid_and_missing_fields(
     assert res2 is None
 
 
-@pytest.mark.asyncio
 async def test_memcached_clear_path_raises_when_the_server_is_unreachable() -> None:
     """A connection failure is not "nothing to clear" (#177).
 
@@ -305,7 +297,6 @@ _ENTRY = CacheEntry(fingerprint="f", content=b"x")
         "clear_path",
     ],
 )
-@pytest.mark.asyncio
 async def test_memcached_keeps_raising_after_a_connection_failure(call) -> None:
     """A call right after a failed one raises instead of returning a default (#197).
 
@@ -321,7 +312,6 @@ async def test_memcached_keeps_raising_after_a_connection_failure(call) -> None:
         await call(backend)
 
 
-@pytest.mark.asyncio
 async def test_memcached_tries_a_failed_server_again_after_the_dead_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -343,7 +333,6 @@ async def test_memcached_tries_a_failed_server_again_after_the_dead_timeout(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_clear_path_propagates_client_errors(
     monkeypatch,
     memcached_backend: MemcachedBackend,
@@ -358,19 +347,18 @@ async def test_memcached_clear_path_propagates_client_errors(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_all_keys_empty(
     memcached_backend: MemcachedBackend,
 ) -> None:
     """Test get_all_keys returns empty list for Memcached (unsupported)."""
-    await memcached_backend.clear()
-    keys = await memcached_backend.get_all_keys()
+    await flush_memcached(memcached_backend)
+    with pytest.warns(RuntimeWarning, match="does not support key enumeration"):
+        keys = await memcached_backend.get_all_keys()
     # Memcached doesn't support key enumeration
     assert keys == []
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_all_keys_warning(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -384,19 +372,18 @@ async def test_memcached_get_all_keys_warning(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_cache_data_empty(
     memcached_backend: MemcachedBackend,
 ) -> None:
     """Test get_cache_data returns empty dict for Memcached (unsupported)."""
-    await memcached_backend.clear()
-    cache_data = await memcached_backend.get_cache_data()
+    await flush_memcached(memcached_backend)
+    with pytest.warns(RuntimeWarning, match="does not support key enumeration"):
+        cache_data = await memcached_backend.get_cache_data()
     # Memcached doesn't support key enumeration
     assert cache_data == {}
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_cache_data_warning(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -410,7 +397,6 @@ async def test_memcached_get_cache_data_warning(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_concurrent_calls_do_not_share_a_socket(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -427,7 +413,6 @@ async def test_memcached_concurrent_calls_do_not_share_a_socket(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_increment_creates_then_adds(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -440,7 +425,6 @@ async def test_memcached_increment_creates_then_adds(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_increment_decrement_stops_at_zero(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -451,7 +435,6 @@ async def test_memcached_increment_decrement_stops_at_zero(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_increment_honors_ttl(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -463,7 +446,6 @@ async def test_memcached_increment_honors_ttl(
     assert await memcached_backend.increment("window", ttl=1) == 1
 
 
-@pytest.mark.asyncio
 async def test_memcached_increment_only_maps_non_numeric_errors_to_not_a_counter() -> (
     None
 ):
@@ -484,7 +466,6 @@ async def test_memcached_increment_only_maps_non_numeric_errors_to_not_a_counter
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_increment_rejects_a_cached_response(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -495,7 +476,6 @@ async def test_memcached_increment_rejects_a_cached_response(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_increment_is_atomic_under_concurrency(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -507,7 +487,6 @@ async def test_memcached_increment_is_atomic_under_concurrency(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_and_delete_returns_then_removes(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -520,7 +499,6 @@ async def test_memcached_get_and_delete_returns_then_removes(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_and_delete_loses_the_race_when_cas_reports_deletion(
     memcached_backend: MemcachedBackend, monkeypatch
 ) -> None:
@@ -530,7 +508,6 @@ async def test_memcached_get_and_delete_loses_the_race_when_cas_reports_deletion
     assert await memcached_backend.get_and_delete("once") is None
 
 
-@pytest.mark.asyncio
 async def test_memcached_get_and_delete_retries_on_concurrent_write() -> None:
     """When another writer updates the key before CAS, retry gets + cas."""
     backend = stubbed_backend()
@@ -552,7 +529,6 @@ async def test_memcached_get_and_delete_retries_on_concurrent_write() -> None:
     assert backend.client.cas.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_memcached_get_and_delete_returns_none_when_key_deleted_before_cas() -> (
     None
 ):
@@ -569,7 +545,6 @@ async def test_memcached_get_and_delete_returns_none_when_key_deleted_before_cas
     assert backend.client.cas.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_memcached_get_and_delete_exhausts_retries_when_writes_continue() -> None:
     """When writers keep replacing the value, stop after max retries and raise."""
     backend = stubbed_backend()
@@ -588,7 +563,6 @@ async def test_memcached_get_and_delete_exhausts_retries_when_writes_continue() 
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_and_delete_live_concurrent_write_regression(
     memcached_backend: MemcachedBackend, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -619,7 +593,6 @@ async def test_memcached_get_and_delete_live_concurrent_write_regression(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_get_and_delete_has_exactly_one_winner(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -666,7 +639,6 @@ def test_keys_memcached_would_refuse_are_hashed(key: str) -> None:
 
 
 @requires_memcached
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "key",
     [
@@ -691,7 +663,6 @@ async def test_illegal_keys_round_trip_through_the_server(
     assert await memcached_backend.get(key) is None
 
 
-@pytest.mark.asyncio
 async def test_ttl_beyond_thirty_days_is_sent_as_an_absolute_timestamp() -> None:
     """Memcached reads an exptime over 30 days as a Unix timestamp, not a duration."""
     import time
@@ -706,7 +677,6 @@ async def test_ttl_beyond_thirty_days_is_sent_as_an_absolute_timestamp() -> None
     assert now < expire <= now + sixty_days + 5
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(("ttl", "expected"), [(None, 0), (60, 60)])
 async def test_short_ttls_stay_relative(ttl: int | None, expected: int) -> None:
     """Durations inside the boundary are passed straight through."""
@@ -749,7 +719,6 @@ def test_cached_route_with_a_space_in_the_path_is_served() -> None:
         BackendProxy.set(previous)
 
 
-@pytest.mark.asyncio
 async def test_increment_reports_a_counter_that_vanished_mid_call() -> None:
     """ADD then INCR is two round-trips; the entry can expire in between.
 
@@ -767,7 +736,6 @@ async def test_increment_reports_a_counter_that_vanished_mid_call() -> None:
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_set_if_absent_stores_only_the_first_value(
     memcached_backend: MemcachedBackend,
 ):
@@ -780,7 +748,6 @@ async def test_memcached_set_if_absent_stores_only_the_first_value(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_set_if_absent_applies_the_ttl(
     memcached_backend: MemcachedBackend,
 ):
@@ -792,7 +759,6 @@ async def test_memcached_set_if_absent_applies_the_ttl(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_set_if_absent_has_exactly_one_winner(
     memcached_backend: MemcachedBackend,
 ):
@@ -813,7 +779,6 @@ async def test_memcached_set_if_absent_has_exactly_one_winner(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_delete_if_equals_removes_only_a_matching_entry(
     memcached_backend: MemcachedBackend,
 ):
@@ -832,7 +797,6 @@ async def test_memcached_delete_if_equals_removes_only_a_matching_entry(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_delete_if_equals_matches_a_counter(
     memcached_backend: MemcachedBackend,
 ):
@@ -844,7 +808,6 @@ async def test_memcached_delete_if_equals_matches_a_counter(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_delete_if_equals_keeps_a_value_written_after_the_compare(
     memcached_backend: MemcachedBackend,
 ):
@@ -872,7 +835,6 @@ async def test_memcached_delete_if_equals_keeps_a_value_written_after_the_compar
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_expire_if_equals_updates_ttl_only_when_matching(
     memcached_backend: MemcachedBackend,
 ):
@@ -887,7 +849,6 @@ async def test_memcached_expire_if_equals_updates_ttl_only_when_matching(
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_expire_if_equals_keeps_a_value_written_after_the_compare(
     memcached_backend: MemcachedBackend,
 ):
@@ -913,7 +874,6 @@ async def test_memcached_expire_if_equals_keeps_a_value_written_after_the_compar
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_lock_lifecycle_with_memcached(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -938,7 +898,6 @@ def test_expiry_up_to_2038_is_sent_as_a_timestamp(monkeypatch) -> None:
 @pytest.mark.parametrize(
     "operation", ["set", "set_if_absent", "increment", "expire_if_equals"]
 )
-@pytest.mark.asyncio
 async def test_ttl_past_2038_is_rejected_before_io(operation: str) -> None:
     """Such a write used to succeed while Memcached dropped the item at once (#229)."""
     backend = stubbed_backend()
@@ -952,7 +911,6 @@ async def test_ttl_past_2038_is_rejected_before_io(operation: str) -> None:
 
 
 @requires_memcached
-@pytest.mark.asyncio
 async def test_memcached_delete_many_counts_only_existing_keys(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -972,7 +930,6 @@ async def test_memcached_delete_many_counts_only_existing_keys(
     assert await memcached_backend.get("dm-keep") == entry
 
 
-@pytest.mark.asyncio
 async def test_memcached_delete_many_sends_each_namespaced_key_once() -> None:
     backend = stubbed_backend()
     backend.client.delete.side_effect = [True, False, True]
@@ -992,7 +949,6 @@ async def test_memcached_delete_many_sends_each_namespaced_key_once() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_memcached_delete_many_with_no_keys_does_no_io() -> None:
     backend = stubbed_backend()
 
@@ -1021,7 +977,6 @@ def _stub_for_single_hop(backend: MemcachedBackend) -> None:
         ("delete_many", (["a", "b", "c"],)),
     ],
 )
-@pytest.mark.asyncio
 async def test_memcached_multi_step_operations_take_one_thread_hop(
     operation: str, args: tuple[object, ...], monkeypatch: pytest.MonkeyPatch
 ) -> None:

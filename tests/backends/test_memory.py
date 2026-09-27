@@ -36,7 +36,6 @@ def test_cleanup_interval_must_be_positive(interval: int) -> None:
         MemoryBackend(cleanup_interval=interval)
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_set_get(memory_backend: MemoryBackend):
     key = "test_key"
     value = CacheEntry(
@@ -52,7 +51,6 @@ async def test_memory_backend_set_get(memory_backend: MemoryBackend):
     assert retrieved_value == value
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_get_nonexistent_key(memory_backend: MemoryBackend):
     key = "nonexistent_key"
     retrieved_value = await memory_backend.get(key)
@@ -60,7 +58,6 @@ async def test_memory_backend_get_nonexistent_key(memory_backend: MemoryBackend)
     assert retrieved_value is None
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_delete(memory_backend: MemoryBackend):
     key = "test_key"
     value = CacheEntry(
@@ -77,7 +74,6 @@ async def test_memory_backend_delete(memory_backend: MemoryBackend):
     assert retrieved_value is None
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear(memory_backend: MemoryBackend):
     key1 = "test_key1"
     value1 = CacheEntry(
@@ -104,7 +100,6 @@ async def test_memory_backend_clear(memory_backend: MemoryBackend):
     assert retrieved_value2 is None
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend, clock: Clock):
     key = "test_key"
     value = CacheEntry(
@@ -121,7 +116,6 @@ async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend, clock: C
     assert retrieved_value is None
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_cleanup(memory_backend: MemoryBackend, clock: Clock):
     key1 = "test_key1"
     value1 = CacheEntry(
@@ -150,7 +144,6 @@ async def test_memory_backend_cleanup(memory_backend: MemoryBackend, clock: Cloc
     assert retrieved_value2 == value2
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_start_cleanup(memory_backend: MemoryBackend):
     memory_backend.start_cleanup()
     assert memory_backend._cleanup_task is not None
@@ -158,7 +151,6 @@ async def test_memory_backend_start_cleanup(memory_backend: MemoryBackend):
     memory_backend.stop_cleanup()  # Clean up after test
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_stop_cleanup(memory_backend: MemoryBackend):
     memory_backend.start_cleanup()
     assert memory_backend._cleanup_task is not None
@@ -166,7 +158,6 @@ async def test_memory_backend_stop_cleanup(memory_backend: MemoryBackend):
     assert memory_backend._cleanup_task is None
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_double_start_cleanup(memory_backend: MemoryBackend):
     memory_backend.start_cleanup()
     original_task = memory_backend._cleanup_task
@@ -175,7 +166,6 @@ async def test_memory_backend_double_start_cleanup(memory_backend: MemoryBackend
     memory_backend.stop_cleanup()  # Clean up after test
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_stop_cleanup_when_not_running(
     memory_backend: MemoryBackend,
 ):
@@ -238,7 +228,6 @@ def test_cleanup_moving_loops_cancels_the_task_on_a_loop_still_open():
         _close(second)
 
 
-@pytest.mark.asyncio
 async def test_aclose_waits_for_the_cleanup_task(memory_backend: MemoryBackend):
     memory_backend.start_cleanup()
     task = memory_backend._cleanup_task
@@ -270,7 +259,6 @@ def test_aclose_only_cancels_a_task_on_another_loop():
         _close(current)
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_cleanup_task_impl(
     clock: Clock, monkeypatch: pytest.MonkeyPatch
 ):
@@ -301,7 +289,6 @@ async def test_memory_backend_cleanup_task_impl(
         backend.stop_cleanup()
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_path(memory_backend: MemoryBackend):
     # Set up test data with proper cache key format: method|||host|||path|||query_params
     # default_key_builder always appends a trailing separator for query_params
@@ -324,7 +311,6 @@ async def test_memory_backend_clear_path(memory_backend: MemoryBackend):
     assert other_value == value3
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
     # Set up test data with proper cache key format: method|||host|||path|||query_params
     value1 = CacheEntry(fingerprint="test_etag1", content=b"test_value1")
@@ -345,7 +331,6 @@ async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
     assert posts_value == value3
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_pattern_needs_a_whole_key_glob(
     memory_backend: MemoryBackend,
 ):
@@ -364,7 +349,6 @@ async def test_memory_backend_clear_pattern_needs_a_whole_key_glob(
     assert await memory_backend.clear_path("/users/123") == 1
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_pattern_separator_less_keys(
     memory_backend: MemoryBackend,
 ):
@@ -387,7 +371,6 @@ async def test_memory_backend_clear_pattern_separator_less_keys(
     assert await memory_backend.get("cache:post:789") == value3
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_pattern_is_case_sensitive_on_windows(
     memory_backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
 ):
@@ -401,7 +384,6 @@ async def test_memory_backend_clear_pattern_is_case_sensitive_on_windows(
     assert await memory_backend.clear_pattern("cache:User:*") == 1
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_path_with_colon_in_path(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -444,7 +426,6 @@ async def test_memory_backend_clear_path_with_colon_in_path(
     )
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_path_include_params(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -462,7 +443,6 @@ async def test_memory_backend_clear_path_include_params(
     assert await memory_backend.get("GET|||localhost|||/other|||") == value
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_path_direct_key(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -480,7 +460,6 @@ async def test_memory_backend_clear_path_direct_key(
     assert await memory_backend.get("gitlab:template:by_tag") == value
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_clear_path_direct_key_and_separator_key(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -496,14 +475,12 @@ async def test_memory_backend_clear_path_direct_key_and_separator_key(
     assert await memory_backend.get("GET|||localhost|||my:path|||") is None
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_get_all_keys_empty(memory_backend: MemoryBackend):
     """Test get_all_keys returns empty list for empty cache."""
     keys = await memory_backend.get_all_keys()
     assert keys == []
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_get_all_keys_with_entries(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -523,14 +500,12 @@ async def test_memory_backend_get_all_keys_with_entries(
     assert len(keys) == 3
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_get_cache_data_empty(memory_backend: MemoryBackend):
     """Test get_cache_data returns empty dict for empty cache."""
     cache_data = await memory_backend.get_cache_data()
     assert cache_data == {}
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_get_cache_data_with_entries(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -571,7 +546,6 @@ async def _with_one_expired_entry(backend: MemoryBackend) -> None:
     backend.cache["stale"].expiry = time.time() - 1
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_enumeration_skips_expired_entries(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -582,7 +556,6 @@ async def test_memory_backend_enumeration_skips_expired_entries(
     assert list(await memory_backend.get_cache_data()) == ["live"]
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "clear",
     [
@@ -626,7 +599,6 @@ def test_ensure_cleanup_started_without_event_loop() -> None:
     assert no_task_created
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_increment_creates_then_adds(
     memory_backend: MemoryBackend,
 ):
@@ -641,7 +613,6 @@ async def test_memory_backend_increment_creates_then_adds(
     assert entry.fingerprint == COUNTER_FINGERPRINT
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_increment_applies_ttl_only_on_creation(
     memory_backend: MemoryBackend,
 ):
@@ -655,7 +626,6 @@ async def test_memory_backend_increment_applies_ttl_only_on_creation(
     assert memory_backend.cache["window"].value == counter_entry(2)
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_increment_without_ttl_never_expires(
     memory_backend: MemoryBackend,
 ):
@@ -664,7 +634,6 @@ async def test_memory_backend_increment_without_ttl_never_expires(
     assert memory_backend.cache["forever"].expiry is None
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_increment_restarts_an_expired_counter(
     memory_backend: MemoryBackend,
 ):
@@ -674,7 +643,6 @@ async def test_memory_backend_increment_restarts_an_expired_counter(
     assert await memory_backend.increment("stale", ttl=60) == 1
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_increment_rejects_a_cached_response(
     memory_backend: MemoryBackend,
 ):
@@ -684,7 +652,6 @@ async def test_memory_backend_increment_rejects_a_cached_response(
         await memory_backend.increment("page")
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_increment_is_atomic_under_concurrency(
     memory_backend: MemoryBackend,
 ):
@@ -696,7 +663,6 @@ async def test_memory_backend_increment_is_atomic_under_concurrency(
     assert await memory_backend.get("race") == counter_entry(100)
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_get_and_delete_returns_then_removes(
     memory_backend: MemoryBackend,
 ):
@@ -708,7 +674,6 @@ async def test_memory_backend_get_and_delete_returns_then_removes(
     assert await memory_backend.get("once") is None
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_get_and_delete_drops_an_expired_entry(
     memory_backend: MemoryBackend,
 ):
@@ -719,7 +684,6 @@ async def test_memory_backend_get_and_delete_drops_an_expired_entry(
     assert "stale" not in memory_backend.cache
 
 
-@pytest.mark.asyncio
 async def test_memory_backend_get_and_delete_has_exactly_one_winner(
     memory_backend: MemoryBackend,
 ):
@@ -734,7 +698,6 @@ async def test_memory_backend_get_and_delete_has_exactly_one_winner(
     assert results.count(None) == 19
 
 
-@pytest.mark.asyncio
 async def test_memory_delete_many_counts_only_existing_keys(
     memory_backend: MemoryBackend,
 ):
@@ -747,7 +710,6 @@ async def test_memory_delete_many_counts_only_existing_keys(
     assert await memory_backend.get("keep") is not None
 
 
-@pytest.mark.asyncio
 async def test_write_only_use_starts_the_cleanup_task(
     clock: Clock, monkeypatch: pytest.MonkeyPatch
 ):
@@ -775,7 +737,6 @@ async def test_write_only_use_starts_the_cleanup_task(
         backend.stop_cleanup()
 
 
-@pytest.mark.asyncio
 async def test_get_evicts_the_expired_entry_it_skips(clock: Clock):
     """A miss on an expired key must also free the memory it was holding.
 
@@ -796,7 +757,6 @@ async def test_get_evicts_the_expired_entry_it_skips(clock: Clock):
         backend.stop_cleanup()
 
 
-@pytest.mark.asyncio
 async def test_read_only_use_starts_the_cleanup_task():
     """A read-mostly caller needs the sweeper too.
 
@@ -819,7 +779,6 @@ async def test_read_only_use_starts_the_cleanup_task():
         backend.stop_cleanup()
 
 
-@pytest.mark.asyncio
 async def test_cleanup_leaves_live_entries_alone():
     """A sweep with nothing to do must not touch what is still valid."""
     backend = MemoryBackend()
@@ -834,7 +793,6 @@ async def test_cleanup_leaves_live_entries_alone():
         backend.stop_cleanup()
 
 
-@pytest.mark.asyncio
 async def test_memory_set_if_absent_stores_only_the_first_value(
     memory_backend: MemoryBackend,
 ):
@@ -847,7 +805,6 @@ async def test_memory_set_if_absent_stores_only_the_first_value(
     assert memory_backend.cache["slot"].expiry is not None
 
 
-@pytest.mark.asyncio
 async def test_memory_set_if_absent_without_ttl_never_expires(
     memory_backend: MemoryBackend,
 ):
@@ -857,7 +814,6 @@ async def test_memory_set_if_absent_without_ttl_never_expires(
     assert memory_backend.cache["slot"].expiry is None
 
 
-@pytest.mark.asyncio
 async def test_memory_set_if_absent_treats_an_expired_entry_as_absent(
     memory_backend: MemoryBackend,
 ):
@@ -870,7 +826,6 @@ async def test_memory_set_if_absent_treats_an_expired_entry_as_absent(
     assert await memory_backend.get("slot") == fresh
 
 
-@pytest.mark.asyncio
 async def test_memory_set_if_absent_has_exactly_one_winner(
     memory_backend: MemoryBackend,
 ):
@@ -890,7 +845,6 @@ async def test_memory_set_if_absent_has_exactly_one_winner(
     )
 
 
-@pytest.mark.asyncio
 async def test_memory_delete_if_equals_removes_only_a_matching_entry(
     memory_backend: MemoryBackend,
 ):
@@ -906,7 +860,6 @@ async def test_memory_delete_if_equals_removes_only_a_matching_entry(
     assert await memory_backend.delete_if_equals("slot", theirs) is False
 
 
-@pytest.mark.asyncio
 async def test_memory_delete_if_equals_ignores_an_expired_entry(
     memory_backend: MemoryBackend,
 ):
@@ -917,7 +870,6 @@ async def test_memory_delete_if_equals_ignores_an_expired_entry(
     assert await memory_backend.delete_if_equals("slot", entry) is False
 
 
-@pytest.mark.asyncio
 async def test_memory_delete_if_equals_matches_a_counter(
     memory_backend: MemoryBackend,
 ):
@@ -928,7 +880,6 @@ async def test_memory_delete_if_equals_matches_a_counter(
     assert await memory_backend.get("hits") is None
 
 
-@pytest.mark.asyncio
 async def test_memory_lock_release_after_expiry_keeps_the_new_holder(
     memory_backend: MemoryBackend,
 ):
@@ -945,7 +896,6 @@ async def test_memory_lock_release_after_expiry_keeps_the_new_holder(
     assert await memory_backend.get("slot") == owner_b
 
 
-@pytest.mark.asyncio
 async def test_memory_expire_if_equals_updates_ttl_only_when_matching(
     memory_backend: MemoryBackend,
 ):
@@ -959,7 +909,6 @@ async def test_memory_expire_if_equals_updates_ttl_only_when_matching(
     assert await memory_backend.expire_if_equals("missing", theirs, 60) is False
 
 
-@pytest.mark.asyncio
 async def test_memory_expire_if_equals_ignores_an_expired_entry(
     memory_backend: MemoryBackend,
 ):

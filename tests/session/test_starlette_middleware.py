@@ -104,7 +104,6 @@ def test_set_cookie_header_includes_secure_and_domain_flags(
     assert "domain=example.com" in set_cookie
 
 
-@pytest.mark.asyncio
 async def test_call_passes_through_non_http_scope() -> None:
     """Non-http/websocket scopes (e.g. lifespan) must bypass session handling entirely."""
     config = SessionConfig(secret_key="a" * 32)
@@ -167,7 +166,6 @@ def test_no_cookie_dict_untouched_no_set_cookie(
     assert "set-cookie" not in response.headers
 
 
-@pytest.mark.asyncio
 async def test_no_cookie_dict_mutated_creates_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -220,7 +218,6 @@ def test_no_cookie_dict_mutated_then_cleared_no_set_cookie(
     assert "set-cookie" not in response.headers
 
 
-@pytest.mark.asyncio
 async def test_valid_cookie_dict_mutated_merges_data(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -250,7 +247,6 @@ async def test_valid_cookie_dict_mutated_merges_data(
     assert reloaded.data == {"a": 1, "b": 2}
 
 
-@pytest.mark.asyncio
 async def test_valid_cookie_sliding_expiration_refreshes_cookie_without_mutation(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -292,7 +288,6 @@ async def test_valid_cookie_sliding_expiration_refreshes_cookie_without_mutation
     assert renewed.expires_at > shortened_expiry
 
 
-@pytest.mark.asyncio
 async def test_valid_cookie_cleared_deletes_backend_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -346,7 +341,6 @@ def test_invalid_cookie_starts_fresh_session(
     assert "set-cookie" in response.headers
 
 
-@pytest.mark.asyncio
 async def test_expired_cookie_starts_fresh_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -373,7 +367,6 @@ async def test_expired_cookie_starts_fresh_session(
     assert response.json() == {"has_data": False}
 
 
-@pytest.mark.asyncio
 async def test_ip_binding_mismatch_starts_fresh_session(
     config: SessionConfig,
 ) -> None:
@@ -505,7 +498,6 @@ def test_get_client_ip_none(config: SessionConfig) -> None:
     assert get_client_ip(connection, config) is None
 
 
-@pytest.mark.asyncio
 async def test_get_session_dependency_works_under_starlette_middleware(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -540,7 +532,6 @@ async def test_get_session_dependency_works_under_starlette_middleware(
     assert authenticated.json() == {"user_id": "cookie-user"}
 
 
-@pytest.mark.asyncio
 async def test_header_token_takes_priority_under_starlette_middleware(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -576,7 +567,6 @@ async def test_header_token_takes_priority_under_starlette_middleware(
     assert header_wins.json() == {"user_id": "header-user"}
 
 
-@pytest.mark.asyncio
 async def test_header_source_renewal_uses_response_header_not_cookie(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -613,7 +603,6 @@ async def test_header_source_renewal_uses_response_header_not_cookie(
     assert renewed.expires_at > shortened_expiry
 
 
-@pytest.mark.asyncio
 async def test_header_source_modify_persists_without_cookie(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -645,7 +634,6 @@ async def test_header_source_modify_persists_without_cookie(
     assert reloaded.data == {"a": 1, "b": 2}
 
 
-@pytest.mark.asyncio
 async def test_header_source_invalid_token_new_session_via_header(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -685,7 +673,6 @@ def test_session_middleware_construction_is_deprecated(
         SessionMiddleware(app, manager, config)
 
 
-@pytest.mark.asyncio
 async def test_header_source_cleared_session_is_deleted_without_a_cookie(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -748,7 +735,6 @@ async def _shorten_expiry(manager: SessionManager, token: str) -> None:
 
 @pytest.mark.parametrize("write_data", [True, False])
 @pytest.mark.parametrize("sliding", [True, False])
-@pytest.mark.asyncio
 async def test_regenerated_session_id_is_sent_as_cookie(
     manager: SessionManager, config: SessionConfig, write_data: bool, sliding: bool
 ) -> None:
@@ -782,7 +768,6 @@ async def test_regenerated_session_id_is_sent_as_cookie(
 
 @pytest.mark.parametrize("write_data", [True, False])
 @pytest.mark.parametrize("sliding", [True, False])
-@pytest.mark.asyncio
 async def test_regenerated_session_id_is_sent_in_the_header(
     manager: SessionManager, config: SessionConfig, write_data: bool, sliding: bool
 ) -> None:
@@ -805,7 +790,6 @@ async def test_regenerated_session_id_is_sent_in_the_header(
 
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 @pytest.mark.parametrize("sliding", [True, False])
-@pytest.mark.asyncio
 async def test_deprecated_middleware_sends_regenerated_token(
     manager: SessionManager, config: SessionConfig, sliding: bool
 ) -> None:
@@ -849,7 +833,6 @@ def _rotating_login_app(manager: SessionManager, config: SessionConfig) -> FastA
     return app
 
 
-@pytest.mark.asyncio
 async def test_rotate_session_id_defeats_a_planted_cookie(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -892,7 +875,6 @@ def test_rotate_session_id_without_a_session(
     assert config.cookie_name in client.cookies
 
 
-@pytest.mark.asyncio
 async def test_rotate_session_id_over_the_header(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -937,7 +919,6 @@ def _session_reading_app(manager: SessionManager, config: SessionConfig) -> Fast
     return app
 
 
-@pytest.mark.asyncio
 async def test_header_token_varies_on_the_token_header_not_cookie(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -950,7 +931,6 @@ async def test_header_token_varies_on_the_token_header_not_cookie(
     assert _vary(response) == {config.header_name.lower()}
 
 
-@pytest.mark.asyncio
 async def test_bearer_token_varies_on_every_header_consulted(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -963,7 +943,6 @@ async def test_bearer_token_varies_on_every_header_consulted(
     assert _vary(response) == {config.header_name.lower(), "authorization"}
 
 
-@pytest.mark.asyncio
 async def test_cookie_token_varies_on_cookie_and_the_headers_checked_first(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -1021,7 +1000,6 @@ def _clearing_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
     return app
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["cookie", "header"])
 async def test_clear_logs_out_a_session_with_empty_data(
     manager: SessionManager, config: SessionConfig, transport: str
@@ -1052,7 +1030,6 @@ async def test_clear_logs_out_a_session_with_empty_data(
         await manager.get_session(token)
 
 
-@pytest.mark.asyncio
 async def test_popping_the_last_key_keeps_a_user_logged_in(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -1071,7 +1048,6 @@ async def test_popping_the_last_key_keeps_a_user_logged_in(
     assert kept.data == {}
 
 
-@pytest.mark.asyncio
 async def test_popping_the_last_key_deletes_an_anonymous_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -1088,7 +1064,6 @@ async def test_popping_the_last_key_deletes_an_anonymous_session(
         await manager.get_session(token)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["cookie", "header"])
 async def test_writing_after_clear_starts_a_new_anonymous_session(
     manager: SessionManager, config: SessionConfig, transport: str
@@ -1118,7 +1093,6 @@ async def test_writing_after_clear_starts_a_new_anonymous_session(
     assert fresh.data == {"flash": "signed out"}
 
 
-@pytest.mark.asyncio
 async def test_require_user_session_rejects_anonymous_sessions(
     manager: SessionManager, config: SessionConfig
 ) -> None:

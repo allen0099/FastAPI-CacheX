@@ -36,8 +36,13 @@ is disposable, the flag says *whether* skipping is acceptable at all.
 
 import os
 import socket
+import warnings
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from fastapi_cachex.backends import MemcachedBackend
 
 REDIS_PORT_ENV = "CACHEX_TEST_REDIS_PORT"
 REDIS_HOST_ENV = "CACHEX_TEST_REDIS_HOST"
@@ -78,6 +83,22 @@ MEMCACHED_PORT: int = (
     _MEMCACHED_PORT if _MEMCACHED_PORT is not None else UNCONNECTED_PORT
 )
 MEMCACHED_SERVER = f"{MEMCACHED_HOST}:{MEMCACHED_PORT}"
+
+
+async def flush_memcached(backend: "MemcachedBackend") -> None:
+    """Wipe the disposable Memcached server between tests.
+
+    `clear()` is `flush_all` and warns that it wipes the whole server, which is
+    exactly what a reset of a throwaway test server wants. Only that warning is
+    silenced; the test that checks it uses `pytest.warns`.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Memcached\.clear\(\) flushes ALL",
+            category=RuntimeWarning,
+        )
+        await backend.clear()
 
 
 def _port_is_open(host: str, port: int) -> bool:

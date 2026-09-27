@@ -1,4 +1,3 @@
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -21,7 +20,6 @@ async def backend_endpoint(backend: CacheBackend):
 
 
 # Actual test functions
-@pytest.mark.asyncio
 async def test_get_cache_backend_falls_back_to_memory_without_a_backend():
     """`CacheBackend` must work before any `@cache` route has run.
 
@@ -39,7 +37,6 @@ async def test_get_cache_backend_falls_back_to_memory_without_a_backend():
     assert get_app_cache().backend is BackendProxy.get()
 
 
-@pytest.mark.asyncio
 async def test_get_cache_backend_with_memory_backend():
     """Test that get_cache_backend returns the configured backend."""
     backend = MemoryBackend()
@@ -50,7 +47,6 @@ async def test_get_cache_backend_with_memory_backend():
     assert response.json() == {"backend_type": "MemoryBackend"}
 
 
-@pytest.mark.asyncio
 async def test_get_app_cache_falls_back_to_memory_without_a_backend():
     """`AppCache` must work on its own, like `@cache` already does.
 
@@ -68,7 +64,6 @@ async def test_get_app_cache_falls_back_to_memory_without_a_backend():
     assert CacheManagerProxy.get() is manager
 
 
-@pytest.mark.asyncio
 async def test_get_app_cache_uses_the_configured_backend():
     """A configured backend must not be replaced by the fallback."""
     backend = MemoryBackend()

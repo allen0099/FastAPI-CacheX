@@ -66,7 +66,7 @@ def test_non_ascii_token_does_not_crash_the_middleware(
     assert response.json() == {"authenticated": False}
 
 
-def test_forged_forwarded_header_cannot_satisfy_ip_binding(
+async def test_forged_forwarded_header_cannot_satisfy_ip_binding(
     manager: SessionManager, config: SessionConfig
 ):
     """A stolen token plus a forged X-Forwarded-For must not pass IP binding."""
@@ -85,13 +85,9 @@ def test_forged_forwarded_header_cannot_satisfy_ip_binding(
 
     # TestClient presents itself as "testclient"; bind a session to some other
     # address and then try to claim that address via the header.
-    import asyncio
-
-    _, token = asyncio.run(
-        manager.create_session(
-            user=SessionUser(user_id="u1"),
-            ip_address="203.0.113.7",
-        )
+    _, token = await manager.create_session(
+        user=SessionUser(user_id="u1"),
+        ip_address="203.0.113.7",
     )
 
     response = client.get(
@@ -110,11 +106,9 @@ def test_forged_forwarded_header_cannot_satisfy_ip_binding(
     # Positive control: the same token bound to the address the request really
     # comes from is honoured. Without this, an implementation that refused
     # every session would pass the assertion above.
-    _, bound_token = asyncio.run(
-        manager.create_session(
-            user=SessionUser(user_id="u2"),
-            ip_address="testclient",
-        )
+    _, bound_token = await manager.create_session(
+        user=SessionUser(user_id="u2"),
+        ip_address="testclient",
     )
 
     honoured = client.get("/me", headers={"X-Session-Token": bound_token})
@@ -122,7 +116,9 @@ def test_forged_forwarded_header_cannot_satisfy_ip_binding(
     assert honoured.json() == {"authenticated": True}
 
 
-def test_prepended_forwarded_entry_cannot_satisfy_ip_binding(manager: SessionManager):
+async def test_prepended_forwarded_entry_cannot_satisfy_ip_binding(
+    manager: SessionManager,
+):
     """Behind a trusted proxy, the attacker's own entry must not be believed.
 
     `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` appends, so a
@@ -147,13 +143,9 @@ def test_prepended_forwarded_entry_cannot_satisfy_ip_binding(manager: SessionMan
         loaded = request.scope["state"].get("__fastapi_cachex_session")
         return {"authenticated": loaded is not None}
 
-    import asyncio
-
-    _, token = asyncio.run(
-        manager.create_session(
-            user=SessionUser(user_id="u1"),
-            ip_address="198.51.100.5",
-        )
+    _, token = await manager.create_session(
+        user=SessionUser(user_id="u1"),
+        ip_address="198.51.100.5",
     )
 
     client = TestClient(app)

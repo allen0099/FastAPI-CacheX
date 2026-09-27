@@ -77,7 +77,6 @@ def test_construction_warns_and_points_to_the_replacement(
         TestClient(app).get("/")
 
 
-@pytest.mark.asyncio
 async def test_a_header_token_loads_the_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -90,7 +89,6 @@ async def test_a_header_token_loads_the_session(
     assert config.header_name not in response.headers
 
 
-@pytest.mark.asyncio
 async def test_a_bearer_token_loads_the_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -125,7 +123,6 @@ def test_a_missing_or_invalid_token_loads_no_session(
     assert config.header_name not in response.headers
 
 
-@pytest.mark.asyncio
 async def test_an_expired_session_is_not_loaded(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -140,7 +137,6 @@ async def test_an_expired_session_is_not_loaded(
     assert response.json() == {"session_id": None, "user": None}
 
 
-@pytest.mark.asyncio
 async def test_config_defaults_to_the_managers() -> None:
     config = SessionConfig(secret_key="a" * 32, header_name="X-Custom-Session")
     manager = SessionManager(MemoryBackend(), config)
@@ -152,7 +148,6 @@ async def test_config_defaults_to_the_managers() -> None:
     assert response.json()["user"] == "u1"
 
 
-@pytest.mark.asyncio
 async def test_an_explicit_config_overrides_the_managers(
     manager: SessionManager,
 ) -> None:
@@ -168,7 +163,6 @@ async def test_an_explicit_config_overrides_the_managers(
     )
 
 
-@pytest.mark.asyncio
 async def test_the_manager_defaults_to_the_proxy(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -181,7 +175,6 @@ async def test_the_manager_defaults_to_the_proxy(
     assert response.json()["user"] == "u1"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("peer", "loaded"), [("203.0.113.7", True), ("198.51.100.1", False)]
 )
@@ -200,7 +193,6 @@ async def test_ip_binding_checks_the_peer_address(
     assert (response.json()["user"] == "u1") is loaded
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("forwarded_for", "loaded"), [("203.0.113.7", True), ("198.51.100.1", False)]
 )
@@ -224,7 +216,6 @@ async def test_ip_binding_uses_the_forwarded_address_behind_a_trusted_proxy(
     assert (response.json()["user"] == "u1") is loaded
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("user_agent", "loaded"), [("App/1.0", True), ("Other/2.0", False)]
 )
@@ -245,7 +236,6 @@ async def test_user_agent_binding_checks_the_request_user_agent(
     assert (response.json()["user"] == "u1") is loaded
 
 
-@pytest.mark.asyncio
 async def test_a_rotated_session_id_is_sent_back_as_a_new_token(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -263,7 +253,6 @@ async def test_a_rotated_session_id_is_sent_back_as_a_new_token(
     assert old["user"] is None
 
 
-@pytest.mark.asyncio
 async def test_sliding_expiration_sends_the_renewed_token() -> None:
     """The refreshed token goes back in the response header, with a later expiry."""
     slide_config = SessionConfig(

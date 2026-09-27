@@ -79,7 +79,6 @@ async def state_manager(
         backend.stop_cleanup()
 
 
-@pytest.mark.asyncio
 async def test_create_state_basic(state_manager: StateManager) -> None:
     """Test creating a basic OAuth state."""
     state = await state_manager.create_state()
@@ -89,7 +88,6 @@ async def test_create_state_basic(state_manager: StateManager) -> None:
     assert len(state) > 0
 
 
-@pytest.mark.asyncio
 async def test_create_state_with_metadata(state_manager: StateManager) -> None:
     """Test creating OAuth state with metadata."""
     metadata = {
@@ -108,7 +106,6 @@ async def test_create_state_with_metadata(state_manager: StateManager) -> None:
     assert retrieved_metadata == metadata
 
 
-@pytest.mark.asyncio
 async def test_create_state_with_custom_ttl(state_manager: StateManager) -> None:
     """Test creating OAuth state with custom TTL."""
     custom_ttl = 1800  # 30 minutes
@@ -120,7 +117,6 @@ async def test_create_state_with_custom_ttl(state_manager: StateManager) -> None
     assert is_valid is True
 
 
-@pytest.mark.asyncio
 async def test_consume_state(state_manager: StateManager) -> None:
     """Test consuming a valid OAuth state."""
     state = await state_manager.create_state()
@@ -139,7 +135,6 @@ async def test_consume_state(state_manager: StateManager) -> None:
     assert is_valid is False
 
 
-@pytest.mark.asyncio
 async def test_consume_state_with_different_manager(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -161,7 +156,6 @@ async def test_consume_state_with_different_manager(
     assert is_valid is False
 
 
-@pytest.mark.asyncio
 async def test_consume_state_with_metadata(state_manager: StateManager) -> None:
     """Test consuming state and retrieving its metadata."""
     metadata = {
@@ -177,14 +171,12 @@ async def test_consume_state_with_metadata(state_manager: StateManager) -> None:
     assert state_data.metadata == metadata
 
 
-@pytest.mark.asyncio
 async def test_consume_invalid_state(state_manager: StateManager) -> None:
     """Test consuming an invalid state raises InvalidStateError."""
     with pytest.raises(InvalidStateError, match="Invalid or expired state"):
         await state_manager.consume_state("invalid_state_string")
 
 
-@pytest.mark.asyncio
 async def test_consume_state_after_backend_ttl_is_invalid(
     memory_backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -204,7 +196,6 @@ async def test_consume_state_after_backend_ttl_is_invalid(
         await manager.consume_state(state)
 
 
-@pytest.mark.asyncio
 async def test_validate_state(state_manager: StateManager) -> None:
     """Test validating a state without consuming it."""
     state = await state_manager.create_state()
@@ -218,14 +209,12 @@ async def test_validate_state(state_manager: StateManager) -> None:
     assert is_valid_again is True
 
 
-@pytest.mark.asyncio
 async def test_validate_invalid_state(state_manager: StateManager) -> None:
     """Test validating an invalid state."""
     is_valid = await state_manager.validate_state("invalid_state")
     assert is_valid is False
 
 
-@pytest.mark.asyncio
 async def test_get_state_metadata_valid(state_manager: StateManager) -> None:
     """Test retrieving metadata from a valid state."""
     metadata = {"key": "value", "nested": {"data": 123}}
@@ -237,14 +226,12 @@ async def test_get_state_metadata_valid(state_manager: StateManager) -> None:
     assert retrieved == metadata
 
 
-@pytest.mark.asyncio
 async def test_get_state_metadata_invalid(state_manager: StateManager) -> None:
     """Test retrieving metadata from an invalid state."""
     retrieved = await state_manager.get_state_metadata("invalid_state")
     assert retrieved is None
 
 
-@pytest.mark.asyncio
 async def test_delete_state(state_manager: StateManager) -> None:
     """Test manually deleting a state."""
     state = await state_manager.create_state()
@@ -262,7 +249,6 @@ async def test_delete_state(state_manager: StateManager) -> None:
     assert is_valid_after is False
 
 
-@pytest.mark.asyncio
 async def test_multiple_states_independent(state_manager: StateManager) -> None:
     """Test that multiple states are independent."""
     metadata1 = {"user_id": "user1"}
@@ -291,7 +277,6 @@ async def test_multiple_states_independent(state_manager: StateManager) -> None:
     assert is_valid2 is True
 
 
-@pytest.mark.asyncio
 async def test_state_expiry_information(state_manager: StateManager) -> None:
     """Test that state data contains correct expiry information."""
     ttl = 3600
@@ -308,7 +293,6 @@ async def test_state_expiry_information(state_manager: StateManager) -> None:
     assert abs(time_diff - ttl) < 5  # Allow 5 seconds tolerance
 
 
-@pytest.mark.asyncio
 async def test_state_manager_custom_prefix(memory_backend: MemoryBackend) -> None:
     """Test StateManager with custom key prefix."""
     BackendProxy.set(memory_backend)
@@ -326,7 +310,6 @@ async def test_state_manager_custom_prefix(memory_backend: MemoryBackend) -> Non
     assert is_valid_other is False
 
 
-@pytest.mark.asyncio
 async def test_state_reuse_prevention(state_manager: StateManager) -> None:
     """Test that consumed states cannot be reused."""
     state = await state_manager.create_state()
@@ -339,7 +322,6 @@ async def test_state_reuse_prevention(state_manager: StateManager) -> None:
         await state_manager.consume_state(state)
 
 
-@pytest.mark.asyncio
 async def test_get_state_metadata_after_expire(
     state_manager: StateManager, clock: Clock
 ) -> None:
@@ -354,7 +336,6 @@ async def test_get_state_metadata_after_expire(
     assert retrieved is None
 
 
-@pytest.mark.asyncio
 async def test_consume_state_with_invalid_json(state_manager: StateManager) -> None:
     """Test consuming state when backend returns invalid JSON."""
     # Directly set invalid JSON in backend
@@ -368,7 +349,6 @@ async def test_consume_state_with_invalid_json(state_manager: StateManager) -> N
         await state_manager.consume_state("bad_state")
 
 
-@pytest.mark.asyncio
 async def test_get_metadata_with_invalid_json(state_manager: StateManager) -> None:
     """Test retrieving metadata when backend returns invalid JSON."""
     # Directly set invalid JSON in backend
@@ -382,7 +362,6 @@ async def test_get_metadata_with_invalid_json(state_manager: StateManager) -> No
     assert retrieved is None
 
 
-@pytest.mark.asyncio
 async def test_validate_state_with_invalid_json(state_manager: StateManager) -> None:
     """Test validating state when backend returns invalid JSON."""
     # Directly set invalid JSON in backend
@@ -396,7 +375,6 @@ async def test_validate_state_with_invalid_json(state_manager: StateManager) -> 
     assert is_valid is False
 
 
-@pytest.mark.asyncio
 async def test_create_state_empty_metadata(state_manager: StateManager) -> None:
     """Test creating state with empty metadata."""
     state = await state_manager.create_state(metadata={})
@@ -406,7 +384,6 @@ async def test_create_state_empty_metadata(state_manager: StateManager) -> None:
     assert metadata == {}
 
 
-@pytest.mark.asyncio
 async def test_state_with_complex_nested_metadata(state_manager: StateManager) -> None:
     """Test state with complex nested metadata structures."""
     complex_metadata = {
@@ -427,7 +404,6 @@ async def test_state_with_complex_nested_metadata(state_manager: StateManager) -
     assert retrieved == complex_metadata
 
 
-@pytest.mark.asyncio
 async def test_get_metadata_with_missing_expiry(state_manager: StateManager) -> None:
     """A stored state without expires_at yields no metadata."""
     state = "test_state"
@@ -449,7 +425,6 @@ async def test_get_metadata_with_missing_expiry(state_manager: StateManager) -> 
     assert await state_manager.backend.get(cache_key) is not None
 
 
-@pytest.mark.asyncio
 async def test_validate_state_with_missing_expiry(state_manager: StateManager) -> None:
     """A stored state without expires_at does not validate."""
     state = "test_state"
@@ -471,7 +446,6 @@ async def test_validate_state_with_missing_expiry(state_manager: StateManager) -
     assert await state_manager.backend.get(cache_key) is not None
 
 
-@pytest.mark.asyncio
 async def test_validate_state_with_invalid_expiry_format(
     state_manager: StateManager,
 ) -> None:
@@ -496,7 +470,6 @@ async def test_validate_state_with_invalid_expiry_format(
     assert is_valid is False
 
 
-@pytest.mark.asyncio
 async def test_get_metadata_with_invalid_expiry_format(
     state_manager: StateManager,
 ) -> None:
@@ -521,7 +494,6 @@ async def test_get_metadata_with_invalid_expiry_format(
     assert retrieved is None
 
 
-@pytest.mark.asyncio
 async def test_consume_state_with_missing_expiry(state_manager: StateManager) -> None:
     """Test consuming state when state data is missing expiry."""
     state = "test_state"
@@ -542,7 +514,6 @@ async def test_consume_state_with_missing_expiry(state_manager: StateManager) ->
         await state_manager.consume_state(state)
 
 
-@pytest.mark.asyncio
 async def test_consume_state_with_non_string_content(
     state_manager: StateManager,
 ) -> None:
@@ -558,7 +529,6 @@ async def test_consume_state_with_non_string_content(
         await state_manager.consume_state("bad_state")
 
 
-@pytest.mark.asyncio
 async def test_validate_state_with_non_string_content(
     state_manager: StateManager,
 ) -> None:
@@ -572,7 +542,6 @@ async def test_validate_state_with_non_string_content(
     assert is_valid is False
 
 
-@pytest.mark.asyncio
 async def test_get_metadata_with_non_string_content(
     state_manager: StateManager,
 ) -> None:
@@ -586,7 +555,6 @@ async def test_get_metadata_with_non_string_content(
     assert retrieved is None
 
 
-@pytest.mark.asyncio
 async def test_get_metadata_with_non_dict_metadata(state_manager: StateManager) -> None:
     """Test retrieving metadata when metadata is not a dict."""
     state = "test_state"
@@ -609,7 +577,6 @@ async def test_get_metadata_with_non_dict_metadata(state_manager: StateManager) 
     assert retrieved is None
 
 
-@pytest.mark.asyncio
 async def test_consume_state_with_bad_expiry_date(state_manager: StateManager) -> None:
     """Test consuming state when expiry date has invalid format."""
     state = "test_state"
@@ -637,7 +604,6 @@ async def test_consume_state_with_bad_expiry_date(state_manager: StateManager) -
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_state_nonexistent_returns_false(
     state_manager: StateManager,
 ) -> None:
@@ -646,7 +612,6 @@ async def test_delete_state_nonexistent_returns_false(
     assert result is False
 
 
-@pytest.mark.asyncio
 async def test_delete_state_existing_returns_true(
     state_manager: StateManager,
 ) -> None:
@@ -659,7 +624,6 @@ async def test_delete_state_existing_returns_true(
     assert is_valid is False
 
 
-@pytest.mark.asyncio
 async def test_delete_state_idempotent_returns_false_on_second_call(
     state_manager: StateManager,
 ) -> None:
@@ -669,7 +633,6 @@ async def test_delete_state_idempotent_returns_false_on_second_call(
     assert await state_manager.delete_state(state) is False
 
 
-@pytest.mark.asyncio
 async def test_state_manager_accepts_explicit_backend(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -686,7 +649,6 @@ async def test_state_manager_accepts_explicit_backend(
     assert await manager.validate_state(state) is True
 
 
-@pytest.mark.asyncio
 async def test_state_manager_falls_back_to_backend_proxy(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -712,7 +674,6 @@ def test_state_manager_raises_when_no_backend_configured() -> None:
         StateManager()
 
 
-@pytest.mark.asyncio
 async def test_consume_state_has_exactly_one_winner_under_concurrency(
     state_manager: StateManager,
 ) -> None:
@@ -733,7 +694,6 @@ async def test_consume_state_has_exactly_one_winner_under_concurrency(
     assert winners[0].metadata == {"n": 1}
 
 
-@pytest.mark.asyncio
 async def test_consume_state_past_wall_clock_expiry_removes_the_entry(
     state_manager: StateManager,
 ) -> None:
@@ -765,7 +725,6 @@ async def test_consume_state_past_wall_clock_expiry_removes_the_entry(
     assert await state_manager.validate_state(state) is False
 
 
-@pytest.mark.asyncio
 async def test_peeking_a_state_past_its_wall_clock_expiry_treats_it_as_gone(
     state_manager: StateManager,
 ) -> None:
@@ -790,7 +749,6 @@ def _state_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [r for r in caplog.records if r.name == "fastapi_cachex.state.manager"]
 
 
-@pytest.mark.asyncio
 async def test_logs_never_contain_the_raw_state(
     memory_backend: MemoryBackend, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -815,7 +773,6 @@ async def test_logs_never_contain_the_raw_state(
     assert hashlib.sha256(state.encode()).hexdigest()[:12] in caplog.text
 
 
-@pytest.mark.asyncio
 async def test_unknown_state_is_not_logged_as_warning(
     memory_backend: MemoryBackend, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -842,7 +799,6 @@ async def test_unknown_state_is_not_logged_as_warning(
     assert all(r.levelno < logging.WARNING for r in _state_records(caplog))
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["consume", "validate", "metadata"])
 async def test_malformed_state_data_is_logged_once_without_the_state(
     memory_backend: MemoryBackend,
@@ -875,7 +831,6 @@ async def test_malformed_state_data_is_logged_once_without_the_state(
     assert state not in caplog.text
 
 
-@pytest.mark.asyncio
 async def test_bound_state_is_accepted_with_its_binding(
     state_manager: StateManager,
 ) -> None:
@@ -888,7 +843,6 @@ async def test_bound_state_is_accepted_with_its_binding(
     assert data.binding_hash == hashlib.sha256(b"nonce-a").hexdigest()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("binding", ["nonce-b", None])
 async def test_bound_state_is_rejected_for_another_client(
     state_manager: StateManager, binding: str | None
@@ -907,7 +861,6 @@ async def test_bound_state_is_rejected_for_another_client(
         await state_manager.consume_state(state, binding="nonce-a")
 
 
-@pytest.mark.asyncio
 async def test_unbound_state_is_rejected_with_a_binding(
     state_manager: StateManager,
 ) -> None:
@@ -918,14 +871,12 @@ async def test_unbound_state_is_rejected_with_a_binding(
         await state_manager.consume_state(state, binding="nonce-a")
 
 
-@pytest.mark.asyncio
 async def test_empty_binding_is_rejected(state_manager: StateManager) -> None:
     """An empty binding (a missing cookie read as "") would bind everyone alike."""
     with pytest.raises(ValueError, match="binding must not be empty"):
         await state_manager.create_state(binding="")
 
 
-@pytest.mark.asyncio
 async def test_binding_is_not_stored_in_plain_text(
     memory_backend: MemoryBackend,
 ) -> None:

@@ -68,7 +68,6 @@ OPERATIONS: dict[str, Callable[[BaseCacheBackend, int], Awaitable[object]]] = {
 
 @pytest.mark.parametrize(("ttl", "error", "match"), BAD_TTLS)
 @pytest.mark.parametrize("operation", ["set", "set_if_absent", "increment"])
-@pytest.mark.asyncio
 async def test_backends_reject_invalid_ttl(
     operation: str, ttl: object, error: type[Exception], match: str
 ) -> None:
@@ -91,7 +90,6 @@ def test_validate_ttl_passes_none_and_positive(ttl: int | None) -> None:
 
 
 @pytest.mark.parametrize(("ttl", "error", "match"), BAD_TTLS)
-@pytest.mark.asyncio
 async def test_cache_manager_rejects_invalid_ttl(
     ttl: Any, error: type[Exception], match: str
 ) -> None:
@@ -113,7 +111,6 @@ async def test_cache_manager_rejects_invalid_ttl(
 
 
 @pytest.mark.parametrize(("ttl", "error", "match"), BAD_TTLS)
-@pytest.mark.asyncio
 async def test_state_manager_rejects_invalid_ttl(
     ttl: Any, error: type[Exception], match: str
 ) -> None:
@@ -136,7 +133,6 @@ async def test_state_manager_rejects_invalid_ttl(
         pytest.param(-(2**63) - 1, ValueError, "signed 64-bit", id="too-small"),
     ],
 )
-@pytest.mark.asyncio
 async def test_backends_reject_invalid_delta(
     delta: Any, error: type[Exception], match: str
 ) -> None:

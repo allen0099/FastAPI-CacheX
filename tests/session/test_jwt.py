@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 jwt = pytest.importorskip("jwt")
 
 
-@pytest.mark.asyncio
 async def test_jwt_create_and_get_session() -> None:
     backend = MemoryBackend()
     config = SessionConfig(
@@ -43,7 +42,6 @@ async def test_jwt_create_and_get_session() -> None:
     assert retrieved.user.user_id == "u1"
 
 
-@pytest.mark.asyncio
 async def test_jwt_invalid_signature_rejected() -> None:
     backend = MemoryBackend()
     config = SessionConfig(secret_key="a" * 32, token_format="jwt")
@@ -58,7 +56,6 @@ async def test_jwt_invalid_signature_rejected() -> None:
         await manager.get_session(tampered)
 
 
-@pytest.mark.asyncio
 async def test_jwt_wrong_audience_rejected() -> None:
     backend = MemoryBackend()
     config1 = SessionConfig(
@@ -81,7 +78,6 @@ async def test_jwt_wrong_audience_rejected() -> None:
         await manager2.get_session(token)
 
 
-@pytest.mark.asyncio
 async def test_jwt_expiration_enforced(clock: Clock) -> None:
     backend = MemoryBackend()
     config = SessionConfig(secret_key="a" * 32, token_format="jwt", session_ttl=1)
@@ -99,7 +95,6 @@ async def test_jwt_expiration_enforced(clock: Clock) -> None:
         await manager.get_session(token)
 
 
-@pytest.mark.asyncio
 async def test_jwt_sliding_renewal_returns_new_token_with_updated_exp() -> None:
     """Sliding renewal must extend the session's expires_at back to a full TTL."""
     from datetime import datetime
