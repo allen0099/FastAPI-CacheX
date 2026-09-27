@@ -13,6 +13,8 @@ FastAPI-CacheX 的 Session 管理提供完整的使用者 Session 處理，包�
 
 `SessionConfig` 的六個 `cookie_*` 設定（`cookie_name`、`cookie_max_age`、`cookie_path`、`cookie_same_site`、`cookie_https_only`、`cookie_domain`）**只有 `FastAPICacheXSessionMiddleware` 會讀取**；安裝的是 `SessionMiddleware` 時，設定它們不會有任何效果。
 
+完整可執行範例（英文）：[`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)、[`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py)。
+
 ## 功能特點 {#features}
 
 - ✅ **Session 生命週期管理**：建立、讀取、更新、刪除、使其失效

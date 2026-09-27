@@ -37,6 +37,8 @@ if await manager.add(f"webhook:{event_id}", True, ttl=86400):
 await manager.clear_pattern("user:*")  # matches "myapp:user:*"
 ```
 
+Complete runnable example: [`examples/app_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/app_cache.py).
+
 ## Behavior
 
 - `get()` returns `None` (or a supplied `default=`) on a cache miss — it never

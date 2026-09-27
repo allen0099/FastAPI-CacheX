@@ -21,6 +21,8 @@ finally:
     await lock.release()
 ```
 
+完整可執行範例（英文）：[`examples/cache_lock.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/cache_lock.py)。
+
 ## 行為 {#behavior}
 
 - **安全性與權杖所有權**：每個 `CacheLock` 實例都會產生一個唯一的權杖（`secrets.token_hex(16)`），存放在 `CacheEntry` 中。釋放（`release()`）與續約（`extend()`）都使用會檢查持有者的後端原子操作（`delete_if_equals` 與 `expire_if_equals`），因此鎖已過期的持有者無法釋放或續約已被他人取得的鎖。
