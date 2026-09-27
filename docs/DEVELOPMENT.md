@@ -242,7 +242,10 @@ uv run zensical build --strict -f zensical.zh-TW.toml  # also run by the Docs wo
 The English pages are the source of truth. The translation may lag behind
 them, and every translated page carries a banner saying so, with a link to the
 English original. Pages that are not translated yet are linked from the
-translation's navigation to the English site. When translating, follow the
+translation's navigation to the English site. The API reference (`docs/api/`),
+this development guide and the changelog stay English-only (the API pages are
+generated from the docstrings, which are in English); the translation links to
+their English versions. When translating, follow the
 terms in [`i18n/zh-TW/GLOSSARY.md`](https://github.com/allen0099/FastAPI-CacheX/blob/master/i18n/zh-TW/GLOSSARY.md).
 
 ### Adding API reference pages

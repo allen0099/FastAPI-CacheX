@@ -52,6 +52,11 @@ await manager.clear_pattern("user:*")  # matches "myapp:user:*"
 - Keys live under their own `cache:`-prefixed namespace by default, separate from
   the HTTP route cache and OAuth state, so `clear()`/`clear_prefix()` never touch
   unrelated cache entries.
+- The prefix is matched as a plain string prefix. A manager with
+  `key_prefix="cache:"` therefore also clears the entries of one with
+  `key_prefix="cache:users:"`, and an empty `key_prefix` makes `clear()` remove
+  everything in the backend, including HTTP responses, locks, OAuth states and
+  sessions. Give each manager a prefix that does not start with another's.
 - The `AppCache` dependency creates and registers a default `CacheManager` the
   first time it is used; `CacheManagerProxy.set()` registers your own instead.
 

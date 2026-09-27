@@ -159,8 +159,9 @@ app.add_middleware(
 )
 ```
 
-All backends automatically namespace keys with a prefix (e.g., `fastapi_cachex:`)
-to avoid conflicts with other applications. `CacheManager` (see
+The Redis and Memcached backends also put their own prefix (`fastapi_cachex:` by
+default) in front of every key, so other applications can share the server;
+`MemoryBackend` has no prefix. `CacheManager` (see
 [Application cache](APP_CACHE.md)) uses a separate, simpler `cache:`-prefixed key
 namespace instead of this `|||`-separated format, since its keys aren't tied to
 HTTP requests.
@@ -241,6 +242,10 @@ something a shared cache cannot see, use option 1 instead.
 > A key built from a raw request header is a horizontal privilege escalation:
 > sending `X-User-Id: <someone-else>` returns that user's cached response.
 
+The key builder runs only when `@cache` reads or writes the backend, so it is not
+called for `no_store=True`, `private=True` or routes without a `ttl`. Before 0.3.8
+it was, only to feed a debug log. Keep it free of side effects.
+
 ## Clearing the cache
 
 ### By path or pattern
@@ -312,8 +317,9 @@ async def update_item(item_id: int, request: Request):
 ```
 
 `invalidate(request, key_builder=None)` returns `True` when an entry existed and
-was removed, `False` otherwise (including when no backend is configured — it
-never raises). The request you hand it must produce the cached route's key:
+was removed, `False` otherwise, including when no backend is configured. An
+error from the backend itself is raised to the caller (see
+[When the backend fails](#when-the-backend-fails)). The request you hand it must produce the cached route's key:
 same method, host, path and query string. If the cached route uses a custom
 `key_builder`, pass the same one here, or the key will not match.
 
