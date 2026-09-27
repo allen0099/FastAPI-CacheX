@@ -11,7 +11,7 @@
 | 簡單快取 | Memcached | 穩定、成熟（但無法列舉鍵，因此不支援依模式／路徑清除，也無法監控） |
 | 多行程部署 | Redis | 共用快取、一致性 |
 
-所有後端都會以前綴為鍵建立命名空間（預設為 `fastapi_cachex:`，可用 `key_prefix=` 變更），以避免與其他應用程式衝突。
+Redis 與 Memcached 後端會以前綴為鍵建立命名空間（預設為 `fastapi_cachex:`，可用 `key_prefix=` 變更），以避免與同一台伺服器上的其他應用程式衝突。`MemoryBackend` 只存在於單一行程內，沒有前綴。
 
 ## 記憶體（預設） {#in-memory-default}
 
@@ -64,6 +64,7 @@ BackendProxy.set(backend)
 - 使用 SCAN 而非 KEYS，可安全用於正式環境（不會阻塞）
 - 預設以 `fastapi_cachex:` 前綴建立命名空間；多租戶情境可傳入 `key_prefix="myapp:cache:"`
 - 只有傳給 `clear_pattern()` 的模式是萬用字元（glob）模式。鍵前綴與傳給 `clear_path()` 的路徑都以字面值比對，因此其中的 `*`、`?`、`[` 或 `]` 不會觸及前綴以外的鍵，也不會漏掉該路徑
+- `clear_pattern()` 比對的是邏輯鍵，也就是不含後端前綴的鍵，並一律自行加上前綴。0.3.8 以前，以前綴開頭的模式會先去掉前綴再比對。在只有這種寫法能比對到項目時，它仍可使用，但會發出 `DeprecationWarning`，直到 0.4.0 為止
 
 **從模型設定**：`RedisConfig` 是具有相同設定項與驗證的 pydantic 模型，當設定來自環境變數或設定檔時很方便：
 
@@ -76,7 +77,7 @@ config = RedisConfig(
     port=6379,
     password=None,  # SecretStr | None
     db=0,
-    encoding="utf-8",  # 用戶端解碼伺服器回應的方式
+    encoding="utf-8",  # 保持 UTF-8；見下方說明
     socket_timeout=1.0,  # 秒；適用於讀取／寫入
     socket_connect_timeout=1.0,
     key_prefix="fastapi_cachex:",
@@ -85,6 +86,8 @@ config = RedisConfig(
 backend = AsyncRedisCacheBackend.load_from_config(config)
 BackendProxy.set(backend)
 ```
+
+請保持 `encoding="utf-8"`。項目一律以 UTF-8 JSON 寫入，而用戶端會以 `encoding` 解碼回應，因此任何其他值都會在讀回時破壞非 ASCII 內容（使用 `"latin-1"` 時，儲存的 `b"\xe9"` 會讀回成 `b"\xc3\xa9"`）。編碼不是 UTF-8 時，後端會發出 `RuntimeWarning`，而這個參數將於 0.4.0 移除。
 
 除非你需要 RESP3 的功能，*而且*你的 `hiredis` 建置支援它（RESP3 需要 hiredis >= 3.0），否則請保留 `protocol=2`。Redis 8.0 支援 RESP3，但較舊的 hiredis 會無法協商使用它。
 
@@ -144,12 +147,13 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
         await backend.delete_if_equals(f"stream:{user_id}", owner)
 ```
 
-- `increment(key, delta=1, ttl=None) -> int`：記憶體後端在鎖內執行讀取—修改—寫入，Redis 執行 Lua 腳本（`EXISTS` + `INCRBY` + `EXPIRE`），Memcached 則使用 `ADD` + `INCR`/`DECR`（Memcached 的計數器最低停在 0）。計數器可透過 `get()` 讀到，形式為 fingerprint 為 `COUNTER_FINGERPRINT`、內容為十進位數值的 `CacheEntry`，因此 `delete`／`clear*` 與監控路由都會把它當成一般項目處理。對存放快取回應的鍵執行 increment 會拋出 `CacheXError`。`delta` 必須是 signed 64 位元範圍內的 `int`，否則會在存取後端之前拋出 `TypeError` 或 `ValueError`。
+- `increment(key, delta=1, ttl=None) -> int`：記憶體後端在鎖內執行讀取—修改—寫入，Redis 執行 Lua 腳本（`EXISTS` + `INCRBY` + `EXPIRE`），Memcached 則使用 `ADD` + `INCR`/`DECR`（Memcached 的計數器最低停在 0）。計數器可透過 `get()` 讀到，形式為 fingerprint 為 `COUNTER_FINGERPRINT`、內容為十進位數值的 `CacheEntry`，因此 `delete`／`clear*` 與監控路由都會把它當成一般項目處理。對存放其他內容的鍵執行 increment，在每個後端上都會拋出 `CacheXError`，即使是本文剛好是數字的快取回應也一樣。以 `set(key, counter_entry(n))` 寫入的計數器在每個後端上都可以 increment，唯一的例外是 Memcached 的計數器沒有正負號：在它上面 `n` 必須介於 0 到 2**64 - 1 之間，對負數的計數器執行 increment 會拋出 `CacheXError`。`delta` 必須是 signed 64 位元範圍內的 `int`，否則會在存取後端之前拋出 `TypeError` 或 `ValueError`。
 - `get_and_delete(key) -> CacheEntry | None`：記憶體後端在鎖內 pop，Redis 使用 `GETDEL`（伺服器 6.2 以上），Memcached 使用 `GETS` + `exptime=-1` 的 `CAS` 寫入（若中間有其他寫入者替換了值則會重試；連續 16 次都被替換時會拋出 `CacheXError`，而不是當成鍵不存在）。`StateManager.consume_state`、`StateManager.delete_state`、`CacheManager.delete` 與 `invalidate()` 都建立在它之上。
 - `set_if_absent(key, value, ttl=None) -> bool`：只在 `key` 不存在時儲存 `value`（已過期的鍵視為不存在），並回報是否有寫入。記憶體後端在鎖內檢查，Redis 使用 `SET NX EX`，Memcached 使用 `ADD`。
 - `delete_if_equals(key, expected) -> bool`：只在 `key` 仍存放 `expected` 時才移除它，因此項目已過期的持有者無法釋放已被他人取得的鎖。請在你儲存的項目中放入唯一的權杖，並以同一個項目釋放。記憶體後端在鎖內比較，Redis 透過 Lua 腳本刪除，並在腳本中重新檢查先前比較過的值，Memcached 則使用 `GETS` + 一個讓項目立即過期的 `CAS` 寫入（傳統協定的 `DELETE` 不接受 CAS 權杖）。
+- `expire_if_equals(key, expected, ttl) -> bool`：只在 `key` 仍存放 `expected` 時，才把它的 TTL 更新為 `ttl` 秒，因此長時間執行的鎖持有者可以續約租期，而不會在鎖已過期時動到別人的鎖。記憶體後端在鎖內更新，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `EXPIRE`），Memcached 則使用 `GETS` + 以新 exptime 寫回相同位元組的 `CAS`（`TOUCH` 不接受 CAS 權杖）。
 
-這四個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。
+這五個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。
 
 ## TTL 值 {#ttl-values}
 

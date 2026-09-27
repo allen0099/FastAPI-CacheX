@@ -12,8 +12,10 @@ lives in one backend, registered once at startup with `BackendProxy.set()`.
 | Simple caching | Memcached | Stable, mature (but no key enumeration, so no pattern/path clearing or monitoring) |
 | Multi-process deployments | Redis | Shared cache, consistency |
 
-All backends namespace their keys with a prefix (`fastapi_cachex:` by default,
-`key_prefix=` to change it) to avoid conflicts with other applications.
+The Redis and Memcached backends namespace their keys with a prefix
+(`fastapi_cachex:` by default, `key_prefix=` to change it) to avoid conflicts with
+other applications on the same server. `MemoryBackend` lives inside one process
+and has no prefix.
 
 ## In-memory (default)
 
@@ -205,7 +207,9 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   and the monitoring routes treat it like any other entry. Incrementing a key
   that holds anything else raises `CacheXError` on every backend, even a cached
   response whose body is a number. A counter written with
-  `set(key, counter_entry(n))` can be incremented on every backend. `delta`
+  `set(key, counter_entry(n))` can be incremented on every backend, except that
+  Memcached counters are unsigned: there `n` must be from 0 to 2**64 - 1, and
+  incrementing a negative one raises `CacheXError`. `delta`
   must be an `int` within the signed 64-bit range; anything else raises
   `TypeError` or `ValueError` before the backend is touched.
 - `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis

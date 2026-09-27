@@ -42,6 +42,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 - `get_or_set()` 不提供 cache stampede 保護：同一個鍵同時發生多次未命中時，每一次都會執行 `factory`。
 - `add()` 只在鍵尚未被占用時寫入值，並回傳是否有寫入。檢查與寫入是同一個後端原子操作（`set_if_absent`），因此適合「每個鍵只做一次」的工作，例如 webhook 或電子郵件的去重。已過期的鍵視為未被占用；存放無法解碼之值的鍵則不算，即使 `get()` 會把它當成未命中。
 - 鍵預設位於獨立、以 `cache:` 為前綴的命名空間，與 HTTP 路由快取及 OAuth state 分開，因此 `clear()`／`clear_prefix()` 絕不會動到無關的快取項目。
+- 前綴是以單純的字串前綴比對。因此 `key_prefix="cache:"` 的 manager 也會清除 `key_prefix="cache:users:"` 的 manager 的項目；而空的 `key_prefix` 會讓 `clear()` 移除後端中的所有內容，包括 HTTP 回應、鎖、OAuth state 與 Session。請讓每個 manager 的前綴都不以另一個 manager 的前綴開頭。
 - `AppCache` 依賴項在第一次使用時會建立並註冊一個預設的 `CacheManager`；`CacheManagerProxy.set()` 則可改為註冊你自己的實例。
 
 > [!NOTE]

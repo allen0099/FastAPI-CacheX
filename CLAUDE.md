@@ -47,7 +47,7 @@ tox -e lowest  # every direct dependency at its declared floor, Python 3.10
 
 ### Module Structure
 
-The library has four independent subsystems:
+The library has five independent subsystems:
 
 **1. HTTP Caching (`fastapi_cachex/cache.py`, `proxy.py`, `backends/`)**
 - `@cache(...)` decorator wraps FastAPI route handlers. It injects a `Request` parameter into the handler signature if not already present, so the handler does not need to declare it.
@@ -67,11 +67,11 @@ The library has four independent subsystems:
 - `clear()`/`clear_prefix()` are built on `backend.get_all_keys()` + `backend.delete_many()`, so they are no-ops on the Memcached backend (see below).
 
 **3. Session Management (`fastapi_cachex/session/`)**
-- Optional subsystem, activated via `SessionMiddleware` and `SessionManagerProxy`.
+- Optional subsystem, activated via `FastAPICacheXSessionMiddleware` (the header-only `SessionMiddleware` is deprecated until 0.4.0) and `SessionManagerProxy`.
 - `SessionManager` handles create/get/update/delete/invalidate/regenerate operations. It stores `Session` Pydantic models serialized as JSON, wrapped in `CacheEntry` for backend compatibility.
 - Token signing: `simple` format uses HMAC-SHA256 (`SecurityManager`); `jwt` format uses PyJWT (optional dependency `fastapi-cachex[jwt]`).
 - `get_session()` saves only when sliding expiration renewed the session (or with `touch=True`), so the stored `last_accessed` is the last write, not the last lookup. Session entries use the constant fingerprint `"session"`; nothing compares it.
-- Session token is passed via custom header (`X-Session-Token` by default) or `Authorization: Bearer` token.
+- Session token is passed via custom header (`X-Session-Token` by default), `Authorization: Bearer` token, or (`FastAPICacheXSessionMiddleware` only) the session cookie.
 - `SessionManagerProxy` mirrors the `BackendProxy` pattern for managing the `SessionManager` singleton.
 - Key FastAPI dependencies: `get_session`, `require_session`, `get_optional_session` (in `session/dependencies.py`). These accept anonymous sessions (`user=None`); `require_user_session` / `AuthenticatedSession` also require a user. `UserSessionDep` is still an alias of `SessionDep` until 0.4.0.
 - `JWTTokenSerializer` emits one `UserWarning` at construction when `secret_key` is shorter (in UTF-8 bytes) than the HMAC hash output (48 for HS384, 64 for HS512).
@@ -83,6 +83,10 @@ The library has four independent subsystems:
 - Uses the same cache backends, with key prefix `oauth_state:` by default.
 - `create_state(binding=...)` / `consume_state(state, binding=...)` bind a state to the client that started the flow (SHA-256 stored, `hmac.compare_digest`); a mismatch in either direction raises `InvalidStateError`, and the state is consumed either way.
 
+**5. Distributed Lock (`fastapi_cachex/lock.py`)**
+- `CacheLock(name, ttl=60, ...)` is a lease on `set_if_absent` / `delete_if_equals` / `expire_if_equals`, with a per-instance random token; keys use the `lock:` prefix by default.
+- It uses `BackendProxy.get()` (no `MemoryBackend` fallback). One instance per acquisition: re-acquiring a held instance raises `RuntimeError`; `async with` raises `LockTimeoutError`; `release()`/`extend()` return `False` once the lease is lost.
+
 ### Backends (`fastapi_cachex/backends/`)
 
 All backends implement `BaseCacheBackend` (abstract base in `backends/base.py`):
@@ -90,17 +94,18 @@ All backends implement `BaseCacheBackend` (abstract base in `backends/base.py`):
 - `AsyncRedisCacheBackend` (`backends/redis.py`): Fully async; uses `SCAN` (not `KEYS`) for pattern operations. Requires `redis[hiredis]` and `orjson` extras.
 - `MemcachedBackend` (`backends/memcached.py`): `clear_pattern`/`get_all_keys` are no-ops (return `0`/`[]` with a `RuntimeWarning`) since the Memcached protocol has no key enumeration. Runs the sync pymemcache client in worker threads with connection pooling (`use_pooling=True`, `default_noreply=False`), so concurrent calls never share a socket and every write is acknowledged before the next call on another socket can observe it. Requires the `memcached` extra (`memcache` is a deprecated alias until 0.4.0).
 
-Backend keys are namespaced automatically (default prefix: `fastapi_cachex:`).
+The Redis and Memcached backends namespace keys automatically (`key_prefix`, default `fastapi_cachex:`); `MemoryBackend` has no prefix.
 
-Four non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see `docs/BACKENDS.md` "Atomic backend primitives"):
+Five non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see `docs/BACKENDS.md` "Atomic backend primitives"):
 - `increment(key, delta=1, ttl=None) -> int`: fixed-window counter; `ttl` applies only when the counter is created. Redis runs a registered Lua script, Memcached uses `ADD` + `INCR`/`DECR`, memory works under its lock. A counter reads back through `get()` as a `CacheEntry` with `COUNTER_FINGERPRINT` (`types.py`).
 - `get_and_delete(key) -> CacheEntry | None`: one-shot retrieval (Redis `GETDEL`, Memcached `gets` + `cas(..., exptime=-1)`, retried up to 16 times, then `CacheXError`). `StateManager.consume_state`, `delete_state`, `CacheManager.delete` and `invalidate()` use it. `delete()` keeps returning `None` for 0.3.x compatibility.
 - `set_if_absent(key, value, ttl=None) -> bool`: claim-if-free for locks/slots. Redis `SET NX EX`, Memcached `ADD`, memory under its lock.
 - `delete_if_equals(key, expected) -> bool`: release only while the key still holds `expected` (compared as decoded `CacheEntry`). Redis compares in Python then deletes via a Lua script that re-checks the raw bytes; Memcached uses `GETS` + `CAS` with exptime `-1` (immediate expiry), since classic `DELETE` has no CAS.
+- `expire_if_equals(key, expected, ttl) -> bool`: renew the TTL only while the key still holds `expected` (used by `CacheLock.extend`). Redis compares in Python then runs a Lua `GET` compare + `EXPIRE`; Memcached `GETS` + `CAS` writing the same bytes with the new exptime.
 
 `validate_ttl` (in `backends/base.py`) accepts `None` or an `int` from 1 to `MAX_TTL` (2**31 - 1) and raises `TypeError` for floats/bools; `validate_delta` requires an `int` in signed 64-bit range. Both run before any I/O. Memcached's `_expiry` also rejects expiries after 2038-01-19.
 
-`delete_many(keys) -> int` is the fifth non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock). Memcached sends one acknowledged `DELETE` per key inside a single worker call and counts the ones that existed (pymemcache's `delete_many` returns `True` regardless). Every Memcached multi-step op (`increment`, `get_and_delete`, `*_if_equals`) also runs as one sync helper in one `asyncio.to_thread` call.
+`delete_many(keys) -> int` is the sixth non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock). Memcached sends one acknowledged `DELETE` per key inside a single worker call and counts the ones that existed (pymemcache's `delete_many` returns `True` regardless). Every Memcached multi-step op (`increment`, `get_and_delete`, `*_if_equals`) also runs as one sync helper in one `asyncio.to_thread` call.
 
 `backends/codec.py` holds the JSON `CacheEntry` codec shared by Redis and Memcached; `decode_entry` maps a bare integer to a counter entry and every malformed value to `None`.
 

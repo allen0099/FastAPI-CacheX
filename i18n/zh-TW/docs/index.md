@@ -1,4 +1,4 @@
-# FastAPI-Cache X
+# FastAPI-Cache X {#fastapi-cache-x}
 
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -18,7 +18,7 @@ FastAPI-CacheX 是 FastAPI 的高效能快取擴充套件：提供支援 `Cache-
 
 **文件：** <https://fastapi-cachex.readthedocs.io/zh-tw/latest/>（尚未翻譯的頁面與完整 API 參考請見[英文文件](https://fastapi-cachex.readthedocs.io/en/latest/)）
 
-## 功能特點
+## 功能特點 {#features}
 
 - **HTTP 快取**：GET 路由專用的 `@cache` 裝飾器，支援 `Cache-Control`、`ETag` / `If-None-Match`（304）與單一路由的快取失效。
 - **應用層快取**：`CacheManager` 可在自己的程式碼中快取任意 JSON 值，提供未命中時才計算的 `get_or_set()` 與原子性的「不存在才寫入」`add()`。
@@ -26,7 +26,7 @@ FastAPI-CacheX 是 FastAPI 的高效能快取擴充套件：提供支援 `Cache-
 - **Session（可選）**：以 HMAC 簽章或 JWT 發行的 Session 權杖，可經由標頭、Bearer 權杖或 Cookie 傳遞，支援滑動過期與 IP / User-Agent 綁定。
 - **OAuth state**：OAuth / OIDC 流程中用於防範 CSRF 的一次性 state 權杖。
 
-## 安裝
+## 安裝 {#installation}
 
 ```bash
 uv add fastapi-cachex
@@ -42,7 +42,7 @@ uv add fastapi-cachex
 
 Extra 可以組合：`uv add "fastapi-cachex[redis,jwt]"`。
 
-## 快速開始
+## 快速開始 {#quick-start}
 
 ```python
 from fastapi import FastAPI
@@ -73,7 +73,7 @@ async def report(cache: AppCache):
 > [!WARNING]
 > 預設的快取鍵不包含使用者身分。需要驗證身分的端點請使用 `private=True` 或依使用者區分的 key builder，詳見 [需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
 
-## 文件
+## 文件 {#documentation}
 
 - [HTTP 快取](HTTP_CACHING.md)：`@cache` 裝飾器、Cache-Control 指令、快取鍵、快取失效與監控路由
 - [快取流程](CACHE_FLOW.md)：快取請求內部的處理流程
@@ -81,10 +81,11 @@ async def report(cache: AppCache):
 - [後端](BACKENDS.md)：選擇與設定後端、原子操作的基本功能
 - [Session 管理](SESSION.md)與 [JWT claims](JWT_CLAIMS.md)
 - [OAuth state](STATE.md)：一次性的 OAuth / CSRF state 權杖
+- [分散式鎖](LOCK.md)：以 `CacheLock` 在多個行程之間互斥
 - [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)（英文）
-- [開發指南](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/)與[貢獻指南](https://fastapi-cachex.readthedocs.io/en/latest/CONTRIBUTING/)（英文）
+- [開發指南](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/)（英文）與[貢獻指南](CONTRIBUTING.md)
 - [變更紀錄](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md)（英文） · [已知限制與規劃中的工作](https://github.com/allen0099/FastAPI-CacheX/issues)
 
-## 授權
+## 授權 {#license}
 
 本專案採用 Apache License 2.0 授權，詳見 [LICENSE](https://github.com/allen0099/FastAPI-CacheX/blob/master/LICENSE)。

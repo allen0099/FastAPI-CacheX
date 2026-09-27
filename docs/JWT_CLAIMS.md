@@ -87,7 +87,7 @@ FastAPI-CacheX uses a **stateful session** model, which is fundamentally differe
 └─────────────────────────────────────────────────────────┘
 ```
 
-A valid JWT signature is necessary but not sufficient: after decoding, `SessionManager.get_session()` still loads the session from the backend and rejects it if it is missing, not active, expired, past `absolute_timeout`, or fails IP/User-Agent binding checks. Any decoding failure is raised as `SessionTokenError`, which `SessionMiddleware` treats as "no session".
+A valid JWT signature is necessary but not sufficient: after decoding, `SessionManager.get_session()` still loads the session from the backend and rejects it if it is missing, not active, expired, past `absolute_timeout`, or fails IP/User-Agent binding checks. Any decoding failure is raised as `SessionTokenError`, which the session middleware (`FastAPICacheXSessionMiddleware`) treats as "no session".
 
 ### Why a Stateful Session
 
@@ -173,92 +173,9 @@ await session_manager.delete_session("session-abc123")
 
 ## Extension Guide: Adding Custom Claims
 
-If your application needs additional JWT claims, subclass `JWTTokenSerializer` and pass an instance to `SessionManager` through its `token_serializer` argument. Any object with `to_string(token) -> str` and `from_string(token_str) -> SessionToken` methods (the `TokenSerializer` protocol) will do; `from_string()` should raise `ValueError` for invalid tokens, which `SessionManager` converts into `SessionTokenError`.
+If your application needs additional JWT claims, write your own serializer and pass an instance to `SessionManager` through its `token_serializer` argument. Any object with `to_string(token) -> str` and `from_string(token_str) -> SessionToken` methods (the `TokenSerializer` protocol) will do; `from_string()` should raise `ValueError` for invalid tokens, which `SessionManager` converts into `SessionTokenError`.
 
-The examples below honour `token.expires_at` in `to_string()` the same way the built-in serializer does, so that `exp` keeps following sliding expiration.
-
-### Example 1: Adding `jti` and `nbf`
-
-```python
-from __future__ import annotations
-
-import uuid
-from datetime import datetime, timezone
-
-from fastapi_cachex.session.models import SessionToken
-from fastapi_cachex.session.token_serializers import JWTTokenSerializer
-
-
-class ExtendedJWTSerializer(JWTTokenSerializer):
-    """Extended JWT serializer that adds the jti and nbf claims."""
-
-    def to_string(self, token: SessionToken) -> str:
-        """Encode a SessionToken as a JWT, including jti and nbf."""
-        iat = int(token.issued_at.timestamp())
-        if token.expires_at is not None:
-            exp = int(token.expires_at.timestamp())
-        else:
-            exp = iat + int(self._session_ttl)
-
-        payload: dict[str, object] = {
-            "sid": token.session_id,
-            "iat": iat,
-            "exp": exp,
-            "jti": str(uuid.uuid4()),  # Unique token ID
-            "nbf": iat,  # Not before = issued at
-        }
-
-        if self._issuer:
-            payload["iss"] = self._issuer
-        if self._audience:
-            payload["aud"] = self._audience
-
-        encoded = self.jwt_encoder.encode(
-            payload, self._secret, algorithm=self._algorithm
-        )
-        return str(encoded)
-
-    def from_string(self, token_str: str) -> SessionToken:
-        """Decode and verify a JWT, including jti and nbf validation."""
-        options = {
-            "require": ["sid", "iat", "exp", "jti"],  # Require jti
-            "verify_signature": True,
-            "verify_exp": True,
-            "verify_iat": True,
-            "verify_nbf": True,  # Verify nbf
-        }
-
-        kwargs: dict[str, object] = {
-            "algorithms": [self._algorithm],
-            "options": options,
-            "leeway": self._leeway,
-            "key": self._secret,
-        }
-
-        if self._issuer:
-            kwargs["issuer"] = self._issuer
-        if self._audience:
-            kwargs["audience"] = self._audience
-
-        try:
-            payload = self.jwt_encoder.decode(token_str, **kwargs)
-        except Exception as e:
-            msg = "Invalid JWT token"
-            raise ValueError(msg) from e
-
-        # Extract the standard fields
-        sid = str(payload["sid"])
-        iat = int(payload["iat"])
-        issued_at = datetime.fromtimestamp(iat, tz=timezone.utc)
-
-        # Optional: record the jti for auditing
-        jti = payload.get("jti")
-        # logger.info("JWT decoded: sid=%s, jti=%s", sid, jti)
-
-        return SessionToken(session_id=sid, signature="", issued_at=issued_at)
-```
-
-### Example 2: Adding Multi-Tenant Custom Claims
+The base class below does what the built-in `JWTTokenSerializer` does and leaves two hooks for the extra claims. It keeps its own copy of the settings, read from the public `SessionConfig` fields, instead of reaching into `JWTTokenSerializer`'s private attributes, which may change in any release. Like the built-in serializer, it follows `token.expires_at` in `to_string()`, so `exp` keeps up with sliding expiration.
 
 ```python
 from __future__ import annotations
@@ -266,94 +183,126 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import jwt
+
 from fastapi_cachex.session import SessionConfig
 from fastapi_cachex.session.models import SessionToken
-from fastapi_cachex.session.token_serializers import JWTTokenSerializer
 
 
-class MultiTenantJWTSerializer(JWTTokenSerializer):
-    """Multi-tenant JWT serializer that adds tenant_id and api_version."""
+class CustomClaimsJWTSerializer:
+    """JWT serializer with the built-in claims plus extra ones from subclasses."""
 
-    def __init__(
-        self,
-        config: SessionConfig,
-        tenant_id: str,
-        api_version: str = "v1",
-        jwt_module: Any | None = None,
-    ) -> None:
-        super().__init__(config, jwt_module)
-        self.tenant_id = tenant_id
-        self.api_version = api_version
+    # Claims that from_string() requires besides sid, iat and exp.
+    required_claims: tuple[str, ...] = ()
+
+    def __init__(self, config: SessionConfig) -> None:
+        self.secret = config.secret_key.get_secret_value()
+        self.algorithm = config.jwt_algorithm  # must be HS256, HS384 or HS512
+        self.issuer = config.jwt_issuer
+        self.audience = config.jwt_audience
+        self.leeway = config.jwt_leeway
+        self.session_ttl = config.session_ttl
+
+    def extra_claims(self, token: SessionToken) -> dict[str, Any]:
+        """Return the claims to add to a new token."""
+        return {}
+
+    def check_claims(self, payload: dict[str, Any]) -> None:
+        """Raise ValueError if the extra claims of a verified token are wrong."""
 
     def to_string(self, token: SessionToken) -> str:
-        """Encode a SessionToken as a JWT, including tenant information."""
+        """Encode a SessionToken as a signed JWT."""
         iat = int(token.issued_at.timestamp())
         if token.expires_at is not None:
             exp = int(token.expires_at.timestamp())
         else:
-            exp = iat + int(self._session_ttl)
+            exp = iat + self.session_ttl
 
-        payload: dict[str, object] = {
-            "sid": token.session_id,
-            "iat": iat,
-            "exp": exp,
-            # Custom claims
-            "tenant_id": self.tenant_id,
-            "api_version": self.api_version,
-        }
-
-        if self._issuer:
-            payload["iss"] = self._issuer
-        if self._audience:
-            payload["aud"] = self._audience
-
-        encoded = self.jwt_encoder.encode(
-            payload, self._secret, algorithm=self._algorithm
-        )
-        return str(encoded)
+        payload: dict[str, Any] = {"sid": token.session_id, "iat": iat, "exp": exp}
+        if self.issuer:
+            payload["iss"] = self.issuer
+        if self.audience:
+            payload["aud"] = self.audience
+        payload.update(self.extra_claims(token))
+        return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
     def from_string(self, token_str: str) -> SessionToken:
-        """Decode and verify a JWT, validating the tenant information."""
-        options = {
-            "require": ["sid", "iat", "exp", "tenant_id", "api_version"],
-            "verify_signature": True,
-            "verify_exp": True,
-            "verify_iat": True,
-        }
-
-        kwargs: dict[str, object] = {
-            "algorithms": [self._algorithm],
-            "options": options,
-            "leeway": self._leeway,
-            "key": self._secret,
-        }
-
-        if self._issuer:
-            kwargs["issuer"] = self._issuer
-        if self._audience:
-            kwargs["audience"] = self._audience
-
+        """Verify a JWT and turn it back into a SessionToken."""
         try:
-            payload = self.jwt_encoder.decode(token_str, **kwargs)
-        except Exception as e:
+            payload = jwt.decode(
+                token_str,
+                self.secret,
+                algorithms=[self.algorithm],
+                issuer=self.issuer,
+                audience=self.audience,
+                leeway=self.leeway,
+                options={"require": ["sid", "iat", "exp", *self.required_claims]},
+            )
+        except jwt.InvalidTokenError as e:
             msg = "Invalid JWT token"
             raise ValueError(msg) from e
 
-        # Validate the tenant information
+        self.check_claims(payload)
+        issued_at = datetime.fromtimestamp(int(payload["iat"]), tz=timezone.utc)
+        return SessionToken(
+            session_id=str(payload["sid"]), signature="", issued_at=issued_at
+        )
+```
+
+PyJWT verifies the signature, `exp`, `iat` and (when present) `nbf` by default, and `iss`/`aud` when `issuer`/`audience` are given. Two checks of the built-in serializer are not repeated here: it rejects an asymmetric `jwt_algorithm` and warns about a `secret_key` shorter than the HMAC output. This class signs with `secret_key` too, so keep an `HS*` algorithm; for an asymmetric one, hold the private and public keys in the class and use them in `jwt.encode()` and `jwt.decode()`.
+
+### Example 1: Adding `jti` and `nbf`
+
+```python
+import uuid
+from typing import Any
+
+from fastapi_cachex.session.models import SessionToken
+
+
+class ExtendedJWTSerializer(CustomClaimsJWTSerializer):
+    """Adds the jti and nbf claims."""
+
+    required_claims = ("jti", "nbf")
+
+    def extra_claims(self, token: SessionToken) -> dict[str, Any]:
+        return {
+            "jti": str(uuid.uuid4()),  # Unique token ID
+            "nbf": int(token.issued_at.timestamp()),  # Not before = issued at
+        }
+```
+
+### Example 2: Adding Multi-Tenant Custom Claims
+
+```python
+from typing import Any
+
+from fastapi_cachex.session import SessionConfig
+from fastapi_cachex.session.models import SessionToken
+
+
+class MultiTenantJWTSerializer(CustomClaimsJWTSerializer):
+    """Adds tenant_id and api_version, and rejects tokens for other tenants."""
+
+    required_claims = ("tenant_id", "api_version")
+
+    def __init__(
+        self, config: SessionConfig, tenant_id: str, api_version: str = "v1"
+    ) -> None:
+        super().__init__(config)
+        self.tenant_id = tenant_id
+        self.api_version = api_version
+
+    def extra_claims(self, token: SessionToken) -> dict[str, Any]:
+        return {"tenant_id": self.tenant_id, "api_version": self.api_version}
+
+    def check_claims(self, payload: dict[str, Any]) -> None:
         if payload["tenant_id"] != self.tenant_id:
             msg = f"Invalid tenant_id: expected {self.tenant_id}, got {payload['tenant_id']}"
             raise ValueError(msg)
-
         if payload["api_version"] != self.api_version:
             msg = f"Unsupported API version: {payload['api_version']}"
             raise ValueError(msg)
-
-        # Extract the standard fields
-        sid = str(payload["sid"])
-        iat = int(payload["iat"])
-        issued_at = datetime.fromtimestamp(iat, tz=timezone.utc)
-
-        return SessionToken(session_id=sid, signature="", issued_at=issued_at)
 ```
 
 ### Using a Custom Serializer
@@ -364,7 +313,11 @@ class MultiTenantJWTSerializer(JWTTokenSerializer):
 from fastapi import FastAPI
 
 from fastapi_cachex.backends import AsyncRedisCacheBackend
-from fastapi_cachex.session import SessionConfig, SessionManager, SessionMiddleware
+from fastapi_cachex.session import (
+    FastAPICacheXSessionMiddleware,
+    SessionConfig,
+    SessionManager,
+)
 
 app = FastAPI()
 
@@ -390,7 +343,7 @@ manager = SessionManager(backend, config, token_serializer=custom_serializer)
 
 # Add the middleware
 app.add_middleware(
-    SessionMiddleware,
+    FastAPICacheXSessionMiddleware,
     session_manager=manager,
     config=config,
 )
@@ -435,12 +388,12 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.session import (
+    FastAPICacheXSessionMiddleware,
     Session,
     SessionConfig,
     SessionManager,
-    SessionMiddleware,
     SessionUser,
-    get_session,
+    require_user_session,
 )
 
 # Uses the MultiTenantJWTSerializer defined above
@@ -467,7 +420,7 @@ serializer = MultiTenantJWTSerializer(
 manager = SessionManager(backend, config, token_serializer=serializer)
 
 app.add_middleware(
-    SessionMiddleware,
+    FastAPICacheXSessionMiddleware,
     session_manager=manager,
     config=config,
 )
@@ -492,11 +445,13 @@ async def login(username: str, password: str) -> dict[str, str]:
 
 
 @app.get("/api/profile")
-async def get_profile(session: Session = Depends(get_session)) -> dict[str, str | None]:
+async def get_profile(
+    session: Session = Depends(require_user_session),
+) -> dict[str, str | None]:
     """Protected endpoint; tenant_id is validated automatically."""
     # tenant_id and api_version were already validated while decoding the JWT.
-    # A token for another tenant fails to decode, so the middleware sets no
-    # session and get_session responds with 401.
+    # A token for another tenant fails to decode, so the middleware loads no
+    # session and require_user_session responds with 401.
     assert session.user is not None
     return {
         "user_id": session.user.user_id,
@@ -530,47 +485,52 @@ Always validate custom claims in `from_string()`:
 
 ```python
 # ❌ Bad: no validation
-payload = self.jwt_encoder.decode(token_str, **kwargs)
+payload = jwt.decode(token_str, self.secret, algorithms=[self.algorithm])
 tenant_id = payload.get("tenant_id")  # May be missing or invalid
 
 # ✅ Good: strict validation
-options = {"require": ["sid", "iat", "exp", "tenant_id"]}
-payload = self.jwt_encoder.decode(token_str, **kwargs)
-if payload["tenant_id"] != self.expected_tenant_id:
+payload = jwt.decode(
+    token_str,
+    self.secret,
+    algorithms=[self.algorithm],
+    options={"require": ["sid", "iat", "exp", "tenant_id"]},
+)
+if payload["tenant_id"] != self.tenant_id:
     raise ValueError("Invalid tenant_id")
 ```
 
 ### 4. Key Rotation
 
-To support key rotation, you can use the `kid` (Key ID) header parameter. The following is a sketch; `payload`, `kwargs` and `_get_key_by_id()` are yours to fill in:
+To support key rotation, you can use the `kid` (Key ID) header parameter. The following is a sketch built on `CustomClaimsJWTSerializer`; building `payload` and `kwargs` works as in its `to_string()` and `from_string()`:
 
 ```python
-class KeyRotationJWTSerializer(JWTTokenSerializer):
+class KeyRotationJWTSerializer(CustomClaimsJWTSerializer):
     def __init__(
-        self, config: SessionConfig, key_id: str, jwt_module: Any | None = None
+        self, config: SessionConfig, keys: dict[str, str], current_key_id: str
     ) -> None:
-        super().__init__(config, jwt_module)
-        self.key_id = key_id
+        super().__init__(config)
+        # Key ID -> secret. Keep a retired key until its tokens have expired.
+        self.keys = keys
+        self.current_key_id = current_key_id
 
     def to_string(self, token: SessionToken) -> str:
-        # Add kid to the JWT header
-        encoded = self.jwt_encoder.encode(
+        # Sign with the current key and name it in the header
+        return jwt.encode(
             payload,
-            self._secret,
-            algorithm=self._algorithm,
-            headers={"kid": self.key_id},
+            self.keys[self.current_key_id],
+            algorithm=self.algorithm,
+            headers={"kid": self.current_key_id},
         )
-        return str(encoded)
 
     def from_string(self, token_str: str) -> SessionToken:
-        # Parse the header to obtain kid
-        header = self.jwt_encoder.get_unverified_header(token_str)
-        kid = header.get("kid")
+        # Read kid from the (not yet verified) header and pick the matching key
+        kid = jwt.get_unverified_header(token_str).get("kid")
+        key = self.keys.get(kid)
+        if key is None:
+            msg = "Unknown key ID"
+            raise ValueError(msg)
 
-        # Pick the matching key based on kid
-        key = self._get_key_by_id(kid)
-
-        payload = self.jwt_encoder.decode(token_str, key=key, **kwargs)
+        payload = jwt.decode(token_str, key, algorithms=[self.algorithm], **kwargs)
         # ...
 ```
 
@@ -579,6 +539,7 @@ class KeyRotationJWTSerializer(JWTTokenSerializer):
 Add tests for your custom serializer:
 
 ```python
+import jwt
 import pytest
 
 from fastapi_cachex.backends.memory import MemoryBackend
@@ -603,12 +564,8 @@ async def test_custom_claims_included():
     session, token = await manager.create_session(user=user)
 
     # The token can be decoded and carries the custom claim
-    assert (
-        serializer.jwt_encoder.decode(token, options={"verify_signature": False})[
-            "tenant_id"
-        ]
-        == "test-tenant"
-    )
+    claims = jwt.decode(token, options={"verify_signature": False})
+    assert claims["tenant_id"] == "test-tenant"
 
     # get_session returns (session, renewed_token)
     retrieved, _renewed = await manager.get_session(token)
@@ -653,7 +610,7 @@ A: In most cases, no. `nbf` is for tokens that are issued in advance but become 
 
 ### Q: Can I add claims without writing code?
 
-A: Not currently; custom claims require subclassing `JWTTokenSerializer`. A future version might add a configuration option such as the hypothetical one below (it does not exist today, and `SessionConfig` rejects unknown fields):
+A: Not currently; custom claims require a custom `token_serializer`, such as the classes in the [Extension Guide](#extension-guide-adding-custom-claims). A future version might add a configuration option such as the hypothetical one below (it does not exist today, and `SessionConfig` rejects unknown fields):
 
 ```python
 SessionConfig(

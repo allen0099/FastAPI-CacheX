@@ -108,7 +108,7 @@ host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`�
 | 其他情況 | 依序為：`public` 或 `private`、`max-age=<ttl>`、`must-revalidate`、`stale-while-revalidate=<n>` 或 `stale-if-error=<n>`、`immutable` |
 
 > [!NOTE]
-> 沒有設定 `ttl`（或設定 `ttl=0`，此時會送出 `max-age=0`）時，項目仍會寫入（不設過期時間），但永遠不會直接拿來回應：它只用於以 `304` 回應相符的 `If-None-Match`。請設定正數的 `ttl`，讓伺服器重播快取的回應。
+> 沒有設定 `ttl`（或設定 `ttl=0`，此時會送出 `max-age=0`）時，既不讀取也不寫入後端：每個請求都會執行 handler，相符的 `If-None-Match` 只有在與新產生的回應比對之後才會以 `304` 回應。請設定正數的 `ttl`，讓伺服器儲存並重播回應。
 
 > [!WARNING]
 > **預設的快取鍵不包含使用者身分**，而且後端由所有 worker 與所有使用者共用。直接在需要驗證的端點上加上 `@cache(ttl=...)`，會把使用者 A 的回應提供給下一個請求相同路徑的使用者 B。
@@ -149,8 +149,8 @@ if request.method != "GET":
 if no_store:
     return await render()                    # 不讀取，不寫入
 
-if private:
-    response, etag = await render()          # 共用後端既不讀取也不寫入
+if private or not ttl:
+    response, etag = await render()          # 既不讀取也不寫入後端
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
 entry = await backend.get(cache_key)         # 過期的項目已在此略過
@@ -162,7 +162,7 @@ if client_etag and no_cache:
 elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
     return not_modified(...)                 # 304，handler 不執行
 
-if entry and not no_cache and ttl is not None:
+if entry and not no_cache:
     return Response(                         # 200，handler 不執行
         content=entry.content,
         status_code=entry.status_code,
@@ -332,7 +332,7 @@ async def cleanup_task():
 | `no_store=True` | 既不讀取也不寫入快取；端點每次都會執行 |
 | `no_cache=True` | 端點每次都會執行以重新計算 ETag；與用戶端的 `If-None-Match` 相符時仍回傳 304，ETag 改變時會更新快取 |
 | `private=True` | **共用後端**既不讀取也不寫入；仍會送出 `Cache-Control: private`，並以新產生的內容比對 ETag |
-| 沒有 `ttl` | 項目寫入時不設過期時間，但只用於 `If-None-Match` 重新驗證；沒有相符驗證器的請求每次都會執行 handler |
+| 沒有 `ttl`（或 `ttl=0`） | 與 `private=True` 一樣，既不讀取也不寫入後端；端點每次都會執行，並以新產生的內容比對 ETag |
 | 快取過期（TTL 已到） | 端點會再次執行；`MemoryBackend` 讀取到過期項目時會當場刪除 |
 | 非 2xx 或 206 回應 | 原樣回傳、不寫入，既有的項目不受影響 |
 | 串流／檔案回應 | 無法計算 ETag；原樣回傳且不寫入 |

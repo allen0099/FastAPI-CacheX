@@ -37,7 +37,7 @@ async def non_store_endpoint():
 
 | 指令                     | 設定方式                                 | 寫入標頭           | 對伺服器端快取的影響                                                                                           |
 |--------------------------|------------------------------------------|--------------------|----------------------------------------------------------------------------------------------------------------|
-| `max-age`                | `ttl=N`                                  | :white_check_mark: | `N` 秒內直接回傳已儲存的回應，不執行 handler（`ttl=0` 或未設定：不直接回傳）。                                   |
+| `max-age`                | `ttl=N`                                  | :white_check_mark: | `N` 秒內直接回傳已儲存的回應，不執行 handler（`ttl=0` 或未設定：不儲存任何內容）。                                   |
 | `no-cache`               | `no_cache=True`                          | :white_check_mark: | 每個請求都執行 handler；回應仍會儲存，`If-None-Match` 相符時回 304。                                            |
 | `no-store`               | `no_store=True`                          | :white_check_mark: | 不讀取也不儲存，也不設定 ETag。                                                                                |
 | `private`                | `private=True`                           | :white_check_mark: | 完全不經過後端；每個請求都執行 handler，ETag 重新驗證仍有效。                                                   |
@@ -65,7 +65,7 @@ async def non_store_endpoint():
 - **帶有 `If-None-Match` 標頭**：ETag 相符時回傳 HTTP 304 Not Modified
 - **使用 `no-cache` 指令**：先以新產生的內容強制重新驗證，再決定是否回 304
 - **使用 `private=True`**：不從共用後端讀取，也不寫入；每次都執行 handler，只有 `If-None-Match` 重新驗證有效
-- **未設定 `ttl`**（`ttl=None`）：快取的回應本文永遠不會直接回傳；每個請求都會執行 handler，唯一的例外是 `If-None-Match` 與已儲存 ETag 相符的請求，會得到 304
+- **未設定 `ttl`**（`ttl=None`）：與 `private=True` 相同，不從後端讀取，也不寫入。每個請求都會執行 handler，只有當 `If-None-Match` 與新產生的回應相符時才回 304，因此內容變更後，舊的 ETag 永遠不會得到 304
 - **使用 `ttl=0`**：送出 `max-age=0`，其餘行為與 `ttl=None` 相同。負數、非 `int`（例如 `1.5` 或 `True`）或超過 `MAX_TTL`（見 [TTL 值](BACKENDS.md#ttl-values)）的 `ttl`，都會在套用裝飾器時以 `CacheXError` 拒絕
 
 只有成功的回應會被儲存。handler *回傳* 非 2xx 狀態的回應（例如 `Response(..., status_code=404)`）會原樣傳出、永不快取，因此暫時性的錯誤不會取代或污染上一筆正常的項目。`206 Partial Content` 同樣排除在外，因為它的本文只對產生它的那個 `Range` 請求有意義。`Set-Cookie` 永遠不會被儲存或重播。
@@ -116,7 +116,7 @@ app.add_middleware(
 )
 ```
 
-所有後端都會自動替鍵加上前綴（例如 `fastapi_cachex:`）作為命名空間，以避免與其他應用程式衝突。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|||` 分隔的格式，因為它的鍵與 HTTP 請求無關。
+Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設為 `fastapi_cachex:`），讓其他應用程式可以共用同一台伺服器；`MemoryBackend` 沒有前綴。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|||` 分隔的格式，因為它的鍵與 HTTP 請求無關。
 
 ### 需驗證身分的端點 {#authenticated-endpoints}
 
@@ -179,6 +179,8 @@ async def my_dashboard(user: CurrentUser, response: Response):
 >
 > 以原始請求標頭組成的鍵等同於水平權限提升：送出 `X-User-Id: <someone-else>` 就會拿到該使用者的快取回應。
 
+key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True` 或沒有 `ttl` 的路由不會呼叫它。0.3.8 以前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
+
 ## 清除快取 {#clearing-the-cache}
 
 ### 依路徑或模式 {#by-path-or-pattern}
@@ -238,7 +240,7 @@ async def update_item(item_id: int, request: Request):
     return {"invalidated": await invalidate(StarletteRequest(scope))}
 ```
 
-`invalidate(request, key_builder=None)` 在項目存在且已移除時回傳 `True`，否則回傳 `False`（包括尚未設定後端的情況；它永遠不會拋出例外）。傳入的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder`，這裡也要傳入同一個，否則鍵不會相符。
+`invalidate(request, key_builder=None)` 在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳入的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder`，這裡也要傳入同一個，否則鍵不會相符。
 
 ## 監控路由 {#monitoring-routes}
 
