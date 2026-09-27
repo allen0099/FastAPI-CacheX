@@ -268,6 +268,65 @@ the response already lists (in any case) is not repeated, and a response with
 `vary="Accept"` is rejected when the decorator is applied, as are empty names,
 `*` and anything that is not a valid field name.
 
+#### Credential headers are hashed
+
+The key is not secret: it is listed by `get_all_keys()`, shown by the
+`/cached-records` and `/cached-hits` monitoring routes, and stored as-is in the
+Redis or Memcached keyspace. So for the headers that carry credentials,
+`Authorization`, `Proxy-Authorization`, `Cookie` and `X-Session-Token` (the
+session subsystem's default `header_name`), matched in any case, the component
+holds the full hex SHA-256 of the value (trimmed and joined as above) instead
+of the value:
+
+```
+GET|||example.com|||/me|||||||authorization=sha256:3f0a…(64 hex digits)
+```
+
+The same token always gives the same digest, so it hits its own entry, and two
+tokens give two entries. A missing or empty credential header is not hashed:
+it stays `authorization=`, like any other empty header, so every anonymous
+caller shares one entry and the key still shows that it is the anonymous one.
+Every other header, including a session header configured under another name,
+stays readable; if yours carries a secret, key on it through a `key_builder`
+(hashing it yourself) rather than `vary`.
+
+`vary=["Authorization"]` does not lift the rule for authorized requests (see
+[Authenticated endpoints](#authenticated-endpoints)): a request with an
+`Authorization` header still bypasses the backend unless the route is
+`public=True` or passes `cache_authorized=True`. Without either, only the
+anonymous `authorization=` entry is ever stored.
+
+#### `vary=["Cookie"]` warns
+
+Listing `Cookie` keys on the whole `Cookie` header, so every visitor with a
+distinct set of cookies (a session ID, an analytics ID, a consent flag) gets
+their own entry, and a new one whenever any cookie changes: the number of
+entries grows with the number of visitors. `@cache` emits a `UserWarning` when
+the decorator is applied, pointing at your `@cache(...)` line. Usually one of
+these is what you want instead:
+
+- a `key_builder` returning `build_cache_key(request, <the one cookie or the
+  user id that matters>)`, plus `Vary: Cookie` set on the response yourself;
+- `private=True`, which leaves per-visitor responses to the browser cache.
+
+The per-caller rules still apply: a request carrying a cookie is cached (only
+`Authorization` triggers the bypass), but a response that sets a cookie is
+never stored and is sent with `private`, so a route that refreshes a session
+cookie on every request stores nothing. If you do want `vary=["Cookie"]`,
+silence the warning with the standard filter, before the module defining the
+route is imported:
+
+```python
+import warnings
+
+warnings.filterwarnings("ignore", message="cache vary on Cookie")
+```
+
+`Authorization` and `X-Session-Token` in `vary` do not warn: they are also one
+entry per caller, but that is what `vary` with `cache_authorized=True` is for,
+and a caller keeps the same token across many requests, unlike an arbitrary
+bundle of cookies.
+
 > [!WARNING]
 > **Every distinct header value is its own entry, and the values come from the
 > client.** `Accept-Language: de`, `de-DE`, `de-DE,de;q=0.9` and every other

@@ -3,6 +3,7 @@
 import hashlib
 import inspect
 import logging
+import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -39,6 +40,7 @@ from .exceptions import RequestNotFoundError
 from .headers import add_vary
 from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
+from .session.config import DEFAULT_SESSION_HEADER_NAME
 from .types import CACHE_KEY_SEPARATOR
 from .types import CacheEntry
 from .types import CacheKeyBuilder
@@ -180,18 +182,51 @@ def _validate_vary(vary: Sequence[str] | None) -> list[str]:
     return list(names.values())
 
 
+# Request headers whose values are credentials: ``vary`` keys on a digest of
+# the value instead of the value, so the key (shown by ``get_all_keys()``, the
+# monitoring routes and the Redis/Memcached keyspace) never holds a token.
+_HASHED_VARY_HEADERS = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        DEFAULT_SESSION_HEADER_NAME.lower(),
+    }
+)
+_HASHED_VARY_MARKER = "sha256:"
+
+
 def _vary_components(request: Request, names: Sequence[str]) -> list[str]:
     """The key components for ``@cache(vary=names)``: ``name=value`` each.
 
     The name is lower-cased and the value trimmed; repeated header lines are
     joined with ``,`` as RFC 9110 §5.3 allows, and a missing header gives an
-    empty value, the same as an empty one.
+    empty value, the same as an empty one. For a credential header
+    (``Authorization``, ``Proxy-Authorization``, ``Cookie`` and the session
+    subsystem's ``X-Session-Token``) a non-empty value is replaced by
+    ``sha256:`` and the full hex SHA-256 of the joined value; an empty or
+    missing one stays ``name=``, so anonymous requests share one entry.
     """
-    return [
-        f"{name.lower()}="
-        + ",".join(value.strip() for value in request.headers.getlist(name))
-        for name in names
-    ]
+    components = []
+    for name in names:
+        lowered = name.lower()
+        value = ",".join(line.strip() for line in request.headers.getlist(name))
+        if value and lowered in _HASHED_VARY_HEADERS:
+            digest = hashlib.sha256(value.encode("utf-8", "surrogatepass"))
+            value = _HASHED_VARY_MARKER + digest.hexdigest()
+        components.append(f"{lowered}={value}")
+    return components
+
+
+_COOKIE_VARY_WARNING = (
+    "cache vary on Cookie: @cache(vary=[...]) lists Cookie, so every distinct "
+    "Cookie header gets its own entry and the number of entries grows with "
+    "the number of visitors (and a new entry is made whenever any cookie "
+    "changes). Key on the one value that matters instead, with a key_builder "
+    "returning build_cache_key(request, <that cookie or the user id>), or use "
+    "private=True. To keep vary=['Cookie'], silence this with "
+    "warnings.filterwarnings('ignore', message='cache vary on Cookie')."
+)
 
 
 def default_key_builder(request: Request) -> str:
@@ -232,6 +267,9 @@ async def invalidate(
         vary: The target route's ``vary`` names, if any. Only the variant
             selected by ``request``'s own values for those headers is
             deleted; ``clear_path()`` clears every variant of a path.
+            Credential headers (``Authorization``, ``Cookie``, ...) are
+            hashed exactly as ``@cache`` hashes them, so pass a request
+            carrying the same header value.
 
     Returns:
         True if a cache entry existed and was deleted, False otherwise.
@@ -752,7 +790,16 @@ def cache(
             header of every response to a GET request, unless it already
             lists them or ``*``. Values are client-controlled: each listed
             header multiplies the number of entries, so normalise them in a
-            ``key_builder`` when only a few values matter.
+            ``key_builder`` when only a few values matter. The credential
+            headers ``Authorization``, ``Proxy-Authorization``, ``Cookie``
+            and ``X-Session-Token`` are keyed on ``sha256:<hex digest>`` of
+            the value rather than the value, so no token or session cookie
+            appears in the key; missing or empty, they stay ``name=``.
+            Listing ``Cookie`` emits a ``UserWarning`` when the decorator is
+            applied, since every visitor then gets their own entry.
+            A request with ``Authorization`` still bypasses the backend
+            unless ``public`` or ``cache_authorized`` is set, and a response
+            that sets a cookie is still not stored.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -788,6 +835,10 @@ def cache(
             msg = f"ttl must be at most {MAX_TTL} seconds"
             raise CacheXError(msg)
         vary_names = _validate_vary(vary)
+        if any(name.lower() == "cookie" for name in vary_names):
+            # stacklevel=2: the caller applying the decorator, i.e. the line
+            # of the user's @cache(...).
+            warnings.warn(_COOKIE_VARY_WARNING, UserWarning, stacklevel=2)
 
         # Analyze the original function's signature
         sig: Signature = inspect.signature(func)

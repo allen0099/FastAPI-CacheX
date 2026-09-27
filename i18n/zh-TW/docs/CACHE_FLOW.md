@@ -74,7 +74,7 @@ cache_key = CACHE_KEY_SEPARATOR.join(
 
 host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`（`fastapi_cachex/types.py` 中的 `escape_key_component`）。兩者都來自用戶端，其中若出現未編碼的 `|||`，各段就會錯位，使某個請求的快取鍵可能與另一個請求相同。查詢字串本來就經過 URL 編碼。監控路由顯示時會再解碼。
 
-自訂的 `key_builder` 可以用 `build_cache_key(request, *components)` 在查詢字串之後加入其他段；這些段以同樣方式編碼，`clear_path()` 也仍會比對路徑（見 [HTTP 快取](HTTP_CACHING.md#adding-components-to-the-key)中的「在鍵中加入其他段」）。`@cache(vary=[...])` 會在 key builder 回傳的鍵之後，為每個列出的請求標頭附加一個 `name=value` 段，並把這些名稱加入回應的 `Vary` 標頭（見 [HTTP 快取](HTTP_CACHING.md#varying-on-request-headers)中的「依請求標頭區分」）。
+自訂的 `key_builder` 可以用 `build_cache_key(request, *components)` 在查詢字串之後加入其他段；這些段以同樣方式編碼，`clear_path()` 也仍會比對路徑（見 [HTTP 快取](HTTP_CACHING.md#adding-components-to-the-key)中的「在鍵中加入其他段」）。`@cache(vary=[...])` 會在 key builder 回傳的鍵之後，為每個列出的請求標頭附加一個 `name=value` 段，並把這些名稱加入回應的 `Vary` 標頭（見 [HTTP 快取](HTTP_CACHING.md#varying-on-request-headers)中的「依請求標頭區分」）。對於憑證標頭 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`，非空的值會寫成 `sha256:<十六進位摘要>`，因此鍵中不會出現任何權杖。
 
 查詢參數依請求送出的順序串接（`str(request.query_params)`），**不會排序**，因此 `?page=1&limit=10` 與 `?limit=10&page=1` 是兩個不同的快取項目。若希望兩者視為同一個，請傳入自訂的 `key_builder` 將查詢字串正規化。
 

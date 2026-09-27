@@ -1,5 +1,7 @@
-"""``@cache(vary=[...])`` keys on request headers and sends ``Vary`` (#268)."""
+"""``@cache(vary=[...])`` keys on request headers and sends ``Vary`` (#268, #312)."""
 
+import hashlib
+import warnings
 from typing import Any
 
 import pytest
@@ -8,8 +10,11 @@ from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
 
+from fastapi_cachex import SessionConfig
+from fastapi_cachex import add_routes
 from fastapi_cachex import build_cache_key
 from fastapi_cachex import invalidate
+from fastapi_cachex.cache import _HASHED_VARY_HEADERS
 from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
@@ -271,3 +276,183 @@ async def test_invalid_vary_is_rejected_by_invalidate() -> None:
 
     with pytest.raises(CacheXError, match="vary"):
         await invalidate(request, vary="Accept")
+
+
+# --- Credential headers are hashed (#312) ---
+
+TOKEN_A = "Bearer secret-token-a"
+TOKEN_B = "Bearer secret-token-b"
+ME_KEY = "GET|||testserver|||/me|||"
+
+
+def _digest(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode()).hexdigest()
+
+
+def _credential_app(
+    vary: list[str], **cache_kwargs: Any
+) -> tuple[TestClient, dict[str, int]]:
+    app = FastAPI()
+    calls = {"n": 0}
+
+    @app.get("/me")
+    @cache(ttl=60, vary=vary, **cache_kwargs)
+    async def me() -> dict[str, int]:
+        calls["n"] += 1
+        return {"n": calls["n"]}
+
+    @app.post("/me")
+    async def reset(request: Request) -> dict[str, bool]:
+        request.scope["method"] = "GET"
+        return {"deleted": await invalidate(request, vary=vary)}
+
+    add_routes(app, prefix="/cache", dependencies=[])
+    return TestClient(app), calls
+
+
+async def test_authorization_value_is_hashed_everywhere_the_key_shows() -> None:
+    client, calls = _credential_app(["Authorization"], cache_authorized=True)
+
+    first = client.get("/me", headers={"Authorization": TOKEN_A})
+    again = client.get("/me", headers={"Authorization": TOKEN_A})
+    other = client.get("/me", headers={"Authorization": TOKEN_B})
+
+    assert first.json() == again.json() == {"n": 1}
+    assert other.json() == {"n": 2}
+    assert calls["n"] == 2
+    keys = await BackendProxy.get().get_all_keys()
+    assert sorted(keys) == sorted(
+        [
+            f"{ME_KEY}|||authorization={_digest(TOKEN_A)}",
+            f"{ME_KEY}|||authorization={_digest(TOKEN_B)}",
+        ]
+    )
+    records = client.get("/cache/cached-records").text
+    hits = client.get("/cache/cached-hits").text
+    for shown in (" ".join(keys), records, hits):
+        assert "secret-token" not in shown
+        assert _digest(TOKEN_A) in shown
+
+
+@pytest.mark.parametrize(
+    ("name", "header"),
+    [
+        pytest.param("Authorization", "authorization", id="authorization"),
+        pytest.param("AUTHORIZATION", "authorization", id="upper-case"),
+        pytest.param("proxy-authorization", "proxy-authorization", id="proxy"),
+        pytest.param("X-Session-Token", "x-session-token", id="session-token"),
+    ],
+)
+async def test_credential_headers_are_hashed_in_any_case(
+    name: str, header: str
+) -> None:
+    client, _ = _credential_app([name], public=True)
+
+    client.get("/me", headers={header.upper(): "  s3cret  "})
+
+    assert await BackendProxy.get().get_all_keys() == [
+        f"{ME_KEY}|||{header}={_digest('s3cret')}"
+    ]
+
+
+def test_session_header_default_is_hashed() -> None:
+    default = SessionConfig.model_fields["header_name"].default
+
+    assert default.lower() in _HASHED_VARY_HEADERS
+
+
+async def test_cookie_is_hashed_with_repeated_lines_joined() -> None:
+    with pytest.warns(UserWarning, match="cache vary on Cookie"):
+        client, _ = _credential_app(["Cookie"])
+
+    client.get("/me", headers=[("Cookie", "sid=abc"), ("Cookie", " theme=dark ")])
+
+    assert await BackendProxy.get().get_all_keys() == [
+        f"{ME_KEY}|||cookie={_digest('sid=abc,theme=dark')}"
+    ]
+
+
+async def test_missing_or_empty_credential_header_gives_the_empty_component() -> None:
+    client, calls = _credential_app(["Authorization"], cache_authorized=True)
+
+    client.get("/me")
+    client.get("/me", headers={"Authorization": "   "})
+
+    assert calls["n"] == 1
+    assert await BackendProxy.get().get_all_keys() == [f"{ME_KEY}|||authorization="]
+
+
+async def test_authorization_in_vary_still_bypasses_without_opt_in() -> None:
+    client, calls = _credential_app(["Authorization"])
+
+    client.get("/me", headers={"Authorization": TOKEN_A})
+    client.get("/me", headers={"Authorization": TOKEN_A})
+    client.get("/me")
+
+    assert calls["n"] == 3
+    assert await BackendProxy.get().get_all_keys() == [f"{ME_KEY}|||authorization="]
+
+
+async def test_non_credential_headers_stay_readable() -> None:
+    client, _ = _credential_app(["X-Tenant", "Authorization"], cache_authorized=True)
+
+    client.get("/me", headers={"X-Tenant": "acme", "Authorization": TOKEN_A})
+
+    assert await BackendProxy.get().get_all_keys() == [
+        f"{ME_KEY}|||x-tenant=acme|||authorization={_digest(TOKEN_A)}"
+    ]
+
+
+async def test_invalidate_deletes_the_hashed_variant() -> None:
+    client, _ = _credential_app(["Authorization"], cache_authorized=True)
+    client.get("/me", headers={"Authorization": TOKEN_A})
+    client.get("/me", headers={"Authorization": TOKEN_B})
+
+    deleted = client.post("/me", headers={"Authorization": TOKEN_A}).json()
+    again = client.post("/me", headers={"Authorization": TOKEN_A}).json()
+
+    assert deleted == {"deleted": True}
+    assert again == {"deleted": False}
+    assert await BackendProxy.get().get_all_keys() == [
+        f"{ME_KEY}|||authorization={_digest(TOKEN_B)}"
+    ]
+
+
+# --- vary=["Cookie"] warns at decoration (#312) ---
+
+
+@pytest.mark.parametrize("name", ["Cookie", "cookie", "COOKIE"])
+def test_vary_on_cookie_warns_at_the_callers_line(name: str) -> None:
+    with pytest.warns(UserWarning, match="cache vary on Cookie") as record:
+
+        @cache(ttl=60, vary=["Accept-Language", name])
+        async def handler() -> dict[str, str]:
+            return {}
+
+    [warning] = record
+    assert warning.filename == __file__
+    assert "build_cache_key" in str(warning.message)
+    assert "private=True" in str(warning.message)
+
+
+def test_documented_filter_silences_the_cookie_warning() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        warnings.filterwarnings("ignore", message="cache vary on Cookie")
+
+        cache(ttl=60, vary=["Cookie"])(lambda: None)
+
+
+@pytest.mark.parametrize(
+    "vary",
+    [
+        pytest.param(["Accept-Language"], id="accept-language"),
+        pytest.param(["Authorization", "X-Session-Token"], id="credentials"),
+        pytest.param(["X-Cookie-Consent"], id="cookie-lookalike"),
+    ],
+)
+def test_other_vary_names_do_not_warn(vary: list[str]) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        cache(ttl=60, vary=vary)(lambda: None)

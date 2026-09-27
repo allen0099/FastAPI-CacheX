@@ -90,6 +90,9 @@ A custom `key_builder` can add components after the query string with
 appends one `name=value` component per listed request header after whatever
 the key builder returns, and adds the names to the response's `Vary` header
 (see [Varying on request headers](HTTP_CACHING.md#varying-on-request-headers)).
+For the credential headers `Authorization`, `Proxy-Authorization`, `Cookie`
+and `X-Session-Token` a non-empty value is written as `sha256:<hex digest>`,
+so no token appears in the key.
 
 Query parameters are joined in the order the request sent them
 (`str(request.query_params)`) and are **not sorted**, so `?page=1&limit=10` and
