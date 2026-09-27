@@ -232,7 +232,7 @@ jobs:
             echo 'Changes that the release commit would have carried:'
             echo
             echo '```'
-            git --no-pager diff --stat -- pyproject.toml uv.lock CHANGELOG.md
+            git --no-pager diff --stat -- pyproject.toml uv.lock CHANGELOG.md changelog.d
             echo '```'
             echo
             echo 'Build artifacts:'
@@ -305,7 +305,12 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          git add pyproject.toml uv.lock CHANGELOG.md
+          # `build` merged every fragment in changelog.d/ into CHANGELOG.md and
+          # deleted it, but an artifact cannot carry a deletion. This is the
+          # same commit, and `build` fails on any file there other than
+          # fragments, README.md and dotfiles, so delete the same files here.
+          find changelog.d -maxdepth 1 -type f -name '*.md' ! -name README.md ! -name '.*' -delete
+          git add pyproject.toml uv.lock CHANGELOG.md changelog.d
           if git diff --cached --quiet; then
             echo "Nothing to commit; releasing HEAD as it is."
           else

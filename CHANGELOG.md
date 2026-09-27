@@ -6,12 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 This file records what changed for users of the library, in particular
-behaviour that changed under an unchanged API. Entries are added by hand, in
-the pull request that earns them, and each one opens with a bold one-line
-summary: `- **What changed.** The details...`. The GitHub release notes list
-those summaries and link back here, and a release fails if `## [Unreleased]`
-is empty or an entry has no summary. Entries before 0.3.8 predate this format.
-See [Releasing](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/#releasing).
+behaviour that changed under an unchanged API. The pull request that earns an
+entry adds it as a fragment in `changelog.d/`, and the release merges the
+fragments in here, so `## [Unreleased]` is usually empty between releases. Each
+entry opens with a bold one-line summary: `- **What changed.** The details...`.
+The GitHub release notes list those summaries and link back here, and a release
+fails if there is nothing to release or an entry has no summary. Entries before
+0.3.8 predate this format. See
+[Changelog fragments](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/#changelog-fragments)
+and [Releasing](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/#releasing).
 
 Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 

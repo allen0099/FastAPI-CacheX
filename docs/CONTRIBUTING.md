@@ -32,13 +32,18 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
 1. Update the matching guide under `docs/` (and the README if the change belongs on the front page) when you change the interface. Only the English
    pages need updating: the [Traditional Chinese translation](DEVELOPMENT.md#traditional-chinese-translation)
    is allowed to lag behind them
-2. Add an entry to the `## [Unreleased]` section of
-   [CHANGELOG.md](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md) if your change alters behaviour, adds public
-   API, or fixes something a user could have hit. Open the entry with a bold
-   one-line summary, `- **What changed.** The details...`: the release notes
-   list only those summaries, and CI fails on an entry without one. A release
-   also refuses to run on an empty section, so an omission surfaces — but only
-   at release time, and only as "somebody forgot", never as which PR it was
+2. Add a changelog fragment if your change alters behaviour, adds public
+   API, or fixes something a user could have hit: a file
+   `changelog.d/<issue>.<section>.md` (section `added`, `changed`,
+   `deprecated`, `removed`, `fixed` or `security`) holding the entry, opening
+   with a bold one-line summary, `**What changed.** The details...`, without a
+   leading `- ` or the issue link — the release adds both. Do not edit
+   [CHANGELOG.md](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md)
+   directly; see [Changelog fragments](DEVELOPMENT.md#changelog-fragments). The
+   release notes list only the summaries, and CI fails on a malformed fragment.
+   A release also refuses to run with nothing to release, so an omission
+   surfaces — but only at release time, and only as "somebody forgot", never as
+   which PR it was
 3. Update the documentation with any new dependencies, features, or changes.
    New public API needs a docstring and, if it lives in a module not yet
    covered, an entry under `docs/api/`; check the site with
