@@ -22,6 +22,7 @@ from fastapi_cachex.state.exceptions import StateExpiredError
 from fastapi_cachex.state.manager import StateManager
 from fastapi_cachex.state.models import StateData
 from fastapi_cachex.types import CacheEntry
+from tests.conftest import Clock
 from tests.live_servers import REDIS_HOST
 from tests.live_servers import REDIS_PORT
 from tests.live_servers import requires_redis
@@ -339,15 +340,14 @@ async def test_state_reuse_prevention(state_manager: StateManager) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_state_metadata_after_expire(state_manager: StateManager) -> None:
+async def test_get_state_metadata_after_expire(
+    state_manager: StateManager, clock: Clock
+) -> None:
     """Test retrieving metadata from an expired state."""
     # Create state with very short TTL
     state = await state_manager.create_state(ttl=1, metadata={"test": "data"})
 
-    # Wait for state to expire
-    import asyncio
-
-    await asyncio.sleep(1.1)
+    await clock.wait(1.1, state_manager.backend)
 
     # Try to retrieve metadata - should return None since it's expired
     retrieved = await state_manager.get_state_metadata(state)

@@ -13,6 +13,15 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import COUNTER_FINGERPRINT
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
+from tests.conftest import Clock
+
+
+async def _until(condition: Callable[[], bool]) -> None:
+    """Give the background sweeper up to a second of real time to act."""
+    for _ in range(100):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
 
 
 @pytest_asyncio.fixture
@@ -96,7 +105,7 @@ async def test_memory_backend_clear(memory_backend: MemoryBackend):
 
 
 @pytest.mark.asyncio
-async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend):
+async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend, clock: Clock):
     key = "test_key"
     value = CacheEntry(
         fingerprint="test_etag",
@@ -106,14 +115,14 @@ async def test_memory_backend_ttl_expiry(memory_backend: MemoryBackend):
     ttl = 1
 
     await memory_backend.set(key, value, ttl)
-    await asyncio.sleep(2)  # Wait for the TTL to expire
+    clock.advance(1.5)
     retrieved_value = await memory_backend.get(key)
 
     assert retrieved_value is None
 
 
 @pytest.mark.asyncio
-async def test_memory_backend_cleanup(memory_backend: MemoryBackend):
+async def test_memory_backend_cleanup(memory_backend: MemoryBackend, clock: Clock):
     key1 = "test_key1"
     value1 = CacheEntry(
         fingerprint="test_etag1",
@@ -131,7 +140,7 @@ async def test_memory_backend_cleanup(memory_backend: MemoryBackend):
 
     await memory_backend.set(key1, value1, ttl1)
     await memory_backend.set(key2, value2, ttl2)
-    await asyncio.sleep(2)  # Wait for the TTL of key1 to expire
+    clock.advance(1.5)  # past key1's TTL, well within key2's
     await memory_backend.cleanup()
 
     retrieved_value1 = await memory_backend.get(key1)
@@ -262,7 +271,9 @@ def test_aclose_only_cancels_a_task_on_another_loop():
 
 
 @pytest.mark.asyncio
-async def test_memory_backend_cleanup_task_impl():
+async def test_memory_backend_cleanup_task_impl(
+    clock: Clock, monkeypatch: pytest.MonkeyPatch
+):
     """The sweeper itself has to drop expired entries.
 
     Reading the keys back through `get` proves nothing about the sweeper:
@@ -271,16 +282,18 @@ async def test_memory_backend_cleanup_task_impl():
     dictionary is inspected directly instead, and neither key is ever read.
     """
     backend = MemoryBackend(cleanup_interval=1)
+    # Sweep every 10 ms of real time; the entries' TTLs run on `clock`.
+    monkeypatch.setattr(backend, "cleanup_interval", 0.01)
     expiring = CacheEntry(fingerprint="test_etag1", content=b"test_value1")
     surviving = CacheEntry(fingerprint="test_etag2", content=b"test_value2")
 
     await backend.set("expiring", expiring, ttl=1)
     await backend.set("surviving", surviving, ttl=60)
+    clock.advance(1.5)
     backend.start_cleanup()
 
     try:
-        # One full interval plus the entry's own TTL.
-        await asyncio.sleep(2)
+        await _until(lambda: "expiring" not in backend.cache)
 
         assert "expiring" not in backend.cache
         assert backend.cache["surviving"].value == surviving
@@ -735,7 +748,9 @@ async def test_memory_delete_many_counts_only_existing_keys(
 
 
 @pytest.mark.asyncio
-async def test_write_only_use_starts_the_cleanup_task():
+async def test_write_only_use_starts_the_cleanup_task(
+    clock: Clock, monkeypatch: pytest.MonkeyPatch
+):
     """A backend that is only written to still needs its sweeper running.
 
     Only `get` used to start it, so a write-mostly caller — `StateManager`
@@ -743,12 +758,14 @@ async def test_write_only_use_starts_the_cleanup_task():
     expired entries with nothing to remove them.
     """
     backend = MemoryBackend(cleanup_interval=1)
+    monkeypatch.setattr(backend, "cleanup_interval", 0.01)
 
     await backend.set("gone", CacheEntry(fingerprint="e", content=b"v"), ttl=1)
     await backend.set("stays", CacheEntry(fingerprint="e", content=b"v"), ttl=60)
+    clock.advance(1.5)
 
     try:
-        await asyncio.sleep(2)
+        await _until(lambda: "gone" not in backend.cache)
 
         # Nothing here ever calls `get`, so only the sweeper can have removed
         # the expired key — a task that merely exists would leave it in place.
@@ -759,7 +776,7 @@ async def test_write_only_use_starts_the_cleanup_task():
 
 
 @pytest.mark.asyncio
-async def test_get_evicts_the_expired_entry_it_skips():
+async def test_get_evicts_the_expired_entry_it_skips(clock: Clock):
     """A miss on an expired key must also free the memory it was holding.
 
     Asserting that `get` returns `None` says nothing about this: it returns
@@ -771,7 +788,7 @@ async def test_get_evicts_the_expired_entry_it_skips():
     await backend.set("k", CacheEntry(fingerprint="e", content=b"v"), ttl=1)
 
     try:
-        await asyncio.sleep(1.05)
+        clock.advance(1.05)
 
         assert await backend.get("k") is None
         assert "k" not in backend.cache

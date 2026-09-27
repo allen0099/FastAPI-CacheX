@@ -5,7 +5,7 @@ These tests are skipped if PyJWT is not installed.
 
 from __future__ import annotations
 
-import asyncio
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -14,6 +14,9 @@ from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.exceptions import SessionTokenError
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.models import SessionUser
+
+if TYPE_CHECKING:
+    from tests.conftest import Clock
 
 jwt = pytest.importorskip("jwt")
 
@@ -79,13 +82,17 @@ async def test_jwt_wrong_audience_rejected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_jwt_expiration_enforced() -> None:
+async def test_jwt_expiration_enforced(clock: Clock) -> None:
     backend = MemoryBackend()
     config = SessionConfig(secret_key="a" * 32, token_format="jwt", session_ttl=1)
     manager = SessionManager(backend, config)
 
+    # PyJWT checks `exp` against the real time, which `clock` cannot move, so
+    # the session is created in the past instead: its `exp` has already gone
+    # by. The backend entry and the session itself go by `clock` and are still
+    # current, so only the token check can reject it.
+    clock.advance(-5)
     _session, token = await manager.create_session(user=SessionUser(user_id="u1"))
-    await asyncio.sleep(1.2)
 
     # JWT should be expired before reaching session checks
     with pytest.raises(SessionTokenError):
