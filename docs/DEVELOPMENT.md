@@ -114,6 +114,10 @@ extras through `tox-uv` and passes the `CACHEX_TEST_*` and
 `CACHEX_REQUIRE_LIVE_SERVERS` variables through, so the opt-in rules above apply
 unchanged.
 
+tox is for local runs. CI runs the same versions as a job matrix in the
+**Test** workflow (`.github/workflows/test.yml`), one job per version, so it
+does not run tox as well.
+
 1. Install all Python versions (`uv python install 3.10 3.11 3.12 3.13 3.14`)
 2. Run tox:
 
