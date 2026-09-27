@@ -228,6 +228,71 @@ default) in front of every key, so other applications can share the server;
 namespace instead of this `|||`-separated format, since its keys aren't tied to
 HTTP requests.
 
+### Varying on request headers
+
+The key includes no request header, so a route whose response depends on, say,
+`Accept-Language` would serve the first cached language to everyone. List such
+headers in `vary`:
+
+```python
+@app.get("/greeting")
+@cache(ttl=300, vary=["Accept-Language"])
+async def greeting(request: Request):
+    return {"text": translate("hello", request.headers.get("accept-language"))}
+```
+
+Each listed header adds a `name=value` component to the key: the name
+lower-cased, the value trimmed (repeated header lines joined with `,`), and a
+missing header treated as an empty one. The components are escaped like the
+rest of the key and come after whatever the `key_builder` returns, so `vary`
+and a custom key builder compose:
+`GET|||example.com|||/greeting|||||||tenant-1|||accept-language=de` for
+`key_builder` returning `build_cache_key(request, "tenant-1")`. Routes without
+`vary` keep their keys.
+
+The names are also added to the `Vary` header of every response to a GET
+request on the route, on a 200 or a 304, served from the backend or not
+(`private`, `no_store`, a bypassed `Authorization` request or a response that
+is not stored), so a shared cache in front of the app keys on them too. A name
+the response already lists (in any case) is not repeated, and a response with
+`Vary: *` is left alone.
+
+`vary` must be a list (or tuple) of header field names. A bare string such as
+`vary="Accept"` is rejected when the decorator is applied, as are empty names,
+`*` and anything that is not a valid field name.
+
+> [!WARNING]
+> **Every distinct header value is its own entry, and the values come from the
+> client.** `Accept-Language: de`, `de-DE`, `de-DE,de;q=0.9` and every other
+> spelling are separate keys, and a client can send a new one on every request
+> to fill the backend. Each listed header multiplies the number of entries.
+> When only a few values matter, normalise in a `key_builder` instead, and add
+> the header to `Vary` yourself:
+>
+> ```python
+> SUPPORTED = ("en", "de", "fr")
+>
+>
+> def locale_key(request: Request) -> str:
+>     wanted = request.headers.get("accept-language", "")
+>     locale = next(
+>         (tag for tag in SUPPORTED if wanted.lower().startswith(tag)), "en"
+>     )
+>     return build_cache_key(request, locale)
+>
+>
+> @app.get("/greeting")
+> @cache(ttl=300, key_builder=locale_key)
+> async def greeting(request: Request, response: Response):
+>     response.headers["Vary"] = "Accept-Language"
+>     return {"text": translate("hello", locale_of(request))}
+> ```
+
+`clear_path()` clears every variant of a path (see
+[Adding components to the key](#adding-components-to-the-key)).
+`invalidate()` takes the same `vary` list and deletes only the variant the
+request it is given selects.
+
 ### Authenticated endpoints
 
 > [!WARNING]
@@ -375,12 +440,14 @@ async def update_item(item_id: int, request: Request):
     return {"invalidated": await invalidate(StarletteRequest(scope))}
 ```
 
-`invalidate(request, key_builder=None)` returns `True` when an entry existed and
+`invalidate(request, key_builder=None, vary=None)` returns `True` when an entry existed and
 was removed, `False` otherwise, including when no backend is configured. An
 error from the backend itself is raised to the caller (see
 [When the backend fails](#when-the-backend-fails)). The request you hand it must produce the cached route's key:
 same method, host, path and query string. If the cached route uses a custom
-`key_builder`, pass the same one here, or the key will not match.
+`key_builder` or `vary`, pass the same here, or the key will not match; with
+`vary` only the variant selected by the request's own header values is
+deleted, and `clear_path()` removes all of them.
 
 ## Monitoring routes
 

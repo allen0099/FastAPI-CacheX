@@ -18,6 +18,8 @@ from starlette.types import Receive
 from starlette.types import Scope
 from starlette.types import Send
 
+from fastapi_cachex.headers import add_vary
+
 from .config import SessionConfig
 from .exceptions import SessionError
 from .manager import SessionManager
@@ -144,30 +146,6 @@ def _read_header_token(
                     return token_value, consulted
 
     return None, consulted
-
-
-def _add_vary(headers: MutableHeaders, names: list[str]) -> None:
-    """Add header names to ``Vary``, keeping the values already there.
-
-    Starlette's ``add_vary_header`` appends unconditionally, so names the
-    response already varies on (compared case-insensitively) are skipped, as
-    is everything when it already varies on ``*``.
-
-    Args:
-        headers: Mutable response headers to write to
-        names: Request header names the response depends on
-    """
-    present = {
-        value.strip().lower()
-        for line in headers.getlist("vary")
-        for value in line.split(",")
-    }
-    if "*" in present:
-        return
-    for name in names:
-        if name.lower() not in present:
-            headers.add_vary_header(name)
-            present.add(name.lower())
 
 
 def _forbid_storing(headers: MutableHeaders) -> None:
@@ -298,7 +276,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
         if response_token is not None:
             response.headers[self.config.header_name] = response_token
-            _add_vary(response.headers, _read_header_token(request, self.config)[1])
+            add_vary(response.headers, _read_header_token(request, self.config)[1])
             _forbid_storing(response.headers)
 
         return response
@@ -459,7 +437,7 @@ class FastAPICacheXSessionMiddleware:
                 )
 
                 if session.accessed or sent_token:
-                    _add_vary(headers, vary_on)
+                    add_vary(headers, vary_on)
                 if sent_token:
                     _forbid_storing(headers)
 
