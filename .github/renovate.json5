@@ -1,6 +1,8 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: ["config:recommended"],
+  // Workflows pin every action to a commit SHA with a `# vX.Y.Z` comment;
+  // this keeps the pins (and their comments) up to date.
+  extends: ["config:recommended", "helpers:pinGitHubActionDigests"],
   dependencyDashboard: true,
   semanticCommits: "enabled",
   semanticCommitType: "chore",
