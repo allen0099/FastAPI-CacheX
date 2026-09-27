@@ -316,20 +316,42 @@ class MemcachedBackend(BaseCacheBackend):
         return None if result is None else int(result)
 
     def _increment(self, prefixed_key: str, delta: int, exptime: int) -> int | None:
-        """Run ``increment``'s INCR, ADD and retried INCR in one worker thread."""
+        """Run ``increment``'s INCR, ADD and retried INCR in one worker thread.
+
+        Returns ``None`` only when the counter vanished after every one of
+        ``_CAS_MAX_RETRIES`` ADD + INCR attempts.
+        """
         value = self._add_delta(prefixed_key, delta)
-        if value is None:
+        if value is not None:
+            return value
+        for _ in range(_CAS_MAX_RETRIES):
             # No counter yet: ADD is atomic and a no-op when a concurrent
-            # call created it first, so the retry always finds a counter.
+            # call created it first.
             self.client.add(prefixed_key, b"0", exptime, noreply=False)
             value = self._add_delta(prefixed_key, delta)
-        return value
+            if value is not None:
+                return value
+            # Memcached keeps time in whole seconds, so a counter created with
+            # a short ttl can expire before the INCR that follows its ADD. It
+            # expired inside its own window, so the next window starts again
+            # at ``delta``.
+            logger.debug("Memcached INCREMENT RETRY; key=%s", prefixed_key)
+        return None
 
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 
         Memcached counters are unsigned, so a negative ``delta`` uses DECR,
         which stops at 0 instead of going negative.
+
+        Creating a counter takes an ADD and then an INCR. If the new counter
+        expires in between (Memcached's clock has one-second resolution, so a
+        ``ttl=1`` counter can live for well under a second), the ADD + INCR
+        pair is retried, starting a new window at ``delta``.
+
+        Raises:
+            CacheXError: If the key holds a value that is not a counter, or
+                the counter vanished after every ADD + INCR attempt.
         """
         validate_delta(delta)
         validate_ttl(ttl)
@@ -348,7 +370,7 @@ class MemcachedBackend(BaseCacheBackend):
             msg = "Cache key holds a value that is not a counter"
             raise CacheXError(msg) from e
         if value is None:
-            msg = "Counter vanished between ADD and INCR"
+            msg = f"Counter vanished between ADD and INCR on each of {_CAS_MAX_RETRIES} attempts"
             raise CacheXError(msg)
         logger.debug("Memcached INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
         return value

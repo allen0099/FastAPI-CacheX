@@ -243,8 +243,11 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 
 - `increment(key, delta=1, ttl=None) -> int` — Memory does the read-modify-write
   under its lock, Redis runs a Lua script (`EXISTS` + `INCRBY` + `EXPIRE`) and
-  Memcached uses `ADD` + `INCR`/`DECR` (Memcached counters stop at 0). The
-  counter is visible through `get()` as a `CacheEntry` with fingerprint
+  Memcached uses `ADD` + `INCR`/`DECR` (Memcached counters stop at 0).
+  Memcached keeps time in whole seconds, so a new counter with a short `ttl`
+  can expire between its `ADD` and the `INCR`; Memcached then retries `ADD` +
+  `INCR`, starting a new window at `delta`, and raises `CacheXError` only if
+  the counter vanishes on all 16 attempts. The counter is visible through `get()` as a `CacheEntry` with fingerprint
   `COUNTER_FINGERPRINT` and the decimal value as content, so `delete`/`clear*`
   and the monitoring routes treat it like any other entry. Incrementing a key
   that holds anything else raises `CacheXError` on every backend, even a cached
