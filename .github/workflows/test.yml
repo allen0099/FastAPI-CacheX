@@ -14,7 +14,14 @@ on:
   pull_request:
     branches: [ "master" ]
 
+permissions:
+  contents: read
+
 jobs:
+  # The one CI run of the 3.10-3.14 matrix. tox runs the same suites against
+  # the same lockfile, so it is left to local use rather than run here twice.
+  # A run against the lowest supported dependency versions would be a
+  # separate job next to this one.
   test:
     runs-on: ubuntu-latest
 

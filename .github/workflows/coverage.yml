@@ -14,8 +14,9 @@ on:
   pull_request:
     branches: [ "master" ]
 
+# Only the badge job below writes, and it runs only on pushes to master.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   coverage:
@@ -51,7 +52,7 @@ jobs:
         uv run coverage run -m pytest
         uv run coverage report
         uv run coverage xml
-        uv tool run --from genbadge[coverage] genbadge coverage -i coverage.xml -o coverage.svg
+        uv tool run --from "genbadge[coverage]" genbadge coverage -i coverage.xml -o coverage.svg
       env:
         # The suites that talk to a real server are opt-in: they wipe what they
         # connect to, so they skip unless a port is named. These are the service
@@ -64,14 +65,46 @@ jobs:
         # coverage stays near 97%, well over the 90% gate.
         CACHEX_REQUIRE_LIVE_SERVERS: 1
 
-    - name: Upload coverage badge
-      # Only a push to master updates the badge. A pull request's coverage is
-      # not master's, and a fork's pull request gets a read-only token, so the
-      # push would fail with 403 and turn the check red.
+    - name: Keep the badge for the deploy job
       if: github.event_name == 'push'
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-badge
+        path: coverage.svg
+        if-no-files-found: error
+        retention-days: 1
+
+  badge:
+    # Only a push to master updates the badge. A pull request's coverage is
+    # not master's, and a fork's pull request gets a read-only token, so the
+    # push would fail with 403 and turn the check red. The deploy runs in its
+    # own job so that the write permission never reaches the job that runs
+    # the tests.
+    needs: coverage
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Deploy in push order; two deploys at once race on the branch.
+    concurrency:
+      group: coverage-badge
+      cancel-in-progress: false
+
+    steps:
+    # The deploy action runs git in the workspace, so it needs a checkout.
+    - uses: actions/checkout@v7
+
+    - name: Download coverage badge
+      uses: actions/download-artifact@v8
+      with:
+        name: coverage-badge
+        path: badge
+
+    - name: Upload coverage badge
       uses: JamesIves/github-pages-deploy-action@v4
       with:
         branch: coverage-badge
-        folder: .
-        target-folder: .
-        clean: false
+        # Only the badge. `clean` removes what earlier deploys left there:
+        # they published the whole checkout, not just coverage.svg.
+        folder: badge
+        clean: true
