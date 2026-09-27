@@ -176,6 +176,13 @@ async def account(session: AuthenticatedSession):
 `UserSessionDep` does not check for a user despite its name; it is an alias of `SessionDep`
 until 0.4.0, which is planned to make it require one.
 
+`session.user` is set only by passing `user=` to `create_session()` or by assigning it and
+saving the session. Keys written to `request.session` (`request.session["user_id"] = ...`)
+are application data: the library does not treat them as a login, so `AuthenticatedSession`
+still answers `401` for such a session. See
+[Regenerate the Session ID After Login](#5-regenerate-the-session-id-after-login) for a login
+that sets the user.
+
 ### 3. Full Example (Redis Backend)
 
 ```python
@@ -669,6 +676,37 @@ A handler that already holds the request's session object can call
 `await manager.regenerate_session_id(session)` directly, with the same effect. Get it from
 `get_optional_session` and skip the call when it is `None`; `SessionDep` answers `401` to a
 visitor who has no session yet.
+
+The example above stores the user ID as application data, which `require_user_session` and
+`AuthenticatedSession` do not recognise. To pass them, attach a `SessionUser` after the
+rotation and save the session yourself: assigning `session.user` does not mark
+`request.session` as modified, so the middleware would not save it.
+
+```python
+from fastapi_cachex.session import SessionUser
+from fastapi_cachex.session.dependencies import OptionalSession
+
+
+@app.post("/login")
+async def login(request: Request, session: OptionalSession):
+    ...  # verify the credentials
+    user = SessionUser(user_id="123")
+    if session is not None:
+        await rotate_session_id(request)
+        session.user = user
+        await session_manager.update_session(session)
+    else:
+        # No session yet: create one with the user and deliver its token yourself,
+        # as in the login example in Basic Usage.
+        _, token = await session_manager.create_session(user=user)
+        ...
+    return {"ok": True}
+```
+
+The complete version, including the cookie for a new visitor, is
+[`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py).
+A `login()` helper that does all of this is planned
+([#293](https://github.com/allen0099/FastAPI-CacheX/issues/293)).
 
 Outside a middleware, load the session with the same bindings the middleware would pass, and hand
 the returned token to the client yourself:
