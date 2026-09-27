@@ -354,6 +354,10 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   errors, only the Redis and Memcached backends prefix their keys, and
   `CacheLock` is a lease rather than a guarantee of mutual exclusion.
   ([#214](https://github.com/allen0099/FastAPI-CacheX/issues/214))
+- **Logging a user in.** The session guide now shows how to attach a
+  `SessionUser` at login so `require_user_session` and
+  `AuthenticatedSession` accept the session; writing to `request.session`
+  alone does not. ([#294](https://github.com/allen0099/FastAPI-CacheX/pull/294))
 
 ## [0.3.7] - 2026-09-25
 
