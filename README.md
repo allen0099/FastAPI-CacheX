@@ -91,7 +91,7 @@ async def report(cache: AppCache):
 - [Distributed lock](https://fastapi-cachex.readthedocs.io/en/latest/LOCK/) — `CacheLock` for multi-process mutual exclusion
 - [Runnable examples](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples) — one complete app per feature, each covered by the test suite
 - [API reference](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)
-- [Development guide](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/) and [contributing](https://fastapi-cachex.readthedocs.io/en/latest/CONTRIBUTING/)
+- [Development guide](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/) and [contributing](https://fastapi-cachex.readthedocs.io/en/latest/CONTRIBUTING/) · [Security policy](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md) — report vulnerabilities privately, not in public issues
 - [Changelog](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md) · [Known limitations and planned work](https://github.com/allen0099/FastAPI-CacheX/issues)
 
 ## License

@@ -8,6 +8,14 @@ We love your input! We want to make contributing to FastAPI-CacheX as easy and t
 - Proposing new features
 - Becoming a maintainer
 
+## Reporting a Security Vulnerability
+
+Please do not report security problems in public issues or pull requests.
+Report them privately through
+[GitHub private vulnerability reporting](https://github.com/allen0099/FastAPI-CacheX/security/advisories/new)
+instead. The [security policy](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)
+lists the supported versions and what to include in a report.
+
 ## Development Process
 
 1. Fork the project
