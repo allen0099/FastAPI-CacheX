@@ -146,6 +146,43 @@ def _read_header_token(
     return None, consulted
 
 
+def _add_vary(headers: MutableHeaders, names: list[str]) -> None:
+    """Add header names to ``Vary``, keeping the values already there.
+
+    Starlette's ``add_vary_header`` appends unconditionally, so names the
+    response already varies on (compared case-insensitively) are skipped, as
+    is everything when it already varies on ``*``.
+
+    Args:
+        headers: Mutable response headers to write to
+        names: Request header names the response depends on
+    """
+    present = {
+        value.strip().lower()
+        for line in headers.getlist("vary")
+        for value in line.split(",")
+    }
+    if "*" in present:
+        return
+    for name in names:
+        if name.lower() not in present:
+            headers.add_vary_header(name)
+            present.add(name.lower())
+
+
+def _forbid_storing(headers: MutableHeaders) -> None:
+    """Keep a response that carries a session token out of every cache.
+
+    The token is a credential: a shared cache that stored the response would
+    hand it to the next visitor. This replaces any ``Cache-Control`` the route
+    set, ``public`` and ``max-age`` included.
+
+    Args:
+        headers: Mutable response headers to write to
+    """
+    headers["Cache-Control"] = "private, no-store"
+
+
 def _stash_session_manager(app: Any, manager: SessionManager) -> None:
     """Register the session manager on ``app.state`` for dependency injection.
 
@@ -254,12 +291,15 @@ class SessionMiddleware(BaseHTTPMiddleware):
         if session is not None and session.session_id != loaded_session_id:
             # The handler regenerated the session ID; a renewed token would
             # name the deleted record, so send a token for the new ID.
-            response.headers[self.config.header_name] = (
-                self.session_manager.issue_token(session)
-            )
-        elif renewed_token is not None:
+            response_token: str | None = self.session_manager.issue_token(session)
+        else:
             # Propagate renewed token to client so its JWT exp stays in sync
-            response.headers[self.config.header_name] = renewed_token
+            response_token = renewed_token
+
+        if response_token is not None:
+            response.headers[self.config.header_name] = response_token
+            _add_vary(response.headers, _read_header_token(request, self.config)[1])
+            _forbid_storing(response.headers)
 
         return response
 
@@ -408,11 +448,7 @@ class FastAPICacheXSessionMiddleware:
                     backend_session, loaded_session_id, loaded_token, renewed_token
                 )
 
-                if session.accessed:
-                    for name in vary_on:
-                        headers.add_vary_header(name)
-
-                await self._persist(
+                sent_token = await self._persist(
                     session,
                     headers,
                     connection,
@@ -421,6 +457,11 @@ class FastAPICacheXSessionMiddleware:
                     fresh_token,
                     from_header=from_header,
                 )
+
+                if session.accessed or sent_token:
+                    _add_vary(headers, vary_on)
+                if sent_token:
+                    _forbid_storing(headers)
 
             await send(message)
 
@@ -436,8 +477,13 @@ class FastAPICacheXSessionMiddleware:
         fresh_token: str | None,
         *,
         from_header: bool,
-    ) -> None:
-        """Save, delete or renew the session according to what the request did to it."""
+    ) -> bool:
+        """Save, delete or renew the session according to what the request did to it.
+
+        Returns:
+            True if a token or a clearing cookie was written to the response
+        """
+        sent_token = False
         target = backend_session
         if session.cleared and target is not None:
             # clear() logs out, whatever the data held. Anything
@@ -448,6 +494,7 @@ class FastAPICacheXSessionMiddleware:
                 # Cookie transport: expire the cookie. A header-based
                 # client simply drops its now-dangling token.
                 headers.append("Set-Cookie", self._build_clear_cookie_header())
+                sent_token = True
 
         if session.modified and (
             session or (target is not None and target.user is not None)
@@ -467,16 +514,20 @@ class FastAPICacheXSessionMiddleware:
             token_to_emit = new_token if from_header else cookie_token
             if token_to_emit is not None:
                 self._emit_token(headers, token_to_emit, from_header=from_header)
+                sent_token = True
         elif session.modified and target is not None:
             # An anonymous session left empty holds nothing to keep.
             await self.session_manager.delete_session(target.session_id)
             if not from_header:
                 headers.append("Set-Cookie", self._build_clear_cookie_header())
+                sent_token = True
         elif fresh_token is not None:
             # Sliding expiration renewed the token, or the ID was
             # regenerated, even though the dict itself was untouched;
             # propagate it via the same transport.
             self._emit_token(headers, fresh_token, from_header=from_header)
+            sent_token = True
+        return sent_token
 
     def _token_sources(
         self, connection: HTTPConnection
