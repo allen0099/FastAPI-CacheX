@@ -18,8 +18,9 @@ Build the cache key: method|||host|||path|||query_params
 no-store? ── yes → run the handler, neither read nor write the cache,
     │              respond with Cache-Control: no-store
     ↓ no
-private? ── yes → run the handler; compare If-None-Match to decide 304 or 200
-    │              (the shared backend is neither read nor written)
+private, or Authorization without public/cache_authorized?
+    ── yes → run the handler; compare If-None-Match to decide 304 or 200
+    │        (the shared backend is neither read nor written)
     ↓ no
 Read the backend entry
     ↓
@@ -35,10 +36,14 @@ Cached entry exists, ttl is set, and no-cache is off?
               ├─ non-2xx (or 206) → return as-is and **do not write**
               │                     (an existing good entry is not overwritten)
               ├─ streaming/file response → no ETag can be computed; return as-is, do not write
+              ├─ handler sent Cache-Control private/no-store, or Set-Cookie
+              │     → set the ETag, return it, **do not write** (an existing
+              │       entry is left alone; a private/no-store header is kept)
               └─ regular response → set the ETag; write to the backend only if it
                                     differs from the existing entry's ETag
     ↓
-Attach Cache-Control to the response (non-2xx responses are returned without it)
+Attach Cache-Control to the response (non-2xx responses are returned without it,
+and a handler's own private/no-store Cache-Control is never replaced)
 ```
 
 ## Detailed steps
@@ -102,8 +107,9 @@ The decorator arguments control both the server-side behaviour and the
 
 # Normal caching behaviour
 @cache(ttl=3600)          # Cache for 1 hour (also used as the max-age value)
-@cache(public=True)       # Allow shared caches
+@cache(public=True)       # Allow shared caches, also for Authorization requests
 @cache(private=True)      # Private only; never touches the shared backend
+@cache(ttl=60, key_builder=per_user_key, cache_authorized=True)  # Authorization requests use the backend
 @cache(immutable=True)    # Content never changes
 
 # Header-only directives (they do not change server-side behaviour)
@@ -143,8 +149,10 @@ The header value is built once per decorated route:
 >    sends `Cache-Control: private` so the user's own browser can cache the
 >    response, and `If-None-Match` is still compared against freshly rendered
 >    content.
-> 2. A custom `key_builder` that includes the identity — when you really do want
->    a per-user server-side cache.
+> 2. A custom `key_builder` that includes the identity, together with
+>    `cache_authorized=True` — when you really do want a per-user server-side
+>    cache. Without `cache_authorized`, a request with an `Authorization` header
+>    bypasses the backend (see below).
 >
 > Take the identity from a trusted source (a verified token claim, a
 > dependency-injected user object); do not trust unchecked client headers.
@@ -182,7 +190,8 @@ if request.method != "GET":
 if no_store:
     return await render()                    # no read, no write
 
-if private or not ttl:
+authorized = "authorization" in request.headers and not (public or cache_authorized)
+if private or not ttl or authorized:
     response, etag = await render()          # backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
@@ -208,6 +217,8 @@ if not is_cacheable_status(response.status_code):
     return response                          # non-2xx: returned as-is, not written
 if etag is None:
     return response                          # streaming/file: no ETag, not written
+if marked_private_or_no_store(response) or "set-cookie" in response.headers:
+    return response                          # one caller's response: not written
 if not entry or entry.fingerprint != etag:
     await backend.set(cache_key, CacheEntry(...), ttl=ttl)
 return response
@@ -220,6 +231,19 @@ return response
 > request that produced it. Non-2xx responses are also never answered with
 > `304` and are returned without the decorator's `Cache-Control` header (only
 > `no_store=True` adds `no-store` to every response).
+
+> [!NOTE]
+> **Responses that belong to one caller are never stored.** Following RFC 9111
+> §3.5, a request with an `Authorization` header bypasses the backend (no read,
+> no write) unless the route is `public=True` or opts in with
+> `cache_authorized=True` (for a `key_builder` that includes the verified
+> identity). On a render, a response whose own `Cache-Control` contains
+> `private` or `no-store` (whole directive, any case), or that sets a cookie,
+> is served but not written. A `private`/`no-store` header from the handler is
+> sent unchanged instead of the decorator's. An entry already stored under the
+> key is left alone, and a request that hits it before the handler runs is
+> served from it as usual. Each skip is logged at `DEBUG`. Before 0.3.9 such
+> responses were stored and replayed to every caller (#296).
 
 ### 4. ETag generation and validation
 
@@ -386,6 +410,8 @@ lookup. Which backend to pick is covered in [Backends](BACKENDS.md#choosing-a-ba
 | `no_store=True` | The cache is neither read nor written; the endpoint runs every time |
 | `no_cache=True` | The endpoint runs every time to recompute the ETag; a match with the client's `If-None-Match` still returns 304, and the cache is updated when the ETag changes |
 | `private=True` | The **shared backend** is neither read nor written; `Cache-Control: private` is still sent and the ETag is compared against fresh content |
+| Request with `Authorization` | The backend is neither read nor written, as with `private=True`, unless the route has `public=True` or `cache_authorized=True` |
+| Handler sends `Cache-Control: private`/`no-store`, or `Set-Cookie` | Returned (with the handler's `private`/`no-store` header intact), not written, and any existing entry is left untouched |
 | No `ttl` (or `ttl=0`) | The backend is neither read nor written, as with `private=True`; the endpoint runs every time and the ETag is compared against fresh content |
 | Cache expired (TTL elapsed) | The endpoint runs again; `MemoryBackend` deletes the expired entry in place when it reads it |
 | Non-2xx or 206 response | Returned as-is, not written, and any existing entry is left untouched |

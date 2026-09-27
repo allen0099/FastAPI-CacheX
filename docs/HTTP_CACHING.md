@@ -51,7 +51,7 @@ header, and the server-side cache behaves the same with or without them.
 | `no-cache`               | `no_cache=True`                          | :white_check_mark: | The handler runs on every request; the response is still stored, and a matching `If-None-Match` gets a 304.   |
 | `no-store`               | `no_store=True`                          | :white_check_mark: | Nothing is read or stored, and no ETag is set.                                                                  |
 | `private`                | `private=True`                           | :white_check_mark: | The backend is bypassed; the handler runs on every request, and ETag revalidation still works.                 |
-| `public`                 | `public=True`                            | :white_check_mark: | None (header only).                                                                                            |
+| `public`                 | `public=True`                            | :white_check_mark: | Requests with `Authorization` still use the backend (otherwise they bypass it).                                |
 | `immutable`              | `immutable=True`                         | :white_check_mark: | None (header only).                                                                                            |
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | None (header only).                                                                                            |
 | `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | None (header only): the server-side cache never serves stale content.                                         |
@@ -89,8 +89,25 @@ Only successful responses are stored. A response the handler *returns* with a
 non-2xx status (for example `Response(..., status_code=404)`) is passed straight
 through and never cached, so a transient error cannot replace or poison the last
 good entry. `206 Partial Content` is excluded as well, since its body is only
-meaningful for the `Range` request that produced it. `Set-Cookie` is never
-stored or replayed.
+meaningful for the `Range` request that produced it.
+
+A response that belongs to one caller is never stored either (#296):
+
+- **The request carries `Authorization`.** As RFC 9111 §3.5 requires of a
+  shared cache, the backend is bypassed, as with `private=True`: nothing is
+  read or written, the handler runs, and `If-None-Match` is compared against
+  the fresh render. `public=True` routes are exempt, and so are routes with
+  `cache_authorized=True`, the opt-in for a key builder that includes the
+  caller's identity (see [Authenticated endpoints](#authenticated-endpoints)).
+- **The handler's own `Cache-Control` contains `private` or `no-store`**
+  (as whole directives, in any case). The response is served but not stored,
+  and the handler's header is sent unchanged instead of the decorator's.
+- **The response sets a cookie.** It is served, `Set-Cookie` included, but not
+  stored.
+
+In the last two cases an entry already stored under the key is left alone, and
+a request that finds a valid entry is still answered from it before the
+handler runs. Each skip is logged at `DEBUG`.
 
 A handler that returns plain data instead of a `Response` gets the same
 treatment it would without `@cache`: the value is validated and filtered by the
@@ -184,7 +201,9 @@ HTTP requests.
 >    rendered content.
 > 2. **A key builder that includes the caller's identity** — use this when you
 >    do want a server-side cache per user. Leave `private` unset: `private=True`
->    bypasses the backend, so the key builder would never be used.
+>    bypasses the backend, so the key builder would never be used. Pass
+>    `cache_authorized=True` when callers authenticate with an `Authorization`
+>    header: without it such requests bypass the backend too.
 
 ```python
 from fastapi import Request, Response
@@ -217,7 +236,7 @@ def per_user_key(request: Request) -> str:
 
 
 @app.get("/me/dashboard")
-@cache(ttl=60, key_builder=per_user_key)
+@cache(ttl=60, key_builder=per_user_key, cache_authorized=True)
 async def my_dashboard(user: CurrentUser, response: Response):
     # Without `private`, the response goes out as `Cache-Control: max-age=60`,
     # which a shared cache (CDN, reverse proxy) may store. Vary on whatever
@@ -245,7 +264,8 @@ something a shared cache cannot see, use option 1 instead.
 > sending `X-User-Id: <someone-else>` returns that user's cached response.
 
 The key builder runs only when `@cache` reads or writes the backend, so it is not
-called for `no_store=True`, `private=True` or routes without a `ttl`. Before 0.3.8
+called for `no_store=True`, `private=True`, routes without a `ttl`, or requests
+with `Authorization` on a route without `public=True` or `cache_authorized=True`. Before 0.3.8
 it was, only to feed a debug log. Keep it free of side effects.
 
 ## Clearing the cache

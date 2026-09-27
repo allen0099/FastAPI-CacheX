@@ -352,8 +352,49 @@ def _not_modified(
     )
 
 
+# Response directives by which the handler says its response belongs to one
+# caller (``private``) or must not be kept at all (``no-store``).
+_UNSHAREABLE_DIRECTIVES = frozenset(
+    {DirectiveType.PRIVATE.value, DirectiveType.NO_STORE.value}
+)
+
+
+def _marked_unshareable(response: Response) -> bool:
+    """Whether the handler's own ``Cache-Control`` has ``private`` or ``no-store``.
+
+    Directive names are matched as whole tokens, case-insensitively, across
+    every ``Cache-Control`` field the response carries.
+    """
+    return any(
+        directive.split("=", 1)[0].strip().lower() in _UNSHAREABLE_DIRECTIVES
+        for value in response.headers.getlist("cache-control")
+        for directive in value.split(",")
+    )
+
+
+def _unshareable_reason(response: Response) -> str | None:
+    """Why a rendered response must not be stored, or None when it may be."""
+    if _marked_unshareable(response):
+        return "response Cache-Control is private or no-store"
+    if "set-cookie" in response.headers:
+        return "response sets a cookie"
+    return None
+
+
+def _cache_control_for(response: Response, cache_control: str) -> str:
+    """The ``Cache-Control`` to send for a response the handler just rendered.
+
+    A handler that marked its response ``private`` or ``no-store`` keeps its own
+    header; the decorator's would widen what the handler allowed.
+    """
+    if _marked_unshareable(response):
+        return ", ".join(response.headers.getlist("cache-control"))
+    return cache_control
+
+
 def _with_cache_control(response: Response, cache_control: str) -> Response:
-    response.headers["Cache-Control"] = cache_control
+    if not _marked_unshareable(response):
+        response.headers["Cache-Control"] = cache_control
     return response
 
 
@@ -494,11 +535,18 @@ def cache(
     must_revalidate: bool = False,
     key_builder: CacheKeyBuilder | None = None,
     fail_open: bool = True,
+    cache_authorized: bool = False,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
     Only GET requests go through the cache; other methods run the handler
     unchanged.
+
+    A response is never stored when the handler marks it ``private`` or
+    ``no-store`` in its own ``Cache-Control`` (that header is then sent
+    unchanged instead of the decorator's) or when it sets a cookie. Such a
+    response is served as rendered, and an entry already stored under its key
+    is left alone.
 
     Args:
         ttl: How long, in seconds, a stored response may be served without
@@ -533,6 +581,12 @@ def cache(
             the cache: a failed read counts as a miss and a failed write
             leaves the response unstored. ``False`` lets the error propagate,
             so the request fails.
+        cache_authorized: Read and write the backend for requests that carry
+            an ``Authorization`` header. By default such a request bypasses
+            the backend as ``private=True`` does (RFC 9111 §3.5), unless
+            ``public`` is set. Set this only when ``key_builder`` puts the
+            verified caller's identity into the key; with the default key
+            builder one user's response would be served to the next.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -653,9 +707,28 @@ def cache(
                 logger.debug(
                     "no-store active; bypassed cache for path=%s", req.url.path
                 )
-                return _with_cache_control(response, _NO_STORE)
+                # Unconditional: `no-store` is stricter than anything the
+                # handler may have sent.
+                response.headers["Cache-Control"] = _NO_STORE
+                return response
 
             client_etag = req.headers.get("if-none-match")
+
+            # RFC 9111 §3.5: a shared cache must not reuse a response to a
+            # request with `Authorization` unless the response allows it. The
+            # default key carries no identity, so treat such requests as
+            # private unless the route is `public` or opted in.
+            authorized_bypass = (
+                not bypass_backend
+                and not public
+                and not cache_authorized
+                and "authorization" in req.headers
+            )
+            if authorized_bypass:
+                logger.debug(
+                    "Authorization header present; bypassing the backend for path=%s",
+                    req.url.path,
+                )
 
             # A private response belongs to exactly one user, so it must never
             # be read from or written to the shared backend — the default cache
@@ -663,7 +736,7 @@ def cache(
             # next caller. The same path serves routes without a positive ttl
             # (see `bypass_backend`). ETag revalidation still works: it
             # compares the client's validator against freshly rendered content.
-            if bypass_backend:
+            if bypass_backend or authorized_bypass:
                 response, _, etag = await _render(func, req, *args, **kwargs)
                 if not _is_cacheable_status(response.status_code):
                     return response
@@ -672,7 +745,11 @@ def cache(
                     return _with_cache_control(response, cache_control)
                 if _etag_matches(client_etag, etag):
                     logger.debug("304 Not Modified (uncached); path=%s", req.url.path)
-                    return _not_modified(etag, cache_control, response.headers)
+                    return _not_modified(
+                        etag,
+                        _cache_control_for(response, cache_control),
+                        response.headers,
+                    )
                 response.headers["ETag"] = etag
                 logger.debug("Bypassed the backend; path=%s", req.url.path)
                 return _with_cache_control(response, cache_control)
@@ -720,7 +797,9 @@ def cache(
                         # For no-cache, compare fresh data with client's ETag
                         logger.debug("304 Not Modified via no-cache; key=%s", cache_key)
                         return _not_modified(
-                            current_etag, cache_control, current_response.headers
+                            current_etag,
+                            _cache_control_for(current_response, cache_control),
+                            current_response.headers,
                         )
 
                 # Compare with cached ETag - if match, return 304
@@ -771,8 +850,15 @@ def cache(
 
             current_response.headers["ETag"] = current_etag
 
+            # A response the handler scoped to one caller is served but never
+            # stored. An entry already under this key is left alone, as for an
+            # error status: it came from a response that was shareable.
+            skip_reason = _unshareable_reason(current_response)
+            if skip_reason is not None:
+                logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
+
             # Update cache if needed
-            if not cached_data or cached_data.fingerprint != current_etag:
+            elif not cached_data or cached_data.fingerprint != current_etag:
                 assert (
                     current_body is not None
                 )  # guaranteed by early-return guards above

@@ -123,25 +123,33 @@ def test_cache_hit_restores_custom_headers_and_2xx_status():
         assert response.text == "body"
 
 
-def test_set_cookie_is_never_replayed():
-    """`Set-Cookie` carries per-user state and must not come back from cache."""
+async def test_set_cookie_is_never_replayed():
+    """`Set-Cookie` carries per-user state and must not come back from cache.
+
+    The response that set it is not stored at all (#296): stripping only the
+    cookie still replayed the body it came with to every other caller.
+    """
     app = FastAPI()
     client = TestClient(app)
+    calls = {"n": 0}
 
     @app.get("/login-ish")
     @cache(ttl=60)
     async def login_ish():
+        calls["n"] += 1
         return Response(
             content="ok",
             media_type="text/plain",
             headers={"Set-Cookie": "sid=secret; Path=/", "X-Safe": "yes"},
         )
 
-    assert "sid=secret" in client.get("/login-ish").headers.get("set-cookie", "")
+    for _ in range(2):
+        response = client.get("/login-ish")
+        assert "sid=secret" in response.headers.get("set-cookie", "")
+        assert response.headers["X-Safe"] == "yes"
 
-    hit = client.get("/login-ish")
-    assert "set-cookie" not in hit.headers
-    assert hit.headers["X-Safe"] == "yes"
+    assert calls["n"] == 2
+    assert await BackendProxy.get().get(_key("/login-ish")) is None
 
 
 def test_partial_content_is_not_cached():
