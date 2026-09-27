@@ -3,16 +3,17 @@
 import hashlib
 import json
 import logging
+import time
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from typing import TYPE_CHECKING
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
-from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.state.exceptions import InvalidStateError
@@ -23,41 +24,11 @@ from fastapi_cachex.state.models import StateData
 from fastapi_cachex.types import CacheEntry
 from tests.live_servers import REDIS_HOST
 from tests.live_servers import REDIS_PORT
-from tests.live_servers import has_redis_package
-from tests.live_servers import redis_skip_reason
 from tests.live_servers import requires_redis
 from tests.live_servers import requires_redis_package
 
-
-@pytest_asyncio.fixture
-async def memory_backend_for_state() -> AsyncGenerator[BaseCacheBackend, Any]:
-    """Create a MemoryBackend instance."""
-    backend = MemoryBackend()
-    backend.start_cleanup()
-    yield backend
-    backend.stop_cleanup()
-
-
-@pytest_asyncio.fixture
-async def redis_backend_for_state() -> AsyncGenerator[BaseCacheBackend, Any]:
-    """Create a Redis backend instance if Redis is available."""
-    reason = redis_skip_reason()
-    if reason is not None:
-        pytest.skip(reason)
-    if not has_redis_package():
-        pytest.skip("redis package is not installed")
-
-    from fastapi_cachex.backends import AsyncRedisCacheBackend
-
-    backend = AsyncRedisCacheBackend(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        socket_timeout=1.0,
-        socket_connect_timeout=1.0,
-        key_prefix="test_state:",
-    )
-    yield backend
-    await backend.clear()
+if TYPE_CHECKING:
+    from fastapi_cachex.backends.base import BaseCacheBackend
 
 
 @pytest_asyncio.fixture(
@@ -213,26 +184,23 @@ async def test_consume_invalid_state(state_manager: StateManager) -> None:
 
 
 @pytest.mark.asyncio
-async def test_consume_expired_state(state_manager: StateManager) -> None:
-    """Test consuming an expired state raises an error.
+async def test_consume_state_after_backend_ttl_is_invalid(
+    memory_backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once the backend TTL has run out the entry is gone: InvalidStateError.
 
-    Different backends behave differently for expired states:
-    - MemoryBackend: InvalidStateError (auto-removes expired entries)
-    - RedisBackend: StateExpiredError (TTL expired but data still exists)
+    A state whose backend entry still exists but whose expires_at has passed
+    raises StateExpiredError instead; see
+    test_consume_state_past_wall_clock_expiry_removes_the_entry.
     """
-    from fastapi_cachex.state.exceptions import StateExpiredError
+    manager = StateManager(backend=memory_backend)
+    state = await manager.create_state(ttl=60)
 
-    # Create state with very short TTL
-    state = await state_manager.create_state(ttl=1)
+    later = time.time() + 61
+    monkeypatch.setattr("fastapi_cachex.backends.memory.time.time", lambda: later)
 
-    # Wait for state to expire from cache backend
-    import asyncio
-
-    await asyncio.sleep(1.1)
-
-    # Try to consume expired state - should fail with one of these exceptions
-    with pytest.raises((InvalidStateError, StateExpiredError)):
-        await state_manager.consume_state(state)
+    with pytest.raises(InvalidStateError, match="Invalid or expired state"):
+        await manager.consume_state(state)
 
 
 @pytest.mark.asyncio
@@ -461,47 +429,46 @@ async def test_state_with_complex_nested_metadata(state_manager: StateManager) -
 
 @pytest.mark.asyncio
 async def test_get_metadata_with_missing_expiry(state_manager: StateManager) -> None:
-    """Test retrieving metadata when state data is missing expiry."""
+    """A stored state without expires_at yields no metadata."""
     state = "test_state"
     cache_key = f"{state_manager.key_prefix}{state}"
 
-    # Create StateData with default expires_at
-    state_data_obj = StateData(
-        state=state,
-        metadata={"test": "data"},
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-    )
-
-    json_content = json.dumps(state_data_obj.model_dump(mode="json"))
+    # expires_at is required by StateData, so this entry cannot be decoded.
+    state_data = {
+        "state": state,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {"test": "data"},
+    }
+    json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
     entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, entry, ttl=600)
 
-    # Should still work and return metadata
-    retrieved = await state_manager.get_state_metadata(state)
-    assert retrieved == {"test": "data"}
+    assert await state_manager.get_state_metadata(state) is None
+    # Peeking does not consume the entry.
+    assert await state_manager.backend.get(cache_key) is not None
 
 
 @pytest.mark.asyncio
 async def test_validate_state_with_missing_expiry(state_manager: StateManager) -> None:
-    """Test validating state when state data is missing expiry."""
+    """A stored state without expires_at does not validate."""
     state = "test_state"
     cache_key = f"{state_manager.key_prefix}{state}"
 
-    state_data_obj = StateData(
-        state=state,
-        metadata={"test": "data"},
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-    )
-
-    json_content = json.dumps(state_data_obj.model_dump(mode="json"))
+    # expires_at is required by StateData, so this entry cannot be decoded.
+    state_data = {
+        "state": state,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {"test": "data"},
+    }
+    json_content = json.dumps(state_data)
     etag = hashlib.sha256(json_content.encode()).hexdigest()
     entry = CacheEntry(fingerprint=etag, content=json_content.encode("utf-8"))
     await state_manager.backend.set(cache_key, entry, ttl=600)
 
-    # Should validate as valid
-    is_valid = await state_manager.validate_state(state)
-    assert is_valid is True
+    assert await state_manager.validate_state(state) is False
+    # Peeking does not consume the entry.
+    assert await state_manager.backend.get(cache_key) is not None
 
 
 @pytest.mark.asyncio
@@ -703,25 +670,20 @@ async def test_delete_state_idempotent_returns_false_on_second_call(
 
 
 @pytest.mark.asyncio
-async def test_state_manager_accepts_explicit_backend() -> None:
+async def test_state_manager_accepts_explicit_backend(
+    memory_backend: MemoryBackend,
+) -> None:
     """StateManager(backend=...) must use the provided backend without touching BackendProxy."""
-    backend = MemoryBackend()
-    backend.start_cleanup()
+    # Unset BackendProxy: the manager must never call BackendProxy.get() when
+    # a backend is passed directly. setup_default_backend (autouse) sets a
+    # fresh backend for the next test.
+    BackendProxy.set(None)
 
-    try:
-        # Ensure BackendProxy is NOT set (or set to something else); the manager
-        # should never call BackendProxy.get() when a backend is passed directly.
-        BackendProxy.set(None)
+    manager = StateManager(backend=memory_backend)
+    assert manager.backend is memory_backend
 
-        manager = StateManager(backend=backend)
-        assert manager.backend is backend
-
-        state = await manager.create_state(metadata={"direct": True})
-        is_valid = await manager.validate_state(state)
-        assert is_valid is True
-    finally:
-        backend.stop_cleanup()
-        await backend.clear()
+    state = await manager.create_state(metadata={"direct": True})
+    assert await manager.validate_state(state) is True
 
 
 @pytest.mark.asyncio
@@ -744,13 +706,10 @@ def test_state_manager_raises_when_no_backend_configured() -> None:
     """StateManager() raises BackendNotFoundError if no backend is configured in the proxy."""
     from fastapi_cachex.exceptions import BackendNotFoundError
 
+    # setup_default_backend (autouse) sets a fresh backend for the next test.
     BackendProxy.set(None)
-    try:
-        with pytest.raises(BackendNotFoundError):
-            StateManager()
-    finally:
-        # Restore a backend so the autouse fixture teardown works correctly
-        BackendProxy.set(MemoryBackend())
+    with pytest.raises(BackendNotFoundError):
+        StateManager()
 
 
 @pytest.mark.asyncio
