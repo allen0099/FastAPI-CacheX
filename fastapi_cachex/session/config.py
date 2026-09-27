@@ -17,6 +17,10 @@ SameSitePolicy = Literal["lax", "strict", "none"]
 IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
+# The default ``SessionConfig.header_name``; ``@cache(vary=[...])`` also hashes
+# this header's value like ``Authorization`` and ``Cookie``.
+DEFAULT_SESSION_HEADER_NAME = "X-Session-Token"
+
 
 @lru_cache(maxsize=256)
 def _parse_network(entry: str) -> IPNetwork | None:
@@ -98,7 +102,7 @@ class SessionConfig(BaseModel):
         description="Token serialization format: 'simple' (default) or 'jwt'",
     )
     header_name: str = Field(
-        default="X-Session-Token",
+        default=DEFAULT_SESSION_HEADER_NAME,
         description="Custom header name for session token",
     )
     use_bearer_token: bool = Field(
