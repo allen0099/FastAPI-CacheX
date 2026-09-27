@@ -348,6 +348,7 @@ async def me(session=Depends(get_session)):
 - 以 `del` 或 `pop()` 移除最後一個鍵並不是登出。帶有使用者的 Session 會以空資料儲存；匿名 Session 已無任何內容，會和 `clear()` 一樣被刪除。
 - 以寫入 `request.session` 的方式登入時，會沿用請求帶來的 Session ID。Starlette 的中介軟體中 Cookie *就是* Session，因此登入回應會取代任何被植入的 Cookie；這裡的 Cookie 只是指向伺服器端紀錄的名稱，被植入的 Cookie 會跟著受害者一起登入。請在附加使用者之前呼叫 `await rotate_session_id(request)`（見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)）。
 - 只要存取 `request.session`，就會為了尋找權杖而讀取過的每個請求標頭加入 `Vary`：依 `token_source_priority` 順序檢查的標頭（`header_name`，以及啟用 Bearer 權杖時的 `Authorization`），直到攜帶權杖的那一個為止。只有在沒有任何標頭攜帶權杖時才會讀取 Cookie，因此也只有這時才會加入 `Cookie`。
+- 帶有 Session 權杖的回應（新建立的 Session、滑動續期、重新產生的 ID），或帶有讓 Session Cookie 失效之 `Set-Cookie` 的回應，一律不可快取。中介軟體會設定 `Cache-Control: private, no-store`，取代路由原本設定的值（包括 `@cache(public=True)` 的路由），並且即使處理函式沒有碰過 `request.session`，也會加入與上一項相同的 `Vary` 名稱。否則 CDN 或反向 proxy 可能存下權杖，再交給下一位訪客。不帶權杖的回應則維持原本的標頭。已棄用的 `SessionMiddleware` 在回應標頭送出權杖時也會這麼做。
 
 Cookie 一律為 `HttpOnly`；`Secure`、`SameSite`、`Domain`、`Path` 與 `Max-Age` 則依 `cookie_*` 設定。
 

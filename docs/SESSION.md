@@ -411,6 +411,13 @@ async def me(session=Depends(get_session)):
   the headers checked in `token_source_priority` order (`header_name`, and `Authorization` when
   bearer tokens are enabled) up to the one that carried the token. `Cookie` is added only when
   no header carried a token, because only then is the cookie read.
+- A response that carries a session token (a new session, a sliding renewal, a regenerated ID)
+  or a `Set-Cookie` that expires the session cookie is never cacheable. The middleware sets
+  `Cache-Control: private, no-store`, replacing whatever the route set (a `@cache(public=True)`
+  route included), and adds the same `Vary` names as above even when the handler never touched
+  `request.session`. Otherwise a CDN or reverse proxy could store the token and hand it to the
+  next visitor. Responses without a token keep their headers. The deprecated `SessionMiddleware`
+  does the same when it sends a token in its response header.
 
 The cookie is always `HttpOnly`; `Secure`, `SameSite`, `Domain`, `Path` and `Max-Age` follow the
 `cookie_*` settings.
