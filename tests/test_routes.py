@@ -1,6 +1,7 @@
 """Tests for cache monitoring routes."""
 
 import time
+import warnings
 
 import pytest
 from fastapi import FastAPI
@@ -43,7 +44,7 @@ class TestCachedHitsRoute:
 
     def test_cached_hits_without_backend(self, app, client):
         """Test /cached-hits returns empty when backend not configured."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         response = client.get("/cached-hits")
         assert response.status_code == 200
@@ -55,7 +56,7 @@ class TestCachedHitsRoute:
 
     def test_cached_hits_empty_cache(self, app, client, setup_cache):
         """Test /cached-hits returns empty structure when cache is empty."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         response = client.get("/cached-hits")
         assert response.status_code == 200
@@ -67,7 +68,7 @@ class TestCachedHitsRoute:
 
     def test_cached_hits_with_entries(self, app, client, setup_cache):
         """Test /cached-hits returns cached entries when routes are cached."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/users")
         @cache(ttl=60)
@@ -110,7 +111,7 @@ class TestCachedHitsRoute:
 
     def test_cached_hits_route_structure(self, app, client, setup_cache):
         """Test that cached hit records have correct structure."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/test")
         @cache(ttl=60)
@@ -146,7 +147,7 @@ class TestCachedHitsRoute:
 
     def test_cached_hits_with_prefix(self, app, client, setup_cache):
         """Test /cached-hits route with custom prefix."""
-        add_routes(app, prefix="/admin/cache")
+        add_routes(app, prefix="/admin/cache", dependencies=[])
 
         @app.get("/test")
         @cache(ttl=60)
@@ -162,7 +163,7 @@ class TestCachedHitsRoute:
 
     def test_cached_hits_multiple_query_variations(self, app, client, setup_cache):
         """Test /cached-hits shows different cache keys for query params."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/items")  # type: ignore[untyped-decorator]
         @cache(ttl=60)
@@ -192,7 +193,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_without_backend(self, app, client):
         """Test /cached-records returns empty when backend not configured."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         response = client.get("/cached-records")
         assert response.status_code == 200
@@ -203,7 +204,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_empty_cache(self, app, client, setup_cache):
         """Test /cached-records returns empty structure when cache is empty."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         response = client.get("/cached-records")
         assert response.status_code == 200
@@ -215,7 +216,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_with_entries(self, app, client, setup_cache):
         """Test /cached-records returns cached entries with content info."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/users")
         @cache(ttl=60)
@@ -248,7 +249,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_structure(self, app, client, setup_cache):
         """Test that cached records have correct structure."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/test")
         @cache(ttl=60)
@@ -286,7 +287,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_reports_media_type(self, app, client, setup_cache):
         """``media_type`` is the stored response's, ``content_type`` stays "bytes"."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/json")
         @cache(ttl=60)
@@ -310,7 +311,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_media_type_null_when_unset(self, app, client, setup_cache):
         """An entry stored without a media type reports ``null``."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
         setup_cache.cache["GET|||h|||/raw|||"] = CacheItem(
             value=CacheEntry(fingerprint="e", content=b"x"), expiry=None
         )
@@ -320,7 +321,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_content_size_calculation(self, app, client, setup_cache):
         """Test that content size is calculated correctly."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/small")
         @cache(ttl=60)
@@ -351,7 +352,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_with_prefix(self, app, client, setup_cache):
         """Test /cached-records route with custom prefix."""
-        add_routes(app, prefix="/api/cache")
+        add_routes(app, prefix="/api/cache", dependencies=[])
 
         @app.get("/test")
         @cache(ttl=60)
@@ -367,7 +368,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_content_preview(self, app, client, setup_cache):
         """Test that content preview is limited to 100 bytes."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/large")
         @cache(ttl=60)
@@ -388,7 +389,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_can_omit_content_preview(self, app, client, setup_cache):
         """include_content_preview=False hides bodies but keeps the metadata."""
-        add_routes(app, include_content_preview=False)
+        add_routes(app, include_content_preview=False, dependencies=[])
 
         @app.get("/api/secret")
         @cache(ttl=60)
@@ -411,7 +412,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_summary_calculations(self, app, client, setup_cache):
         """Test that summary calculations are correct."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/test1")
         @cache(ttl=60)
@@ -442,7 +443,7 @@ class TestRoutesIntegration:
 
     def test_routes_without_prefix(self, app, client, setup_cache):
         """Test that routes work without prefix."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/test")
         @cache(ttl=60)
@@ -459,7 +460,7 @@ class TestRoutesIntegration:
 
     def test_routes_consistency(self, app, client, setup_cache):
         """Test that both routes show consistent data."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/consistent")
         @cache(ttl=60)
@@ -485,7 +486,7 @@ class TestRoutesIntegration:
 
     def test_routes_not_cached_by_default(self, app, client, setup_cache):
         """Test that the monitoring routes themselves are not cached."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         @app.get("/api/test")
         @cache(ttl=60)
@@ -504,7 +505,7 @@ class TestRoutesIntegration:
 
     def test_include_in_schema_parameter(self, app):
         """Test that include_in_schema parameter works."""
-        add_routes(app, include_in_schema=True)
+        add_routes(app, include_in_schema=True, dependencies=[])
 
         # Check if routes are included in OpenAPI schema
         openapi_schema = app.openapi()
@@ -541,11 +542,50 @@ class TestRoutesIntegration:
         r2 = dep_client.get("/cached-hits", headers={"x-api-key": "secret"})
         assert r2.status_code == 200
 
-    def test_add_routes_with_none_dependencies_no_error(self, app, client, setup_cache):
-        """Passing dependencies=None (default) must not raise errors."""
-        add_routes(app, dependencies=None)
+    def test_add_routes_with_none_dependencies_warns_and_mounts(
+        self, app, client, setup_cache
+    ):
+        """dependencies=None warns but still mounts the routes unguarded."""
+        with pytest.warns(UserWarning, match="dependencies"):
+            add_routes(app, dependencies=None)
         response = client.get("/cached-hits")
         assert response.status_code == 200
+
+
+class TestUnguardedWarning:
+    """add_routes() warns when mounted without dependencies (#301)."""
+
+    def test_default_warns(self, app):
+        """Leaving dependencies unset emits a UserWarning naming it."""
+        with pytest.warns(UserWarning, match="without access control") as record:
+            add_routes(app)
+
+        assert len(record) == 1
+        message = str(record[0].message)
+        assert "dependencies" in message
+        assert "dependencies=[]" in message
+        assert "0.4.0" in message
+        assert "include_content_preview" in message
+        assert "298" in message
+        # stacklevel points at the caller, not at routes.py
+        assert record[0].filename == __file__
+
+    def test_empty_dependencies_does_not_warn(self, app):
+        """An explicit dependencies=[] is a deliberate opt-out."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            add_routes(app, dependencies=[])
+
+    def test_guarded_does_not_warn(self, app):
+        """Passing a real guard does not warn."""
+        from fastapi import Depends
+
+        def guard() -> None:
+            return None
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            add_routes(app, dependencies=[Depends(guard)])
 
 
 def _report_expired(backend: MemoryBackend, key: str, entry: CacheEntry) -> None:
@@ -567,7 +607,7 @@ class TestExpiredEntryMonitoring:
 
     def test_cached_hits_shows_expired_entry(self, app, client, setup_cache):
         """/cached-hits marks is_expired=True for entries whose TTL has passed."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         # TestClient sends Host: testserver by default
         cache_key = "GET|||testserver|||/expired-route|||"
@@ -589,7 +629,7 @@ class TestExpiredEntryMonitoring:
 
     def test_cached_records_shows_expired_entry(self, app, client, setup_cache):
         """/cached-records marks is_expired=True for entries whose TTL has passed."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
 
         cache_key = "GET|||testserver|||/expired-data|||"
         expired_entry = CacheEntry(
@@ -614,7 +654,7 @@ class TestMonitoringEdgeCases:
 
     def test_non_route_keys_are_skipped(self, app, client, setup_cache):
         """A CacheManager/state key has no method|||host|||path shape and must not be listed."""
-        add_routes(app)
+        add_routes(app, dependencies=[])
         setup_cache.cache["cache:plain-value"] = CacheItem(
             value=CacheEntry(fingerprint="x", content=b"1"), expiry=None
         )
@@ -629,7 +669,7 @@ class TestMonitoringEdgeCases:
         assert [r["path"] for r in records["cached_records"]] == ["/route"]
 
     def test_routes_answer_empty_when_no_backend_is_configured(self, app, client):
-        add_routes(app)
+        add_routes(app, dependencies=[])
         BackendProxy.set(None)
 
         hits = client.get("/cached-hits").json()

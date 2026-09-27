@@ -267,6 +267,8 @@ add_routes(
 
 > [!WARNING]
 > **這些路由本身沒有任何身分驗證。** `include_in_schema=False` 只是讓它們不出現在 OpenAPI 文件中；任何猜到路徑的人都能讀取。`/cached-records` 含有快取內容的預覽（除非設定 `include_content_preview=False`），並會暴露整個路由結構。正式環境中請務必傳入 `dependencies=[Depends(your_auth)]`，或將它們掛載在僅供內部使用的應用程式上。
+>
+> 呼叫 `add_routes()` 時若未傳入 `dependencies`，會發出 `UserWarning`。0.4.0 版將要求必須傳入此參數，並將 `include_content_preview` 預設改為關閉（[#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)）。若本機或測試用的應用程式確實要保持開放，請傳入 `dependencies=[]` 明確選擇不設防護，這樣就不會出現警告。
 
 > [!NOTE]
 > Memcached 無法列舉鍵，因此在 Memcached 上這兩個路由都不會回傳任何內容。
