@@ -43,5 +43,11 @@
       automerge: false,
       labels: ["dependencies", "major-update"],
     },
+    {
+      description: "lowest.yml pins the oldest supported Python on purpose",
+      matchFileNames: [".github/workflows/lowest.yml"],
+      matchDepNames: ["python"],
+      enabled: false,
+    },
   ],
 }

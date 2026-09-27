@@ -41,6 +41,8 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
+        # The oldest supported Python. Renovate leaves it alone (see
+        # .github/renovate.json5).
         python-version: "3.10"
 
     - name: Install uv
