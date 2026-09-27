@@ -17,6 +17,7 @@ from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
+from tests.conftest import Clock
 from tests.live_servers import REDIS_HOST
 from tests.live_servers import REDIS_PORT
 from tests.live_servers import requires_redis
@@ -216,14 +217,14 @@ async def test_get_or_set_awaits_a_sync_callable_returning_an_awaitable(
 
 @pytest.mark.asyncio
 async def test_get_or_set_honors_ttl_on_created_value(
-    cache_manager: CacheManager,
+    cache_manager: CacheManager, clock: Clock
 ) -> None:
     """get_or_set() applies the given ttl to a newly created value."""
     result = await cache_manager.get_or_set("key", lambda: "value", ttl=1)
     assert result == "value"
     assert await cache_manager.get("key") == "value"
 
-    await asyncio.sleep(1.2)
+    await clock.wait(1.2, cache_manager.backend)
 
     assert await cache_manager.get("key") is None
 
@@ -278,24 +279,28 @@ async def test_add_concurrent_callers_have_exactly_one_winner(
 
 
 @pytest.mark.asyncio
-async def test_add_ttl_expires_the_claim(cache_manager: CacheManager) -> None:
+async def test_add_ttl_expires_the_claim(
+    cache_manager: CacheManager, clock: Clock
+) -> None:
     """An explicit ttl applies, and once it lapses the key can be added again."""
     assert await cache_manager.add("event:1", "first", ttl=1) is True
     assert await cache_manager.add("event:1", "second", ttl=1) is False
 
-    await asyncio.sleep(1.2)
+    await clock.wait(1.2, cache_manager.backend)
 
     assert await cache_manager.add("event:1", "third") is True
     assert await cache_manager.get("event:1") == "third"
 
 
 @pytest.mark.asyncio
-async def test_add_uses_default_ttl(memory_backend: MemoryBackend) -> None:
+async def test_add_uses_default_ttl(
+    memory_backend: MemoryBackend, clock: Clock
+) -> None:
     """add() without an explicit ttl falls back to the manager's default_ttl."""
     manager = CacheManager(backend=memory_backend, default_ttl=1)
     assert await manager.add("event:1", "value") is True
 
-    await asyncio.sleep(1.2)
+    clock.advance(1.2)
 
     assert await manager.get("event:1") is None
 
@@ -360,19 +365,19 @@ async def test_has_missing_key_false(cache_manager: CacheManager) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ttl_expiry(cache_manager: CacheManager) -> None:
+async def test_ttl_expiry(cache_manager: CacheManager, clock: Clock) -> None:
     """A value set with a short ttl expires and is no longer retrievable."""
     await cache_manager.set("key", "value", ttl=1)
     assert await cache_manager.get("key") == "value"
 
-    await asyncio.sleep(1.2)
+    await clock.wait(1.2, cache_manager.backend)
 
     assert await cache_manager.get("key") is None
 
 
 @pytest.mark.asyncio
 async def test_default_ttl_used_when_not_specified(
-    memory_backend: MemoryBackend,
+    memory_backend: MemoryBackend, clock: Clock
 ) -> None:
     """set() without an explicit ttl uses the manager's default_ttl."""
     BackendProxy.set(memory_backend)
@@ -381,21 +386,21 @@ async def test_default_ttl_used_when_not_specified(
     await manager.set("key", "value")
     assert await manager.get("key") == "value"
 
-    await asyncio.sleep(1.2)
+    clock.advance(1.2)
 
     assert await manager.get("key") is None
 
 
 @pytest.mark.asyncio
 async def test_explicit_ttl_overrides_default_ttl(
-    memory_backend: MemoryBackend,
+    memory_backend: MemoryBackend, clock: Clock
 ) -> None:
     """An explicit ttl on set() overrides a long default_ttl."""
     BackendProxy.set(memory_backend)
     manager = CacheManager(default_ttl=3600)
 
     await manager.set("key", "value", ttl=1)
-    await asyncio.sleep(1.2)
+    clock.advance(1.2)
 
     assert await manager.get("key") is None
 

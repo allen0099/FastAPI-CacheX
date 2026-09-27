@@ -322,13 +322,21 @@ async def test_memcached_keeps_raising_after_a_connection_failure(call) -> None:
 
 
 @pytest.mark.asyncio
-async def test_memcached_tries_a_failed_server_again_after_the_dead_timeout() -> None:
-    """A failed server is not skipped for pymemcache's default 60 seconds (#197)."""
+async def test_memcached_tries_a_failed_server_again_after_the_dead_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed server is not skipped for pymemcache's default 60 seconds (#197).
+
+    The backend hands `_DEAD_TIMEOUT` to pymemcache, which times it with the
+    real clock, so the test shortens it rather than wait the documented second.
+    """
+    assert _DEAD_TIMEOUT == 1  # the delay BACKENDS.md documents
+    monkeypatch.setattr("fastapi_cachex.backends.memcached._DEAD_TIMEOUT", 0.05)
     backend = _unreachable_backend()
     with pytest.raises(ConnectionRefusedError):
         await backend.get("trip")
 
-    await asyncio.sleep(_DEAD_TIMEOUT + 0.1)
+    await asyncio.sleep(0.1)
 
     with pytest.raises(ConnectionRefusedError):
         await backend.get("k")

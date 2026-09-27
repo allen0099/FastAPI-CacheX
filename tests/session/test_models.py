@@ -11,6 +11,7 @@ from fastapi_cachex.session.models import SessionStatus
 from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.session.token_serializers import SimpleTokenSerializer
+from tests.conftest import Clock
 
 
 def test_session_user_creation() -> None:
@@ -80,20 +81,17 @@ def test_session_is_expired() -> None:
     assert not session.is_expired()
 
 
-def test_session_renew() -> None:
+def test_session_renew(clock: Clock) -> None:
     """Test session renewal."""
-    import time
-
     session = Session()
     session.expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     old_expiry = session.expires_at
 
-    # Sleep briefly to ensure time difference
-    time.sleep(0.01)
+    clock.advance(1)
 
     session.renew(3600)  # Renew for 1 hour
 
-    assert session.expires_at >= old_expiry
+    assert session.expires_at > old_expiry
 
 
 def test_session_regenerate_id() -> None:

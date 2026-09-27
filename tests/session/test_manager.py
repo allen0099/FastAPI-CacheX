@@ -25,6 +25,7 @@ from fastapi_cachex.session.models import SessionToken
 from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import CacheItem
+from tests.conftest import Clock
 
 
 class DummySerializer:
@@ -223,10 +224,8 @@ async def test_user_agent_binding(backend: MemoryBackend) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sliding_expiration(backend: MemoryBackend) -> None:
+async def test_sliding_expiration(backend: MemoryBackend, clock: Clock) -> None:
     """Test sliding expiration."""
-    import asyncio
-
     config = SessionConfig(
         secret_key="a" * 32,
         session_ttl=3600,
@@ -240,8 +239,7 @@ async def test_sliding_expiration(backend: MemoryBackend) -> None:
 
     original_expiry = session.expires_at
 
-    # Sleep briefly to ensure time passes
-    await asyncio.sleep(0.01)
+    clock.advance(1)
 
     # Set expiry to be past the threshold (only 1000 seconds left vs 3600 TTL)
     session.expires_at = datetime.now(timezone.utc) + timedelta(seconds=1000)

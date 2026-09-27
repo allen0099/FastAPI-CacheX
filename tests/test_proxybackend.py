@@ -1,4 +1,3 @@
-import asyncio
 import threading
 import time
 from collections.abc import Iterator
@@ -21,6 +20,7 @@ from fastapi_cachex.proxy import get_backend_or_fallback
 from fastapi_cachex.session.proxy import SessionManagerProxy
 from fastapi_cachex.state.proxy import StateManagerProxy
 from fastapi_cachex.types import CacheEntry
+from tests.conftest import Clock
 
 app = FastAPI()
 client = TestClient(app)
@@ -84,7 +84,7 @@ def test_memory_cache():
 
 
 @pytest.mark.asyncio
-async def test_backend_cleanup():
+async def test_backend_cleanup(clock: Clock):
     # Run cleanup task in async environment
     memory_backend = MemoryBackend()
     BackendProxy.set(memory_backend)
@@ -101,8 +101,7 @@ async def test_backend_cleanup():
     assert cached_value is not None
     assert cached_value.content == b"test_value"
 
-    # Wait for data to expire (1 second + extra time)
-    await asyncio.sleep(1.1)
+    clock.advance(1.1)
 
     # Execute cleanup
     await memory_backend.cleanup()
