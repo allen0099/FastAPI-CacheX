@@ -126,6 +126,15 @@ class MemcachedBackend(BaseCacheBackend):
         )
         self.key_prefix = key_prefix
 
+    async def aclose(self) -> None:
+        """Close every pooled connection to every server.
+
+        Safe to call more than once. The pymemcache client reconnects on the
+        next call, so a backend used after ``aclose()`` opens new sockets that
+        need another ``aclose()``.
+        """
+        await asyncio.to_thread(self.client.close)
+
     def _make_key(self, key: str) -> str:
         """Namespace a cache key, hashing it when Memcached would refuse it.
 

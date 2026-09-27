@@ -4,12 +4,19 @@ import warnings
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Iterable
+from types import TracebackType
+from typing import TYPE_CHECKING
 from typing import Any
 
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
+
+if TYPE_CHECKING:
+    # Type-only: typing.Self is 3.11+, and typing_extensions is not a runtime
+    # dependency.
+    from typing_extensions import Self
 
 
 def warn_if_path_shaped(pattern: str, cleared: int) -> None:
@@ -89,7 +96,33 @@ def validate_delta(delta: int) -> int:
 
 
 class BaseCacheBackend(ABC):
-    """Base class for all cache backends."""
+    """Base class for all cache backends.
+
+    Every backend is an async context manager: ``async with`` returns the
+    backend itself and calls ``aclose()`` on the way out.
+    """
+
+    async def aclose(self) -> None:  # noqa: B027 - a no-op default, not abstract
+        """Release what the backend holds open: connections, background tasks.
+
+        Call it once on shutdown, typically at the end of a FastAPI lifespan.
+        It is safe to call more than once. The base implementation does
+        nothing, for backends with nothing to release; the built-in backends
+        override it.
+        """
+
+    async def __aenter__(self) -> "Self":
+        """Return the backend itself."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Close the backend with ``aclose()``."""
+        await self.aclose()
 
     @abstractmethod
     async def get(self, key: str) -> CacheEntry | None:

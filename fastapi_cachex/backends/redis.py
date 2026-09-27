@@ -208,6 +208,19 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             protocol=config.protocol,
         )
 
+    async def aclose(self) -> None:
+        """Close the Redis client and the connection pool it created.
+
+        Safe to call more than once. redis-py reconnects on the next command,
+        so a backend used after ``aclose()`` needs another ``aclose()``. A
+        pool passed in through ``connection_pool=`` is left open: redis-py
+        leaves a pool it did not create to whoever created it, and so does
+        this backend.
+        """
+        # The types-redis stubs predate aclose() (redis-py 5.0.1+); close()
+        # is its deprecated alias and warns.
+        await self.client.aclose()  # type: ignore[attr-defined]
+
     def _make_key(self, key: str) -> str:
         """Add prefix to cache key."""
         return f"{self.key_prefix}{key}"

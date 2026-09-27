@@ -28,22 +28,7 @@ BackendProxy.set(backend)
 > [!NOTE]
 > 記憶體快取不適合用於多行程的正式環境。每個行程都各自維護獨立的快取。
 
-清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束；`stop_cleanup()` 只會要求取消。
-
-```python
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield
-    await backend.aclose()
-
-
-app = FastAPI(lifespan=lifespan)
-```
+清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束（參見[關閉後端](#closing-a-backend)）；`stop_cleanup()` 只會要求取消。
 
 `clear_pattern()` 在所有平台上都以區分大小寫的方式比對完整的鍵，與 Redis 相同。萬用字元語法採用 Python 的 `fnmatch`，與 Redis 有兩處不同：否定字元類別要寫 `[!...]`（Redis 為 `[^...]`）；跳脫特殊字元要放進中括號，例如 `[*]`（Redis 另外也接受 `\*`）。`*`、`?` 與 `[abc]` 在兩者上的行為相同。
 
@@ -119,6 +104,48 @@ BackendProxy.set(backend)
 同步的 pymemcache 用戶端在工作執行緒中執行，並使用連線池，因此並行的請求絕不會共用同一個 socket。寫入會等待伺服器確認（`default_noreply=False`），因此只要 `set()` 返回，就能從連線池中的任何連線讀到該值。每次呼叫只切換到工作執行緒一次，多步驟的[原子操作](#atomic-backend-primitives)也是如此。`delete_many()` 在這一次呼叫中逐一對每個鍵送出 `DELETE`，並回傳實際存在的鍵數；0.3.8 之前它每個鍵都要切換一次執行緒，回傳的是傳入的鍵數。
 
 伺服器無法連線時，所有要送往它的呼叫都會拋出錯誤，一秒後會再嘗試連線。0.3.8 以前，失敗後一秒內的呼叫會回傳虛構的結果：`get()` 當成未命中、`set()` 沒有任何反應（寫入遺失）、`increment()` 當成新的計數器並回傳 0。設定多台伺服器時，失敗的那台會立即移出輪替，它的鍵會改由其餘伺服器處理，直到它恢復回應。
+
+## 關閉後端 {#closing-a-backend}
+
+每個後端都有 `aclose()`，用來釋放它持有的連線與背景工作。請在關閉應用程式時，於 FastAPI lifespan 的結尾呼叫它：
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from fastapi_cachex import BackendProxy
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379)
+    BackendProxy.set(backend)
+    try:
+        yield
+    finally:
+        BackendProxy.set(None)
+        await backend.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
+```
+
+每種後端都適用同一個 lifespan。後端也是非同步 context manager，因此 `async with MemcachedBackend(servers=[...]) as backend:` 會在區塊結束時關閉它，區塊拋出例外時也一樣。
+
+| 後端 | `aclose()` |
+|------|------------|
+| `MemoryBackend` | 取消清理 task 並等待它結束 |
+| `AsyncRedisCacheBackend` | 關閉 redis-py 用戶端，以及它自己建立的連線池 |
+| `MemcachedBackend` | 在工作執行緒中關閉連往每台伺服器的所有連線池 socket |
+
+- 多次呼叫 `aclose()` 是安全的。
+- 後端擁有它自己建立的用戶端，因此 `aclose()` 也會關閉 `backend.client`；請關閉後端，而不要直接操作用戶端。你自行建立並以 `connection_pool=` 傳入的 Redis 連線池不會被關閉，與 redis-py 的做法相同：誰建立連線池，就由誰關閉。
+- 關閉後的後端並不會被鎖住：Redis 與 Memcached 用戶端會在下一次呼叫時重新連線，`MemoryBackend` 也會重新啟動清理 task，因此在 `aclose()` 之後又使用的後端需要再呼叫一次 `aclose()`。
+- `BackendProxy.set(None)` 只會取消註冊後端，不會關閉它。
+- 自訂後端會從 `BaseCacheBackend` 繼承一個什麼都不做的 `aclose()`；若後端持有連線或背景工作，請覆寫它。
+- 若不呼叫 `aclose()`，開啟中的 socket 只會由垃圾回收器關閉，關閉應用程式時可能會產生 `ResourceWarning`。0.3.9 之前只有 `MemoryBackend` 有 `aclose()`，Redis 與 Memcached 後端要透過 `backend.client` 關閉。
 
 ## 後端的原子操作 {#atomic-backend-primitives}
 
