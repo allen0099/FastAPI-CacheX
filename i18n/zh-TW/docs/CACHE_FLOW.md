@@ -17,7 +17,8 @@ no-store？ ── 是 → 執行 handler，既不讀取也不寫入快取，
     ↓ 否
 private，或帶有 Authorization 且未設定 public／cache_authorized？
     ── 是 → 執行 handler；比對 If-None-Match 決定回傳 304 或 200
-    │        （共用後端既不讀取也不寫入）
+    │        （共用後端既不讀取也不寫入；Authorization 的情況下
+    │         Cache-Control 以 private 取代 public）
     ↓ 否
 讀取後端項目
     ↓
@@ -40,7 +41,8 @@ private，或帶有 Authorization 且未設定 public／cache_authorized？
                             不同時才寫入後端
     ↓
 在回應中附加 Cache-Control（非 2xx 回應回傳時不帶此標頭，
-且 handler 自己送出的 private／no-store Cache-Control 永遠不會被取代）
+handler 自己送出的 private／no-store Cache-Control 永遠不會被取代，
+設定 Set-Cookie 的回應則以 private 取代 public）
 ```
 
 ## 詳細步驟 {#detailed-steps}
@@ -193,7 +195,7 @@ return response
 > 「非 2xx 不寫入」是刻意的設計：暫時性的錯誤不應抹除最後一次正常的快取回應，也不應在之後被當成 200 重播。`206 Partial Content` 同樣不會快取，因為它的內容只對產生它的那個 `Range` 請求有意義。非 2xx 回應也永遠不會以 `304` 回應，且回傳時不帶裝飾器的 `Cache-Control` 標頭（只有 `no_store=True` 會在每個回應加上 `no-store`）。
 
 > [!NOTE]
-> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 以前這類回應會被儲存並重播給每位呼叫者（#296）。
+> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及繞過後端的 `Authorization` 請求的回應（200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 以前這類回應會被儲存並重播給每位呼叫者（#296）。
 
 ### 4. ETag 產生與驗證 {#4-etag-generation-and-validation}
 
@@ -344,8 +346,9 @@ async def cleanup_task():
 | `no_store=True` | 既不讀取也不寫入快取；端點每次都會執行 |
 | `no_cache=True` | 端點每次都會執行以重新計算 ETag；與用戶端的 `If-None-Match` 相符時仍回傳 304，ETag 改變時會更新快取 |
 | `private=True` | **共用後端**既不讀取也不寫入；仍會送出 `Cache-Control: private`，並以新產生的內容比對 ETag |
-| 帶有 `Authorization` 的請求 | 與 `private=True` 一樣，既不讀取也不寫入後端，除非路由設定了 `public=True` 或 `cache_authorized=True` |
-| handler 送出 `Cache-Control: private`／`no-store` 或 `Set-Cookie` | 原樣回傳（handler 的 `private`／`no-store` 標頭保持不變），不寫入，既有項目也保持不變 |
+| 帶有 `Authorization` 的請求 | 與 `private=True` 一樣，既不讀取也不寫入後端，`Cache-Control` 以 `private` 取代 `public`，除非路由設定了 `public=True` 或 `cache_authorized=True`（`must_revalidate=True` 不算） |
+| handler 送出 `Cache-Control: private`／`no-store` | 回傳時保留 handler 的標頭，不寫入，既有項目也保持不變 |
+| 回應設定了 cookie | 回傳時 `Cache-Control` 以 `private` 取代 `public`，不寫入，既有項目也保持不變 |
 | 沒有 `ttl`（或 `ttl=0`） | 與 `private=True` 一樣，既不讀取也不寫入後端；端點每次都會執行，並以新產生的內容比對 ETag |
 | 快取過期（TTL 已到） | 端點會再次執行；`MemoryBackend` 讀取到過期項目時會當場刪除 |
 | 非 2xx 或 206 回應 | 原樣回傳、不寫入，既有的項目不受影響 |

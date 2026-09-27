@@ -116,7 +116,7 @@ async def test_response_setting_a_cookie_is_not_stored():
     assert first.json() == {"visitor": "v1"}
     assert second.json() == {"visitor": "v2"}
     assert second.cookies["visitor"] == "v2"
-    assert second.headers["Cache-Control"] == "max-age=60"
+    assert second.headers["Cache-Control"] == "private, max-age=60"
     assert await BackendProxy.get().get(_key("/visit")) is None
 
 
@@ -139,7 +139,7 @@ async def test_authorization_request_bypasses_the_backend():
 
     assert alice.json() == {"for": "Bearer alice"}
     assert bob.json() == {"for": "Bearer bob"}
-    assert bob.headers["Cache-Control"] == "max-age=60"
+    assert bob.headers["Cache-Control"] == "private, max-age=60"
     # The anonymous entry is untouched.
     assert await BackendProxy.get().get(_key("/greeting")) == stored
 
@@ -160,7 +160,7 @@ def test_authorization_request_still_revalidates():
     revalidated = client.get("/doc", headers={**auth, "If-None-Match": etag})
 
     assert revalidated.status_code == 304
-    assert revalidated.headers["Cache-Control"] == "max-age=60"
+    assert revalidated.headers["Cache-Control"] == "private, max-age=60"
 
 
 def test_bypassed_304_keeps_the_handler_cache_control():
@@ -323,3 +323,169 @@ def test_each_skip_is_logged_at_debug(
         record.levelno == logging.DEBUG and expected in record.getMessage()
         for record in caplog.records
     )
+
+
+async def test_set_cookie_on_a_public_route_is_sent_as_private():
+    """A shared cache downstream must not store the cookie response either:
+    `public` becomes `private`, the other directives stay."""
+    app = FastAPI()
+
+    @app.get("/banner")
+    @cache(
+        ttl=60,
+        public=True,
+        must_revalidate=True,
+        stale="revalidate",
+        stale_ttl=30,
+        immutable=True,
+    )
+    async def banner(response: Response):
+        response.set_cookie("seen", "1")
+        return {"banner": True}
+
+    client = TestClient(app)
+    first = client.get("/banner")
+    again = client.get("/banner", headers={"If-None-Match": first.headers["ETag"]})
+
+    expected = (
+        "private, max-age=60, must-revalidate, stale-while-revalidate=30, immutable"
+    )
+    assert first.headers["Cache-Control"] == expected
+    # Not stored: the handler ran again, and its fresh cookie response is a 200.
+    assert again.status_code == 200
+    assert again.headers["Cache-Control"] == expected
+    assert await BackendProxy.get().get(_key("/banner")) is None
+
+
+def test_set_cookie_304_on_a_bypassed_route_is_private():
+    """The bypass path's 304 also carries the private variant."""
+    app = FastAPI()
+
+    @app.get("/uncached")
+    @cache(public=True)
+    async def uncached(response: Response):
+        response.set_cookie("seen", "1")
+        return {"uncached": True}
+
+    client = TestClient(app)
+    first = client.get("/uncached")
+    revalidated = client.get(
+        "/uncached", headers={"If-None-Match": first.headers["ETag"]}
+    )
+
+    assert first.headers["Cache-Control"] == "private"
+    assert revalidated.status_code == 304
+    assert revalidated.headers["Cache-Control"] == "private"
+
+
+async def test_set_cookie_on_a_no_cache_route_is_private_no_cache():
+    """`no_cache` omits the scope, so `private` is added in front."""
+    app = FastAPI()
+
+    @app.get("/ticker")
+    @cache(ttl=60, no_cache=True, public=True, must_revalidate=True)
+    async def ticker(response: Response):
+        response.set_cookie("seen", "1")
+        return {"ticker": 1}
+
+    client = TestClient(app)
+    first = client.get("/ticker")
+    revalidated = client.get(
+        "/ticker", headers={"If-None-Match": first.headers["ETag"]}
+    )
+
+    assert first.headers["Cache-Control"] == "private, no-cache, must-revalidate"
+    assert revalidated.status_code == 304
+    assert revalidated.headers["Cache-Control"] == (
+        "private, no-cache, must-revalidate"
+    )
+    assert await BackendProxy.get().get(_key("/ticker")) is None
+
+
+async def test_must_revalidate_does_not_lift_the_authorization_bypass():
+    """RFC 9111 §3.5 would allow reuse under `must-revalidate`; the library
+    requires `public` or `cache_authorized`, and sends `private`."""
+    app = FastAPI()
+    calls = {"n": 0}
+
+    @app.get("/account")
+    @cache(ttl=60, must_revalidate=True)
+    async def account(request: Request):
+        calls["n"] += 1
+        return {"for": request.headers["authorization"]}
+
+    client = TestClient(app)
+    alice = client.get("/account", headers={"Authorization": "Bearer alice"})
+    bob = client.get("/account", headers={"Authorization": "Bearer bob"})
+    revalidated = client.get(
+        "/account",
+        headers={"Authorization": "Bearer bob", "If-None-Match": bob.headers["ETag"]},
+    )
+
+    assert alice.json() == {"for": "Bearer alice"}
+    assert bob.json() == {"for": "Bearer bob"}
+    assert bob.headers["Cache-Control"] == "private, max-age=60, must-revalidate"
+    assert revalidated.status_code == 304
+    assert revalidated.headers["Cache-Control"] == (
+        "private, max-age=60, must-revalidate"
+    )
+    assert calls["n"] == 3
+    assert await BackendProxy.get().get(_key("/account")) is None
+
+
+def test_authorization_on_a_no_cache_route_is_private_no_cache():
+    app = FastAPI()
+
+    @app.get("/live")
+    @cache(ttl=60, no_cache=True)
+    async def live():
+        return {"live": True}
+
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer alice"}
+    first = client.get("/live", headers=auth)
+    revalidated = client.get(
+        "/live", headers={**auth, "If-None-Match": first.headers["ETag"]}
+    )
+
+    assert first.headers["Cache-Control"] == "private, no-cache"
+    assert revalidated.status_code == 304
+    assert revalidated.headers["Cache-Control"] == "private, no-cache"
+
+
+@pytest.mark.parametrize(
+    ("public", "cache_authorized", "expected"),
+    [
+        (True, False, "public, max-age=60"),
+        (False, True, "max-age=60"),
+    ],
+)
+def test_opted_in_authorization_keeps_the_decorator_header(
+    public: bool, cache_authorized: bool, expected: str
+):
+    """Where the bypass is lifted, the header is the decorator's as before."""
+    app = FastAPI()
+
+    @app.get("/opted-in")
+    @cache(ttl=60, public=public, cache_authorized=cache_authorized)
+    async def opted_in():
+        return {"ok": True}
+
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer alice"}
+    client.get("/opted-in", headers=auth)
+    hit = client.get("/opted-in", headers=auth)
+
+    assert hit.headers["Cache-Control"] == expected
+
+
+def test_no_store_decorator_wins_over_set_cookie():
+    app = FastAPI()
+
+    @app.get("/nothing")
+    @cache(no_store=True, public=True)
+    async def nothing(response: Response):
+        response.set_cookie("c", "1")
+        return {}
+
+    assert TestClient(app).get("/nothing").headers["Cache-Control"] == "no-store"

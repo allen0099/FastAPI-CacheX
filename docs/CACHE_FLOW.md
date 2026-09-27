@@ -20,7 +20,8 @@ no-store? ── yes → run the handler, neither read nor write the cache,
     ↓ no
 private, or Authorization without public/cache_authorized?
     ── yes → run the handler; compare If-None-Match to decide 304 or 200
-    │        (the shared backend is neither read nor written)
+    │        (the shared backend is neither read nor written; for
+    │        Authorization, Cache-Control says private instead of public)
     ↓ no
 Read the backend entry
     ↓
@@ -43,7 +44,8 @@ Cached entry exists, ttl is set, and no-cache is off?
                                     differs from the existing entry's ETag
     ↓
 Attach Cache-Control to the response (non-2xx responses are returned without it,
-and a handler's own private/no-store Cache-Control is never replaced)
+a handler's own private/no-store Cache-Control is never replaced, and a
+Set-Cookie response gets private instead of public)
 ```
 
 ## Detailed steps
@@ -240,7 +242,13 @@ return response
 > identity). On a render, a response whose own `Cache-Control` contains
 > `private` or `no-store` (whole directive, any case), or that sets a cookie,
 > is served but not written. A `private`/`no-store` header from the handler is
-> sent unchanged instead of the decorator's. An entry already stored under the
+> sent unchanged instead of the decorator's. A cookie response, and the answer
+> to a bypassed `Authorization` request, are sent (200 or 304) with `private`
+> in place of `public` and the decorator's other directives kept (`private,
+> no-cache` on a `no_cache` route), so a downstream shared cache does not
+> store them either. `must_revalidate=True` does not lift the `Authorization`
+> bypass, although RFC 9111 would allow reuse under `must-revalidate`: the
+> library requires the explicit opt-in. An entry already stored under the
 > key is left alone, and a request that hits it before the handler runs is
 > served from it as usual. Each skip is logged at `DEBUG`. Before 0.3.9 such
 > responses were stored and replayed to every caller (#296).
@@ -410,8 +418,9 @@ lookup. Which backend to pick is covered in [Backends](BACKENDS.md#choosing-a-ba
 | `no_store=True` | The cache is neither read nor written; the endpoint runs every time |
 | `no_cache=True` | The endpoint runs every time to recompute the ETag; a match with the client's `If-None-Match` still returns 304, and the cache is updated when the ETag changes |
 | `private=True` | The **shared backend** is neither read nor written; `Cache-Control: private` is still sent and the ETag is compared against fresh content |
-| Request with `Authorization` | The backend is neither read nor written, as with `private=True`, unless the route has `public=True` or `cache_authorized=True` |
-| Handler sends `Cache-Control: private`/`no-store`, or `Set-Cookie` | Returned (with the handler's `private`/`no-store` header intact), not written, and any existing entry is left untouched |
+| Request with `Authorization` | The backend is neither read nor written, as with `private=True`, and `Cache-Control` has `private` instead of `public`, unless the route has `public=True` or `cache_authorized=True` (`must_revalidate=True` is not enough) |
+| Handler sends `Cache-Control: private`/`no-store` | Returned with the handler's header intact, not written, and any existing entry is left untouched |
+| Response sets a cookie | Returned with `private` instead of `public` in `Cache-Control`, not written, and any existing entry is left untouched |
 | No `ttl` (or `ttl=0`) | The backend is neither read nor written, as with `private=True`; the endpoint runs every time and the ETag is compared against fresh content |
 | Cache expired (TTL elapsed) | The endpoint runs again; `MemoryBackend` deletes the expired entry in place when it reads it |
 | Non-2xx or 206 response | Returned as-is, not written, and any existing entry is left untouched |

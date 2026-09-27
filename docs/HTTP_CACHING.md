@@ -96,18 +96,27 @@ A response that belongs to one caller is never stored either (#296):
 - **The request carries `Authorization`.** As RFC 9111 §3.5 requires of a
   shared cache, the backend is bypassed, as with `private=True`: nothing is
   read or written, the handler runs, and `If-None-Match` is compared against
-  the fresh render. `public=True` routes are exempt, and so are routes with
+  the fresh render. The response (and a 304) is sent with `private` in place
+  of `public`, keeping the decorator's other directives (`private, no-cache`
+  on a `no_cache` route), so a CDN or proxy does not store it either.
+  `public=True` routes are exempt, and so are routes with
   `cache_authorized=True`, the opt-in for a key builder that includes the
   caller's identity (see [Authenticated endpoints](#authenticated-endpoints)).
+  `must_revalidate=True` does not lift the bypass: RFC 9111 would let a shared
+  cache reuse such a response under `must-revalidate`, but the library
+  requires an explicit opt-in.
 - **The handler's own `Cache-Control` contains `private` or `no-store`**
   (as whole directives, in any case). The response is served but not stored,
   and the handler's header is sent unchanged instead of the decorator's.
 - **The response sets a cookie.** It is served, `Set-Cookie` included, but not
-  stored.
+  stored, and it (and a 304) is sent with `private` in place of `public`,
+  keeping the other directives, so a shared cache downstream does not store it
+  either.
 
 In the last two cases an entry already stored under the key is left alone, and
 a request that finds a valid entry is still answered from it before the
-handler runs. Each skip is logged at `DEBUG`.
+handler runs. A handler's own `private`/`no-store` header always wins, and
+`no_store=True` still sends only `no-store`. Each skip is logged at `DEBUG`.
 
 A handler that returns plain data instead of a `Response` gets the same
 treatment it would without `@cache`: the value is validated and filtered by the
