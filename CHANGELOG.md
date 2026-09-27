@@ -36,6 +36,22 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   backend that is not involved. It subclasses `BackendNotFoundError`, so
   existing handlers keep catching it. `BackendProxy` is unchanged.
   ([#161](https://github.com/allen0099/FastAPI-CacheX/issues/161))
+- **`CacheXError`, `BackendNotFoundError` and `RequestNotFoundError` are
+  exported from `fastapi_cachex`.** They were only importable from
+  `fastapi_cachex.exceptions`, unlike every session and state exception.
+  ([#160](https://github.com/allen0099/FastAPI-CacheX/issues/160))
+- **`require_user_session` / `AuthenticatedSession` require a logged-in
+  user.** `get_session`, `RequiredSession` and `UserSessionDep` accept the
+  anonymous session any visitor gets by writing to `request.session`; the
+  new dependency also answers `401` when `session.user` is `None`.
+  `UserSessionDep` keeps its behaviour until 0.4.0.
+  ([#114](https://github.com/allen0099/FastAPI-CacheX/issues/114))
+- **`/cached-records` reports each entry's `media_type`.** It is the media
+  type the response was stored with, or `null` when it had none.
+  `content_type` is still returned for compatibility but is always `"bytes"`.
+  `CACHE_KEY_MAX_PARTS` in `fastapi_cachex.routes` is renamed
+  `CACHE_KEY_MAX_SPLIT`, since it is a `maxsplit` count; the old name remains
+  as an alias. ([#184](https://github.com/allen0099/FastAPI-CacheX/issues/184))
 
 ### Changed
 
@@ -59,6 +75,51 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   old behaviour. `invalidate()`, `CacheManager`, `StateManager`, `CacheLock`
   and sessions still raise.
   ([#228](https://github.com/allen0099/FastAPI-CacheX/issues/228))
+- **Redis clear operations delete page by page.** `clear()`, `clear_pattern()`
+  and `clear_path()` delete each SCAN page as it arrives instead of first
+  collecting every matching key in memory, and `clear_path()` no longer runs
+  an extra `EXISTS` on the direct key.
+  ([#172](https://github.com/allen0099/FastAPI-CacheX/issues/172))
+- **Redis `get_cache_data()` no longer blocks the server.** It fetched every
+  value and TTL inside one `MULTI`/`EXEC`, because redis-py pipelines are
+  transactional by default. It now sends non-transactional pipelines of 100
+  keys each.
+  ([#171](https://github.com/allen0099/FastAPI-CacheX/issues/171))
+- **Memcached runs each operation in one worker call, and `delete_many()`
+  counts what it removed.** `increment`, `get_and_delete` and
+  `delete_if_equals` used to hand every round trip to its own worker thread;
+  `delete_many()` took one per key and returned how many keys it was given.
+  Each call now makes a single trip, and `delete_many()` returns how many of
+  the keys existed.
+  ([#174](https://github.com/allen0099/FastAPI-CacheX/issues/174),
+  [#176](https://github.com/allen0099/FastAPI-CacheX/issues/176))
+- **`CacheBackend` falls back to a `MemoryBackend` like `@cache` and
+  `AppCache`.** It used to answer 500 (`BackendNotFoundError`) until some
+  `@cache` route had registered the fallback. The three lazy defaults
+  (`get_backend_or_fallback`, `get_app_cache`, `get_state_manager`) now share
+  `ProxyBase.get_or_create(factory)`, which runs the factory at most once
+  under a per-class lock; `get_state_manager` could previously register two
+  managers under concurrent first requests. States still have no memory
+  fallback. ([#112](https://github.com/allen0099/FastAPI-CacheX/issues/112))
+- **`@cache` builds the cache key only when it reads or writes the backend.**
+  A custom `key_builder` is no longer called for `no_store`, `private` or
+  TTL-less routes, where the key only fed debug logs.
+  ([#182](https://github.com/allen0099/FastAPI-CacheX/issues/182))
+- **Session lookups no longer write to the backend unless sliding expiration
+  renewed the session.** `SessionManager.get_session()` used to save the
+  session on every call to record `last_accessed`, so each authenticated
+  request cost a write (two if it also modified the session). The stored
+  `last_accessed` is now updated only when the session is written (created,
+  modified, renewed or regenerated); pass `get_session(..., touch=True)` to
+  save it on every lookup. Session entries also store a constant fingerprint
+  instead of hashing the payload.
+  ([#115](https://github.com/allen0099/FastAPI-CacheX/issues/115))
+- **Runtime dependencies declare minimum versions.** `fastapi>=0.133.0`,
+  `starlette>=1.0.0` (now declared directly; the session middleware needs
+  Starlette 1.0), `pydantic>=2.7.0` and `itsdangerous>=1.1.0`; the extras
+  require `pymemcache>=4.0.0` and `orjson>=3.4.7`. Older versions could be
+  installed before but failed at import. A `lowest` tox env and CI workflow
+  test every floor. ([#194](https://github.com/allen0099/FastAPI-CacheX/issues/194))
 
 ### Deprecated
 
@@ -191,6 +252,26 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   to retrieve and remove the current value, matching Redis `GETDEL`, and raises
   `CacheXError` if retries run out.
   ([#175](https://github.com/allen0099/FastAPI-CacheX/issues/175))
+- **`clear_expired_sessions()` also removes invalidated and expired-status
+  sessions.** It only checked `expires_at`, so a session marked `INVALIDATED`
+  by `invalidate_session()` or `EXPIRED` by an expired read stayed in the
+  backend until its TTL ran out. Any session that is no longer `ACTIVE` is now
+  removed. `clear_expired_sessions()` and `delete_user_sessions()` also delete
+  what they find with one `backend.delete_many()` call instead of one `delete`
+  per session.
+  ([#165](https://github.com/allen0099/FastAPI-CacheX/issues/165))
+- **The session middleware varies on the header that carried the token.**
+  `FastAPICacheXSessionMiddleware` added `Vary: Cookie` whenever
+  `request.session` was accessed, even when the token came in
+  `X-Session-Token` or `Authorization`, so a shared cache could key those
+  responses on the wrong header. It now varies on every request header it
+  read to find the token, and on `Cookie` only when no header carried one.
+  ([#168](https://github.com/allen0099/FastAPI-CacheX/issues/168))
+- **The wheel and sdist ship the LICENSE file.** `pyproject.toml` declared
+  `Apache-2.0` but no `license-files`, so neither artifact contained the
+  licence text the Apache-2.0 licence requires recipients to receive. The
+  package also carries the `Typing :: Typed` classifier now.
+  ([#232](https://github.com/allen0099/FastAPI-CacheX/issues/232))
 
 ### Security
 
@@ -242,6 +323,21 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
   contains `|` or `%` change, so those entries are cached afresh once. The
   HTTP caching guide now recommends `TrustedHostMiddleware`.
   ([#230](https://github.com/allen0099/FastAPI-CacheX/issues/230))
+- **Releases run from master only, and only the publish step can reach
+  PyPI.** `release.yml` could be dispatched on any branch, pushing the
+  release commit there and publishing unmerged code, and the one job that
+  installed every dev dependency also held `contents: write` and
+  `id-token: write`. A non-dry-run dispatch off `master` now fails at once.
+  The workflow is split into a read-only `build` job, a `release` job that
+  commits, tags and creates the GitHub release, and a `publish` job in the
+  `pypi` environment that alone can mint the PyPI token.
+  ([#231](https://github.com/allen0099/FastAPI-CacheX/issues/231))
+- **The JWT serializer warns about an HMAC key shorter than RFC 7518
+  requires.** `secret_key` needs only 32 characters, but `HS384` and `HS512`
+  need 48 and 64 bytes. `JWTTokenSerializer` now emits one `UserWarning`
+  when it is built with a shorter key, instead of relying on PyJWT's
+  per-token `InsecureKeyLengthWarning`.
+  ([#116](https://github.com/allen0099/FastAPI-CacheX/issues/116))
 
 ## [0.3.7] - 2026-09-25
 
