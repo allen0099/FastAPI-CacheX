@@ -40,6 +40,7 @@ uv run pre-commit run --all-files
 # Run tox across all Python versions (3.10–3.14)
 uv run tox
 tox -e py310  # single version
+tox -e lowest  # every direct dependency at its declared floor, Python 3.10
 ```
 
 ## Architecture
