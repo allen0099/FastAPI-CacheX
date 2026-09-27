@@ -231,6 +231,71 @@ async def test_get_or_set_treats_corrupted_content_as_miss(
     assert await manager.get("bad") == "repaired"
 
 
+@pytest.mark.parametrize(
+    ("value", "decoded"),
+    [
+        pytest.param((1, 2), [1, 2], id="tuple"),
+        pytest.param({1: "a"}, {"1": "a"}, id="int-keyed-dict"),
+        pytest.param(
+            {"items": [(1, {2: (3,)})], "n": None},
+            {"items": [[1, {"2": [3]}]], "n": None},
+            id="nested",
+        ),
+    ],
+)
+async def test_get_or_set_miss_returns_the_value_a_hit_returns(
+    cache_manager: CacheManager, value: Any, decoded: Any
+) -> None:
+    """get_or_set() returns the JSON round-tripped value on a miss, like a hit."""
+    miss = await cache_manager.get_or_set("key", lambda: value)
+    hit = await cache_manager.get_or_set("key", lambda: pytest.fail("factory ran"))
+
+    assert miss == decoded
+    assert hit == decoded
+    assert type(miss) is type(hit)
+
+
+async def test_get_or_set_miss_encodes_the_value_once(
+    memory_backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """get_or_set() serialises the factory's value once and stores those bytes."""
+    manager = CacheManager(backend=memory_backend)
+    encoded: list[Any] = []
+    original = CacheManager._encode
+
+    def counting_encode(value: Any) -> CacheEntry:
+        encoded.append(value)
+        return original(value)
+
+    monkeypatch.setattr(CacheManager, "_encode", staticmethod(counting_encode))
+
+    result = await manager.get_or_set("key", lambda: (1, 2))
+
+    assert encoded == [(1, 2)]
+    assert result == [1, 2]
+    stored = await memory_backend.get(f"{manager.key_prefix}key")
+    assert stored is not None
+    assert stored.content == b"[1, 2]"
+
+
+async def test_get_or_set_non_json_serializable_raises_and_stores_nothing(
+    cache_manager: CacheManager,
+) -> None:
+    """get_or_set() raises TypeError after factory runs and leaves the key free."""
+    calls = 0
+
+    def factory() -> object:
+        nonlocal calls
+        calls += 1
+        return object()
+
+    with pytest.raises(TypeError):
+        await cache_manager.get_or_set("key", factory)
+
+    assert calls == 1
+    assert not await cache_manager.has("key")
+
+
 # --- add ------------------------------------------------------------------------
 
 

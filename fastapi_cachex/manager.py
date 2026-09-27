@@ -171,6 +171,13 @@ class CacheManager:
         returned directly. This method does not provide stampede protection:
         concurrent misses for the same key may each invoke ``factory``.
 
+        A miss returns the value as it will be read back from the cache, not
+        the object ``factory`` returned: it goes through the same JSON
+        round-trip as a hit, so a tuple comes back as a list and integer
+        dict keys as strings. A value JSON cannot encode (``datetime``,
+        ``Decimal``, ``UUID``, a pydantic model) raises ``TypeError`` only
+        after ``factory`` has run; nothing is stored.
+
         Args:
             key: Logical cache key (without the manager's prefix).
             factory: Zero-argument callable that produces the JSON-serializable
@@ -181,7 +188,8 @@ class CacheManager:
                 uses ``self.default_ttl``.
 
         Returns:
-            The cached value (existing or newly created).
+            The cached value (existing or newly created), JSON-decoded in
+            both cases.
 
         Raises:
             TypeError: If the value produced by ``factory`` is not JSON-serializable.
@@ -200,8 +208,14 @@ class CacheManager:
         if inspect.isawaitable(value):
             value = await value
 
-        await self.set(key, value, ttl=ttl)
-        return value
+        # Encode once, store those bytes and return them decoded, so a miss
+        # returns exactly what a later hit will: a tuple comes back as a
+        # list, int dict keys as strings.
+        effective_ttl = ttl if ttl is not None else self.default_ttl
+        entry = self._encode(value)
+        await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
+        logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
+        return json.loads(entry.content)
 
     async def clear_pattern(self, pattern: str) -> int:
         """Clear all keys under this manager's namespace matching a glob pattern.

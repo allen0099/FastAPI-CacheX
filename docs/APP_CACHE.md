@@ -46,6 +46,8 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
 - `set()` lets `TypeError` propagate for values that are not JSON-serializable.
 - `get_or_set()` provides no stampede protection: concurrent misses for the same
   key each run `factory`.
+- `get_or_set()` returns the JSON-decoded value on a miss as well as on a hit
+  (see [JSON round-trip](#json-round-trip)), so both paths give the same result.
 - `add()` stores a value only when the key is free and returns whether it did.
   The check and the write are one atomic backend operation (`set_if_absent`),
   so it suits "do this once per key" work such as webhook or email
@@ -69,5 +71,25 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
 > methods — and `clear_pattern()` — are no-ops on a Memcached backend;
 > `get()`/`set()`/`add()`/`delete()`/`has()` work normally. Use Redis or the in-memory
 > backend if you need bulk clearing.
+
+## JSON round-trip
+
+Values are stored as JSON (`json.dumps` with its defaults) and read back with
+`json.loads`, so what you get back is the JSON-decoded form, not the object you
+stored:
+
+| Stored | Read back |
+|---|---|
+| `dict`, `list`, `str`, `int`, `float`, `bool`, `None` | unchanged |
+| `tuple` | `list`: `(1, 2)` → `[1, 2]` |
+| `dict` with `int`/`float`/`bool`/`None` keys | string keys: `{1: "a"}` → `{"1": "a"}` |
+| `datetime`, `Decimal`, `UUID`, `set`, a pydantic model, … | `TypeError`, nothing stored |
+
+`get_or_set()` applies this on a miss too: it encodes the factory's value once,
+stores those bytes and returns them decoded, so the first call returns exactly
+what later hits return. A value JSON cannot encode raises `TypeError` only
+after `factory` has run, since the value doesn't exist before; convert it
+first, e.g. `lambda: model.model_dump(mode="json")` or
+`lambda: when.isoformat()`.
 
 The full method list is in the [API reference](api/cache-manager.md).
