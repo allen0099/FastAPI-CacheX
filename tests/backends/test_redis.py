@@ -1204,6 +1204,8 @@ def test_cached_route_with_ttl_zero_is_served() -> None:
             )
             # Clean up inside the client's event loop, which owns the pool.
             client.portal.call(backend.clear)  # type: ignore[union-attr]
+            # types-redis predates aclose() (redis-py 5.0.1).
+            client.portal.call(backend.client.aclose)  # type: ignore[union-attr,call-arg,attr-defined]
 
         assert first.status_code == 200
         assert first.headers["Cache-Control"] == "max-age=0"

@@ -1,15 +1,21 @@
 import asyncio
 import time
+from collections.abc import AsyncGenerator
 from datetime import datetime
 from datetime import tzinfo
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import pytest_asyncio
+from pymemcache import HashClient
+from redis.asyncio import Redis
 
+from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends import memory
 from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.memory import MemoryBackend
+from fastapi_cachex.backends.redis import AsyncRedisCacheBackend
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.session import manager as session_manager
@@ -40,6 +46,43 @@ def setup_default_backend():
     BackendProxy.set(backend)
     yield
     backend.stop_cleanup()
+
+
+@pytest.fixture(autouse=True)
+async def close_network_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncGenerator[None, None]:
+    """Close every Redis and Memcached client a test opens, when it ends.
+
+    The backends have no close method of their own, so a client a test drops
+    keeps its sockets until the garbage collector finds it, often during a
+    later test. The `ResourceWarning` then fails whichever test that is.
+    Recording each backend as it is built and closing it here keeps every
+    socket inside the test that opened it.
+
+    `__new__` records rather than `__init__`, so the constructor's warnings
+    still point at the test that called it.
+
+    Both client libraries are imported at the top of this module: a test that
+    hides them from `import` is still patched while this teardown runs.
+    """
+    opened: list[AsyncRedisCacheBackend | MemcachedBackend] = []
+
+    def record(cls: type[Any], *args: Any, **kwargs: Any) -> Any:
+        backend = object.__new__(cls)
+        opened.append(backend)
+        return backend
+
+    for cls in (AsyncRedisCacheBackend, MemcachedBackend):
+        monkeypatch.setattr(cls, "__new__", record)
+    yield
+    for backend in opened:
+        # Missing if the constructor raised; a test may swap in a mock.
+        client = getattr(backend, "client", None)
+        if isinstance(client, Redis):
+            await client.aclose()  # type: ignore[attr-defined]  # not in types-redis
+        elif isinstance(client, HashClient):
+            client.close()
 
 
 @pytest.fixture(autouse=True)

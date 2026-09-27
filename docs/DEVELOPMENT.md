@@ -100,6 +100,13 @@ it makes the run louder, not safer.
   global ignore only for a third-party warning the tests cannot avoid, with a
   comment saying why.
 
+  An unclosed socket counts too: its `ResourceWarning` fails whichever test
+  is running when the garbage collector finds it. The autouse
+  `close_network_clients` fixture in `tests/conftest.py` closes every Redis
+  and Memcached client a test builds, on the test's own event loop. A sync
+  test that uses a Redis backend from inside `TestClient` closes it through
+  `client.portal`, because the connections belong to that loop.
+
 ### Checking that a test can fail
 
 Coverage says a line ran, not that anything checked what it did. A test that
