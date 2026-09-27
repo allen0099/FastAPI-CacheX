@@ -27,24 +27,6 @@ from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import CacheItem
 
 
-@pytest.fixture
-def backend() -> MemoryBackend:
-    """Create a memory backend for testing."""
-    return MemoryBackend()
-
-
-@pytest.fixture
-def config() -> SessionConfig:
-    """Create session config for testing."""
-    return SessionConfig(secret_key="a" * 32, session_ttl=3600)
-
-
-@pytest.fixture
-def manager(backend: MemoryBackend, config: SessionConfig) -> SessionManager:
-    """Create session manager for testing."""
-    return SessionManager(backend, config)
-
-
 class DummySerializer:
     """Stub serializer used to verify DI override coverage."""
 

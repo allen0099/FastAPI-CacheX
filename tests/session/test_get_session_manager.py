@@ -7,7 +7,6 @@ from fastapi import Depends
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.session import SessionConfig
 from fastapi_cachex.session import SessionManager
@@ -15,19 +14,6 @@ from fastapi_cachex.session import SessionMiddleware
 from fastapi_cachex.session import SessionUser
 from fastapi_cachex.session import get_session_manager
 from fastapi_cachex.session.proxy import SessionManagerProxy
-
-
-@pytest.fixture
-def config() -> SessionConfig:
-    """Create session config for testing."""
-    return SessionConfig(secret_key="a" * 32)
-
-
-@pytest.fixture
-def manager(config: SessionConfig) -> SessionManager:
-    """Create session manager for testing."""
-    backend = MemoryBackend()
-    return SessionManager(backend, config)
 
 
 def test_get_session_manager_dependency(
