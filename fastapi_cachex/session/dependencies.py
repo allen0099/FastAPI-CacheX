@@ -176,6 +176,11 @@ async def rotate_session_id(request: Request) -> bool:
             return {"ok": True}
         ```
 
+        ``request.session["user_id"]`` is application data. For
+        ``require_user_session`` / ``AuthenticatedSession`` to accept the
+        session, set ``session.user`` after the rotation and save it with
+        ``SessionManager.update_session()``; see the session guide.
+
     Args:
         request: FastAPI request object
 

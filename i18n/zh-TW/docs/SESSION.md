@@ -154,6 +154,8 @@ async def account(session: AuthenticatedSession):
 
 `UserSessionDep` 雖然名稱如此，卻不會檢查使用者；在 0.4.0 之前它是 `SessionDep` 的別名，0.4.0 預計改為要求使用者。
 
+只有在 `create_session()` 傳入 `user=`，或指定 `session.user` 後儲存 Session，才會設定 `session.user`。寫入 `request.session` 的鍵（`request.session["user_id"] = ...`）是應用程式資料：函式庫不會把它視為登入，因此這種 Session 仍會讓 `AuthenticatedSession` 回應 `401`。會設定使用者的登入方式，請見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)。
+
 ### 3. 完整範例（Redis 後端） {#3-full-example-redis-backend}
 
 ```python
@@ -543,6 +545,31 @@ async def login(request: Request):
 `rotate_session_id()` 會對請求的 Session 呼叫 `SessionManager.regenerate_session_id()`，刪除舊 ID 底下的後端紀錄，並以新 ID 儲存該 Session，保留其資料、使用者、`created_at` 與過期時間。任一個中介軟體都會看到新 ID，並透過該請求使用的傳輸方式送出對應的權杖：Cookie 使用 `Set-Cookie`，標頭權杖則使用回應標頭。之後舊的權杖就無法再解析出 Session。新訪客沒有可換 ID 的 Session，因此它會回傳 `False`，第一次寫入時會以全新的 ID 建立 Session。
 
 已經取得請求 Session 物件的 handler，也可以直接呼叫 `await manager.regenerate_session_id(session)`，效果相同。請從 `get_optional_session` 取得 Session，並在它為 `None` 時略過呼叫；`SessionDep` 會對還沒有 Session 的訪客回應 `401`。
+
+上面的範例把使用者 ID 存成應用程式資料，`require_user_session` 與 `AuthenticatedSession` 不會認得它。要通過它們的檢查，請在換 ID 之後附加 `SessionUser`，並自行儲存 Session：指定 `session.user` 不會把 `request.session` 標記為已修改，因此中介軟體不會儲存它。
+
+```python
+from fastapi_cachex.session import SessionUser
+from fastapi_cachex.session.dependencies import OptionalSession
+
+
+@app.post("/login")
+async def login(request: Request, session: OptionalSession):
+    ...  # 驗證帳號密碼
+    user = SessionUser(user_id="123")
+    if session is not None:
+        await rotate_session_id(request)
+        session.user = user
+        await session_manager.update_session(session)
+    else:
+        # 還沒有 Session：建立帶有使用者的 Session，並自行交付其權杖，
+        # 做法同基本用法中的登入範例。
+        _, token = await session_manager.create_session(user=user)
+        ...
+    return {"ok": True}
+```
+
+完整版本（包含為新訪客設定 Cookie）請見 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)。處理上述所有步驟的 `login()` 輔助函式已在規劃中（[#293](https://github.com/allen0099/FastAPI-CacheX/issues/293)）。
 
 在中介軟體之外，請以中介軟體會傳入的相同綁定值載入 Session，並自行將回傳的權杖交給用戶端：
 
