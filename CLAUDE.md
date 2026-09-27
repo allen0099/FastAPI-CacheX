@@ -69,6 +69,7 @@ The library has four independent subsystems:
 - Optional subsystem, activated via `SessionMiddleware` and `SessionManagerProxy`.
 - `SessionManager` handles create/get/update/delete/invalidate/regenerate operations. It stores `Session` Pydantic models serialized as JSON, wrapped in `CacheEntry` for backend compatibility.
 - Token signing: `simple` format uses HMAC-SHA256 (`SecurityManager`); `jwt` format uses PyJWT (optional dependency `fastapi-cachex[jwt]`).
+- `get_session()` saves only when sliding expiration renewed the session (or with `touch=True`), so the stored `last_accessed` is the last write, not the last lookup. Session entries use the constant fingerprint `"session"`; nothing compares it.
 - Session token is passed via custom header (`X-Session-Token` by default) or `Authorization: Bearer` token.
 - `SessionManagerProxy` mirrors the `BackendProxy` pattern for managing the `SessionManager` singleton.
 - Key FastAPI dependencies: `get_session`, `require_session`, `get_optional_session` (in `session/dependencies.py`). These accept anonymous sessions (`user=None`); `require_user_session` / `AuthenticatedSession` also require a user. `UserSessionDep` is still an alias of `SessionDep` until 0.4.0.
