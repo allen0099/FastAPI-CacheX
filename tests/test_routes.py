@@ -284,6 +284,40 @@ class TestCachedRecordsRoute:
         assert record["content_size"] > 0
         assert record["content_type"] in ("bytes", "str")
 
+    def test_cached_records_reports_media_type(self, app, client, setup_cache):
+        """``media_type`` is the stored response's, ``content_type`` stays "bytes"."""
+        add_routes(app)
+
+        @app.get("/api/json")
+        @cache(ttl=60)
+        async def json_endpoint():
+            return {"data": "test"}
+
+        @app.get("/api/text")
+        @cache(ttl=60)
+        async def text_endpoint():
+            return Response(content=b"hi", media_type="text/plain")
+
+        client.get("/api/json")
+        client.get("/api/text")
+
+        records = {
+            r["path"]: r for r in client.get("/cached-records").json()["cached_records"]
+        }
+        assert records["/api/json"]["media_type"] == "application/json"
+        assert records["/api/text"]["media_type"] == "text/plain"
+        assert {r["content_type"] for r in records.values()} == {"bytes"}
+
+    def test_cached_records_media_type_null_when_unset(self, app, client, setup_cache):
+        """An entry stored without a media type reports ``null``."""
+        add_routes(app)
+        setup_cache.cache["GET|||h|||/raw|||"] = CacheItem(
+            value=CacheEntry(fingerprint="e", content=b"x"), expiry=None
+        )
+
+        (record,) = client.get("/cached-records").json()["cached_records"]
+        assert record["media_type"] is None
+
     def test_cached_records_content_size_calculation(self, app, client, setup_cache):
         """Test that content size is calculated correctly."""
         add_routes(app)
@@ -605,3 +639,11 @@ class TestMonitoringEdgeCases:
         assert hits["summary"]["cached_paths"] == []
         assert records["total_records"] == 0
         assert records["summary"]["estimated_cache_size_kb"] == 0.0
+
+
+def test_cache_key_max_parts_is_an_alias_of_max_split():
+    """The renamed maxsplit constant keeps its former name importable."""
+    from fastapi_cachex.routes import CACHE_KEY_MAX_PARTS
+    from fastapi_cachex.routes import CACHE_KEY_MAX_SPLIT
+
+    assert CACHE_KEY_MAX_PARTS == CACHE_KEY_MAX_SPLIT == 3

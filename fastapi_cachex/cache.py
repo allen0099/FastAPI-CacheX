@@ -207,6 +207,57 @@ def _media_type_of(response: Response) -> str | None:
     return response.headers.get("content-type")
 
 
+def _build_cache_control(
+    *,
+    ttl: int | None,
+    stale: Literal["error", "revalidate"] | None,
+    stale_ttl: int | None,
+    no_cache: bool,
+    public: bool,
+    private: bool,
+    immutable: bool,
+    must_revalidate: bool,
+) -> str:
+    """The ``Cache-Control`` value for a ``@cache`` route's arguments.
+
+    ``no_cache`` sends only ``no-cache`` (plus ``must-revalidate``); otherwise
+    the directives follow in a fixed order: scope, ``max-age``,
+    ``must-revalidate``, the stale directive, ``immutable``.
+    """
+    cache_control = CacheControl()
+    if no_cache:
+        cache_control.add(DirectiveType.NO_CACHE)
+        if must_revalidate:
+            cache_control.add(DirectiveType.MUST_REVALIDATE)
+        return str(cache_control)
+
+    # 1. Access scope (public/private)
+    if public:
+        cache_control.add(DirectiveType.PUBLIC)
+    elif private:
+        cache_control.add(DirectiveType.PRIVATE)
+
+    # 2. Cache time settings
+    if ttl is not None:
+        cache_control.add(DirectiveType.MAX_AGE, ttl)
+
+    # 3. Validation related
+    if must_revalidate:
+        cache_control.add(DirectiveType.MUST_REVALIDATE)
+
+    # 4. Stale response handling (stale_ttl is validated at decoration time)
+    if stale == "revalidate":
+        cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
+    elif stale == "error":
+        cache_control.add(DirectiveType.STALE_IF_ERROR, stale_ttl)
+
+    # 5. Special flags
+    if immutable:
+        cache_control.add(DirectiveType.IMMUTABLE)
+
+    return str(cache_control)
+
+
 def _is_request_annotation(annotation: Any) -> bool:
     """Whether an annotation asks for a ``Request`` (or a subclass of one)."""
     if get_origin(annotation) is Annotated:
@@ -555,42 +606,17 @@ def cache(
         else:
             request_name = found_request.name
 
-        def build_cache_control() -> str:
-            cache_control = CacheControl()
-            if no_cache:
-                cache_control.add(DirectiveType.NO_CACHE)
-                if must_revalidate:
-                    cache_control.add(DirectiveType.MUST_REVALIDATE)
-                return str(cache_control)
-
-            # 1. Access scope (public/private)
-            if public:
-                cache_control.add(DirectiveType.PUBLIC)
-            elif private:
-                cache_control.add(DirectiveType.PRIVATE)
-
-            # 2. Cache time settings
-            if ttl is not None:
-                cache_control.add(DirectiveType.MAX_AGE, ttl)
-
-            # 3. Validation related
-            if must_revalidate:
-                cache_control.add(DirectiveType.MUST_REVALIDATE)
-
-            # 4. Stale response handling (stale_ttl is validated at decoration time)
-            if stale == "revalidate":
-                cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
-            elif stale == "error":
-                cache_control.add(DirectiveType.STALE_IF_ERROR, stale_ttl)
-
-            # 5. Special flags
-            if immutable:
-                cache_control.add(DirectiveType.IMMUTABLE)
-
-            return str(cache_control)
-
         # The header only depends on the decorator arguments, so build it once.
-        cache_control = build_cache_control()
+        cache_control = _build_cache_control(
+            ttl=ttl,
+            stale=stale,
+            stale_ttl=stale_ttl,
+            no_cache=no_cache,
+            public=public,
+            private=private,
+            immutable=immutable,
+            must_revalidate=must_revalidate,
+        )
         builder = key_builder or default_key_builder
         # Without a positive ttl nothing may be served from storage, and a 304
         # answered from a stored ETag would be exactly that: it would keep
@@ -609,7 +635,7 @@ def cache(
             else:
                 req = kwargs.pop(request_name, None)
 
-            if not req:
+            if req is None:
                 # Reached when the wrapper is called outside the router, which
                 # is the only caller that supplies the request parameter.
                 raise RequestNotFoundError
@@ -621,12 +647,12 @@ def cache(
                 )
                 return await get_response(func, req, *args, **kwargs)
 
-            cache_key = builder(req)
-
             # Handle special case: no-store (highest priority)
             if no_store:
                 response = await get_response(func, req, *args, **kwargs)
-                logger.debug("no-store active; bypassed cache for key=%s", cache_key)
+                logger.debug(
+                    "no-store active; bypassed cache for path=%s", req.url.path
+                )
                 return _with_cache_control(response, _NO_STORE)
 
             client_etag = req.headers.get("if-none-match")
@@ -645,11 +671,15 @@ def cache(
                     # StreamingResponse/FileResponse — cannot compute ETag
                     return _with_cache_control(response, cache_control)
                 if _etag_matches(client_etag, etag):
-                    logger.debug("304 Not Modified (uncached); key=%s", cache_key)
+                    logger.debug("304 Not Modified (uncached); path=%s", req.url.path)
                     return _not_modified(etag, cache_control, response.headers)
                 response.headers["ETag"] = etag
-                logger.debug("Bypassed the backend; key=%s", cache_key)
+                logger.debug("Bypassed the backend; path=%s", req.url.path)
                 return _with_cache_control(response, cache_control)
+
+            # Built only here: the branches above never touch the backend, so a
+            # custom key builder would run for nothing.
+            cache_key = builder(req)
 
             try:
                 cached_data = await cache_backend.get(cache_key)
