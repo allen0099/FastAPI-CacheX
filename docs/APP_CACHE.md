@@ -32,8 +32,9 @@ profile = await manager.get_or_set("user:42", lambda: load_user(42), ttl=300)
 if await manager.add(f"webhook:{event_id}", True, ttl=86400):
     await deliver_webhook(event_id)
 
-# Glob over this manager's namespace, using the backend's native pattern
-# support (Redis SCAN) rather than enumerating every key.
+# Glob over this manager's namespace. Only the pattern is a glob; the prefix
+# is literal. With a prefix free of *?[]\ this uses the backend's native
+# pattern support (Redis SCAN) rather than enumerating every key.
 await manager.clear_pattern("user:*")  # matches "myapp:user:*"
 ```
 
@@ -61,6 +62,19 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
   `key_prefix="cache:users:"`, and an empty `key_prefix` makes `clear()` remove
   everything in the backend, including HTTP responses, locks, OAuth states and
   sessions. Give each manager a prefix that does not start with another's.
+- `clear_pattern(pattern)` treats only `pattern` as a glob; `key_prefix` is
+  always matched literally. With a prefix free of glob metacharacters
+  (`*`, `?`, `[`, `]`, `\`) it hands `key_prefix + pattern` to the backend's
+  `clear_pattern()` (Redis `SCAN MATCH`), and `pattern` uses the backend's
+  glob syntax. A prefix that contains one, such as `cache[1]:`, cannot be
+  passed on as a glob, so `clear_pattern()` lists every key with
+  `get_all_keys()`, keeps those that start with the prefix and whose remainder
+  matches `pattern` under `fnmatch.fnmatchcase`, and deletes them with
+  `delete_many()`. That is slower on Redis, and `pattern` is then fnmatch
+  syntax rather than Redis glob: case-sensitive, no backslash escapes, and
+  `[!a]` rather than `[^a]` for negation. Constructing a `CacheManager` with
+  such a prefix emits a `UserWarning`; pick a prefix without `*?[]\` to keep
+  the fast path.
 - The `AppCache` dependency creates and registers a default `CacheManager` the
   first time it is used; `CacheManagerProxy.set()` registers your own instead.
 
