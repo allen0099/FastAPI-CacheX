@@ -43,6 +43,7 @@ from .types import CACHE_KEY_SEPARATOR
 from .types import CacheEntry
 from .types import CacheKeyBuilder
 from .types import escape_key_component
+from .types import log_ref
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
@@ -107,6 +108,29 @@ def build_cache_key(request: Request, *components: str | int) -> str:
     )
     logger.debug("Built cache key: %s", key)
     return key
+
+
+def _log_backend_failure(
+    what: str, request: Request, cache_key: str, error: Exception
+) -> None:
+    """Log a failed backend call without writing the cache key at WARNING.
+
+    The key holds the raw query string, ``vary`` header values and any custom
+    key components, so the warning carries the method, the path and a digest
+    of the key; the full key goes to ``DEBUG`` under the same digest. The path
+    is formatted with ``%r`` because it is percent-decoded client input and
+    could otherwise put a CR/LF into the log.
+    """
+    key_ref = log_ref(cache_key)
+    logger.warning(
+        "Cache backend %s. method=%s path=%r key_ref=%s error=%r",
+        what,
+        request.method,
+        request.url.path,
+        key_ref,
+        error,
+    )
+    logger.debug("Cache backend %s; key_ref=%s key=%s", what, key_ref, cache_key)
 
 
 def _append_key_components(key: str, components: Sequence[str | int]) -> str:
@@ -940,11 +964,7 @@ def cache(
             except Exception as e:
                 if not fail_open:
                     raise
-                logger.warning(
-                    "Cache backend read failed; serving uncached. key=%s error=%r",
-                    cache_key,
-                    e,
-                )
+                _log_backend_failure("read failed; serving uncached", req, cache_key, e)
                 cached_data = None
 
             current_response: Response | None = None
@@ -1060,10 +1080,8 @@ def cache(
                 except Exception as e:
                     if not fail_open:
                         raise
-                    logger.warning(
-                        "Cache backend write failed; response not stored. key=%s error=%r",
-                        cache_key,
-                        e,
+                    _log_backend_failure(
+                        "write failed; response not stored", req, cache_key, e
                     )
                 else:
                     logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)

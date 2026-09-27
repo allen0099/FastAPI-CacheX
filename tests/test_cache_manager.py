@@ -1,6 +1,7 @@
 """Tests for CacheManager application-level caching."""
 
 import asyncio
+import logging
 import time
 from collections.abc import AsyncGenerator
 from functools import partial
@@ -17,6 +18,7 @@ from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import log_ref
 from tests.conftest import Clock
 from tests.live_servers import REDIS_HOST
 from tests.live_servers import REDIS_PORT
@@ -294,6 +296,27 @@ async def test_get_or_set_non_json_serializable_raises_and_stores_nothing(
 
     assert calls == 1
     assert not await cache_manager.has("key")
+
+
+async def test_decode_failure_warning_logs_a_digest_not_the_key(
+    memory_backend: MemoryBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Keys often embed e-mails or user IDs: the full key is logged at DEBUG only."""
+    manager = CacheManager(backend=memory_backend)
+    key = "user:alice@example.com"
+    entry = CacheEntry(fingerprint="x", content=b"not valid json")
+    await memory_backend.set(f"{manager.key_prefix}{key}", entry, ttl=60)
+
+    with caplog.at_level(logging.DEBUG, logger="fastapi_cachex.manager"):
+        assert await manager.get(key) is None
+
+    [warning] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert "alice" not in warning
+    assert f"key_ref={log_ref(key)}" in warning
+    assert any(
+        r.levelno == logging.DEBUG and f"key={key}" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 # --- add ------------------------------------------------------------------------

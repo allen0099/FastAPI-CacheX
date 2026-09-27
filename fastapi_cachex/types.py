@@ -1,5 +1,6 @@
 """Type definitions and type aliases for FastAPI-CacheX."""
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,6 +34,18 @@ def escape_key_component(value: str) -> str:
 def unescape_key_component(value: str) -> str:
     """Reverse ``escape_key_component``."""
     return _KEY_UNESCAPE_RE.sub(lambda match: _KEY_UNESCAPES[match.group()], value)
+
+
+def log_ref(value: str) -> str:
+    """Return a short digest that identifies ``value`` in logs without revealing it.
+
+    Cache keys carry the raw query string, ``vary`` header values and custom
+    key components, and OAuth states come from the callback query string;
+    logging them at ``WARNING`` would leak tokens, e-mail addresses or user
+    IDs into application logs. The same value always gives the same digest,
+    so a warning can still be matched to the full value logged at ``DEBUG``.
+    """
+    return hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()[:12]
 
 
 # Status replayed for entries stored before ``CacheEntry`` carried a status code.
