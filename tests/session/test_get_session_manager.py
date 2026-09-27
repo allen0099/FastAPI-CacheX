@@ -16,6 +16,7 @@ from fastapi_cachex.session import get_session_manager
 from fastapi_cachex.session.proxy import SessionManagerProxy
 
 
+@pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
 def test_get_session_manager_dependency(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -39,6 +40,7 @@ def test_get_session_manager_dependency(
     assert response.json()["has_manager"] is True
 
 
+@pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
 @pytest.mark.asyncio
 async def test_get_session_manager_allows_create_session(
     manager: SessionManager, config: SessionConfig
@@ -89,6 +91,7 @@ def test_get_session_manager_without_middleware_raises_error() -> None:
     assert "SessionManager not initialized" in response.json()["detail"]
 
 
+@pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
 @pytest.mark.asyncio
 async def test_get_session_manager_full_workflow(
     manager: SessionManager, config: SessionConfig
@@ -130,6 +133,7 @@ async def test_get_session_manager_full_workflow(
     assert logout_response.json()["message"] == "logged out"
 
 
+@pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
 def test_session_manager_type_annotation(
     manager: SessionManager, config: SessionConfig
 ) -> None:

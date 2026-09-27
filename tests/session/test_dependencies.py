@@ -65,6 +65,9 @@ class TestRequireSessionAlias:
     def test_require_session_is_get_session_alias(self) -> None:
         assert require_session is get_session
 
+    @pytest.mark.filterwarnings(
+        "ignore:SessionMiddleware is deprecated:DeprecationWarning"
+    )
     def test_require_session_via_http_endpoint(self) -> None:
         """require_session used as a route dependency must return 401 without session."""
         config = SessionConfig(secret_key="a" * 32)
@@ -86,6 +89,9 @@ class TestRequireSessionAlias:
         r = dep_client.get("/protected")
         assert r.status_code == 401
 
+    @pytest.mark.filterwarnings(
+        "ignore:SessionMiddleware is deprecated:DeprecationWarning"
+    )
     @pytest.mark.asyncio
     async def test_require_session_with_valid_session(self) -> None:
         """require_session passes when a valid session is present."""

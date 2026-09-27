@@ -3,555 +3,371 @@
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
+from typing import Annotated
 
 import pytest
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Request
-from fastapi import Response
 from fastapi.testclient import TestClient
-from starlette.datastructures import Headers
 
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
+from fastapi_cachex.session.dependencies import get_optional_session
+from fastapi_cachex.session.dependencies import rotate_session_id
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.middleware import _extract_header_token
+from fastapi_cachex.session.middleware import get_client_ip
+from fastapi_cachex.session.models import Session
 from fastapi_cachex.session.models import SessionUser
+from fastapi_cachex.session.proxy import SessionManagerProxy
+
+# The deprecated `SessionMiddleware` is exercised the way an application uses
+# it: installed with `add_middleware`, reached over HTTP, and observed through
+# `get_optional_session` and the response headers.
+
+_DEPRECATION = "SessionMiddleware is deprecated"
 
 
-def test_middleware_initialization(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test middleware initialization."""
+def _client(
+    manager: SessionManager | None,
+    config: SessionConfig | None = None,
+    *,
+    peer: str = "testclient",
+) -> TestClient:
+    """A client for an app behind `SessionMiddleware`, its stack already built.
 
-    # Create a simple ASGI app
-    async def app(scope, receive, send):
-        pass
+    Starlette constructs middleware on the first request, so the warm-up
+    request below is where the `DeprecationWarning` is raised and expected.
+    `/whoami` reports the session the middleware loaded; `/rotate` gives it a
+    new ID, as a login handler would.
+    """
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
 
-    middleware = SessionMiddleware(app, manager, config)
+    @app.get("/whoami")
+    async def whoami(
+        session: Annotated[Session | None, Depends(get_optional_session)],
+    ) -> dict[str, str | None]:
+        if session is None:
+            return {"session_id": None, "user": None}
+        return {
+            "session_id": session.session_id,
+            "user": session.user.user_id if session.user else None,
+        }
 
-    assert middleware.session_manager is manager
-    assert middleware.config is config
+    @app.post("/rotate")
+    async def rotate(request: Request) -> dict[str, bool]:
+        return {"rotated": await rotate_session_id(request)}
+
+    client = TestClient(app, client=(peer, 50000))
+    with pytest.warns(DeprecationWarning, match=_DEPRECATION):
+        client.get("/whoami")
+    return client
 
 
-def test_middleware_initialization_uses_manager_config(
+def test_construction_warns_and_points_to_the_replacement(
     manager: SessionManager,
 ) -> None:
-    """Ensure middleware defaults to manager config when none provided."""
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, session_manager=manager)
 
-    async def app(scope, receive, send):
-        pass
-
-    middleware = SessionMiddleware(app, manager)
-
-    assert middleware.config is manager.config
-
-
-def test_extract_token_from_header(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test token extraction from header."""
-
-    async def app(scope, receive, send):
-        pass
-
-    middleware = SessionMiddleware(app, manager, config)
-
-    # Create a mock request with header
-    request = MagicMock(spec=Request)
-    request.headers = {config.header_name: "test-token"}
-
-    token = middleware._extract_token(request)
-    assert token == "test-token"
-
-
-def test_extract_token_from_bearer(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test token extraction from Bearer token."""
-
-    async def app(scope, receive, send):
-        pass
-
-    config.use_bearer_token = True
-    middleware = SessionMiddleware(app, manager, config)
-
-    # Create a mock request with Bearer token
-    request = MagicMock(spec=Request)
-    request.headers = {"authorization": "Bearer test-token"}
-
-    token = middleware._extract_token(request)
-    assert token == "test-token"
-
-
-def test_extract_token_none(manager: SessionManager, config: SessionConfig) -> None:
-    """Test token extraction when no token is present."""
-
-    async def app(scope, receive, send):
-        pass
-
-    middleware = SessionMiddleware(app, manager, config)
-
-    # Create a mock request with no token
-    request = MagicMock(spec=Request)
-    request.headers = {}
-
-    token = middleware._extract_token(request)
-    assert token is None
-
-
-def test_get_client_ip_ignores_forwarded_headers_by_default(
-    manager: SessionManager,
-    config: SessionConfig,
-) -> None:
-    """Forwarded headers are spoofable, so an untrusted peer's are ignored."""
-
-    async def app(scope, receive, send):
-        pass
-
-    middleware = SessionMiddleware(app, manager, config)
-
-    request = MagicMock(spec=Request)
-    request.headers = {
-        "x-forwarded-for": "1.2.3.4",
-        "x-real-ip": "5.6.7.8",
-    }
-    client = MagicMock()
-    client.host = "10.0.0.9"
-    request.client = client
-
-    assert middleware._get_client_ip(request) == "10.0.0.9"
-
-
-def test_get_client_ip_from_x_forwarded_for_behind_trusted_proxy(
-    manager: SessionManager,
-) -> None:
-    """A proxy the app vouches for may report the real client address."""
-
-    async def app(scope, receive, send):
-        pass
-
-    config = SessionConfig(
-        secret_key="a" * 32, trusted_proxies=["10.0.0.9", "10.0.0.1"]
-    )
-    middleware = SessionMiddleware(app, manager, config)
-
-    request = MagicMock(spec=Request)
-    request.headers = Headers({"x-forwarded-for": "192.168.1.1, 10.0.0.1"})
-    client = MagicMock()
-    client.host = "10.0.0.9"
-    request.client = client
-
-    assert middleware._get_client_ip(request) == "192.168.1.1"
-
-
-def test_get_client_ip_ignores_a_prepended_forwarded_entry(
-    manager: SessionManager,
-) -> None:
-    """Proxies append, so the leftmost entry is whatever the caller sent."""
-
-    async def app(scope, receive, send):
-        pass
-
-    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
-    middleware = SessionMiddleware(app, manager, config)
-
-    request = MagicMock(spec=Request)
-    # The attacker sent the first entry themselves; nginx appended the second.
-    request.headers = Headers({"x-forwarded-for": "198.51.100.5, 203.0.113.99"})
-    client = MagicMock()
-    client.host = "10.0.0.9"
-    request.client = client
-
-    assert middleware._get_client_ip(request) == "203.0.113.99"
-
-
-def test_get_client_ip_falls_back_when_every_hop_is_trusted(
-    manager: SessionManager,
-) -> None:
-    """With no untrusted entry left there is no client address to recover."""
-
-    async def app(scope, receive, send):
-        pass
-
-    config = SessionConfig(
-        secret_key="a" * 32, trusted_proxies=["10.0.0.9", "10.0.0.1"]
-    )
-    middleware = SessionMiddleware(app, manager, config)
-
-    request = MagicMock(spec=Request)
-    request.headers = Headers({"x-forwarded-for": "10.0.0.1"})
-    client = MagicMock()
-    client.host = "10.0.0.9"
-    request.client = client
-
-    assert middleware._get_client_ip(request) == "10.0.0.9"
-
-
-def test_get_client_ip_from_real_ip_behind_trusted_proxy(
-    manager: SessionManager,
-) -> None:
-    """X-Real-IP is the fallback once the peer is trusted."""
-
-    async def app(scope, receive, send):
-        pass
-
-    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
-    middleware = SessionMiddleware(app, manager, config)
-
-    request = MagicMock(spec=Request)
-    request.headers = Headers({"x-real-ip": "192.168.1.1"})
-    client = MagicMock()
-    client.host = "10.0.0.9"
-    request.client = client
-
-    assert middleware._get_client_ip(request) == "192.168.1.1"
-
-
-def test_get_client_ip_from_client(
-    manager: SessionManager,
-    config: SessionConfig,
-) -> None:
-    """Test getting client IP from client."""
-
-    async def app(scope, receive, send):
-        pass
-
-    middleware = SessionMiddleware(app, manager, config)
-
-    # Create a mock request
-    request = MagicMock(spec=Request)
-    request.headers = {}
-    client = MagicMock()
-    client.host = "192.168.1.1"
-    request.client = client
-
-    ip = middleware._get_client_ip(request)
-    assert ip == "192.168.1.1"
+    with pytest.warns(DeprecationWarning, match="FastAPICacheXSessionMiddleware"):
+        TestClient(app).get("/")
 
 
 @pytest.mark.asyncio
-async def test_dispatch_with_expired_session(
+async def test_a_header_token_loads_the_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
-    """Test dispatch with expired session token."""
+    session, token = await manager.create_session(user=SessionUser(user_id="u1"))
+    client = _client(manager, config)
 
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
+    response = client.get("/whoami", headers={config.header_name: token})
 
-    @app.get("/test")
-    async def test_route():
-        return {"message": "ok"}
+    assert response.json() == {"session_id": session.session_id, "user": "u1"}
+    assert config.header_name not in response.headers
 
-    client = TestClient(app)
 
-    # Create a session with past expiry
-    user = SessionUser(user_id="test-user")
-    session, token = await manager.create_session(user=user)
+@pytest.mark.asyncio
+async def test_a_bearer_token_loads_the_session(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    session, token = await manager.create_session(user=SessionUser(user_id="u1"))
+    client = _client(manager, config)
+
+    response = client.get("/whoami", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.json() == {"session_id": session.session_id, "user": "u1"}
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"X-Session-Token": "invalid-token"},
+        {"Authorization": "Bearer"},
+        {"Authorization": "Bearer invalid-token"},
+    ],
+    ids=["no-token", "invalid-header", "empty-bearer", "invalid-bearer"],
+)
+def test_a_missing_or_invalid_token_loads_no_session(
+    manager: SessionManager, config: SessionConfig, headers: dict[str, str]
+) -> None:
+    """The request still reaches the handler, without a session."""
+    client = _client(manager, config)
+
+    response = client.get("/whoami", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"session_id": None, "user": None}
+    assert config.header_name not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_an_expired_session_is_not_loaded(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    session, token = await manager.create_session(user=SessionUser(user_id="u1"))
     session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
     await manager._save_session(session)
+    client = _client(manager, config)
 
-    # Make request with expired session
-    response = client.get("/test", headers={config.header_name: token})
-    # Should succeed but without session loaded
+    response = client.get("/whoami", headers={config.header_name: token})
+
     assert response.status_code == 200
+    assert response.json() == {"session_id": None, "user": None}
 
 
 @pytest.mark.asyncio
-async def test_dispatch_with_invalid_session(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test dispatch with invalid session token."""
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
+async def test_config_defaults_to_the_managers() -> None:
+    config = SessionConfig(secret_key="a" * 32, header_name="X-Custom-Session")
+    manager = SessionManager(MemoryBackend(), config)
+    _session, token = await manager.create_session(user=SessionUser(user_id="u1"))
+    client = _client(manager)
 
-    @app.get("/test")
-    async def test_route():
-        return {"message": "ok"}
+    response = client.get("/whoami", headers={"X-Custom-Session": token})
 
-    client = TestClient(app)
-
-    # Make request with invalid session header
-    response = client.get("/test", headers={config.header_name: "invalid-token"})
-    assert response.status_code == 200
+    assert response.json()["user"] == "u1"
 
 
 @pytest.mark.asyncio
-async def test_dispatch_with_no_session(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test dispatch without session token."""
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
-
-    @app.get("/test")
-    async def test_route():
-        return {"message": "ok"}
-
-    client = TestClient(app)
-
-    # Make request without session
-    response = client.get("/test")
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sets_session_in_request_state(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test dispatch sets session in request state."""
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
-
-    captured_session = {}
-
-    @app.get("/check-session")
-    async def check_session_route():
-        request = Request({"type": "http", "method": "GET", "headers": []})
-        if hasattr(request.state, "session"):
-            captured_session["session"] = request.state.session
-        return {"has_session": hasattr(request.state, "session")}
-
-    client = TestClient(app)
-
-    # Create a session first
-    user = SessionUser(user_id="test-user")
-    _session, token = await manager.create_session(user=user)
-
-    # Make request with session
-    response = client.get("/check-session", headers={config.header_name: token})
-    assert response.status_code == 200
-
-
-def test_extract_token_from_bearer_with_malformed_header(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """Test token extraction with malformed Bearer header."""
-
-    async def app(scope, receive, send):
-        pass
-
-    config.use_bearer_token = True
-    middleware = SessionMiddleware(app, manager, config)
-
-    # Create a mock request with malformed Bearer token
-    request = MagicMock(spec=Request)
-    request.headers = {"authorization": "Bearer"}  # Missing token
-
-    token = middleware._extract_token(request)
-    assert token is None
-
-
-def test_get_client_ip_none(
+async def test_an_explicit_config_overrides_the_managers(
     manager: SessionManager,
-    config: SessionConfig,
 ) -> None:
-    """Test getting client IP when none available."""
+    override = SessionConfig(secret_key="a" * 32, header_name="X-Other-Session")
+    _session, token = await manager.create_session(user=SessionUser(user_id="u1"))
+    client = _client(manager, override)
 
-    async def app(scope, receive, send):
-        pass
-
-    middleware = SessionMiddleware(app, manager, config)
-
-    # Create a mock request with no IP info
-    request = MagicMock(spec=Request)
-    request.headers = {}
-    request.client = None
-
-    ip = middleware._get_client_ip(request)
-    assert ip is None
+    assert (
+        client.get("/whoami", headers={"X-Other-Session": token}).json()["user"] == "u1"
+    )
+    assert (
+        client.get("/whoami", headers={"X-Session-Token": token}).json()["user"] is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_dispatch_with_session_and_ip_binding(
-    config: SessionConfig,
+async def test_the_manager_defaults_to_the_proxy(
+    manager: SessionManager, config: SessionConfig
 ) -> None:
-    """Test dispatch validates IP binding."""
-    backend = MemoryBackend()
-    manager = SessionManager(backend, config)
+    SessionManagerProxy.set(manager)
+    _session, token = await manager.create_session(user=SessionUser(user_id="u1"))
+    client = _client(None)
+
+    response = client.get("/whoami", headers={config.header_name: token})
+
+    assert response.json()["user"] == "u1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("peer", "loaded"), [("203.0.113.7", True), ("198.51.100.1", False)]
+)
+async def test_ip_binding_checks_the_peer_address(
+    config: SessionConfig, peer: str, loaded: bool
+) -> None:
     config.ip_binding = True
-
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
-
-    @app.get("/test")
-    async def test_route():
-        return {"message": "ok"}
-
-    client = TestClient(app)
-
-    # Create session with IP binding
-    user = SessionUser(user_id="test-user")
+    manager = SessionManager(MemoryBackend(), config)
     _session, token = await manager.create_session(
-        user=user,
-        ip_address="127.0.0.1",
+        user=SessionUser(user_id="u1"), ip_address="203.0.113.7"
     )
+    client = _client(manager, config, peer=peer)
 
-    # Request with same IP should work
-    response = client.get("/test", headers={config.header_name: token})
-    assert response.status_code == 200
+    response = client.get("/whoami", headers={config.header_name: token})
+
+    assert (response.json()["user"] == "u1") is loaded
 
 
 @pytest.mark.asyncio
-async def test_dispatch_with_user_agent_binding(
-    config: SessionConfig,
+@pytest.mark.parametrize(
+    ("forwarded_for", "loaded"), [("203.0.113.7", True), ("198.51.100.1", False)]
+)
+async def test_ip_binding_uses_the_forwarded_address_behind_a_trusted_proxy(
+    forwarded_for: str, loaded: bool
 ) -> None:
-    """Test dispatch validates User-Agent binding."""
-    backend = MemoryBackend()
-    manager = SessionManager(backend, config)
+    config = SessionConfig(
+        secret_key="a" * 32, ip_binding=True, trusted_proxies=["10.0.0.9"]
+    )
+    manager = SessionManager(MemoryBackend(), config)
+    _session, token = await manager.create_session(
+        user=SessionUser(user_id="u1"), ip_address="203.0.113.7"
+    )
+    client = _client(manager, config, peer="10.0.0.9")
+
+    response = client.get(
+        "/whoami",
+        headers={config.header_name: token, "X-Forwarded-For": forwarded_for},
+    )
+
+    assert (response.json()["user"] == "u1") is loaded
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user_agent", "loaded"), [("App/1.0", True), ("Other/2.0", False)]
+)
+async def test_user_agent_binding_checks_the_request_user_agent(
+    config: SessionConfig, user_agent: str, loaded: bool
+) -> None:
     config.user_agent_binding = True
-
-    app = FastAPI()
-    SessionMiddleware(app, manager, config)
-
-    @app.get("/test")
-    async def test_route():
-        return {"message": "ok"}
-
-    client = TestClient(app)
-
-    # Create session with User-Agent binding
-    user = SessionUser(user_id="test-user")
+    manager = SessionManager(MemoryBackend(), config)
     _session, token = await manager.create_session(
-        user=user,
-        user_agent="TestClient/1.0",
+        user=SessionUser(user_id="u1"), user_agent="App/1.0"
+    )
+    client = _client(manager, config)
+
+    response = client.get(
+        "/whoami", headers={config.header_name: token, "User-Agent": user_agent}
     )
 
-    # Request with session
-    response = client.get("/test", headers={config.header_name: token})
-    assert response.status_code == 200
+    assert (response.json()["user"] == "u1") is loaded
 
 
 @pytest.mark.asyncio
-async def test_dispatch_direct_call(
-    manager: SessionManager,
-    config: SessionConfig,
+async def test_a_rotated_session_id_is_sent_back_as_a_new_token(
+    manager: SessionManager, config: SessionConfig
 ) -> None:
-    """Test dispatch method directly to improve coverage."""
+    session, token = await manager.create_session(user=SessionUser(user_id="u1"))
+    client = _client(manager, config)
 
-    # Create a mock app
-    mock_app = AsyncMock()
+    response = client.post("/rotate", headers={config.header_name: token})
 
-    middleware = SessionMiddleware(mock_app, manager, config)
-
-    # Create a session
-    user = SessionUser(user_id="test-user")
-    _session, token = await manager.create_session(user=user)
-
-    # Create a mock request
-    request = MagicMock(spec=Request)
-    request.headers = {config.header_name: token, "user-agent": "test-agent"}
-    request.state = MagicMock()
-    request.client = MagicMock()
-    request.client.host = "127.0.0.1"
-
-    # Create mock response
-    mock_response = MagicMock(spec=Response)
-
-    # Set up call_next to return response
-    call_next = AsyncMock(return_value=mock_response)
-
-    # Call dispatch directly
-    result = await middleware.dispatch(request, call_next)
-
-    # Verify result
-    assert result == mock_response
-    # Verify session was set in request state
-    assert getattr(request.state, "__fastapi_cachex_session", None) is not None
+    assert response.json() == {"rotated": True}
+    new_token = response.headers[config.header_name]
+    rotated = client.get("/whoami", headers={config.header_name: new_token}).json()
+    assert rotated["user"] == "u1"
+    assert rotated["session_id"] != session.session_id
+    old = client.get("/whoami", headers={config.header_name: token}).json()
+    assert old["user"] is None
 
 
 @pytest.mark.asyncio
-async def test_dispatch_with_session_error(
-    manager: SessionManager,
-    config: SessionConfig,
-) -> None:
-    """Test dispatch handles SessionError gracefully."""
-
-    # Create mock app
-    mock_app = AsyncMock()
-
-    middleware = SessionMiddleware(mock_app, manager, config)
-
-    # Create mock request with invalid token
-    request = MagicMock(spec=Request)
-    request.headers = {config.header_name: "invalid-token-xyz"}
-    request.state = MagicMock()
-    request.client = MagicMock()
-    request.client.host = "127.0.0.1"
-
-    # Create mock response
-    mock_response = MagicMock(spec=Response)
-
-    # Set up call_next to return response
-    call_next = AsyncMock(return_value=mock_response)
-
-    # Call dispatch - should handle SessionError
-    result = await middleware.dispatch(request, call_next)
-
-    # Verify result
-    assert result == mock_response
-    # Session should be None in request state due to error
-    assert getattr(request.state, "__fastapi_cachex_session", None) is None
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sets_renewed_token_header_on_sliding_expiration() -> None:
-    """Middleware must write the refreshed token to the response header and extend expires_at."""
-    from datetime import datetime
-    from datetime import timedelta
-    from datetime import timezone
-
-    from fastapi.responses import JSONResponse
-
-    backend = MemoryBackend()
+async def test_sliding_expiration_sends_the_renewed_token() -> None:
+    """The refreshed token goes back in the response header, with a later expiry."""
     slide_config = SessionConfig(
         secret_key="a" * 32,
         session_ttl=3600,
         sliding_expiration=True,
         sliding_threshold=0.5,
     )
-    mgr = SessionManager(backend, slide_config)
-
-    app = FastAPI()
-    app.add_middleware(SessionMiddleware, session_manager=mgr, config=slide_config)
-
-    @app.get("/ping")
-    async def ping() -> JSONResponse:
-        return JSONResponse({"ok": True})
-
-    user = SessionUser(user_id="slide-user")
-    created, original_token = await mgr.create_session(user=user)
+    manager = SessionManager(MemoryBackend(), slide_config)
+    created, original_token = await manager.create_session(
+        user=SessionUser(user_id="slide-user")
+    )
 
     # Shorten expiry so time_remaining < sliding threshold (< 50% of 3600 s)
     shortened_expiry = datetime.now(timezone.utc) + timedelta(seconds=1000)
     created.expires_at = shortened_expiry
-    await mgr._save_session(created)
+    await manager._save_session(created)
+    client = _client(manager, slide_config)
 
-    client = TestClient(app)
-    response = client.get("/ping", headers={slide_config.header_name: original_token})
+    response = client.get("/whoami", headers={slide_config.header_name: original_token})
 
-    assert response.status_code == 200
+    assert response.json()["user"] == "slide-user"
     renewed = response.headers.get(slide_config.header_name)
-    # Middleware must write a new token to the response header
-    assert renewed is not None, (
-        "Middleware must set renewed token header on sliding renewal"
-    )
+    assert renewed is not None
 
-    # The renewed session must have an extended expires_at (> the shortened value we set)
-    renewed_session, _ = await mgr.get_session(renewed)
+    renewed_session, _ = await manager.get_session(renewed)
     assert renewed_session.expires_at is not None
     assert renewed_session.expires_at > shortened_expiry
 
 
-def _connection(headers: dict[str, str]) -> Request:
-    """A bare `Request` carrying only the headers under test."""
+# `get_client_ip` is the address resolution the middleware binds sessions to.
+
+
+def test_get_client_ip_ignores_forwarded_headers_by_default(
+    config: SessionConfig,
+) -> None:
+    """Forwarded headers are spoofable, so an untrusted peer's are ignored."""
+    connection = _connection(
+        {"X-Forwarded-For": "1.2.3.4", "X-Real-IP": "5.6.7.8"}, peer="10.0.0.9"
+    )
+
+    assert get_client_ip(connection, config) == "10.0.0.9"
+
+
+def test_get_client_ip_from_x_forwarded_for_behind_trusted_proxy() -> None:
+    """A proxy the app vouches for may report the real client address."""
+    config = SessionConfig(
+        secret_key="a" * 32, trusted_proxies=["10.0.0.9", "10.0.0.1"]
+    )
+    connection = _connection(
+        {"X-Forwarded-For": "192.168.1.1, 10.0.0.1"}, peer="10.0.0.9"
+    )
+
+    assert get_client_ip(connection, config) == "192.168.1.1"
+
+
+def test_get_client_ip_ignores_a_prepended_forwarded_entry() -> None:
+    """Proxies append, so the leftmost entry is whatever the caller sent."""
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
+    # The attacker sent the first entry themselves; nginx appended the second.
+    connection = _connection(
+        {"X-Forwarded-For": "198.51.100.5, 203.0.113.99"}, peer="10.0.0.9"
+    )
+
+    assert get_client_ip(connection, config) == "203.0.113.99"
+
+
+def test_get_client_ip_falls_back_when_every_hop_is_trusted() -> None:
+    """With no untrusted entry left there is no client address to recover."""
+    config = SessionConfig(
+        secret_key="a" * 32, trusted_proxies=["10.0.0.9", "10.0.0.1"]
+    )
+    connection = _connection({"X-Forwarded-For": "10.0.0.1"}, peer="10.0.0.9")
+
+    assert get_client_ip(connection, config) == "10.0.0.9"
+
+
+def test_get_client_ip_from_real_ip_behind_trusted_proxy() -> None:
+    """X-Real-IP is the fallback once the peer is trusted."""
+    config = SessionConfig(secret_key="a" * 32, trusted_proxies=["10.0.0.9"])
+    connection = _connection({"X-Real-IP": "192.168.1.1"}, peer="10.0.0.9")
+
+    assert get_client_ip(connection, config) == "192.168.1.1"
+
+
+def test_get_client_ip_from_client(config: SessionConfig) -> None:
+    connection = _connection({}, peer="192.168.1.1")
+
+    assert get_client_ip(connection, config) == "192.168.1.1"
+
+
+def test_get_client_ip_none(config: SessionConfig) -> None:
+    """No peer and no trusted forwarding: there is no address."""
+    assert get_client_ip(_connection({}), config) is None
+
+
+def _connection(headers: dict[str, str], peer: str | None = None) -> Request:
+    """A bare `Request` carrying only the headers (and peer) under test."""
     return Request(
         {
             "type": "http",
             "method": "GET",
             "path": "/",
+            "client": (peer, 1234) if peer is not None else None,
             "headers": [
                 (key.lower().encode(), value.encode()) for key, value in headers.items()
             ],
