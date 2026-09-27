@@ -61,7 +61,6 @@ def test_session_manager_accepts_secretstr(backend: MemoryBackend) -> None:
     assert len(signature) == 64
 
 
-@pytest.mark.asyncio
 async def test_create_session(manager: SessionManager) -> None:
     """Test creating a session."""
     user = SessionUser(user_id="123", username="testuser")
@@ -73,7 +72,6 @@ async def test_create_session(manager: SessionManager) -> None:
     assert token is not None
 
 
-@pytest.mark.asyncio
 async def test_create_anonymous_session(manager: SessionManager) -> None:
     """Test creating an anonymous session."""
     session, token = await manager.create_anonymous_session()
@@ -85,7 +83,6 @@ async def test_create_anonymous_session(manager: SessionManager) -> None:
     assert retrieved.user is None
 
 
-@pytest.mark.asyncio
 async def test_get_session(manager: SessionManager) -> None:
     """Test retrieving a session."""
     user = SessionUser(user_id="123", username="testuser")
@@ -97,14 +94,12 @@ async def test_get_session(manager: SessionManager) -> None:
     assert retrieved_session.user.user_id == "123"  # type: ignore[union-attr]
 
 
-@pytest.mark.asyncio
 async def test_get_invalid_token(manager: SessionManager) -> None:
     """Test getting session with invalid token."""
     with pytest.raises(SessionTokenError):
         await manager.get_session("invalid-token")
 
 
-@pytest.mark.asyncio
 async def test_session_errors_are_caught_as_cachex_errors(
     manager: SessionManager,
 ) -> None:
@@ -115,7 +110,6 @@ async def test_session_errors_are_caught_as_cachex_errors(
     assert isinstance(exc_info.value, SessionTokenError)
 
 
-@pytest.mark.asyncio
 async def test_get_nonexistent_session(manager: SessionManager) -> None:
     """Test getting nonexistent session."""
     # Create a valid token for a session that doesn't exist
@@ -132,7 +126,6 @@ async def test_get_nonexistent_session(manager: SessionManager) -> None:
         await manager.get_session(serializer.to_string(token))
 
 
-@pytest.mark.asyncio
 async def test_session_expiry(manager: SessionManager) -> None:
     """Test session expiry."""
     # Create session with short TTL
@@ -148,7 +141,6 @@ async def test_session_expiry(manager: SessionManager) -> None:
         await manager.get_session(token)
 
 
-@pytest.mark.asyncio
 async def test_delete_session(manager: SessionManager) -> None:
     """Test deleting a session."""
     user = SessionUser(user_id="123", username="testuser")
@@ -160,7 +152,6 @@ async def test_delete_session(manager: SessionManager) -> None:
         await manager.get_session(token)
 
 
-@pytest.mark.asyncio
 async def test_regenerate_session_id(manager: SessionManager) -> None:
     """Test regenerating session ID."""
     user = SessionUser(user_id="123", username="testuser")
@@ -181,7 +172,6 @@ async def test_regenerate_session_id(manager: SessionManager) -> None:
     assert retrieved.session_id == updated_session.session_id
 
 
-@pytest.mark.asyncio
 async def test_ip_binding(backend: MemoryBackend) -> None:
     """Test IP address binding."""
     config = SessionConfig(secret_key="a" * 32, ip_binding=True)
@@ -202,7 +192,6 @@ async def test_ip_binding(backend: MemoryBackend) -> None:
         await manager.get_session(token, ip_address="192.168.1.2")
 
 
-@pytest.mark.asyncio
 async def test_user_agent_binding(backend: MemoryBackend) -> None:
     """Test User-Agent binding."""
     config = SessionConfig(secret_key="a" * 32, user_agent_binding=True)
@@ -223,7 +212,6 @@ async def test_user_agent_binding(backend: MemoryBackend) -> None:
         await manager.get_session(token, user_agent="Chrome/91.0")
 
 
-@pytest.mark.asyncio
 async def test_sliding_expiration(backend: MemoryBackend, clock: Clock) -> None:
     """Test sliding expiration."""
     config = SessionConfig(
@@ -254,7 +242,6 @@ async def test_sliding_expiration(backend: MemoryBackend, clock: Clock) -> None:
     assert new_token is not None
 
 
-@pytest.mark.asyncio
 async def test_invalidate_session(manager: SessionManager) -> None:
     """Test invalidating a session."""
     user = SessionUser(user_id="123", username="testuser")
@@ -267,7 +254,6 @@ async def test_invalidate_session(manager: SessionManager) -> None:
         await manager.get_session(token)
 
 
-@pytest.mark.asyncio
 async def test_clear_expired_sessions(backend: MemoryBackend) -> None:
     """Test clearing expired sessions."""
     config = SessionConfig(secret_key="a" * 32, session_ttl=1)
@@ -294,7 +280,6 @@ async def test_clear_expired_sessions(backend: MemoryBackend) -> None:
     assert count == 1  # Only one session should be cleared
 
 
-@pytest.mark.asyncio
 async def test_save_session_with_expired_session(
     backend: MemoryBackend,
 ) -> None:
@@ -316,7 +301,6 @@ async def test_save_session_with_expired_session(
         await manager.get_session(token)
 
 
-@pytest.mark.asyncio
 async def test_update_session(manager: SessionManager) -> None:
     """Test updating a session."""
     user = SessionUser(user_id="123", username="testuser")
@@ -331,7 +315,6 @@ async def test_update_session(manager: SessionManager) -> None:
     assert retrieved.data.get("updated_field") == "updated_value"
 
 
-@pytest.mark.asyncio
 async def test_delete_user_sessions(manager: SessionManager) -> None:
     """Test deleting all sessions for a specific user."""
     user1 = SessionUser(user_id="user1", username="testuser1")
@@ -354,7 +337,6 @@ async def test_delete_user_sessions(manager: SessionManager) -> None:
     assert retrieved.session_id == session3.session_id
 
 
-@pytest.mark.asyncio
 async def test_invalid_session_signature(
     backend: MemoryBackend,
 ) -> None:
@@ -382,7 +364,6 @@ async def test_invalid_session_signature(
         await manager.get_session(serializer.to_string(tampered_token))
 
 
-@pytest.mark.asyncio
 async def test_session_manager_respects_custom_serializer(
     backend: MemoryBackend,
 ) -> None:
@@ -401,7 +382,6 @@ async def test_session_manager_respects_custom_serializer(
     assert serializer.last_token is not None
 
 
-@pytest.mark.asyncio
 async def test_jwt_token_format_uses_serializer(
     monkeypatch: pytest.MonkeyPatch, backend: MemoryBackend
 ) -> None:
@@ -446,7 +426,6 @@ async def test_jwt_token_format_uses_serializer(
     assert stub.from_string_payloads == [token]
 
 
-@pytest.mark.asyncio
 async def test_load_session_by_key_invalid_payload_returns_none(
     manager: SessionManager, backend: MemoryBackend
 ) -> None:
@@ -462,7 +441,6 @@ async def test_load_session_by_key_invalid_payload_returns_none(
     assert session is None
 
 
-@pytest.mark.asyncio
 async def test_save_session_without_ttl_uses_none_expiry(
     backend: MemoryBackend,
 ) -> None:
@@ -489,7 +467,6 @@ async def test_save_session_without_ttl_uses_none_expiry(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_absolute_timeout_raises_session_expired_error(
     backend: MemoryBackend,
 ) -> None:
@@ -512,7 +489,6 @@ async def test_absolute_timeout_raises_session_expired_error(
         await manager.get_session(token)
 
 
-@pytest.mark.asyncio
 async def test_absolute_timeout_zero_disables_enforcement(
     backend: MemoryBackend,
 ) -> None:
@@ -528,7 +504,6 @@ async def test_absolute_timeout_zero_disables_enforcement(
     assert retrieved is not None
 
 
-@pytest.mark.asyncio
 async def test_absolute_timeout_not_triggered_before_expiry(
     backend: MemoryBackend,
 ) -> None:
@@ -552,7 +527,6 @@ async def _age(manager: SessionManager, session: Session, seconds: int) -> None:
     await manager.update_session(session)
 
 
-@pytest.mark.asyncio
 async def test_sliding_renewal_stops_at_absolute_timeout(
     backend: MemoryBackend,
 ) -> None:
@@ -581,7 +555,6 @@ async def test_sliding_renewal_stops_at_absolute_timeout(
     assert item.expiry <= cap.timestamp()
 
 
-@pytest.mark.asyncio
 async def test_no_renewal_once_expiry_reaches_absolute_timeout(
     backend: MemoryBackend,
 ) -> None:
@@ -603,7 +576,6 @@ async def test_no_renewal_once_expiry_reaches_absolute_timeout(
     assert second is None
 
 
-@pytest.mark.asyncio
 async def test_new_session_expiry_is_capped_by_absolute_timeout(
     backend: MemoryBackend,
 ) -> None:
@@ -616,7 +588,6 @@ async def test_new_session_expiry_is_capped_by_absolute_timeout(
     assert session.expires_at == session.created_at + timedelta(seconds=60)
 
 
-@pytest.mark.asyncio
 async def test_delete_user_sessions_no_sessions(backend: MemoryBackend) -> None:
     """delete_user_sessions returns 0 when the user has no sessions."""
     manager = SessionManager(backend, SessionConfig(secret_key="a" * 32))
@@ -624,7 +595,6 @@ async def test_delete_user_sessions_no_sessions(backend: MemoryBackend) -> None:
     assert count == 0
 
 
-@pytest.mark.asyncio
 async def test_clear_expired_sessions_none_expired(backend: MemoryBackend) -> None:
     """clear_expired_sessions returns 0 when no sessions are expired."""
     config = SessionConfig(secret_key="a" * 32, session_ttl=3600)
@@ -637,7 +607,6 @@ async def test_clear_expired_sessions_none_expired(backend: MemoryBackend) -> No
     assert count == 0
 
 
-@pytest.mark.asyncio
 async def test_load_session_by_key_invalid_json(backend: MemoryBackend) -> None:
     """_load_session_by_key returns None for corrupt (non-JSON) session data."""
     config = SessionConfig(secret_key="a" * 32)
@@ -650,7 +619,6 @@ async def test_load_session_by_key_invalid_json(backend: MemoryBackend) -> None:
     assert result is None
 
 
-@pytest.mark.asyncio
 async def test_ip_binding_with_none_ip_emits_warning(
     backend: MemoryBackend, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -670,7 +638,6 @@ async def test_ip_binding_with_none_ip_emits_warning(
     assert any("ip_binding" in msg for msg in caplog.messages)
 
 
-@pytest.mark.asyncio
 async def test_user_agent_binding_with_none_ua_emits_warning(
     backend: MemoryBackend, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -690,7 +657,6 @@ async def test_user_agent_binding_with_none_ua_emits_warning(
     assert any("user_agent_binding" in msg for msg in caplog.messages)
 
 
-@pytest.mark.asyncio
 async def test_session_scans_ignore_keys_outside_the_session_prefix(
     backend: MemoryBackend,
 ) -> None:
@@ -709,7 +675,6 @@ async def test_session_scans_ignore_keys_outside_the_session_prefix(
     assert await backend.get("cache:unrelated") is not None
 
 
-@pytest.mark.asyncio
 async def test_session_sweeps_are_no_ops_without_key_enumeration() -> None:
     """Memcached cannot list keys, so the bulk operations yield nothing.
 
@@ -729,7 +694,6 @@ async def test_session_sweeps_are_no_ops_without_key_enumeration() -> None:
     assert await manager.clear_expired_sessions() == 0
 
 
-@pytest.mark.asyncio
 async def test_delete_user_sessions_covers_every_session_of_that_user() -> None:
     """The sweep has to keep going after the first match, and skip other users."""
     config = SessionConfig(secret_key="a" * 32)
@@ -744,7 +708,6 @@ async def test_delete_user_sessions_covers_every_session_of_that_user() -> None:
     assert await manager.get_session(other_token) is not None
 
 
-@pytest.mark.asyncio
 async def test_session_sweeps_skip_entries_they_cannot_read() -> None:
     """A key under the prefix that does not decode must be stepped over.
 
@@ -765,7 +728,6 @@ async def test_session_sweeps_skip_entries_they_cannot_read() -> None:
     assert await manager.delete_user_sessions("u1") == 1
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [SessionStatus.INVALIDATED, SessionStatus.EXPIRED])
 async def test_clear_expired_sessions_removes_sessions_no_longer_active(
     status: SessionStatus,
@@ -784,7 +746,6 @@ async def test_clear_expired_sessions_removes_sessions_no_longer_active(
     assert await manager.get_session(active_token) is not None
 
 
-@pytest.mark.asyncio
 async def test_session_sweeps_delete_in_one_batch() -> None:
     """Both sweeps hand every matching key to a single delete_many (#165)."""
 

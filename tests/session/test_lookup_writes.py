@@ -51,7 +51,6 @@ async def _stored(manager: SessionManager, session_id: str) -> Session:
     return stored
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("sliding_expiration", [True, False])
 async def test_plain_lookup_does_not_write(sliding_expiration: bool) -> None:
     """A lookup that renews nothing leaves the backend untouched."""
@@ -66,7 +65,6 @@ async def test_plain_lookup_does_not_write(sliding_expiration: bool) -> None:
     assert loaded.session_id == session.session_id
 
 
-@pytest.mark.asyncio
 async def test_sliding_renewal_writes_once_and_extends_the_stored_expiry() -> None:
     """A renewal must reach the backend, or its TTL would not move."""
     manager, backend = _manager(session_ttl=3600, sliding_threshold=0.5)
@@ -84,7 +82,6 @@ async def test_sliding_renewal_writes_once_and_extends_the_stored_expiry() -> No
     assert stored.expires_at > datetime.now(timezone.utc) + timedelta(seconds=3000)  # type: ignore[operator]
 
 
-@pytest.mark.asyncio
 async def test_touch_stores_last_accessed() -> None:
     """``touch=True`` keeps the stored ``last_accessed`` exact."""
     manager, backend = _manager()
@@ -103,7 +100,6 @@ async def test_touch_stores_last_accessed() -> None:
     assert stored.last_accessed == touched.last_accessed
 
 
-@pytest.mark.asyncio
 async def test_session_entries_use_a_constant_fingerprint() -> None:
     """Nothing compares session fingerprints, so the payload is not hashed."""
     manager, backend = _manager()
@@ -142,7 +138,6 @@ def test_middleware_reads_without_writing_and_writes_changes_once() -> None:
     assert client.get("/read").json() == {"count": 2}
 
 
-@pytest.mark.asyncio
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 async def test_header_middleware_lookup_does_not_write() -> None:
     """The deprecated header middleware loads sessions the same way."""

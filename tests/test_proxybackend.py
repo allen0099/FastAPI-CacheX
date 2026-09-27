@@ -83,7 +83,6 @@ def test_memory_cache():
     assert response2.status_code == 304
 
 
-@pytest.mark.asyncio
 async def test_backend_cleanup(clock: Clock):
     # Run cleanup task in async environment
     memory_backend = MemoryBackend()

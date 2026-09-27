@@ -71,7 +71,6 @@ async def _populate(backend: BaseCacheBackend) -> None:
         await backend.set(key, CacheEntry(fingerprint=key, content=b"v"))
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
 @pytest.mark.parametrize(
     ("pattern", "expected_removed"),
@@ -97,7 +96,6 @@ async def test_clear_pattern_globs_the_whole_key(
     assert len(await backend.get_all_keys()) == len(KEYS) - expected_removed
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
 async def test_a_bare_path_pattern_warns_instead_of_clearing_nothing(
     backend: BaseCacheBackend,
@@ -111,7 +109,6 @@ async def test_a_bare_path_pattern_warns_instead_of_clearing_nothing(
     assert removed == 0
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
 @pytest.mark.parametrize(
     "pattern", ["GET|||*|||/users/*", "cache:user:*", "*", "user:*", "/users/*"]
@@ -132,7 +129,6 @@ async def test_patterns_that_clear_something_do_not_warn(
         await backend.clear_pattern(pattern)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
 async def test_cache_manager_clear_pattern_is_relative_to_its_namespace(
     backend: BaseCacheBackend,
@@ -148,7 +144,6 @@ async def test_cache_manager_clear_pattern_is_relative_to_its_namespace(
     assert await manager.get("post:1") == {"title": "c"}
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
 async def test_clear_path_finds_paths_with_encoded_characters(
     backend: BaseCacheBackend,

@@ -113,6 +113,8 @@ Five non-abstract atomic primitives live on the base class with non-atomic fallb
 
 `tests/conftest.py` sets `MemoryBackend` as the default backend via an `autouse=True` fixture for every test. Tests requiring Redis or Memcached must configure their own backends. The `memory_backend` fixture manages the cleanup task lifecycle.
 
+`[tool.pytest.ini_options]` sets `asyncio_mode = "auto"` (no `@pytest.mark.asyncio`), `--strict-markers`, `xfail_strict = true` and `filterwarnings = ["error"]`: an expected warning needs `pytest.warns`, and live Memcached resets go through `flush_memcached` in `tests/live_servers.py`. The one global ignore covers starlette 1.0.0's deprecated anyio alias in the `lowest` tox env.
+
 ### Code Quality Rules
 
 - Ruff is configured with `extend-select = ['ALL']` with specific ignores (see `pyproject.toml`). Notable: E501 (line length), FBT001/FBT002 (boolean args — intentional for Cache-Control API). `fastapi.Depends` is allowed in argument defaults via `flake8-bugbear.extend-immutable-calls` rather than ignoring B008.

@@ -92,7 +92,6 @@ class TestRequireSessionAlias:
     @pytest.mark.filterwarnings(
         "ignore:SessionMiddleware is deprecated:DeprecationWarning"
     )
-    @pytest.mark.asyncio
     async def test_require_session_with_valid_session(self) -> None:
         """require_session passes when a valid session is present."""
         config = SessionConfig(secret_key="a" * 32)

@@ -89,7 +89,6 @@ def test_redis_load_from_config_warns_on_non_utf8_encoding() -> None:
         AsyncRedisCacheBackend.load_from_config(RedisConfig(encoding="latin-1"))
 
 
-@pytest.mark.asyncio
 async def test_redis_latin1_encoding_corrupts_non_ascii_content() -> None:
     """What the warning is about, on a live server (#122)."""
     reason = redis_skip_reason()
@@ -230,7 +229,6 @@ def test_redis_without_redis_package(monkeypatch):
     assert "redis[hiredis] is not installed" in str(exc_info.value)
 
 
-@pytest.mark.asyncio
 class TestAsyncRedisCacheBackend:
     @requires_redis
     async def test_get_nonexistent(self, async_redis_backend: AsyncRedisCacheBackend):
@@ -304,7 +302,6 @@ class TestAsyncRedisCacheBackend:
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_ttl(async_redis_backend: AsyncRedisCacheBackend):
     """Test TTL functionality."""
     value = CacheEntry(fingerprint="test-etag", content=b"test-content")
@@ -320,7 +317,6 @@ async def test_redis_ttl(async_redis_backend: AsyncRedisCacheBackend):
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_deserialize_invalid_json(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
@@ -343,7 +339,6 @@ async def test_redis_deserialize_invalid_json(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_path_no_matches(async_redis_backend: AsyncRedisCacheBackend):
     """Test clear_path when no keys match the pattern."""
     cleared = await async_redis_backend.clear_path("/nonexistent/")
@@ -351,7 +346,6 @@ async def test_redis_clear_path_no_matches(async_redis_backend: AsyncRedisCacheB
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_path_direct_key(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -385,7 +379,6 @@ async def test_redis_clear_path_direct_key(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_path_direct_key_and_separator_key(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -402,17 +395,16 @@ async def test_redis_clear_path_direct_key_and_separator_key(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_pattern_no_matches(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
     """Test clear_pattern when no keys match the pattern."""
-    cleared = await async_redis_backend.clear_pattern("/nonexistent/*")
+    with pytest.warns(RuntimeWarning, match="clear_path"):
+        cleared = await async_redis_backend.clear_pattern("/nonexistent/*")
     assert cleared == 0
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_pattern_with_prefixed_pattern(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
@@ -430,7 +422,6 @@ async def test_redis_clear_pattern_with_prefixed_pattern(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_pattern_prefixes_a_pattern_that_starts_with_the_prefix(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
@@ -449,7 +440,6 @@ async def test_redis_clear_pattern_prefixes_a_pattern_that_starts_with_the_prefi
     assert await async_redis_backend.get("user:1") == value
 
 
-@pytest.mark.asyncio
 async def test_redis_cache_manager_clear_pattern_with_matching_prefixes() -> None:
     """The #109 reproduction: backend and CacheManager both use ``cache:``."""
     reason = redis_skip_reason()
@@ -475,7 +465,6 @@ async def test_redis_cache_manager_clear_pattern_with_matching_prefixes() -> Non
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_path_exact_without_params(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -493,7 +482,6 @@ async def test_redis_clear_path_exact_without_params(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_path_with_colon_in_path(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -556,7 +544,6 @@ async def test_redis_clear_path_with_colon_in_path(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_deserialize_non_string_content(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -571,7 +558,6 @@ async def test_redis_deserialize_non_string_content(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_set_get_with_bytes_content(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -585,7 +571,6 @@ async def test_redis_set_get_with_bytes_content(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_all_keys_empty(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -597,7 +582,6 @@ async def test_redis_get_all_keys_empty(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_all_keys_with_entries(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -628,7 +612,6 @@ async def test_redis_get_all_keys_with_entries(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_cache_data_empty(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -640,7 +623,6 @@ async def test_redis_get_cache_data_empty(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_cache_data_with_entries(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -678,7 +660,6 @@ async def test_redis_get_cache_data_with_entries(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_increment_with_a_float_ttl_leaves_no_counter(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -696,7 +677,6 @@ async def test_redis_increment_with_a_float_ttl_leaves_no_counter(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_increment_creates_then_adds(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -710,7 +690,6 @@ async def test_redis_increment_creates_then_adds(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_increment_applies_ttl_only_on_creation(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -730,7 +709,6 @@ async def test_redis_increment_applies_ttl_only_on_creation(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_increment_rejects_a_cached_response(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -743,7 +721,6 @@ async def test_redis_increment_rejects_a_cached_response(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_increment_reraises_other_response_errors(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -760,7 +737,6 @@ async def test_redis_increment_reraises_other_response_errors(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_increment_is_atomic_under_concurrency(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -773,7 +749,6 @@ async def test_redis_increment_is_atomic_under_concurrency(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_and_delete_returns_then_removes(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -786,7 +761,6 @@ async def test_redis_get_and_delete_returns_then_removes(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_and_delete_has_exactly_one_winner(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -802,7 +776,6 @@ async def test_redis_get_and_delete_has_exactly_one_winner(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_delete_many_counts_only_existing_keys(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
@@ -816,7 +789,6 @@ async def test_redis_delete_many_counts_only_existing_keys(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_scan_walks_every_page(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -839,7 +811,6 @@ async def test_redis_scan_walks_every_page(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_scan_results_are_deduplicated(
     async_redis_backend: AsyncRedisCacheBackend,
     monkeypatch: pytest.MonkeyPatch,
@@ -901,7 +872,6 @@ async def _fill_pages(backend: AsyncRedisCacheBackend) -> int:
 
 
 @requires_redis
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "clear",
     [
@@ -928,7 +898,6 @@ async def test_redis_clear_deletes_each_scan_page_as_it_arrives(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_path_does_not_check_exists(
     async_redis_backend: AsyncRedisCacheBackend,
     monkeypatch: pytest.MonkeyPatch,
@@ -945,7 +914,6 @@ async def test_redis_clear_path_does_not_check_exists(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_counts_a_key_scan_repeats_once(
     async_redis_backend: AsyncRedisCacheBackend,
     monkeypatch: pytest.MonkeyPatch,
@@ -968,7 +936,6 @@ async def test_redis_clear_counts_a_key_scan_repeats_once(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_cache_data_reports_absolute_expiry(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -988,7 +955,6 @@ async def test_redis_get_cache_data_reports_absolute_expiry(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_cache_data_uses_chunked_non_transactional_pipelines(
     async_redis_backend: AsyncRedisCacheBackend,
     monkeypatch: pytest.MonkeyPatch,
@@ -1026,7 +992,6 @@ async def test_redis_get_cache_data_uses_chunked_non_transactional_pipelines(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_cache_data_skips_keys_gone_after_scan(
     async_redis_backend: AsyncRedisCacheBackend,
     monkeypatch: pytest.MonkeyPatch,
@@ -1045,7 +1010,6 @@ async def test_redis_get_cache_data_skips_keys_gone_after_scan(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_get_cache_data_skips_undecodable_values(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1062,7 +1026,6 @@ async def test_redis_get_cache_data_skips_undecodable_values(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_set_if_absent_stores_only_the_first_value(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1083,7 +1046,6 @@ async def test_redis_set_if_absent_stores_only_the_first_value(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_set_if_absent_has_exactly_one_winner(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1104,7 +1066,6 @@ async def test_redis_set_if_absent_has_exactly_one_winner(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_delete_if_equals_removes_only_a_matching_entry(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1121,7 +1082,6 @@ async def test_redis_delete_if_equals_removes_only_a_matching_entry(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_delete_if_equals_matches_a_counter(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1134,7 +1094,6 @@ async def test_redis_delete_if_equals_matches_a_counter(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_delete_if_equals_keeps_a_value_written_after_the_compare(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1162,7 +1121,6 @@ async def test_redis_delete_if_equals_keeps_a_value_written_after_the_compare(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_lock_release_after_expiry_keeps_the_new_holder(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1178,7 +1136,6 @@ async def test_redis_lock_release_after_expiry_keeps_the_new_holder(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_expire_if_equals_updates_ttl_only_when_matching(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1194,7 +1151,6 @@ async def test_redis_expire_if_equals_updates_ttl_only_when_matching(
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_expire_if_equals_keeps_a_value_written_after_the_compare(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1257,7 +1213,6 @@ def test_cached_route_with_ttl_zero_is_served() -> None:
 
 
 @requires_redis
-@pytest.mark.asyncio
 async def test_redis_clear_path_matches_glob_characters_literally(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
@@ -1278,7 +1233,6 @@ async def test_redis_clear_path_matches_glob_characters_literally(
     ]
 
 
-@pytest.mark.asyncio
 async def test_redis_glob_characters_in_prefix_do_not_reach_other_prefixes() -> None:
     """clear/get_all_keys/clear_pattern stay inside a prefix containing ``?``/``*``."""
     reason = redis_skip_reason()
@@ -1313,7 +1267,6 @@ async def test_redis_glob_characters_in_prefix_do_not_reach_other_prefixes() -> 
 
 @requires_redis
 @requires_redis_package
-@pytest.mark.asyncio
 async def test_lock_lifecycle_with_redis(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:

@@ -64,7 +64,6 @@ async def backend(request: pytest.FixtureRequest) -> AsyncIterator[BaseCacheBack
     await instance.delete_many(list(KEYS))
 
 
-@pytest.mark.asyncio
 async def test_increment_rejects_a_cached_response_with_a_numeric_body(
     backend: BaseCacheBackend,
 ) -> None:
@@ -77,7 +76,6 @@ async def test_increment_rejects_a_cached_response_with_a_numeric_body(
     assert await backend.get(KEYS[0]) == page
 
 
-@pytest.mark.asyncio
 async def test_increment_continues_a_counter_written_with_set(
     backend: BaseCacheBackend,
 ) -> None:
@@ -88,7 +86,6 @@ async def test_increment_continues_a_counter_written_with_set(
     assert await backend.get(KEYS[1]) == counter_entry(4)
 
 
-@pytest.mark.asyncio
 async def test_a_counter_that_shrinks_reads_back_as_a_counter(
     backend: BaseCacheBackend,
 ) -> None:

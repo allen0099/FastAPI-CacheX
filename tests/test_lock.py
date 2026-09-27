@@ -13,7 +13,6 @@ from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
 
 
-@pytest.mark.asyncio
 async def test_lock_basic_context_manager() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -27,7 +26,6 @@ async def test_lock_basic_context_manager() -> None:
     assert await backend.get("lock:test_job") is None
 
 
-@pytest.mark.asyncio
 async def test_lock_acquire_non_blocking() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -44,7 +42,6 @@ async def test_lock_acquire_non_blocking() -> None:
     assert await lock1.locked() is False
 
 
-@pytest.mark.asyncio
 async def test_lock_acquire_blocking_indefinite_retries_until_available() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -64,7 +61,6 @@ async def test_lock_acquire_blocking_indefinite_retries_until_available() -> Non
     assert await lock2.release() is True
 
 
-@pytest.mark.asyncio
 async def test_lock_acquire_blocking_timeout_returns_false() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -77,7 +73,6 @@ async def test_lock_acquire_blocking_timeout_returns_false() -> None:
     assert await lock1.release() is True
 
 
-@pytest.mark.asyncio
 async def test_lock_context_manager_timeout_raises_lock_timeout_error() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -92,7 +87,6 @@ async def test_lock_context_manager_timeout_raises_lock_timeout_error() -> None:
     assert await lock1.release() is True
 
 
-@pytest.mark.asyncio
 async def test_lock_extend() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -108,7 +102,6 @@ async def test_lock_extend() -> None:
     assert await lock1.extend(60) is False
 
 
-@pytest.mark.asyncio
 async def test_lock_locked_status() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -123,7 +116,6 @@ async def test_lock_locked_status() -> None:
     assert await lock.locked() is False
 
 
-@pytest.mark.asyncio
 async def test_lock_custom_key_prefix() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -137,7 +129,6 @@ async def test_lock_custom_key_prefix() -> None:
     assert await backend.get("custom_lock:custom") is None
 
 
-@pytest.mark.asyncio
 async def test_lock_custom_backend() -> None:
     default_backend = MemoryBackend()
     custom_backend = MemoryBackend()
@@ -151,7 +142,6 @@ async def test_lock_custom_backend() -> None:
     assert await custom_backend.get("lock:job") is None
 
 
-@pytest.mark.asyncio
 async def test_lock_release_on_expired_lock_returns_false() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -165,7 +155,6 @@ async def test_lock_release_on_expired_lock_returns_false() -> None:
     assert await lock.release() is False
 
 
-@pytest.mark.asyncio
 async def test_lock_token_uniqueness() -> None:
     lock1 = CacheLock("job")
     lock2 = CacheLock("job")
@@ -174,7 +163,6 @@ async def test_lock_token_uniqueness() -> None:
     assert lock1._entry != lock2._entry
 
 
-@pytest.mark.asyncio
 async def test_lock_raises_backend_not_found_if_no_backend_set() -> None:
     BackendProxy.set(None)
     lock = CacheLock("job")
@@ -183,7 +171,6 @@ async def test_lock_raises_backend_not_found_if_no_backend_set() -> None:
         await lock.acquire(blocking=False)
 
 
-@pytest.mark.asyncio
 async def test_lock_reentry_raises_runtime_error() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
@@ -208,7 +195,6 @@ class YieldingMemoryBackend(MemoryBackend):
         return await super().set_if_absent(key, value, ttl=ttl)
 
 
-@pytest.mark.asyncio
 async def test_lock_shared_instance_raises_runtime_error() -> None:
     backend = YieldingMemoryBackend()
     BackendProxy.set(backend)
@@ -224,7 +210,6 @@ async def test_lock_shared_instance_raises_runtime_error() -> None:
     assert any(res is None for res in results)
 
 
-@pytest.mark.asyncio
 async def test_lock_acquire_cancelled_resets_is_held() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)

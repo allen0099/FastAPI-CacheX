@@ -298,7 +298,8 @@ def test_jwt_serializer_round_trips_hmac_algorithms(algorithm: str) -> None:
     """The HMAC algorithms work end to end with real PyJWT."""
     pytest.importorskip("jwt")
     config = SessionConfig(
-        secret_key=SecretStr("a" * 32),
+        # Long enough for HS512, so no algorithm warns about a short key.
+        secret_key=SecretStr("a" * 64),
         token_format="jwt",
         jwt_algorithm=algorithm,
     )

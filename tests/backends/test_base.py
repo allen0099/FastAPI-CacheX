@@ -48,7 +48,6 @@ def backend() -> DictBackend:
     return DictBackend()
 
 
-@pytest.mark.asyncio
 async def test_increment_fallback_creates_then_adds(backend: DictBackend) -> None:
     assert await backend.increment("hits", ttl=30) == 1
     assert await backend.increment("hits", 4, ttl=30) == 5
@@ -57,7 +56,6 @@ async def test_increment_fallback_creates_then_adds(backend: DictBackend) -> Non
     assert backend.store["hits"] == (counter_entry(3), None)
 
 
-@pytest.mark.asyncio
 async def test_increment_fallback_rejects_a_cached_response(
     backend: DictBackend,
 ) -> None:
@@ -67,7 +65,6 @@ async def test_increment_fallback_rejects_a_cached_response(
         await backend.increment("page")
 
 
-@pytest.mark.asyncio
 async def test_get_and_delete_fallback_returns_then_removes(
     backend: DictBackend,
 ) -> None:
@@ -79,7 +76,6 @@ async def test_get_and_delete_fallback_returns_then_removes(
     assert await backend.get_and_delete("once") is None
 
 
-@pytest.mark.asyncio
 async def test_delete_many_fallback_deletes_one_by_one(backend: DictBackend) -> None:
     await backend.set("a", CacheEntry(fingerprint="e", content=b"1"))
     await backend.set("b", CacheEntry(fingerprint="e", content=b"2"))
@@ -88,7 +84,6 @@ async def test_delete_many_fallback_deletes_one_by_one(backend: DictBackend) -> 
     assert backend.store == {}
 
 
-@pytest.mark.asyncio
 async def test_set_if_absent_fallback_stores_only_the_first_value(
     backend: DictBackend,
 ) -> None:
@@ -100,7 +95,6 @@ async def test_set_if_absent_fallback_stores_only_the_first_value(
     assert backend.store["slot"] == (first, 30)
 
 
-@pytest.mark.asyncio
 async def test_delete_if_equals_fallback_removes_only_a_matching_entry(
     backend: DictBackend,
 ) -> None:
@@ -115,7 +109,6 @@ async def test_delete_if_equals_fallback_removes_only_a_matching_entry(
     assert await backend.delete_if_equals("slot", theirs) is False
 
 
-@pytest.mark.asyncio
 async def test_expire_if_equals_fallback_updates_ttl_only_when_matching(
     backend: DictBackend,
 ) -> None:

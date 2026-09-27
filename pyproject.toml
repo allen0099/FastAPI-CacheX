@@ -87,7 +87,21 @@ include = ["fastapi_cachex/py.typed"]
 pythonpath = [
     "."
 ]
+testpaths = ["tests"]
+addopts = ["--strict-markers"]
+xfail_strict = true
+# Every async test and fixture runs on pytest-asyncio; no per-test marker.
+asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# An unexpected warning fails the test. A test that expects one asserts it
+# with pytest.warns or opts out with a narrow filterwarnings mark.
+filterwarnings = [
+    "error",
+    # starlette 1.0.0 (our floor, run by the `lowest` tox env) imports
+    # TestClient through an alias that newer anyio deprecates. Later starlette
+    # releases no longer use it; nothing in this package or its tests does.
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
 
 [tool.ruff.lint]
 ignore = [

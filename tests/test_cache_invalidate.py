@@ -1,6 +1,5 @@
 """Tests for the cache.invalidate() helper."""
 
-import asyncio
 from collections.abc import Generator
 
 import pytest
@@ -46,7 +45,7 @@ def _build_request(path: str, host: str = "testserver") -> Request:
     return Request(scope)
 
 
-def test_invalidate_forces_re_execution_on_next_request() -> None:
+async def test_invalidate_forces_re_execution_on_next_request() -> None:
     response1 = client.get("/invalidate-target")
     assert response1.status_code == 200
     assert response1.json() == {"calls": 1}
@@ -56,7 +55,7 @@ def test_invalidate_forces_re_execution_on_next_request() -> None:
     assert response2.status_code == 200
     assert response2.json() == {"calls": 1}
 
-    removed = asyncio.run(invalidate(_build_request("/invalidate-target")))
+    removed = await invalidate(_build_request("/invalidate-target"))
     assert removed is True
 
     # Cache miss after invalidation: handler runs again.
@@ -65,28 +64,25 @@ def test_invalidate_forces_re_execution_on_next_request() -> None:
     assert response3.json() == {"calls": 2}
 
 
-def test_invalidate_returns_false_for_missing_key() -> None:
-    removed = asyncio.run(invalidate(_build_request("/does-not-exist")))
+async def test_invalidate_returns_false_for_missing_key() -> None:
+    removed = await invalidate(_build_request("/does-not-exist"))
     assert removed is False
 
 
-def test_invalidate_returns_false_when_no_backend_configured() -> None:
+async def test_invalidate_returns_false_when_no_backend_configured() -> None:
     BackendProxy.set(None)
-    removed = asyncio.run(invalidate(_build_request("/invalidate-target")))
+    removed = await invalidate(_build_request("/invalidate-target"))
     assert removed is False
 
 
-def test_invalidate_with_custom_key_builder() -> None:
+async def test_invalidate_with_custom_key_builder() -> None:
     def custom_key_builder(request: Request) -> str:
         return f"custom:{request.url.path}"
 
-    async def _run() -> None:
-        backend = BackendProxy.get()
-        await backend.set("custom:/x", CacheEntry(fingerprint="e", content=b"v"))
+    backend = BackendProxy.get()
+    await backend.set("custom:/x", CacheEntry(fingerprint="e", content=b"v"))
 
-        removed = await invalidate(_build_request("/x"), key_builder=custom_key_builder)
+    removed = await invalidate(_build_request("/x"), key_builder=custom_key_builder)
 
-        assert removed is True
-        assert await backend.get("custom:/x") is None
-
-    asyncio.run(_run())
+    assert removed is True
+    assert await backend.get("custom:/x") is None

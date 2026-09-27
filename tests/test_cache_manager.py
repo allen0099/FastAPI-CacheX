@@ -73,7 +73,6 @@ async def cache_manager(request: Any) -> AsyncGenerator[CacheManager, Any]:
 # --- Round-trip serialization -------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_set_get_roundtrip_dict(cache_manager: CacheManager) -> None:
     """A dict value round-trips through set/get."""
     value = {"a": 1, "b": [1, 2, 3]}
@@ -81,7 +80,6 @@ async def test_set_get_roundtrip_dict(cache_manager: CacheManager) -> None:
     assert await cache_manager.get("key") == value
 
 
-@pytest.mark.asyncio
 async def test_set_get_roundtrip_list(cache_manager: CacheManager) -> None:
     """A list value round-trips through set/get."""
     value = [1, "two", 3.0, None]
@@ -89,21 +87,18 @@ async def test_set_get_roundtrip_list(cache_manager: CacheManager) -> None:
     assert await cache_manager.get("key") == value
 
 
-@pytest.mark.asyncio
 async def test_set_get_roundtrip_str(cache_manager: CacheManager) -> None:
     """A plain string value round-trips through set/get."""
     await cache_manager.set("key", "hello")
     assert await cache_manager.get("key") == "hello"
 
 
-@pytest.mark.asyncio
 async def test_set_get_roundtrip_int(cache_manager: CacheManager) -> None:
     """An int value round-trips through set/get."""
     await cache_manager.set("key", 42)
     assert await cache_manager.get("key") == 42
 
 
-@pytest.mark.asyncio
 async def test_set_get_roundtrip_bool(cache_manager: CacheManager) -> None:
     """Bool values round-trip through set/get without collapsing to 0/1."""
     await cache_manager.set("key_true", value=True)
@@ -112,7 +107,6 @@ async def test_set_get_roundtrip_bool(cache_manager: CacheManager) -> None:
     assert await cache_manager.get("key_false") is False
 
 
-@pytest.mark.asyncio
 async def test_set_get_roundtrip_none_value(cache_manager: CacheManager) -> None:
     """Explicitly caching None as a value is distinguishable from a cache miss."""
     await cache_manager.set("key", None)
@@ -123,13 +117,11 @@ async def test_set_get_roundtrip_none_value(cache_manager: CacheManager) -> None
 # --- Missing keys / defaults ---------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_missing_key_returns_default(cache_manager: CacheManager) -> None:
     """get() on a missing key returns None by default."""
     assert await cache_manager.get("nope") is None
 
 
-@pytest.mark.asyncio
 async def test_get_missing_key_returns_custom_default(
     cache_manager: CacheManager,
 ) -> None:
@@ -140,7 +132,6 @@ async def test_get_missing_key_returns_custom_default(
 # --- get_or_set -----------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_or_set_hit_does_not_call_factory(
     cache_manager: CacheManager,
 ) -> None:
@@ -159,7 +150,6 @@ async def test_get_or_set_hit_does_not_call_factory(
     assert calls == 0
 
 
-@pytest.mark.asyncio
 async def test_get_or_set_miss_calls_sync_factory_and_caches(
     cache_manager: CacheManager,
 ) -> None:
@@ -178,7 +168,6 @@ async def test_get_or_set_miss_calls_sync_factory_and_caches(
     assert await cache_manager.get("nope") == {"computed": 1}
 
 
-@pytest.mark.asyncio
 async def test_get_or_set_miss_calls_async_factory_and_caches(
     cache_manager: CacheManager,
 ) -> None:
@@ -197,7 +186,6 @@ async def test_get_or_set_miss_calls_async_factory_and_caches(
     assert await cache_manager.get("nope") == "async_value"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("wrap", ["lambda", "partial"])
 async def test_get_or_set_awaits_a_sync_callable_returning_an_awaitable(
     cache_manager: CacheManager, wrap: str
@@ -215,7 +203,6 @@ async def test_get_or_set_awaits_a_sync_callable_returning_an_awaitable(
     assert await cache_manager.get("user") == {"id": 42}
 
 
-@pytest.mark.asyncio
 async def test_get_or_set_honors_ttl_on_created_value(
     cache_manager: CacheManager, clock: Clock
 ) -> None:
@@ -229,7 +216,6 @@ async def test_get_or_set_honors_ttl_on_created_value(
     assert await cache_manager.get("key") is None
 
 
-@pytest.mark.asyncio
 async def test_get_or_set_treats_corrupted_content_as_miss(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -248,14 +234,12 @@ async def test_get_or_set_treats_corrupted_content_as_miss(
 # --- add ------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_add_stores_when_key_is_free(cache_manager: CacheManager) -> None:
     """add() stores the value and reports it when nothing holds the key."""
     assert await cache_manager.add("event:1", {"sent": True}) is True
     assert await cache_manager.get("event:1") == {"sent": True}
 
 
-@pytest.mark.asyncio
 async def test_add_keeps_the_existing_value(cache_manager: CacheManager) -> None:
     """add() never overwrites: the first value stays and the call reports False."""
     await cache_manager.set("event:1", "first")
@@ -264,7 +248,6 @@ async def test_add_keeps_the_existing_value(cache_manager: CacheManager) -> None
     assert await cache_manager.get("event:1") == "first"
 
 
-@pytest.mark.asyncio
 async def test_add_concurrent_callers_have_exactly_one_winner(
     cache_manager: CacheManager,
 ) -> None:
@@ -278,7 +261,6 @@ async def test_add_concurrent_callers_have_exactly_one_winner(
     assert await cache_manager.get("event:1") == results.index(True)
 
 
-@pytest.mark.asyncio
 async def test_add_ttl_expires_the_claim(
     cache_manager: CacheManager, clock: Clock
 ) -> None:
@@ -292,7 +274,6 @@ async def test_add_ttl_expires_the_claim(
     assert await cache_manager.get("event:1") == "third"
 
 
-@pytest.mark.asyncio
 async def test_add_uses_default_ttl(
     memory_backend: MemoryBackend, clock: Clock
 ) -> None:
@@ -305,7 +286,6 @@ async def test_add_uses_default_ttl(
     assert await manager.get("event:1") is None
 
 
-@pytest.mark.asyncio
 async def test_add_treats_undecodable_content_as_present(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -318,7 +298,6 @@ async def test_add_treats_undecodable_content_as_present(
     assert await manager.get("bad", default="fallback") == "fallback"
 
 
-@pytest.mark.asyncio
 async def test_add_non_json_serializable_raises_type_error(
     cache_manager: CacheManager,
 ) -> None:
@@ -332,7 +311,6 @@ async def test_add_non_json_serializable_raises_type_error(
 # --- delete / has ---------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_existing_key_returns_true(cache_manager: CacheManager) -> None:
     """delete() returns True when the key existed."""
     await cache_manager.set("key", "value")
@@ -340,7 +318,6 @@ async def test_delete_existing_key_returns_true(cache_manager: CacheManager) -> 
     assert await cache_manager.get("key") is None
 
 
-@pytest.mark.asyncio
 async def test_delete_nonexistent_key_returns_false(
     cache_manager: CacheManager,
 ) -> None:
@@ -348,14 +325,12 @@ async def test_delete_nonexistent_key_returns_false(
     assert await cache_manager.delete("nope") is False
 
 
-@pytest.mark.asyncio
 async def test_has_existing_key_true(cache_manager: CacheManager) -> None:
     """has() returns True for an existing key."""
     await cache_manager.set("key", "value")
     assert await cache_manager.has("key") is True
 
 
-@pytest.mark.asyncio
 async def test_has_missing_key_false(cache_manager: CacheManager) -> None:
     """has() returns False for a missing key."""
     assert await cache_manager.has("nope") is False
@@ -364,7 +339,6 @@ async def test_has_missing_key_false(cache_manager: CacheManager) -> None:
 # --- TTL --------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_ttl_expiry(cache_manager: CacheManager, clock: Clock) -> None:
     """A value set with a short ttl expires and is no longer retrievable."""
     await cache_manager.set("key", "value", ttl=1)
@@ -375,7 +349,6 @@ async def test_ttl_expiry(cache_manager: CacheManager, clock: Clock) -> None:
     assert await cache_manager.get("key") is None
 
 
-@pytest.mark.asyncio
 async def test_default_ttl_used_when_not_specified(
     memory_backend: MemoryBackend, clock: Clock
 ) -> None:
@@ -391,7 +364,6 @@ async def test_default_ttl_used_when_not_specified(
     assert await manager.get("key") is None
 
 
-@pytest.mark.asyncio
 async def test_explicit_ttl_overrides_default_ttl(
     memory_backend: MemoryBackend, clock: Clock
 ) -> None:
@@ -408,13 +380,11 @@ async def test_explicit_ttl_overrides_default_ttl(
 # --- Key prefixing ------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_default_key_prefix_is_cache_colon() -> None:
     """The default key_prefix is 'cache:'."""
     assert CacheManager().key_prefix == "cache:"
 
 
-@pytest.mark.asyncio
 async def test_key_prefix_isolation(memory_backend: MemoryBackend) -> None:
     """Two managers with different key_prefix values don't see each other's keys."""
     manager_a = CacheManager(backend=memory_backend, key_prefix="a:")
@@ -429,7 +399,6 @@ async def test_key_prefix_isolation(memory_backend: MemoryBackend) -> None:
 # --- clear / clear_prefix ------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_clear_prefix_removes_only_matching_keys(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -449,7 +418,6 @@ async def test_clear_prefix_removes_only_matching_keys(
     assert await memory_backend.get("unrelated:key") is not None
 
 
-@pytest.mark.asyncio
 async def test_clear_prefix_does_not_count_expired_keys(
     cache_manager: CacheManager,
 ) -> None:
@@ -467,7 +435,6 @@ async def test_clear_prefix_does_not_count_expired_keys(
     assert await cache_manager.clear_prefix() == 1
 
 
-@pytest.mark.asyncio
 async def test_clear_prefix_with_subprefix_argument(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -485,7 +452,6 @@ async def test_clear_prefix_with_subprefix_argument(
     assert await manager.get("other:1") == "carol"
 
 
-@pytest.mark.asyncio
 async def test_clear_removes_all_manager_keys(memory_backend: MemoryBackend) -> None:
     """clear() wipes all keys under this manager's own namespace only."""
     manager = CacheManager(backend=memory_backend, key_prefix="cache:")
@@ -502,7 +468,6 @@ async def test_clear_removes_all_manager_keys(memory_backend: MemoryBackend) -> 
     assert await memory_backend.get("oauth_state:untouched") is not None
 
 
-@pytest.mark.asyncio
 async def test_clear_pattern_delegates_to_backend_within_namespace(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -523,7 +488,6 @@ async def test_clear_pattern_delegates_to_backend_within_namespace(
 # --- Serialization errors ----------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_set_non_json_serializable_raises_type_error(
     cache_manager: CacheManager,
 ) -> None:
@@ -532,7 +496,6 @@ async def test_set_non_json_serializable_raises_type_error(
         await cache_manager.set("key", {1, 2, 3})
 
 
-@pytest.mark.asyncio
 async def test_get_with_corrupted_backend_content_returns_default(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -545,7 +508,6 @@ async def test_get_with_corrupted_backend_content_returns_default(
     assert await manager.get("bad", default="fallback") == "fallback"
 
 
-@pytest.mark.asyncio
 async def test_get_with_non_utf8_content_returns_default(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -561,7 +523,6 @@ async def test_get_with_non_utf8_content_returns_default(
 # --- Construction / backend resolution -----------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_manager_accepts_explicit_backend() -> None:
     """CacheManager(backend=...) uses the provided backend without touching BackendProxy."""
     backend = MemoryBackend()
@@ -580,7 +541,6 @@ async def test_manager_accepts_explicit_backend() -> None:
         await backend.clear()
 
 
-@pytest.mark.asyncio
 async def test_manager_falls_back_to_backend_proxy(
     memory_backend: MemoryBackend,
 ) -> None:
@@ -606,7 +566,6 @@ def test_manager_raises_when_no_backend_configured() -> None:
         BackendProxy.set(MemoryBackend())
 
 
-@pytest.mark.asyncio
 async def test_multiple_managers_independent_key_prefixes_same_backend(
     memory_backend: MemoryBackend,
 ) -> None:

@@ -75,7 +75,6 @@ def test_kwargs_handler_can_be_decorated():
     assert params[-1].kind is inspect.Parameter.VAR_KEYWORD
 
 
-@pytest.mark.asyncio
 async def test_kwargs_handler_caches_and_does_not_leak_the_injected_param():
     """The handler runs once and never sees `__cachex_request`."""
     seen: list[list[str]] = []
@@ -96,7 +95,6 @@ async def test_kwargs_handler_caches_and_does_not_leak_the_injected_param():
     assert seen == [[]]
 
 
-@pytest.mark.asyncio
 async def test_kwargs_handler_keeps_its_own_arguments():
     """A real parameter alongside `**kwargs` still reaches the handler."""
     seen: list[tuple[str, list[str]]] = []

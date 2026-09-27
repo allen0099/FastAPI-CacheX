@@ -8,7 +8,6 @@ to the next.
 
 from collections.abc import AsyncIterator
 
-import pytest
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi import Response
@@ -20,7 +19,6 @@ from fastapi_cachex.cache import cache
 from fastapi_cachex.proxy import BackendProxy
 
 
-@pytest.mark.asyncio
 async def test_private_responses_are_not_shared_between_users():
     """Two callers on the same route must each see their own body."""
     app = FastAPI()
@@ -115,7 +113,6 @@ def test_private_runs_the_handler_on_every_request():
     assert calls["n"] == 2
 
 
-@pytest.mark.asyncio
 async def test_private_error_response_passes_through():
     """An uncacheable status is served as-is and stored nowhere."""
     app = FastAPI()
@@ -145,7 +142,6 @@ def test_no_store_still_wins_over_private():
     assert client.get("/private-no-store").headers["Cache-Control"] == "no-store"
 
 
-@pytest.mark.asyncio
 async def test_private_streaming_response_is_not_stored_and_carries_no_etag():
     """A streamed private body cannot be fingerprinted, and must still not be stored.
 

@@ -82,6 +82,24 @@ server is disposable, the flag says *whether* skipping is acceptable at all.
 Never set the flag in a shell where the ports point at a server you care about —
 it makes the run louder, not safer.
 
+### Strict pytest settings
+
+`[tool.pytest.ini_options]` in `pyproject.toml` keeps the suite strict:
+
+- `asyncio_mode = "auto"`: every `async def` test and fixture runs on
+  pytest-asyncio, so tests carry no `@pytest.mark.asyncio`. Write an async test
+  instead of calling `asyncio.run()` inside a sync one.
+- `--strict-markers`: a mistyped or unregistered marker fails collection
+  instead of being silently ignored.
+- `xfail_strict = true`: an `xfail` test that starts passing fails the run, so
+  the marker gets removed.
+- `filterwarnings = ["error"]`: any warning fails the test that raised it. A
+  test that expects one asserts it with `pytest.warns(..., match=...)`. A reset
+  that only needs the side effect silences that one warning locally, as
+  `tests/live_servers.py:flush_memcached` does for `Memcached.clear()`. Add a
+  global ignore only for a third-party warning the tests cannot avoid, with a
+  comment saying why.
+
 ### Checking that a test can fail
 
 Coverage says a line ran, not that anything checked what it did. A test that
