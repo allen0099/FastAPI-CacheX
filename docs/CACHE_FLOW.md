@@ -86,7 +86,10 @@ The monitoring routes decode them again for display.
 A custom `key_builder` can add components after the query string with
 `build_cache_key(request, *components)`; they are encoded the same way, and
 `clear_path()` still matches the path (see "Adding components to the key" in
-[HTTP caching](HTTP_CACHING.md#adding-components-to-the-key)).
+[HTTP caching](HTTP_CACHING.md#adding-components-to-the-key)). `@cache(vary=[...])`
+appends one `name=value` component per listed request header after whatever
+the key builder returns, and adds the names to the response's `Vary` header
+(see [Varying on request headers](HTTP_CACHING.md#varying-on-request-headers)).
 
 Query parameters are joined in the order the request sent them
 (`str(request.query_params)`) and are **not sorted**, so `?page=1&limit=10` and

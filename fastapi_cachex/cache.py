@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Mapping
+from collections.abc import Sequence
 from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
@@ -35,6 +36,7 @@ from .directives import DirectiveType
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
 from .exceptions import RequestNotFoundError
+from .headers import add_vary
 from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
 from .types import CACHE_KEY_SEPARATOR
@@ -92,12 +94,24 @@ def build_cache_key(request: Request, *components: str | int) -> str:
             rejected too), e.g. ``None`` from a missing user ID, which would
             otherwise put every such caller under one ``"None"`` key.
     """
-    parts = [
-        request.method,
-        escape_key_component(request.headers.get("host", "unknown")),
-        escape_key_component(request.url.path),
-        str(request.query_params),
-    ]
+    key = _append_key_components(
+        CACHE_KEY_SEPARATOR.join(
+            [
+                request.method,
+                escape_key_component(request.headers.get("host", "unknown")),
+                escape_key_component(request.url.path),
+                str(request.query_params),
+            ]
+        ),
+        components,
+    )
+    logger.debug("Built cache key: %s", key)
+    return key
+
+
+def _append_key_components(key: str, components: Sequence[str | int]) -> str:
+    """Append each component to ``key``, escaped, after another separator."""
+    parts = [key]
     for component in components:
         if isinstance(component, bool) or not isinstance(component, (str, int)):
             msg = (
@@ -106,9 +120,54 @@ def build_cache_key(request: Request, *components: str | int) -> str:
             )
             raise TypeError(msg)
         parts.append(escape_key_component(str(component)))
-    key = CACHE_KEY_SEPARATOR.join(parts)
-    logger.debug("Built cache key: %s", key)
-    return key
+    return CACHE_KEY_SEPARATOR.join(parts)
+
+
+# RFC 9110 §5.1: a field name is a token.
+_FIELD_NAME_CHARS = frozenset(
+    "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+)
+
+
+def _validate_vary(vary: Sequence[str] | None) -> list[str]:
+    """Check ``@cache(vary=...)`` and return the names, first spelling of each.
+
+    Raises:
+        CacheXError: If ``vary`` is a single string instead of a sequence of
+            names, or a name is not a non-empty header field name, or is ``*``.
+    """
+    if vary is None:
+        return []
+    if isinstance(vary, (str, bytes)) or not isinstance(vary, Sequence):
+        msg = (
+            "vary must be a list of header names, e.g. vary=['Accept-Language'], "
+            f"got {type(vary).__name__}"
+        )
+        raise CacheXError(msg)
+    names: dict[str, str] = {}
+    for name in vary:
+        if not isinstance(name, str) or not name or not set(name) <= _FIELD_NAME_CHARS:
+            msg = f"vary entries must be header field names, got {name!r}"
+            raise CacheXError(msg)
+        if name == "*":
+            msg = "vary cannot contain '*': the key can only vary on named headers"
+            raise CacheXError(msg)
+        names.setdefault(name.lower(), name)
+    return list(names.values())
+
+
+def _vary_components(request: Request, names: Sequence[str]) -> list[str]:
+    """The key components for ``@cache(vary=names)``: ``name=value`` each.
+
+    The name is lower-cased and the value trimmed; repeated header lines are
+    joined with ``,`` as RFC 9110 §5.3 allows, and a missing header gives an
+    empty value, the same as an empty one.
+    """
+    return [
+        f"{name.lower()}="
+        + ",".join(value.strip() for value in request.headers.getlist(name))
+        for name in names
+    ]
 
 
 def default_key_builder(request: Request) -> str:
@@ -131,6 +190,7 @@ def default_key_builder(request: Request) -> str:
 async def invalidate(
     request: Request,
     key_builder: CacheKeyBuilder | None = None,
+    vary: Sequence[str] | None = None,
 ) -> bool:
     """Invalidate the cache entry a ``@cache``-decorated route would use.
 
@@ -145,12 +205,21 @@ async def invalidate(
             it via ``request.app.url_path_for(...)`` for a GET route).
         key_builder: Custom key builder used by the target route's ``@cache``
             decorator, if any. If None, uses ``default_key_builder``.
+        vary: The target route's ``vary`` names, if any. Only the variant
+            selected by ``request``'s own values for those headers is
+            deleted; ``clear_path()`` clears every variant of a path.
 
     Returns:
         True if a cache entry existed and was deleted, False otherwise.
+
+    Raises:
+        CacheXError: If ``vary`` is not a list of header names.
     """
     builder = key_builder or default_key_builder
-    cache_key = builder(request)
+    vary_names = _validate_vary(vary)
+    cache_key = _append_key_components(
+        builder(request), _vary_components(request, vary_names)
+    )
 
     try:
         cache_backend = BackendProxy.get()
@@ -591,6 +660,7 @@ def cache(
     key_builder: CacheKeyBuilder | None = None,
     fail_open: bool = True,
     cache_authorized: bool = False,
+    vary: Sequence[str] | None = None,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -650,6 +720,15 @@ def cache(
             ``key_builder`` puts the verified caller's identity into the key;
             with the default key builder one user's response would be served
             to the next.
+        vary: Request header names the response depends on, e.g.
+            ``["Accept-Language"]``. Each header's value (trimmed; empty when
+            missing) is appended to the key, after whatever ``key_builder``
+            returns, as a ``name=value`` component, so every distinct value
+            gets its own entry. The names are also added to the ``Vary``
+            header of every response to a GET request, unless it already
+            lists them or ``*``. Values are client-controlled: each listed
+            header multiplies the number of entries, so normalise them in a
+            ``key_builder`` when only a few values matter.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -657,8 +736,9 @@ def cache(
     Raises:
         CacheXError: When the decorator is applied, if ``stale`` and
             ``stale_ttl`` are not given together, if ``public`` and
-            ``private`` are both set, or if ``ttl`` is not an ``int``, is
-            negative or is larger than ``MAX_TTL``.
+            ``private`` are both set, if ``ttl`` is not an ``int``, is
+            negative or is larger than ``MAX_TTL``, or if ``vary`` is not a
+            list of header field names (a single string is rejected).
     """
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
@@ -683,6 +763,7 @@ def cache(
         if ttl is not None and ttl > MAX_TTL:
             msg = f"ttl must be at most {MAX_TTL} seconds"
             raise CacheXError(msg)
+        vary_names = _validate_vary(vary)
 
         # Analyze the original function's signature
         sig: Signature = inspect.signature(func)
@@ -761,7 +842,7 @@ def cache(
         bypass_backend = private or not ttl
 
         @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Response:
+        async def serve(*args: Any, **kwargs: Any) -> Response:
             # Resolve backend on every request to support lifespan-configured backends
             cache_backend = get_backend_or_fallback()
 
@@ -850,7 +931,9 @@ def cache(
 
             # Built only here: the branches above never touch the backend, so a
             # custom key builder would run for nothing.
-            cache_key = builder(req)
+            cache_key = _append_key_components(
+                builder(req), _vary_components(req, vary_names)
+            )
 
             try:
                 cached_data = await cache_backend.get(cache_key)
@@ -988,6 +1071,22 @@ def cache(
             return _with_cache_control(
                 current_response, cache_control, private_cache_control
             )
+
+        wrapper: AsyncResponseCallable = serve
+        if vary_names:
+
+            @wraps(func)
+            async def with_vary(*args: Any, **kwargs: Any) -> Response:
+                # Read before `serve` pops an injected request parameter.
+                req: Request | None = kwargs.get(request_name)
+                response = await serve(*args, **kwargs)
+                if req is not None and req.method == "GET":
+                    # Every GET answer, served from the backend or not: a
+                    # shared cache downstream keys on these headers too.
+                    add_vary(response.headers, vary_names)
+                return response
+
+            wrapper = with_vary
 
         # Update the wrapper with the new signature
         update_wrapper(wrapper, func)

@@ -150,6 +150,47 @@ def per_tenant_key(request: Request) -> str:
 
 Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設為 `fastapi_cachex:`），讓其他應用程式可以共用同一台伺服器；`MemoryBackend` 沒有前綴。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|||` 分隔的格式，因為它的鍵與 HTTP 請求無關。
 
+### 依請求標頭區分 {#varying-on-request-headers}
+
+快取鍵不包含任何請求標頭，因此回應內容取決於 `Accept-Language` 等標頭的路由，會把第一個快取下來的語言提供給所有人。請把這類標頭列在 `vary` 中：
+
+```python
+@app.get("/greeting")
+@cache(ttl=300, vary=["Accept-Language"])
+async def greeting(request: Request):
+    return {"text": translate("hello", request.headers.get("accept-language"))}
+```
+
+每個列出的標頭都會在鍵中加入一個 `name=value` 段：名稱轉為小寫，值去除前後空白（重複的標頭行以 `,` 串接），缺少的標頭視同空值。這些段與鍵的其他部分一樣經過編碼，並接在 `key_builder` 回傳的鍵之後，因此 `vary` 可以與自訂的 key builder 一起使用：`key_builder` 回傳 `build_cache_key(request, "tenant-1")` 時，鍵為 `GET|||example.com|||/greeting|||||||tenant-1|||accept-language=de`。沒有設定 `vary` 的路由，鍵維持不變。
+
+這些名稱也會加入該路由對 GET 請求的每個回應的 `Vary` 標頭，不論是 200 或 304，也不論是否由後端提供（`private`、`no_store`、繞過後端的 `Authorization` 請求，或未儲存的回應），讓應用程式前方的共用快取也依它們區分。回應已列出的名稱（不分大小寫）不會重複加入，帶有 `Vary: *` 的回應則維持原樣。
+
+`vary` 必須是由標頭欄位名稱組成的 list（或 tuple）。套用裝飾器時，會拒絕 `vary="Accept"` 這類單一字串，以及空名稱、`*` 與任何不是有效欄位名稱的值。
+
+> [!WARNING]
+> **每個不同的標頭值都是一筆獨立的項目，而這些值來自用戶端。** `Accept-Language: de`、`de-DE`、`de-DE,de;q=0.9` 以及其他寫法都是不同的鍵，用戶端可以在每個請求送出新的值來塞滿後端。每多列一個標頭，項目數量就會成倍增加。若只有少數幾個值有意義，請改在 `key_builder` 中正規化，並自行把該標頭加入 `Vary`：
+>
+> ```python
+> SUPPORTED = ("en", "de", "fr")
+>
+>
+> def locale_key(request: Request) -> str:
+>     wanted = request.headers.get("accept-language", "")
+>     locale = next(
+>         (tag for tag in SUPPORTED if wanted.lower().startswith(tag)), "en"
+>     )
+>     return build_cache_key(request, locale)
+>
+>
+> @app.get("/greeting")
+> @cache(ttl=300, key_builder=locale_key)
+> async def greeting(request: Request, response: Response):
+>     response.headers["Vary"] = "Accept-Language"
+>     return {"text": translate("hello", locale_of(request))}
+> ```
+
+`clear_path()` 會清除某個路徑的所有變體（見[在鍵中加入其他段](#adding-components-to-the-key)）。`invalidate()` 接受同樣的 `vary` 清單，只會刪除傳入的請求所選中的那個變體。
+
 ### 需驗證身分的端點 {#authenticated-endpoints}
 
 > [!WARNING]
@@ -266,7 +307,7 @@ async def update_item(item_id: int, request: Request):
     return {"invalidated": await invalidate(StarletteRequest(scope))}
 ```
 
-`invalidate(request, key_builder=None)` 在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳入的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder`，這裡也要傳入同一個，否則鍵不會相符。
+`invalidate(request, key_builder=None, vary=None)` 在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳入的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder` 或 `vary`，這裡也要傳入相同的值，否則鍵不會相符；使用 `vary` 時，只會刪除請求本身的標頭值所選中的變體，`clear_path()` 則會移除所有變體。
 
 ## 監控路由 {#monitoring-routes}
 
