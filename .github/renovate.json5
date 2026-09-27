@@ -46,6 +46,33 @@
       labels: ["dependencies", "major-update"],
     },
     {
+      // Actions are pinned to commit SHAs, and non-major updates automerge
+      // (rule above). Without a delay, a compromised upstream release would be
+      // merged as soon as CI passes, including the PyPI publish action that
+      // release.yml runs. This holds each update until its release is 3 days
+      // old; automerge still applies after that.
+      //
+      // github-actions updates come from the `github-tags` datasource, which
+      // provides a release timestamp: the committedDate of the commit the
+      // matched tag points to. Digest updates are aged against the newest
+      // matching version's timestamp. `timestamp-required` (the default since
+      // Renovate 42, set explicitly here) keeps an update without a timestamp
+      // pending instead of letting it through immediately. `strict` (also the
+      // default) creates no branch until the age check passes. Pending
+      // updates are listed on the Dependency Dashboard, where they can be
+      // forced.
+      //
+      // Limitation: committedDate is set by whoever made the commit, and a
+      // tag that is force-pushed is aged against the original date. So this
+      // is a delay for ordinary releases, not a guarantee against a
+      // determined attacker.
+      description: "Wait 3 days before raising (and automerging) GitHub Actions updates",
+      matchManagers: ["github-actions"],
+      minimumReleaseAge: "3 days",
+      minimumReleaseAgeBehaviour: "timestamp-required",
+      internalChecksFilter: "strict",
+    },
+    {
       description: "lowest.yml pins the oldest supported Python on purpose",
       matchFileNames: [".github/workflows/lowest.yml"],
       matchDepNames: ["python"],
