@@ -26,10 +26,13 @@ classifiers = [
     "Typing :: Typed",
 ]
 keywords = ["fastapi", "cache", "etag", "cache-control", "redis", "memcached", "in-memory"]
+# Floors are checked by the `lowest` tox env (`uv_resolution = lowest-direct`).
 dependencies = [
-    "fastapi",
-    "itsdangerous",
-    "pydantic",
+    "fastapi>=0.133.0",
+    "itsdangerous>=1.1.0",
+    "pydantic>=2.7.0",
+    # Imported directly; `starlette.middleware.sessions.Session` is new in 1.0.
+    "starlette>=1.0.0",
 ]
 
 [project.urls]
@@ -66,10 +69,10 @@ docs = [
 ]
 
 [project.optional-dependencies]
-memcached = ["pymemcache"]
+memcached = ["pymemcache>=4.0.0"]
 # Deprecated alias of `memcached`, removed in 0.4.0 (#202).
-memcache = ["pymemcache"]
-redis = ["redis[hiredis]>=5.3.0", "orjson"]
+memcache = ["pymemcache>=4.0.0"]
+redis = ["redis[hiredis]>=5.3.0", "orjson>=3.4.7"]
 jwt = ["PyJWT>=2.9.0"]
 
 [build-system]

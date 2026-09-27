@@ -1,0 +1,60 @@
+name: Lowest dependencies
+
+on:
+  push:
+    branches: [ "master" ]
+    paths:
+      - '**.py'
+      - 'pyproject.toml'
+      - 'tox.ini'
+      - '.github/workflows/lowest.yml'
+  # No paths filter on pull requests, so this check can be required before
+  # merging: a required check that never starts blocks the pull request.
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  contents: read
+
+jobs:
+  lowest:
+    # Every direct dependency at the lower bound pyproject.toml declares, on
+    # the oldest supported Python (the `lowest` tox env). The other test jobs
+    # install the locked, newest versions, so a floor that is too low for the
+    # code only shows up here.
+    runs-on: ubuntu-latest
+
+    services:
+      memcached:
+        image: memcached:1.6-alpine
+        ports:
+          - 11211:11211
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.10"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10.2.0
+
+    - name: Sync dependencies
+      run: uv sync
+
+    - name: Test with the lowest direct dependencies
+      run: uv run tox -e lowest
+      env:
+        # The live suites are opt-in; these are the service containers above.
+        CACHEX_TEST_REDIS_PORT: 6379
+        CACHEX_TEST_MEMCACHED_PORT: 11211
+        # A skipped live suite would leave the redis and memcached floors
+        # untested, so treat it as a failure.
+        CACHEX_REQUIRE_LIVE_SERVERS: 1

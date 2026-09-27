@@ -127,6 +127,21 @@ To run for a specific Python version:
 uv run tox -e py310  # only run for Python 3.10
 ```
 
+### The lowest supported dependencies
+
+The `py3*` environments install the versions in `uv.lock`, which are the newest
+ones. The `lowest` environment instead resolves every direct dependency of the
+package, extras included, to the lower bound in `pyproject.toml`
+(`uv_resolution = lowest-direct`) and runs the suite on Python 3.10. It is not in
+`env_list`; the **Lowest dependencies** workflow runs it with live servers.
+
+```bash
+uv run tox -e lowest
+```
+
+When you raise or add a lower bound, or start using an API that is newer than
+the current floor, run it before pushing.
+
 ## Using pre-commit
 
 pre-commit helps maintain code quality by running checks before each commit.

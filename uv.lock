@@ -511,6 +511,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "itsdangerous" },
     { name = "pydantic" },
+    { name = "starlette" },
 ]
 
 [package.optional-dependencies]
@@ -556,14 +557,15 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi" },
-    { name = "itsdangerous" },
-    { name = "orjson", marker = "extra == 'redis'" },
-    { name = "pydantic" },
+    { name = "fastapi", specifier = ">=0.133.0" },
+    { name = "itsdangerous", specifier = ">=1.1.0" },
+    { name = "orjson", marker = "extra == 'redis'", specifier = ">=3.4.7" },
+    { name = "pydantic", specifier = ">=2.7.0" },
     { name = "pyjwt", marker = "extra == 'jwt'", specifier = ">=2.9.0" },
-    { name = "pymemcache", marker = "extra == 'memcache'" },
-    { name = "pymemcache", marker = "extra == 'memcached'" },
+    { name = "pymemcache", marker = "extra == 'memcache'", specifier = ">=4.0.0" },
+    { name = "pymemcache", marker = "extra == 'memcached'", specifier = ">=4.0.0" },
     { name = "redis", extras = ["hiredis"], marker = "extra == 'redis'", specifier = ">=5.3.0" },
+    { name = "starlette", specifier = ">=1.0.0" },
 ]
 provides-extras = ["memcached", "memcache", "redis", "jwt"]
 
