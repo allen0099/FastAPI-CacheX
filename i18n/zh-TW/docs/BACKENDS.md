@@ -91,6 +91,8 @@ BackendProxy.set(backend)
 
 除非你需要 RESP3 的功能，*而且*你的 `hiredis` 建置支援它（RESP3 需要 hiredis >= 3.0），否則請保留 `protocol=2`。Redis 8.0 支援 RESP3，但較舊的 hiredis 會無法協商使用它。
 
+完整可執行範例（英文）：[`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py)。
+
 ## Memcached {#memcached}
 
 以 `uv add "fastapi-cachex[memcached]"` 安裝此 extra。0.3.8 以前這個 extra 名為 `memcache`；舊名稱仍可使用但已棄用，將於 0.4.0 移除。安裝時遇到不存在的 extra 只會顯示警告，因此 0.4.0 之後 `fastapi-cachex[memcache]` 會裝好套件但不含 `pymemcache`。
@@ -154,6 +156,8 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 - `expire_if_equals(key, expected, ttl) -> bool`：只在 `key` 仍存放 `expected` 時，才把它的 TTL 更新為 `ttl` 秒，因此長時間執行的鎖持有者可以續約租期，而不會在鎖已過期時動到別人的鎖。記憶體後端在鎖內更新，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `EXPIRE`），Memcached 則使用 `GETS` + 以新 exptime 寫回相同位元組的 `CAS`（`TOUCH` 不接受 CAS 權杖）。
 
 這五個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。
+
+完整可執行範例（英文）：[`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py)。
 
 ## TTL 值 {#ttl-values}
 

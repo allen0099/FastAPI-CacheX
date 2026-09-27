@@ -2,6 +2,8 @@
 
 `@cache` 裝飾器會快取 FastAPI GET 路由的回應，並替你處理 `Cache-Control`、`ETag` 與 `If-None-Match`。本頁說明如何使用它；[快取流程](CACHE_FLOW.md)則說明請求內部發生了什麼。
 
+完整可執行範例（英文）：[`examples/http_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/http_cache.py)。
+
 ## `@cache` 裝飾器 {#the-cache-decorator}
 
 ```python

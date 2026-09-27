@@ -35,6 +35,8 @@ if await manager.add(f"webhook:{event_id}", True, ttl=86400):
 await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 ```
 
+完整可執行範例（英文）：[`examples/app_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/app_cache.py)。
+
 ## 行為 {#behavior}
 
 - `get()` 在快取未命中時回傳 `None`（或你提供的 `default=`），遇到不存在或損毀的項目也絕不會拋出例外。

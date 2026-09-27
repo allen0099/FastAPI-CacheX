@@ -4,6 +4,8 @@ The `@cache` decorator caches the responses of FastAPI GET routes and handles
 `Cache-Control`, `ETag` and `If-None-Match` for you. This page covers how to use
 it; [Cache flow](CACHE_FLOW.md) explains what happens inside a request.
 
+Complete runnable example: [`examples/http_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/http_cache.py).
+
 ## The `@cache` decorator
 
 ```python

@@ -8,6 +8,8 @@ State 與 HTTP 快取存放在同一個後端，但使用自己的鍵前綴（�
 
 本指南中的所有內容也都可以從頂層的 `fastapi_cachex` 套件匯入。
 
+完整可執行範例（英文）：[`examples/oauth_state.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/oauth_state.py)。
+
 ## 快速開始 {#quick-start}
 
 ```python

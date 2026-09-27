@@ -120,6 +120,8 @@ Keep `protocol=2` unless you need RESP3 features *and* your `hiredis` build
 supports it (RESP3 needs hiredis >= 3.0). Redis 8.0 speaks RESP3, but an older
 hiredis will fail to negotiate it.
 
+Complete runnable example: [`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py).
+
 ## Memcached
 
 Install the extra with `uv add "fastapi-cachex[memcached]"`. Before 0.3.8 it was
@@ -239,6 +241,8 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 All five have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
 that only implements the abstract methods keeps working; override them to get
 real atomicity.
+
+Complete runnable example: [`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py).
 
 ## TTL values
 

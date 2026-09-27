@@ -23,6 +23,8 @@ The six `cookie_*` settings of `SessionConfig` (`cookie_name`, `cookie_max_age`,
 `cookie_same_site`, `cookie_https_only`, `cookie_domain`) are **read only by
 `FastAPICacheXSessionMiddleware`**; setting them has no effect when `SessionMiddleware` is installed.
 
+Complete runnable examples: [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py) and [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py).
+
 ## Features
 
 - ✅ **Session lifecycle management**: create, read, update, delete, invalidate

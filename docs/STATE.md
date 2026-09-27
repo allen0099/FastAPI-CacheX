@@ -19,6 +19,8 @@ does remove them, because it clears everything under the backend's namespace.
 
 Everything in this guide can also be imported from the top-level `fastapi_cachex` package.
 
+Complete runnable example: [`examples/oauth_state.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/oauth_state.py).
+
 ## Quick start
 
 ```python
