@@ -86,6 +86,8 @@ handler 回傳一般資料而非 `Response` 時，得到的處理與沒有 `@cac
 
 `@cache` 採取 fail open。讀取時後端拋出錯誤（例如 Redis 或 Memcached 無法連線），該請求會被當成快取未命中，照常執行 handler。儲存回應時拋出錯誤（例如回應超過 Memcached 的項目大小上限，預設為 1 MB），回應會照常送出，只是不會被儲存。兩種情況都會在 `fastapi_cachex.cache` logger 記錄一則警告，因此後端中斷不會讓有快取的路由變成 500；負載會轉到你的 handler 上，請留意這些警告。
 
+警告會列出請求的 method、路徑與 `key_ref`（快取鍵的簡短 SHA-256 摘要），但不會列出快取鍵本身：快取鍵含有原始查詢字串、`vary` 標頭值以及任何 `build_cache_key` 元件，可能是 token 或個人資料。完整的快取鍵會以 `DEBUG` 等級連同相同的 `key_ref` 記錄，因此排查問題時在 `fastapi_cachex.cache` 開啟 `DEBUG`，即可將警告對應到其快取鍵。
+
 傳入 `fail_open=False` 則會讓後端錯誤直接往外拋出，使該請求失敗：
 
 ```python

@@ -14,6 +14,7 @@ from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.base import validate_ttl
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import log_ref
 
 from .exceptions import InvalidStateError
 from .exceptions import StateDataError
@@ -36,7 +37,7 @@ def _state_ref(state: str) -> str:
     The state comes straight from the callback query string, so logging it raw
     would leak live tokens and let a caller forge log lines with CR/LF.
     """
-    return hashlib.sha256(state.encode("utf-8", "surrogatepass")).hexdigest()[:12]
+    return log_ref(state)
 
 
 def _binding_hash(binding: str) -> str:

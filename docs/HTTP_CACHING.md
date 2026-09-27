@@ -134,6 +134,13 @@ served unstored. Either way a warning is logged on the `fastapi_cachex.cache`
 logger, and a backend outage cannot turn cached routes into 500s. The load
 goes to your handlers instead, so watch for those warnings.
 
+The warning names the request's method and path and a `key_ref`, a short
+SHA-256 digest of the cache key, but not the key itself: the key holds the
+raw query string, `vary` header values and any `build_cache_key` components,
+which may be tokens or personal data. The full key is logged at `DEBUG` with
+the same `key_ref`, so enabling `DEBUG` on `fastapi_cachex.cache` while
+troubleshooting ties a warning to its key.
+
 Pass `fail_open=False` to let the backend error propagate and fail the request
 instead:
 

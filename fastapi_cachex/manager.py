@@ -12,6 +12,7 @@ from .backends.base import BaseCacheBackend
 from .backends.base import validate_ttl
 from .proxy import BackendProxy
 from .types import CacheEntry
+from .types import log_ref
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,9 @@ class CacheManager:
         try:
             return json.loads(cached.content)
         except _DECODE_ERRORS:
-            logger.warning("Failed to decode cached value; key=%s", key)
+            # Keys often embed user IDs or e-mails: only a digest at WARNING.
+            logger.warning("Failed to decode cached value; key_ref=%s", log_ref(key))
+            logger.debug("Failed to decode cached value; key=%s", key)
             return default
 
     async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
