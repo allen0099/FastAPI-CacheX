@@ -1204,8 +1204,7 @@ def test_cached_route_with_ttl_zero_is_served() -> None:
             )
             # Clean up inside the client's event loop, which owns the pool.
             client.portal.call(backend.clear)  # type: ignore[union-attr]
-            # types-redis predates aclose() (redis-py 5.0.1).
-            client.portal.call(backend.client.aclose)  # type: ignore[union-attr,call-arg,attr-defined]
+            client.portal.call(backend.aclose)  # type: ignore[union-attr]
 
         assert first.status_code == 200
         assert first.headers["Cache-Control"] == "max-age=0"
@@ -1279,3 +1278,66 @@ async def test_lock_lifecycle_with_redis(
     assert await lock2.acquire(blocking=False) is False
     assert await lock1.extend(60) is True
     assert await lock1.release() is True
+
+
+@requires_redis_package
+async def test_redis_aclose_closes_the_client() -> None:
+    from unittest.mock import AsyncMock
+    from unittest.mock import MagicMock
+
+    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
+    real_client = backend.client
+    backend.client = MagicMock()
+    backend.client.aclose = AsyncMock()
+
+    async with backend as entered:
+        assert entered is backend
+    await backend.aclose()
+
+    assert backend.client.aclose.await_count == 2
+    backend.client = real_client
+
+
+@requires_redis_package
+async def test_redis_aclose_is_safe_to_repeat_without_a_connection() -> None:
+    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
+
+    await backend.aclose()
+    await backend.aclose()
+
+
+@requires_redis_package
+async def test_redis_aclose_leaves_a_caller_supplied_pool_open() -> None:
+    from unittest.mock import AsyncMock
+
+    from redis.asyncio import ConnectionPool
+
+    pool = ConnectionPool(host=REDIS_HOST, port=UNCONNECTED_PORT, decode_responses=True)
+    backend = AsyncRedisCacheBackend(connection_pool=pool)
+    disconnect = AsyncMock()
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(pool, "disconnect", disconnect)
+            await backend.aclose()
+        disconnect.assert_not_awaited()
+    finally:
+        await pool.disconnect()
+
+
+@requires_redis
+async def test_redis_aclose_disconnects_every_pooled_connection() -> None:
+    backend = AsyncRedisCacheBackend(
+        host=REDIS_HOST, port=REDIS_PORT, key_prefix="cachex_aclose_test:"
+    )
+    await backend.set("key", CacheEntry(fingerprint="f", content=b"v"))
+    assert await backend.get("key") is not None
+    await backend.delete("key")
+    pool = backend.client.connection_pool
+    connections = list(pool._available_connections)
+    assert connections
+    assert all(conn.is_connected for conn in connections)
+
+    await backend.aclose()
+    await backend.aclose()
+
+    assert not any(conn.is_connected for conn in connections)

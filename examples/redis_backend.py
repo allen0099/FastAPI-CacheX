@@ -40,8 +40,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         BackendProxy.set(None)
-        # The types-redis stubs predate aclose() (redis-py 5.0.1+).
-        await backend.client.aclose()  # type: ignore[attr-defined]
+        await backend.aclose()
 
 
 app = FastAPI(lifespan=lifespan)

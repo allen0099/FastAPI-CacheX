@@ -997,3 +997,43 @@ async def test_memcached_multi_step_operations_take_one_thread_hop(
 
     assert hops == 1
     assert len(backend.client.method_calls) > 1
+
+
+async def test_memcached_aclose_closes_the_client() -> None:
+    backend = stubbed_backend()
+
+    async with backend as entered:
+        assert entered is backend
+    await backend.aclose()
+
+    assert backend.client.close.call_count == 2
+
+
+async def test_memcached_aclose_is_safe_to_repeat_without_a_connection() -> None:
+    backend = MemcachedBackend([MEMCACHED_SERVER])
+
+    await backend.aclose()
+    await backend.aclose()
+
+
+@requires_memcached
+async def test_memcached_aclose_closes_every_pooled_socket() -> None:
+    backend = MemcachedBackend([MEMCACHED_SERVER], key_prefix="cachex_aclose_test:")
+    await backend.set("key", CacheEntry(fingerprint="f", content=b"v"))
+    await backend.delete("key")
+    pooled = [
+        conn
+        for server in backend.client.clients.values()
+        for conn in server.client_pool.free
+    ]
+    assert pooled
+    assert all(conn.sock is not None for conn in pooled)
+
+    await backend.aclose()
+    await backend.aclose()
+
+    assert all(conn.sock is None for conn in pooled)
+    assert all(
+        not server.client_pool.free and not server.client_pool.used
+        for server in backend.client.clients.values()
+    )

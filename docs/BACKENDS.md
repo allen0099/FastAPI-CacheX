@@ -39,22 +39,8 @@ BackendProxy.set(backend)
 The cleanup task starts on the event loop of the first cache call. If a later call
 runs on a different loop, for example after the first loop was closed, the task is
 started again there. To stop it on shutdown, `await backend.aclose()` cancels the
-task and waits until it has finished. `stop_cleanup()` only requests cancellation.
-
-```python
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield
-    await backend.aclose()
-
-
-app = FastAPI(lifespan=lifespan)
-```
+task and waits until it has finished (see [Closing a backend](#closing-a-backend)).
+`stop_cleanup()` only requests cancellation.
 
 `clear_pattern()` matches whole keys case-sensitively on every platform, like Redis.
 The glob syntax is Python's `fnmatch`, which differs from Redis in two places: negate
@@ -170,6 +156,60 @@ failure returned made-up results instead: `get()` a miss, `set()` nothing (the w
 was lost), `increment()` a fresh counter of 0. With several servers, a failed one is
 taken out of rotation at once and its keys go to the remaining servers until it
 answers again.
+
+## Closing a backend
+
+Every backend has `aclose()`, which releases what it holds open. Call it on
+shutdown, at the end of the FastAPI lifespan:
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from fastapi_cachex import BackendProxy
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379)
+    BackendProxy.set(backend)
+    try:
+        yield
+    finally:
+        BackendProxy.set(None)
+        await backend.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
+```
+
+The same lifespan works for every backend. A backend is also an async context
+manager, so `async with MemcachedBackend(servers=[...]) as backend:` closes it
+when the block ends, including when the block raises.
+
+| Backend | `aclose()` |
+|---------|------------|
+| `MemoryBackend` | Cancels the cleanup task and waits until it has finished |
+| `AsyncRedisCacheBackend` | Closes the redis-py client and the connection pool it created |
+| `MemcachedBackend` | Closes every pooled socket to every server, in a worker thread |
+
+- Calling `aclose()` more than once is safe.
+- The backend owns the client it creates, so `aclose()` closes `backend.client`
+  too; close the backend rather than reaching into the client. A Redis
+  connection pool you create yourself and pass as `connection_pool=` is left
+  open, as redis-py does: whoever creates a pool closes it.
+- A closed backend is not locked: the Redis and Memcached clients reconnect on
+  the next call, and `MemoryBackend` restarts its cleanup task, so a backend used
+  after `aclose()` needs another `aclose()`.
+- `BackendProxy.set(None)` only unregisters the backend; it does not close it.
+- A custom backend inherits a no-op `aclose()` from `BaseCacheBackend`; override
+  it when the backend holds connections or tasks.
+- Without `aclose()`, open sockets are closed only by the garbage collector,
+  which may emit `ResourceWarning`s at shutdown. Before 0.3.9 only
+  `MemoryBackend` had `aclose()`, and the Redis and Memcached backends were
+  closed through `backend.client`.
 
 ## Atomic backend primitives
 

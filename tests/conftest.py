@@ -52,9 +52,9 @@ async def close_network_clients(
 ) -> AsyncGenerator[None, None]:
     """Close every Redis and Memcached client a test opens, when it ends.
 
-    The backends have no close method of their own, so a client a test drops
-    keeps its sockets until the garbage collector finds it, often during a
-    later test. The `ResourceWarning` then fails whichever test that is.
+    A client a test drops without `aclose()` keeps its sockets until the
+    garbage collector finds it, often during a later test. The
+    `ResourceWarning` then fails whichever test that is.
     Recording each backend as it is built and closing it here keeps every
     socket inside the test that opened it.
 
@@ -77,12 +77,9 @@ async def close_network_clients(
     yield
     for backend in opened:
         # Missing if the constructor raised; a test may swap in a mock.
-        client: Any = getattr(backend, "client", None)
-        module = type(client).__module__
-        if module.startswith("redis."):
-            await client.aclose()
-        elif module.startswith("pymemcache."):
-            client.close()
+        module = type(getattr(backend, "client", None)).__module__
+        if module.startswith(("redis.", "pymemcache.")):
+            await backend.aclose()
 
 
 @pytest.fixture(autouse=True)

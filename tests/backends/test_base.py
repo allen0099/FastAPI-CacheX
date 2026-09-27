@@ -121,3 +121,47 @@ async def test_expire_if_equals_fallback_updates_ttl_only_when_matching(
     assert await backend.expire_if_equals("slot", theirs, ttl=60) is True
     assert backend.store["slot"] == (theirs, 60)
     assert await backend.expire_if_equals("missing", theirs, ttl=60) is False
+
+
+async def test_aclose_is_a_no_op_by_default(backend: DictBackend) -> None:
+    await backend.set("key", CacheEntry(fingerprint="f", content=b"v"))
+
+    await backend.aclose()
+    await backend.aclose()
+
+    assert "key" in backend.store
+
+
+class ClosingBackend(DictBackend):
+    """Counts `aclose()` calls."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = 0
+
+    async def aclose(self) -> None:
+        self.closed += 1
+
+
+async def test_async_with_returns_the_backend_and_closes_it() -> None:
+    backend = ClosingBackend()
+
+    async with backend as entered:
+        assert entered is backend
+        assert backend.closed == 0
+
+    assert backend.closed == 1
+
+
+async def test_async_with_closes_the_backend_when_the_body_raises() -> None:
+    backend = ClosingBackend()
+
+    async def fail_inside() -> None:
+        async with backend:
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await fail_inside()
+
+    assert backend.closed == 1

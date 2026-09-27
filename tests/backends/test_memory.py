@@ -240,6 +240,16 @@ async def test_aclose_waits_for_the_cleanup_task(memory_backend: MemoryBackend):
     await memory_backend.aclose()  # a second call is a no-op
 
 
+async def test_async_with_stops_the_cleanup_task():
+    async with MemoryBackend() as backend:
+        await backend.set("key", CacheEntry(fingerprint="f", content=b"v"))
+        task = backend._cleanup_task
+        assert task is not None
+
+    assert task.done()
+    assert backend._cleanup_task is None
+
+
 def test_aclose_only_cancels_a_task_on_another_loop():
     backend = MemoryBackend()
     other = asyncio.new_event_loop()
