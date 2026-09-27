@@ -126,6 +126,28 @@ app.add_middleware(
 )
 ```
 
+### 在鍵中加入其他段 {#adding-components-to-the-key}
+
+需要多一個維度（使用者 ID、租戶、語系）的自訂 `key_builder`，應呼叫 `build_cache_key(request, *components)`，而不是自行重組格式。不傳入任何段時，它回傳的正是預設的鍵；每個段會附加在查詢字串之後：
+
+```
+{method}|||{host}|||{path}|||{query_params}|||{component}|||...
+```
+
+```python
+from fastapi import Request
+
+from fastapi_cachex import build_cache_key
+
+
+def per_tenant_key(request: Request) -> str:
+    return build_cache_key(request, request.state.tenant_id)
+```
+
+段必須是 `str` 或 `int`（`int` 以十進位寫入，因此 `1` 與 `"1"` 是同一個段）；其他型別，包括 `None`，都會引發 `TypeError`，避免缺少的 ID 悄悄讓所有這類呼叫者共用同一個 `"None"` 鍵。每個段都與 host 和路徑一樣以百分比編碼，因此含有 `|||` 的值無法讓各段錯位。空字串仍是一個段：`build_cache_key(request, "")` 不等於預設的鍵。
+
+由於路徑仍是第三段，`clear_path()` 依然找得到這些鍵：不帶 `include_params` 時，會清除該路徑下查詢字串為空的所有項目，不論其他段為何；帶上它則清除該路徑的所有項目。監控路由會把其他段解碼後列在 `extra_components` 中。`default_key_builder(request)` 就是 `build_cache_key(request)`。
+
 Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設為 `fastapi_cachex:`），讓其他應用程式可以共用同一台伺服器；`MemoryBackend` 沒有前綴。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|||` 分隔的格式，因為它的鍵與 HTTP 請求無關。
 
 ### 需驗證身分的端點 {#authenticated-endpoints}
@@ -141,9 +163,8 @@ Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設
 ```python
 from fastapi import Request, Response
 
+from fastapi_cachex import build_cache_key
 from fastapi_cachex import cache
-from fastapi_cachex.types import CACHE_KEY_SEPARATOR
-from fastapi_cachex.types import escape_key_component
 
 
 # 1. 完全不放進共用快取。
@@ -158,13 +179,8 @@ def per_user_key(request: Request) -> str:
     # `request.state.user_id` 由你的驗證層在確認呼叫者身分後填入；
     # 絕對不要直接從未經驗證的請求標頭讀取身分（見下方說明）。
     user_id = getattr(request.state, "user_id", "anonymous")
-    return (
-        f"{request.method}{CACHE_KEY_SEPARATOR}"
-        f"{escape_key_component(request.headers.get('host', 'unknown'))}"
-        f"{CACHE_KEY_SEPARATOR}"
-        f"{escape_key_component(request.url.path)}{CACHE_KEY_SEPARATOR}"
-        f"{request.query_params}{CACHE_KEY_SEPARATOR}{user_id}"
-    )
+    # 預設的鍵再加上使用者 ID，並與 host、路徑一樣經過編碼。
+    return build_cache_key(request, user_id)
 
 
 @app.get("/me/dashboard")

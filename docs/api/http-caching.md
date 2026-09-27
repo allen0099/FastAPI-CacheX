@@ -7,6 +7,8 @@ configured backend.
 
 ::: fastapi_cachex.cache.invalidate
 
+::: fastapi_cachex.cache.build_cache_key
+
 ::: fastapi_cachex.cache.default_key_builder
 
 ::: fastapi_cachex.proxy.BackendProxy

@@ -4,6 +4,7 @@ import codecs
 import logging
 import time
 import warnings
+from collections.abc import Callable
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from typing import Any
@@ -31,6 +32,10 @@ logger = logging.getLogger(__name__)
 # PTTL replies that are not a remaining lifetime.
 _PTTL_NO_EXPIRY = -1
 _PTTL_MISSING = -2
+
+# Positions of the path and the query string among an HTTP key's components.
+_PATH_INDEX = 2
+_QUERY_INDEX = 3
 
 # SCAN page size and DEL batch size; keeps individual commands small.
 _BATCH_SIZE = 100
@@ -229,8 +234,13 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             if cursor == 0:
                 return list(keys)
 
-    async def _delete_matching(self, pattern: str) -> int:
+    async def _delete_matching(
+        self, pattern: str, keep: Callable[[str], bool] | None = None
+    ) -> int:
         """Delete every key matching ``pattern``, one SCAN page at a time.
+
+        With ``keep``, only the matching keys it returns ``True`` for (given
+        the full, prefixed key) are deleted.
 
         Each page is deleted as it arrives, so the keyspace is never held in
         memory. Deleting keys SCAN already returned is safe: SCAN still returns
@@ -247,6 +257,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             cursor, page = await self.client.scan(
                 cursor, match=pattern, count=_BATCH_SIZE
             )
+            if keep is not None:
+                page = [key for key in page if keep(key)]
             if page:
                 deleted += await self.client.delete(*page)
             if cursor == 0:
@@ -392,17 +404,33 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        # Keys are method|||host|||path|||query. Without include_params only the
-        # exact path is matched: default_key_builder always appends a separator
-        # after the path, so keys with no query params end with "|||". The
-        # path is a literal, not a glob: "/files/[draft]" means those brackets.
-        # It is stored with "|" and "%" percent-encoded, so match it that way.
-        suffix = "*" if include_params else ""
+        # Keys are method|||host|||path|||query, optionally followed by extra
+        # components (build_cache_key). The glob finds every key with the path
+        # between two separators; a glob cannot pin it to the third component
+        # or tell an empty query from extra components after one, so each key
+        # SCAN returns is checked here. Without include_params only keys with
+        # an empty query match. The path is a literal, not a glob:
+        # "/files/[draft]" means those brackets. It is stored with "|" and "%"
+        # percent-encoded, so match it that way.
+        key_path = escape_key_component(path)
         pattern = (
             f"{self._prefix_pattern}*{CACHE_KEY_SEPARATOR}"
-            f"{_escape_glob(escape_key_component(path))}{CACHE_KEY_SEPARATOR}{suffix}"
+            f"{_escape_glob(key_path)}{CACHE_KEY_SEPARATOR}*"
         )
-        cleared_count = await self._delete_matching(pattern)
+
+        def matches(key: str) -> bool:
+            parts = key.removeprefix(self.key_prefix).split(CACHE_KEY_SEPARATOR)
+            return (
+                len(parts) > _PATH_INDEX
+                and parts[_PATH_INDEX] == key_path
+                and (
+                    include_params
+                    or len(parts) <= _QUERY_INDEX
+                    or not parts[_QUERY_INDEX]
+                )
+            )
+
+        cleared_count = await self._delete_matching(pattern, matches)
 
         # Also match direct keys (custom key formats without separators)
         # e.g. key_prefix + "gitlab:template" stored directly via backend.set().

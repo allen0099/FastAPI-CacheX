@@ -4,6 +4,7 @@ import time
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field
 from typing import TYPE_CHECKING
 from typing import Any
 
@@ -18,8 +19,9 @@ if TYPE_CHECKING:
 
 # Constants
 CACHE_KEY_MIN_PARTS = 3
-# A ``maxsplit`` count for ``str.split``, not a number of parts: splitting at
-# most three times keeps a query string containing the separator in one piece.
+# Index of the query string among a key's components. Components after it are
+# the extra ones ``build_cache_key`` appends. Before 0.3.9 keys were split at
+# most this many times, so extra components showed up inside the query string.
 CACHE_KEY_MAX_SPLIT = 3
 # Former name, kept so existing imports keep working.
 CACHE_KEY_MAX_PARTS = CACHE_KEY_MAX_SPLIT
@@ -38,6 +40,7 @@ class CacheHitRecord:
     etag: str
     is_expired: bool
     ttl_remaining: float | None
+    extra_components: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -70,7 +73,9 @@ class CachedRecord:
 
     ``media_type`` is the stored response's media type (``None`` when it had
     none). ``content_type`` is always ``"bytes"``, the type of the stored body,
-    and is kept for compatibility.
+    and is kept for compatibility. ``extra_components`` holds the components a
+    key builder appended after the query string (see ``build_cache_key``),
+    decoded.
     """
 
     cache_key: str
@@ -85,6 +90,7 @@ class CachedRecord:
     ttl_remaining: float | None
     content_preview: str | None
     media_type: str | None
+    extra_components: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -108,6 +114,29 @@ class CachedRecordsResponse:
     summary: CacheSummary
 
 
+def _split_cache_key(cache_key: str) -> tuple[str, str, str, str, list[str]]:
+    """Split a cache key into its components, decoding the escaped ones.
+
+    Args:
+        cache_key: Cache key in format
+            method|||host|||path|||query_params[|||extra...]
+
+    Returns:
+        Tuple of (method, host, path, query_params, extra_components), all
+        empty for a key that is not a route key
+    """
+    key_parts = cache_key.split(CACHE_KEY_SEPARATOR)
+    if len(key_parts) < CACHE_KEY_MIN_PARTS:
+        return "", "", "", "", []
+    return (
+        key_parts[0],
+        unescape_key_component(key_parts[1]),
+        unescape_key_component(key_parts[2]),
+        key_parts[3] if len(key_parts) > CACHE_KEY_MAX_SPLIT else "",
+        [unescape_key_component(part) for part in key_parts[4:]],
+    )
+
+
 def _parse_cache_key(cache_key: str) -> tuple[str, str, str, str]:
     """Parse cache key into components.
 
@@ -117,15 +146,7 @@ def _parse_cache_key(cache_key: str) -> tuple[str, str, str, str]:
     Returns:
         Tuple of (method, host, path, query_params)
     """
-    key_parts = cache_key.split(CACHE_KEY_SEPARATOR, CACHE_KEY_MAX_SPLIT)
-    if len(key_parts) >= CACHE_KEY_MIN_PARTS:
-        method = key_parts[0]
-        host = unescape_key_component(key_parts[1])
-        path = unescape_key_component(key_parts[2])
-        query_params = key_parts[3] if len(key_parts) > CACHE_KEY_MIN_PARTS else ""
-        return method, host, path, query_params
-
-    return "", "", "", ""
+    return _split_cache_key(cache_key)[:4]
 
 
 @dataclass
@@ -137,6 +158,7 @@ class _Entry:
     host: str
     path: str
     query_params: str
+    extra_components: list[str]
     entry: CacheEntry
     is_expired: bool
     ttl_remaining: float | None
@@ -149,7 +171,7 @@ def _parse_entries(
     now = time.time()
     entries: list[_Entry] = []
     for cache_key, (entry, expiry) in cache_data.items():
-        method, host, path, query_params = _parse_cache_key(cache_key)
+        method, host, path, query_params, extra = _split_cache_key(cache_key)
         if not method:
             continue
         entries.append(
@@ -159,6 +181,7 @@ def _parse_entries(
                 host=host,
                 path=path,
                 query_params=query_params,
+                extra_components=extra,
                 entry=entry,
                 is_expired=expiry is not None and expiry <= now,
                 ttl_remaining=(
@@ -189,6 +212,7 @@ def _cached_hits(entries: list[_Entry]) -> CacheHitsResponse:
             etag=e.entry.fingerprint,
             is_expired=e.is_expired,
             ttl_remaining=e.ttl_remaining,
+            extra_components=e.extra_components,
         )
         for e in entries
     ]
@@ -230,6 +254,7 @@ def _cached_records(
                 else None
             ),
             media_type=e.entry.media_type,
+            extra_components=e.extra_components,
         )
         for e in entries
     ]
@@ -316,7 +341,8 @@ def add_routes(
     async def get_cached_hits() -> CacheHitsResponse:
         """List the cached route entries.
 
-        Splits every cached key into method, host, path and query, with its
+        Splits every cached key into method, host, path, query and any
+        extra components a key builder appended, with its
         ETag and expiry, plus counts of valid and expired entries and the
         distinct cached paths. Cache hits are not counted.
 

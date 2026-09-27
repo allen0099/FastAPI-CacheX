@@ -31,8 +31,10 @@ def _split_http_key(key: str) -> tuple[str, bool] | None:
 
     Keys without separators (CacheManager/StateManager keys or custom key
     builders) are not HTTP keys and are matched on their raw value instead.
+    Components after the query string (see ``build_cache_key``) do not count
+    as query params.
     """
-    parts = key.split(CACHE_KEY_SEPARATOR, _QUERY_INDEX)
+    parts = key.split(CACHE_KEY_SEPARATOR)
     if len(parts) <= _PATH_INDEX:
         return None
     has_params = len(parts) > _QUERY_INDEX and bool(parts[_QUERY_INDEX])

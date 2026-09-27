@@ -58,7 +58,7 @@ When a request arrives, the `@cache` decorator does the following:
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR  # "|||"
 from fastapi_cachex.types import escape_key_component
 
-# Cache key format (default_key_builder in fastapi_cachex/cache.py)
+# Cache key format (build_cache_key in fastapi_cachex/cache.py)
 cache_key = CACHE_KEY_SEPARATOR.join(
     [
         request.method,
@@ -82,6 +82,11 @@ The host and path are percent-encoded first: `|` becomes `%7C` and `%` becomes
 client, and a raw `|||` in either would shift the components so that one
 request's key could equal another's. The query string is URL-encoded already.
 The monitoring routes decode them again for display.
+
+A custom `key_builder` can add components after the query string with
+`build_cache_key(request, *components)`; they are encoded the same way, and
+`clear_path()` still matches the path (see "Adding components to the key" in
+[HTTP caching](HTTP_CACHING.md#adding-components-to-the-key)).
 
 Query parameters are joined in the order the request sent them
 (`str(request.query_params)`) and are **not sorted**, so `?page=1&limit=10` and
