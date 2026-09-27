@@ -77,7 +77,8 @@ async def report(cache: AppCache):
 
 > [!WARNING]
 > The default cache key carries no user identity. Cache authenticated endpoints
-> with `private=True` or a per-user key builder — see
+> with `private=True` or a per-user key builder plus `cache_authorized=True`
+> (requests with `Authorization` otherwise bypass the backend) — see
 > [Authenticated endpoints](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/#authenticated-endpoints).
 
 ## Documentation

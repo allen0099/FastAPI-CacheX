@@ -43,7 +43,7 @@ async def non_store_endpoint():
 | `no-cache`               | `no_cache=True`                          | :white_check_mark: | 每個請求都執行 handler；回應仍會儲存，`If-None-Match` 相符時回 304。                                            |
 | `no-store`               | `no_store=True`                          | :white_check_mark: | 不讀取也不儲存，也不設定 ETag。                                                                                |
 | `private`                | `private=True`                           | :white_check_mark: | 完全不經過後端；每個請求都執行 handler，ETag 重新驗證仍有效。                                                   |
-| `public`                 | `public=True`                            | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
+| `public`                 | `public=True`                            | :white_check_mark: | 帶有 `Authorization` 的請求仍會使用後端（否則會繞過後端）。                                                    |
 | `immutable`              | `immutable=True`                         | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | 無（僅寫入標頭）：伺服器端快取不會回傳過期內容。                                                               |
@@ -70,7 +70,15 @@ async def non_store_endpoint():
 - **未設定 `ttl`**（`ttl=None`）：與 `private=True` 相同，不從後端讀取，也不寫入。每個請求都會執行 handler，只有當 `If-None-Match` 與新產生的回應相符時才回 304，因此內容變更後，舊的 ETag 永遠不會得到 304
 - **使用 `ttl=0`**：送出 `max-age=0`，其餘行為與 `ttl=None` 相同。負數、非 `int`（例如 `1.5` 或 `True`）或超過 `MAX_TTL`（見 [TTL 值](BACKENDS.md#ttl-values)）的 `ttl`，都會在套用裝飾器時以 `CacheXError` 拒絕
 
-只有成功的回應會被儲存。handler *回傳* 非 2xx 狀態的回應（例如 `Response(..., status_code=404)`）會原樣傳出、永不快取，因此暫時性的錯誤不會取代或污染上一筆正常的項目。`206 Partial Content` 同樣排除在外，因為它的本文只對產生它的那個 `Range` 請求有意義。`Set-Cookie` 永遠不會被儲存或重播。
+只有成功的回應會被儲存。handler *回傳* 非 2xx 狀態的回應（例如 `Response(..., status_code=404)`）會原樣傳出、永不快取，因此暫時性的錯誤不會取代或污染上一筆正常的項目。`206 Partial Content` 同樣排除在外，因為它的本文只對產生它的那個 `Range` 請求有意義。
+
+屬於單一呼叫者的回應同樣不會被儲存（#296）：
+
+- **請求帶有 `Authorization`。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。`public=True` 的路由不受此限，設定 `cache_authorized=True` 的路由也一樣；後者是給包含呼叫者身分的 key builder 使用的明確選項（見[需驗證身分的端點](#authenticated-endpoints)）。
+- **handler 自己的 `Cache-Control` 含有 `private` 或 `no-store`**（完整指令，不分大小寫）。回應照常送出但不儲存，而且 handler 的標頭會原樣送出，不會被裝飾器的標頭取代。
+- **回應設定了 cookie。** 回應照常送出（包含 `Set-Cookie`），但不儲存。
+
+後兩種情況下，該鍵下已儲存的項目保持不變，而找到有效項目的請求仍會在 handler 執行前由該項目回應。每次略過都會以 `DEBUG` 等級記錄。
 
 handler 回傳一般資料而非 `Response` 時，得到的處理與沒有 `@cache` 時相同：回傳值會經過路由的 response model 驗證與過濾（明確宣告的，或由回傳型別註記推斷，並套用 `response_model_*` 選項），套用路由的 `status_code`，而在注入的 `response: Response` 參數上設定的狀態碼與標頭也會保留。
 
@@ -128,7 +136,7 @@ Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設
 > 回應內容取決於請求者身分的端點，請擇一處理：
 >
 > 1. **`private=True`**：回應永遠不會從共用後端讀取，也不會寫入。`Cache-Control: private` 仍允許使用者自己的瀏覽器快取它，而 `If-None-Match` 重新驗證仍會對新產生的內容運作。
-> 2. **包含呼叫者身分的 key builder**：確實需要依使用者區分的伺服器端快取時使用。不要設定 `private`：`private=True` 會繞過後端，key builder 就永遠不會被使用。
+> 2. **包含呼叫者身分的 key builder**：確實需要依使用者區分的伺服器端快取時使用。不要設定 `private`：`private=True` 會繞過後端，key builder 就永遠不會被使用。呼叫者以 `Authorization` 標頭驗證身分時，請傳入 `cache_authorized=True`：沒有它，這類請求同樣會繞過後端。
 
 ```python
 from fastapi import Request, Response
@@ -160,7 +168,7 @@ def per_user_key(request: Request) -> str:
 
 
 @app.get("/me/dashboard")
-@cache(ttl=60, key_builder=per_user_key)
+@cache(ttl=60, key_builder=per_user_key, cache_authorized=True)
 async def my_dashboard(user: CurrentUser, response: Response):
     # 沒有 `private` 時，回應會帶著 `Cache-Control: max-age=60` 送出，
     # 共用快取（CDN、反向代理）可能會儲存它。對承載身分的標頭設定 Vary，
@@ -181,7 +189,7 @@ async def my_dashboard(user: CurrentUser, response: Response):
 >
 > 以原始請求標頭組成的鍵等同於水平權限提升：送出 `X-User-Id: <someone-else>` 就會拿到該使用者的快取回應。
 
-key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True` 或沒有 `ttl` 的路由不會呼叫它。0.3.8 以前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
+key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True`、沒有 `ttl` 的路由，以及路由未設定 `public=True` 或 `cache_authorized=True` 時帶有 `Authorization` 的請求，都不會呼叫它。0.3.8 以前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
 
 ## 清除快取 {#clearing-the-cache}
 
