@@ -84,7 +84,7 @@ async def report(cache: AppCache):
 - [分散式鎖](LOCK.md)：以 `CacheLock` 在多個行程之間互斥
 - [可執行範例](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples)（英文）：每個功能一個完整的應用程式，皆由測試套件涵蓋
 - [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)（英文）
-- [開發指南](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/)（英文）與[貢獻指南](CONTRIBUTING.md)
+- [開發指南](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/)（英文）與[貢獻指南](CONTRIBUTING.md) · [安全性政策](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)（英文）：請私下回報漏洞，不要開公開 issue
 - [變更紀錄](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md)（英文） · [已知限制與規劃中的工作](https://github.com/allen0099/FastAPI-CacheX/issues)
 
 ## 授權 {#license}

@@ -8,6 +8,10 @@
 - 提議新功能
 - 成為維護者
 
+## 回報安全性漏洞 {#reporting-a-security-vulnerability}
+
+請不要在公開的 issue 或 Pull Request 中回報安全性問題，而是透過 [GitHub 私下漏洞回報](https://github.com/allen0099/FastAPI-CacheX/security/advisories/new)私下回報。支援的版本以及回報應包含的內容，請見[安全性政策](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)（英文）。
+
 ## 開發流程 {#development-process}
 
 1. Fork 這個專案
