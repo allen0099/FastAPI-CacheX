@@ -381,20 +381,30 @@ def _unshareable_reason(response: Response) -> str | None:
     return None
 
 
-def _cache_control_for(response: Response, cache_control: str) -> str:
+def _cache_control_for(
+    response: Response, cache_control: str, private_cache_control: str
+) -> str:
     """The ``Cache-Control`` to send for a response the handler just rendered.
 
     A handler that marked its response ``private`` or ``no-store`` keeps its own
-    header; the decorator's would widen what the handler allowed.
+    header; the decorator's would widen what the handler allowed. A response
+    that sets a cookie gets ``private_cache_control``, so a shared cache in
+    front of the app does not store it either.
     """
     if _marked_unshareable(response):
         return ", ".join(response.headers.getlist("cache-control"))
+    if "set-cookie" in response.headers:
+        return private_cache_control
     return cache_control
 
 
-def _with_cache_control(response: Response, cache_control: str) -> Response:
+def _with_cache_control(
+    response: Response, cache_control: str, private_cache_control: str
+) -> Response:
     if not _marked_unshareable(response):
-        response.headers["Cache-Control"] = cache_control
+        response.headers["Cache-Control"] = _cache_control_for(
+            response, cache_control, private_cache_control
+        )
     return response
 
 
@@ -546,7 +556,9 @@ def cache(
     ``no-store`` in its own ``Cache-Control`` (that header is then sent
     unchanged instead of the decorator's) or when it sets a cookie. Such a
     response is served as rendered, and an entry already stored under its key
-    is left alone.
+    is left alone. A response that sets a cookie is sent with ``private`` in
+    place of ``public`` (the other directives stay), so that a shared cache in
+    front of the app does not store it either.
 
     Args:
         ttl: How long, in seconds, a stored response may be served without
@@ -584,9 +596,13 @@ def cache(
         cache_authorized: Read and write the backend for requests that carry
             an ``Authorization`` header. By default such a request bypasses
             the backend as ``private=True`` does (RFC 9111 §3.5), unless
-            ``public`` is set. Set this only when ``key_builder`` puts the
-            verified caller's identity into the key; with the default key
-            builder one user's response would be served to the next.
+            ``public`` is set, and its response is sent with ``private``.
+            RFC 9111 would also allow reuse under ``must-revalidate``, but
+            ``must_revalidate=True`` does not lift the bypass: only this
+            explicit opt-in or ``public`` does. Set this only when
+            ``key_builder`` puts the verified caller's identity into the key;
+            with the default key builder one user's response would be served
+            to the next.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -671,6 +687,24 @@ def cache(
             immutable=immutable,
             must_revalidate=must_revalidate,
         )
+        # Sent instead for a response that must not be stored downstream
+        # either: one that sets a cookie, or one answering an `Authorization`
+        # request the backend was bypassed for. `public` becomes `private`;
+        # `no_cache` leaves the scope out of `cache_control`, so it is added.
+        private_cache_control = (
+            f"{DirectiveType.PRIVATE.value}, {cache_control}"
+            if no_cache
+            else _build_cache_control(
+                ttl=ttl,
+                stale=stale,
+                stale_ttl=stale_ttl,
+                no_cache=no_cache,
+                public=False,
+                private=True,
+                immutable=immutable,
+                must_revalidate=must_revalidate,
+            )
+        )
         builder = key_builder or default_key_builder
         # Without a positive ttl nothing may be served from storage, and a 304
         # answered from a stored ETag would be exactly that: it would keep
@@ -737,22 +771,35 @@ def cache(
             # (see `bypass_backend`). ETag revalidation still works: it
             # compares the client's validator against freshly rendered content.
             if bypass_backend or authorized_bypass:
+                # Without `public`/`cache_authorized`, RFC 9111 §3.5 would still
+                # let a downstream shared cache reuse the answer to an
+                # `Authorization` request under `must-revalidate`; `private`
+                # rules that out.
+                bypass_cache_control = (
+                    private_cache_control if authorized_bypass else cache_control
+                )
                 response, _, etag = await _render(func, req, *args, **kwargs)
                 if not _is_cacheable_status(response.status_code):
                     return response
                 if etag is None:
                     # StreamingResponse/FileResponse — cannot compute ETag
-                    return _with_cache_control(response, cache_control)
+                    return _with_cache_control(
+                        response, bypass_cache_control, private_cache_control
+                    )
                 if _etag_matches(client_etag, etag):
                     logger.debug("304 Not Modified (uncached); path=%s", req.url.path)
                     return _not_modified(
                         etag,
-                        _cache_control_for(response, cache_control),
+                        _cache_control_for(
+                            response, bypass_cache_control, private_cache_control
+                        ),
                         response.headers,
                     )
                 response.headers["ETag"] = etag
                 logger.debug("Bypassed the backend; path=%s", req.url.path)
-                return _with_cache_control(response, cache_control)
+                return _with_cache_control(
+                    response, bypass_cache_control, private_cache_control
+                )
 
             # Built only here: the branches above never touch the backend, so a
             # custom key builder would run for nothing.
@@ -791,14 +838,18 @@ def cache(
 
                     if current_etag is None:
                         # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
-                        return _with_cache_control(current_response, cache_control)
+                        return _with_cache_control(
+                            current_response, cache_control, private_cache_control
+                        )
 
                     if _etag_matches(client_etag, current_etag):
                         # For no-cache, compare fresh data with client's ETag
                         logger.debug("304 Not Modified via no-cache; key=%s", cache_key)
                         return _not_modified(
                             current_etag,
-                            _cache_control_for(current_response, cache_control),
+                            _cache_control_for(
+                                current_response, cache_control, private_cache_control
+                            ),
                             current_response.headers,
                         )
 
@@ -845,7 +896,9 @@ def cache(
 
                 if current_etag is None:
                     # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
-                    return _with_cache_control(current_response, cache_control)
+                    return _with_cache_control(
+                        current_response, cache_control, private_cache_control
+                    )
                 logger.debug("Cache MISS; computed fresh ETag for key=%s", cache_key)
 
             current_response.headers["ETag"] = current_etag
@@ -885,7 +938,9 @@ def cache(
                 else:
                     logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
 
-            return _with_cache_control(current_response, cache_control)
+            return _with_cache_control(
+                current_response, cache_control, private_cache_control
+            )
 
         # Update the wrapper with the new signature
         update_wrapper(wrapper, func)
