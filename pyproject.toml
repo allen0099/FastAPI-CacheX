@@ -115,6 +115,10 @@ keep-runtime-typing = true
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/**" = ["INP001"]  # Standalone tooling, not an importable package
+"examples/**" = [
+    "INP001",  # Standalone apps, run by path; not an importable package
+    "S106",  # token_format="jwt" is not a password
+]
 "tests/**" = [
     "D",
     "S101",
