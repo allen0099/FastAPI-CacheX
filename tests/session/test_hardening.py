@@ -20,12 +20,6 @@ def config() -> SessionConfig:
     return SessionConfig(secret_key="a" * 32, ip_binding=True)
 
 
-@pytest.fixture
-def manager(config: SessionConfig) -> SessionManager:
-    """Session manager over an in-process backend."""
-    return SessionManager(MemoryBackend(), config)
-
-
 def test_non_ascii_signature_is_rejected_not_raised():
     """`hmac.compare_digest` refuses non-ASCII str; that must not escape."""
     security = SecurityManager("a" * 32)
