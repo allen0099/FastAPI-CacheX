@@ -70,6 +70,19 @@ async def report(cache: AppCache):
     return await cache.get_or_set("report", build_report, ttl=300)
 ```
 
+> [!IMPORTANT]
+> `@cache` 必須寫在路由裝飾器的**下方**。FastAPI 註冊的是傳到 `@app.get(...)` 的那個函式；若 `@cache` 寫在上方，FastAPI 註冊的是未經裝飾的 handler，路由照常運作，但什麼都不會被快取，也不會有任何警告（詳見 [裝飾器順序](HTTP_CACHING.md#decorator-order)）。
+>
+> ```python
+> @app.get("/items")  # ✅ 先寫路由裝飾器，
+> @cache(ttl=60)      #    @cache 緊貼在函式上方
+> async def items(): ...
+>
+> @cache(ttl=60)      # ❌ 永遠不會被呼叫：什麼都不會被快取
+> @app.get("/items")
+> async def items(): ...
+> ```
+
 > [!WARNING]
 > 預設的快取鍵不包含使用者身分。需要驗證身分的端點請使用 `private=True`，或依使用者區分的 key builder 搭配 `cache_authorized=True`（否則帶有 `Authorization` 或 Session 的請求會繞過後端），詳見 [需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
 

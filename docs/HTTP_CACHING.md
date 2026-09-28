@@ -38,6 +38,31 @@ handler does not need to declare a `Request` parameter — the decorator adds on
 when it is missing. If no backend has been configured, `@cache` falls back to a
 `MemoryBackend` (see [Backends](BACKENDS.md)).
 
+### Decorator order
+
+`@cache` goes **below** the route decorator (`@app.get(...)`,
+`@router.get(...)`), directly above the function. Python applies decorators
+bottom-up, and FastAPI registers whatever function reaches the route decorator.
+With `@cache` on top, FastAPI registers the undecorated handler and never calls
+the cache wrapper: the route still works, but nothing is cached, no
+`Cache-Control` or `ETag` header is sent, and nothing warns.
+
+```python
+# ✅ Cached: FastAPI registers the @cache wrapper.
+@app.get("/items")
+@cache(ttl=60)
+async def items(): ...
+
+
+# ❌ Not cached: FastAPI registers the plain function; the wrapper is never called.
+@cache(ttl=60)
+@app.get("/items")
+async def items(): ...
+```
+
+The same applies to `app.add_api_route(path, cache(ttl=60)(handler))`: pass the
+decorated function, not the plain one.
+
 ## Cache-Control directives
 
 `@cache` plays two roles. It writes a `Cache-Control` header for browsers and

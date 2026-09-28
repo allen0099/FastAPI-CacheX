@@ -75,6 +75,22 @@ async def report(cache: AppCache):
     return await cache.get_or_set("report", build_report, ttl=300)
 ```
 
+> [!IMPORTANT]
+> Put `@cache` **below** the route decorator. FastAPI registers whatever function
+> reaches `@app.get(...)`; with `@cache` on top, FastAPI registers the
+> undecorated handler, so the route works but nothing is cached and nothing warns
+> (see [Decorator order](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/#decorator-order)).
+>
+> ```python
+> @app.get("/items")  # ✅ route decorator first,
+> @cache(ttl=60)      #    @cache directly above the function
+> async def items(): ...
+>
+> @cache(ttl=60)      # ❌ never called: nothing is cached
+> @app.get("/items")
+> async def items(): ...
+> ```
+
 > [!WARNING]
 > The default cache key carries no user identity. Cache authenticated endpoints
 > with `private=True` or a per-user key builder plus `cache_authorized=True`
