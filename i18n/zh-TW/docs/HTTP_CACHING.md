@@ -33,6 +33,25 @@ async def non_store_endpoint():
 
 只有 GET 請求會被快取；其他方法照常執行 handler。handler 不需要宣告 `Request` 參數：缺少時裝飾器會自動加上。如果尚未設定任何後端，`@cache` 會改用 `MemoryBackend`（見[後端](BACKENDS.md)）。
 
+### 裝飾器順序 {#decorator-order}
+
+`@cache` 必須寫在路由裝飾器（`@app.get(...)`、`@router.get(...)`）的**下方**，緊貼在函式上方。Python 由下而上套用裝飾器，而 FastAPI 註冊的是傳到路由裝飾器的那個函式。若 `@cache` 寫在上方，FastAPI 註冊的是未經裝飾的 handler，永遠不會呼叫快取包裝函式：路由照常運作，但什麼都不會被快取，不會送出 `Cache-Control` 或 `ETag` 標頭，也不會有任何警告。
+
+```python
+# ✅ 會快取：FastAPI 註冊的是 @cache 的包裝函式。
+@app.get("/items")
+@cache(ttl=60)
+async def items(): ...
+
+
+# ❌ 不會快取：FastAPI 註冊的是原本的函式，包裝函式永遠不會被呼叫。
+@cache(ttl=60)
+@app.get("/items")
+async def items(): ...
+```
+
+`app.add_api_route(path, cache(ttl=60)(handler))` 也是一樣：傳入裝飾後的函式，而不是原本的函式。
+
 ## Cache-Control 指令 {#cache-control-directives}
 
 `@cache` 有兩個角色：替瀏覽器與中間層（CDN、反向代理）寫出 `Cache-Control` 標頭，以及在後端維護自己的伺服器端快取。大部分指令只影響前者：它們會寫進標頭，但不論有沒有設定，伺服器端快取的行為都一樣。
