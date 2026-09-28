@@ -8,6 +8,7 @@ from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
+from functools import partial
 from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
@@ -270,6 +271,49 @@ def default_key_builder(request: Request) -> str:
     return build_cache_key(request)
 
 
+_ASYNC_KEY_BUILDER_MSG = (
+    "key_builder must be a sync function returning str; async key builders "
+    "are not supported (the key is built without awaiting)"
+)
+
+
+def _validate_key_builder(builder: Callable[..., object]) -> None:
+    """Reject a key builder whose call returns a coroutine.
+
+    ``functools.partial`` layers are unwrapped first, so a partial of an async
+    callable object is caught as well. A builder this cannot see through
+    (say a sync wrapper returning a coroutine) is caught by ``_build_key``.
+
+    Raises:
+        CacheXError: If calling ``builder`` would return a coroutine.
+    """
+    target = builder
+    while isinstance(target, partial):
+        target = target.func
+    if _is_coroutine_callable(target):
+        raise CacheXError(_ASYNC_KEY_BUILDER_MSG)
+
+
+def _build_key(builder: CacheKeyBuilder, request: Request) -> str:
+    """Call ``builder`` and check that it returned a ``str``.
+
+    A returned coroutine is closed, so it does not also trigger a "never
+    awaited" ``RuntimeWarning``. ``fail_open`` does not cover this: it is a
+    programming error in the route, not a backend failure.
+
+    Raises:
+        CacheXError: If ``builder`` returns anything but a ``str``.
+    """
+    key: object = builder(request)
+    if isinstance(key, str):
+        return key
+    if inspect.iscoroutine(key):
+        key.close()
+        raise CacheXError(_ASYNC_KEY_BUILDER_MSG)
+    msg = f"key_builder must return a str, got {type(key).__name__}"
+    raise CacheXError(msg)
+
+
 async def invalidate(
     request: Request,
     key_builder: CacheKeyBuilder | None = None,
@@ -287,7 +331,8 @@ async def invalidate(
             a request to the same route/method as the cached one (e.g. build
             it via ``request.app.url_path_for(...)`` for a GET route).
         key_builder: Custom key builder used by the target route's ``@cache``
-            decorator, if any. If None, uses ``default_key_builder``.
+            decorator, if any. If None, uses ``default_key_builder``. Must be
+            a sync callable returning a ``str``, as for ``@cache``.
         vary: The target route's ``vary`` names, if any. Only the variant
             selected by ``request``'s own values for those headers is
             deleted; ``clear_path()`` clears every variant of a path.
@@ -299,12 +344,16 @@ async def invalidate(
         True if a cache entry existed and was deleted, False otherwise.
 
     Raises:
-        CacheXError: If ``vary`` is not a list of header names.
+        CacheXError: If ``vary`` is not a list of header names, if
+            ``key_builder`` is an ``async`` callable, or if it returns
+            something other than a ``str``. Raised before the backend is
+            touched.
     """
     builder = key_builder or default_key_builder
+    _validate_key_builder(builder)
     vary_names = _validate_vary(vary)
     cache_key = _append_key_components(
-        builder(request), _vary_components(request, vary_names)
+        _build_key(builder, request), _vary_components(request, vary_names)
     )
 
     try:
@@ -649,7 +698,7 @@ def _serialize_result(route: "APIRoute", result: object) -> object:
     )
 
 
-def _is_coroutine_callable(func: HandlerCallable) -> bool:
+def _is_coroutine_callable(func: Callable[..., object]) -> bool:
     """Report whether calling `func` returns a coroutine.
 
     `inspect.iscoroutinefunction` already sees through `functools.partial`;
@@ -791,7 +840,13 @@ def cache(
         key_builder: Custom function to build cache keys. If None, uses
             ``default_key_builder``. To add a component (user ID, tenant,
             locale) to the default key, return
-            ``build_cache_key(request, component)``.
+            ``build_cache_key(request, component)``. Must be a sync callable
+            returning a ``str``: an ``async def`` function, an object with an
+            ``async def __call__`` or a ``functools.partial`` of either is
+            rejected when the decorator is applied, and a builder that
+            returns anything but a ``str`` fails the request with
+            ``CacheXError`` (``fail_open`` does not apply; it covers backend
+            errors only).
         fail_open: When the backend raises, log a warning and answer without
             the cache: a failed read counts as a miss and a failed write
             leaves the response unstored. ``False`` lets the error propagate,
@@ -837,7 +892,9 @@ def cache(
             ``stale_ttl`` are not given together, if ``public`` and
             ``private`` are both set, if ``ttl`` is not an ``int``, is
             negative or is larger than ``MAX_TTL``, or if ``vary`` is not a
-            list of header field names (a single string is rejected).
+            list of header field names (a single string is rejected), or if
+            ``key_builder`` is an ``async`` callable. At request time, if
+            ``key_builder`` returns anything but a ``str``.
     """
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
@@ -863,6 +920,8 @@ def cache(
             msg = f"ttl must be at most {MAX_TTL} seconds"
             raise CacheXError(msg)
         vary_names = _validate_vary(vary)
+        if key_builder is not None:
+            _validate_key_builder(key_builder)
         if any(name.lower() == "cookie" for name in vary_names):
             # stacklevel=2: the caller applying the decorator, i.e. the line
             # of the user's @cache(...).
@@ -1039,7 +1098,7 @@ def cache(
             # Built only here: the branches above never touch the backend, so a
             # custom key builder would run for nothing.
             cache_key = _append_key_components(
-                builder(req), _vary_components(req, vary_names)
+                _build_key(builder, req), _vary_components(req, vary_names)
             )
 
             try:
