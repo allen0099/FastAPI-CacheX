@@ -62,6 +62,8 @@ uv add "fastapi-cachex[jwt]"
 
 ```python
 from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel
+
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.session import (
     FastAPICacheXSessionMiddleware,
@@ -71,6 +73,7 @@ from fastapi_cachex.session import (
     get_optional_session,
     get_session,
 )
+from fastapi_cachex.session.dependencies import AuthenticatedSession
 
 # Create the FastAPI application
 app = FastAPI()
@@ -102,17 +105,24 @@ app.add_middleware(
 # When `config` is omitted, the middleware uses `session_manager.config`.
 
 
+# Credentials arrive in the JSON request body, never in the query string,
+# which ends up in browser history and access logs.
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 # Login endpoint
 @app.post("/login")
-async def login(username: str, password: str):
+async def login(credentials: LoginRequest):
     # Authenticate the user (simplified here)
-    if username != "admin" or password != "secret":
+    if credentials.username != "admin" or credentials.password != "secret":
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # Create the session
     user = SessionUser(
         user_id="123",
-        username=username,
+        username=credentials.username,
         roles=["admin"],
     )
     session, token = await session_manager.create_session(user=user)
@@ -122,10 +132,10 @@ async def login(username: str, password: str):
     return {"message": "Login successful", "token": token}
 
 
-# Endpoint that requires authentication
+# Endpoint that requires a logged-in user
 @app.get("/profile")
-async def get_profile(session=Depends(get_session)):
-    """Requires a valid session."""
+async def get_profile(session: AuthenticatedSession):
+    """Requires a session with a user; 401 otherwise, anonymous sessions included."""
     return {
         "user_id": session.user.user_id,
         "username": session.user.username,
@@ -162,16 +172,8 @@ anonymous, so `session.user` is `None`.
 that anyone logged in. Any visitor who reaches a route that writes to `request.session` (a cart,
 a CSRF value) gets one. Guard routes that need a logged-in user with `require_user_session` (or
 its annotated form `AuthenticatedSession`), which also answers `401` when `session.user` is
-`None`:
-
-```python
-from fastapi_cachex.session.dependencies import AuthenticatedSession
-
-
-@app.get("/account")
-async def account(session: AuthenticatedSession):
-    return {"user_id": session.user.user_id}
-```
+`None`, as `/profile` above does. `/logout` only deletes the session, so `get_session` is enough
+there.
 
 `UserSessionDep` does not check for a user despite its name; it is an alias of `SessionDep`
 until 0.4.0, which is planned to make it require one.
@@ -189,6 +191,8 @@ that sets the user.
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from pydantic import BaseModel
+
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.session import (
     FastAPICacheXSessionMiddleware,
@@ -197,7 +201,7 @@ from fastapi_cachex.session import (
     SessionUser,
     get_session,
 )
-from fastapi_cachex.session.dependencies import ClientIPDep
+from fastapi_cachex.session.dependencies import AuthenticatedSession, ClientIPDep
 
 app = FastAPI()
 
@@ -227,10 +231,16 @@ app.add_middleware(
 )
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 @app.post("/api/auth/login")
-async def login(username: str, password: str, request: Request, client_ip: ClientIPDep):
+async def login(credentials: LoginRequest, request: Request, client_ip: ClientIPDep):
     # Authenticate the user (should query a database)
-    if not authenticate_user(username, password):
+    username = credentials.username
+    if not authenticate_user(username, credentials.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # Create the session
@@ -266,8 +276,8 @@ async def login(username: str, password: str, request: Request, client_ip: Clien
 
 
 @app.get("/api/user/profile")
-async def get_user_profile(session=Depends(get_session)):
-    """Return the user's profile (requires authentication)."""
+async def get_user_profile(session: AuthenticatedSession):
+    """Return the user's profile (requires a logged-in user)."""
     return {
         "user_id": session.user.user_id,
         "username": session.user.username,
@@ -281,7 +291,7 @@ async def get_user_profile(session=Depends(get_session)):
 @app.post("/api/user/update")
 async def update_user_profile(
     email: str,
-    session=Depends(get_session),
+    session: AuthenticatedSession,
 ):
     """Update the user's profile."""
     session.user.email = email
@@ -313,7 +323,7 @@ async def logout(session=Depends(get_session)):
 
 
 @app.post("/api/auth/logout-all")
-async def logout_all_devices(session=Depends(get_session)):
+async def logout_all_devices(session: AuthenticatedSession):
     """Log out from all devices."""
     user_id = session.user.user_id
     count = await session_manager.delete_user_sessions(user_id)
@@ -370,12 +380,12 @@ constructed) and will be removed in 0.4.0. Use `FastAPICacheXSessionMiddleware` 
   anonymous session) uses `Set-Cookie`.
 
 Both middlewares put the loaded `Session` object into `request.state`, so the existing session
-dependencies `get_session`, `get_optional_session` and `require_session` work under either
-middleware without any changes:
+dependencies `get_session`, `get_optional_session`, `require_session` and `require_user_session`
+work under either middleware without any changes:
 
 ```python
 from fastapi import Depends
-from fastapi_cachex.session import FastAPICacheXSessionMiddleware, get_session
+from fastapi_cachex.session import FastAPICacheXSessionMiddleware, require_user_session
 
 app.add_middleware(
     FastAPICacheXSessionMiddleware, session_manager=manager, config=config
@@ -383,7 +393,7 @@ app.add_middleware(
 
 
 @app.get("/me")
-async def me(session=Depends(get_session)):
+async def me(session=Depends(require_user_session)):
     return {"user_id": session.user.user_id}
 ```
 
@@ -786,9 +796,12 @@ from fastapi_cachex.session import SessionUser
 from fastapi_cachex.session.dependencies import SessionManagerDep
 
 
+# LoginRequest is the body model from Basic Usage
 @app.post("/login")
-async def login(username: str, manager: SessionManagerDep):
-    session, token = await manager.create_session(user=SessionUser(user_id=username))
+async def login(credentials: LoginRequest, manager: SessionManagerDep):
+    ...  # verify credentials.password
+    user = SessionUser(user_id=credentials.username)
+    session, token = await manager.create_session(user=user)
     return {"token": token}
 ```
 

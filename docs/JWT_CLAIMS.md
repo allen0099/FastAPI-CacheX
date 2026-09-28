@@ -385,6 +385,7 @@ Do not replace the serializer by assigning a private attribute after constructio
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel
 
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.session import (
@@ -426,14 +427,19 @@ app.add_middleware(
 )
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 @app.post("/auth/login")
-async def login(username: str, password: str) -> dict[str, str]:
+async def login(credentials: LoginRequest) -> dict[str, str]:
     """Login endpoint that returns a JWT containing tenant_id."""
     # Authenticate the user (omitted)
-    if username != "admin":
+    if credentials.username != "admin":
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    user = SessionUser(user_id="123", username=username)
+    user = SessionUser(user_id="123", username=credentials.username)
     session, token = await manager.create_session(user=user)
 
     # The token now contains the tenant_id and api_version claims
