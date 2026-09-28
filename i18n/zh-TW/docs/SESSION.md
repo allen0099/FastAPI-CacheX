@@ -580,7 +580,7 @@ async def login(request: Request, session: OptionalSession):
     return {"ok": True}
 ```
 
-最後這個分支的回應要由你自己保護，因為中介軟體不會處理不是由它送出的權杖：設定 Cookie 時帶上設定中所有的 `cookie_*` 屬性（包括 `domain`，否則登出時清除的 Cookie 會對不上），也把權杖交給使用標頭的用戶端，並送出 `Cache-Control: private, no-store`，讓共用快取不會存下這個憑證。完整版本請見 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)。處理上述所有步驟的 `login()` 輔助函式已在規劃中（[#293](https://github.com/allen0099/FastAPI-CacheX/issues/293)）。
+最後這個分支的回應要由你自己保護，因為中介軟體不會處理不是由它送出的權杖：設定 Cookie 時帶上設定中所有的 `cookie_*` 屬性（包括 `domain`，否則登出時清除的 Cookie 會對不上），並送出 `Cache-Control: private, no-store`，讓共用快取不會存下這個憑證。不要把權杖複製到瀏覽器登入回應的標頭或本文中：頁面上的指令碼會讀得到它，而這正是 HttpOnly Cookie 要防止的。API 用戶端的權杖請由另一個在本文中回傳權杖的端點發給，如 [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) 所示。完整版本請見 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)。處理上述所有步驟的 `login()` 輔助函式已在規劃中（[#293](https://github.com/allen0099/FastAPI-CacheX/issues/293)）。
 
 在中介軟體之外，請以中介軟體會傳入的相同綁定值載入 Session，並自行將回傳的權杖交給用戶端：
 

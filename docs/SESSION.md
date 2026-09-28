@@ -728,9 +728,12 @@ async def login(request: Request, session: OptionalSession):
 
 In that last branch the response is yours to secure, since the middleware adds nothing
 to a token it did not send: set the cookie with every `cookie_*` attribute of the config
-(`domain` included, or the cookie cleared at logout will not match it), return the token to
-header clients as well, and send `Cache-Control: private, no-store` so no shared cache stores
-the credential. The complete version is
+(`domain` included, or the cookie cleared at logout will not match it) and send
+`Cache-Control: private, no-store` so no shared cache stores the credential. Do not copy the
+token into a response header or the body of a browser login: page scripts could read it,
+which is what the HttpOnly cookie prevents. Give API clients their token from a separate
+endpoint that returns it in the body, as
+[`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) does. The complete version is
 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py).
 A `login()` helper that does all of this is planned
 ([#293](https://github.com/allen0099/FastAPI-CacheX/issues/293)).

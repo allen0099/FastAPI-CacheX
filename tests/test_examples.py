@@ -264,10 +264,8 @@ def test_session_login_response_is_private(returning_visitor: bool) -> None:
         assert login.headers["cache-control"] == "private, no-store"
         set_cookie = _session_set_cookie(login.headers.get_list("set-cookie"))
         assert _cookie_attributes(set_cookie) == expected
-        if not returning_visitor:
-            # No transport to answer on yet: a header client gets the token too.
-            token = set_cookie.split(";", 1)[0].removeprefix("session=")
-            assert login.headers["x-session-token"] == token
+        # Only the HttpOnly cookie: a copy in a header would be readable by scripts.
+        assert "x-session-token" not in login.headers
         assert client.get("/me").json()["user"] == "alice"
 
         logout = client.post("/logout")
