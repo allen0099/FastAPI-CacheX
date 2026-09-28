@@ -14,6 +14,7 @@ from starlette.responses import StreamingResponse
 
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.cache import cache
+from fastapi_cachex.cache import invalidate
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
@@ -781,3 +782,110 @@ def test_public_and_private_raises():
         @cache(public=True, private=True)
         async def bad_endpoint():
             pass
+
+
+async def _async_key_builder(request: Request) -> str:
+    return request.url.path
+
+
+async def _async_key_builder_with_prefix(prefix: str, request: Request) -> str:
+    return prefix + request.url.path
+
+
+class _AsyncCallableKeyBuilder:
+    async def __call__(self, request: Request) -> str:
+        return request.url.path
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        _async_key_builder,
+        _AsyncCallableKeyBuilder(),
+        partial(_async_key_builder_with_prefix, "p:"),
+        partial(partial(_AsyncCallableKeyBuilder())),
+    ],
+    ids=["async-def", "async-call-object", "partial", "partial-of-async-object"],
+)
+def test_async_key_builder_raises_at_decoration(builder):
+    """An async key builder is rejected when @cache is applied (#323)."""
+    with pytest.raises(CacheXError, match="key_builder must be a sync function"):
+
+        @cache(ttl=60, key_builder=builder)
+        async def bad_endpoint():
+            pass
+
+
+def _get_request(path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+        }
+    )
+
+
+class _RecordingBackend(MemoryBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.touched = False
+
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        self.touched = True
+        return await super().get_and_delete(key)
+
+
+async def test_invalidate_rejects_async_key_builder_before_the_backend():
+    """invalidate() raises for an async builder without touching the backend."""
+    backend = _RecordingBackend()
+    BackendProxy.set(backend)
+    with pytest.raises(CacheXError, match="key_builder must be a sync function"):
+        await invalidate(_get_request("/x"), key_builder=_async_key_builder)  # type: ignore[arg-type]
+    assert backend.touched is False
+
+
+def _returns_coroutine(request: Request) -> str:
+    """A sync wrapper around an async builder: undetectable when applied."""
+    return _async_key_builder(request)  # type: ignore[return-value]
+
+
+def _returns_int(request: Request) -> str:
+    return 42  # type: ignore[return-value]
+
+
+_NON_STR_BUILDERS = pytest.mark.parametrize(
+    ("builder", "match"),
+    [
+        (_returns_coroutine, "key_builder must be a sync function"),
+        (_returns_int, "key_builder must return a str, got int"),
+    ],
+    ids=["coroutine", "int"],
+)
+
+
+@_NON_STR_BUILDERS
+def test_key_builder_returning_non_str_raises_at_request_time(builder, match):
+    """A non-str key fails the request with CacheXError, not a TypeError.
+
+    fail_open does not hide it, and a returned coroutine is closed, so no
+    "never awaited" RuntimeWarning is emitted (filterwarnings=error).
+    """
+    local_app = FastAPI()
+
+    @local_app.get("/non-str-key")
+    @cache(ttl=60, key_builder=builder, fail_open=True)
+    async def endpoint():
+        return {"ok": True}
+
+    with pytest.raises(CacheXError, match=match):
+        TestClient(local_app).get("/non-str-key")
+
+
+@_NON_STR_BUILDERS
+async def test_invalidate_key_builder_returning_non_str_raises(builder, match):
+    """invalidate() raises the same CacheXError for a non-str key."""
+    with pytest.raises(CacheXError, match=match):
+        await invalidate(_get_request("/x"), key_builder=builder)

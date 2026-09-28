@@ -473,6 +473,16 @@ called for `no_store=True`, `private=True`, routes without a `ttl`, or requests
 with `Authorization` or a session on a route without `public=True` or `cache_authorized=True`. Before 0.3.8
 it was, only to feed a debug log. Keep it free of side effects.
 
+The key builder must be a sync function that returns a `str`; it is called
+without being awaited. An `async def` function, an object with an
+`async def __call__`, or a `functools.partial` of either is rejected with
+`CacheXError` when `@cache` is applied, and by `invalidate()` before it touches
+the backend. A builder that still returns something other than a `str` (for
+example a sync wrapper that returns a coroutine) raises `CacheXError` on the
+request. `fail_open` does not cover this: it is a mistake in the route, not a
+backend failure. Read anything async (a user from the database, say) in a
+dependency or middleware and put it on `request.state` for the builder.
+
 ## Clearing the cache
 
 ### By path or pattern

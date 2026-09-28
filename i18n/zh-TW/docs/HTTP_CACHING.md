@@ -300,6 +300,8 @@ async def my_dashboard(user: CurrentUser, response: Response):
 
 key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True`、沒有 `ttl` 的路由，以及路由未設定 `public=True` 或 `cache_authorized=True` 時帶有 `Authorization` 或 Session 的請求，都不會呼叫它。0.3.8 以前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
 
+key builder 必須是回傳 `str` 的同步函式，呼叫時不會被 await。`async def` 函式、具有 `async def __call__` 的物件，或包裝上述兩者的 `functools.partial`，都會在套用 `@cache` 時以 `CacheXError` 拒絕；`invalidate()` 也會在存取後端之前拒絕它們。仍然回傳非 `str` 的 builder（例如回傳協程的同步包裝函式）會在請求時拋出 `CacheXError`。`fail_open` 不涵蓋這種情況：這是路由的錯誤，不是後端故障。需要非同步讀取的資料（例如從資料庫取得使用者），請在依賴項或中介軟體中讀取，放到 `request.state` 供 builder 使用。
+
 ## 清除快取 {#clearing-the-cache}
 
 ### 依路徑或模式 {#by-path-or-pattern}
