@@ -221,6 +221,67 @@ def test_session_login_without_a_prior_session() -> None:
         assert client.get("/me").json() == {"user": "alice", "cart": []}
 
 
+def _cookie_attributes(set_cookie: str) -> dict[str, str]:
+    """The attributes of one `Set-Cookie` value, keys lowercased, value dropped."""
+    _, *parts = (part.strip() for part in set_cookie.split(";"))
+    attributes = {}
+    for part in parts:
+        key, _, value = part.partition("=")
+        attributes[key.lower()] = value
+    return attributes
+
+
+def _session_set_cookie(set_cookies: list[str]) -> str:
+    """The one `Set-Cookie` value for the session cookie."""
+    [value] = [v for v in set_cookies if v.startswith("session=")]
+    return value
+
+
+@pytest.mark.parametrize("returning_visitor", [False, True])
+def test_session_login_response_is_private(returning_visitor: bool) -> None:
+    """The login response carries a credential: never cacheable, same cookie flags."""
+    example = load_example("session_login")
+    example.config.cookie_domain = "example.test"
+    credentials = {"username": "alice", "password": "alice-demo-password"}
+    with TestClient(example.app, base_url="http://app.example.test") as client:
+        # A cookie set by the middleware itself: the reference attributes.
+        started = client.post("/cart/book")
+        expected = _cookie_attributes(
+            _session_set_cookie(started.headers.get_list("set-cookie"))
+        )
+        assert expected == {
+            "path": "/",
+            "max-age": str(example.config.cookie_max_age),
+            "httponly": "",
+            "samesite": "lax",
+            "domain": "example.test",
+        }
+        if not returning_visitor:
+            client.cookies.clear()
+
+        login = client.post("/login", json=credentials)
+        assert login.status_code == 200
+        assert login.headers["cache-control"] == "private, no-store"
+        set_cookie = _session_set_cookie(login.headers.get_list("set-cookie"))
+        assert _cookie_attributes(set_cookie) == expected
+        if not returning_visitor:
+            # No transport to answer on yet: a header client gets the token too.
+            token = set_cookie.split(";", 1)[0].removeprefix("session=")
+            assert login.headers["x-session-token"] == token
+        assert client.get("/me").json()["user"] == "alice"
+
+        logout = client.post("/logout")
+        cleared = _cookie_attributes(
+            _session_set_cookie(logout.headers.get_list("set-cookie"))
+        )
+        assert logout.headers["cache-control"] == "private, no-store"
+        assert cleared["domain"] == expected["domain"]
+        assert cleared["path"] == expected["path"]
+        assert "expires" in cleared
+        assert not client.cookies.get("session")
+        assert client.get("/me").status_code == 401
+
+
 @pytest.mark.skipif(
     importlib.util.find_spec("jwt") is None,
     reason="session_jwt needs the jwt extra (PyJWT)",

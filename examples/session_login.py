@@ -103,8 +103,9 @@ async def login(
         await session_manager.update_session(session)
         return {"user": user.user_id}
 
-    # No session yet: create one for the user and set the cookie ourselves,
-    # since the middleware only sends tokens for sessions it loaded or created.
+    # No session yet, so the middleware has no token to send: create the
+    # session with the user and deliver the token ourselves, with the cookie
+    # attributes and cache headers the middleware would use.
     _, token = await session_manager.create_session(
         user=user,
         ip_address=client_ip,
@@ -115,10 +116,14 @@ async def login(
         token,
         max_age=config.cookie_max_age,
         path=config.cookie_path,
+        domain=config.cookie_domain,
+        secure=config.cookie_https_only,
         httponly=True,
         samesite=config.cookie_same_site,
-        secure=config.cookie_https_only,
     )
+    response.headers[config.header_name] = token  # for header and API clients
+    # The token is a credential: no shared cache may store this response.
+    response.headers["Cache-Control"] = "private, no-store"
     return {"user": user.user_id}
 
 
