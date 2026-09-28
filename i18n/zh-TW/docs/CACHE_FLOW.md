@@ -15,9 +15,9 @@ HTTP 請求抵達
 no-store？ ── 是 → 執行 handler，既不讀取也不寫入快取，
     │              回應帶上 Cache-Control: no-store
     ↓ 否
-private，或帶有 Authorization 且未設定 public／cache_authorized？
+private，或帶有 Authorization／Session 且未設定 public／cache_authorized？
     ── 是 → 執行 handler；比對 If-None-Match 決定回傳 304 或 200
-    │        （共用後端既不讀取也不寫入；Authorization 的情況下
+    │        （共用後端既不讀取也不寫入；Authorization 或 Session 的情況下
     │         Cache-Control 以 private 取代 public）
     ↓ 否
 讀取後端項目
@@ -96,9 +96,9 @@ host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`�
 
 # 一般快取行為
 @cache(ttl=3600)          # 快取 1 小時（也作為 max-age 的值）
-@cache(public=True)       # 允許共用快取，帶有 Authorization 的請求也一樣
+@cache(public=True)       # 允許共用快取，帶有 Authorization／Session 的請求也一樣
 @cache(private=True)      # 僅限私有；永遠不接觸共用後端
-@cache(ttl=60, key_builder=per_user_key, cache_authorized=True)  # 帶有 Authorization 的請求也使用後端
+@cache(ttl=60, key_builder=per_user_key, cache_authorized=True)  # 帶有 Authorization／Session 的請求也使用後端
 @cache(immutable=True)    # 內容永不改變
 
 # 只影響標頭的指令（不會改變伺服器端行為）
@@ -126,7 +126,7 @@ host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`�
 > 對於回應內容取決於呼叫者的端點，請擇一處理：
 >
 > 1. `private=True`：永遠不讀取或寫入共用後端。它仍會送出 `Cache-Control: private`，讓使用者自己的瀏覽器可以快取回應，而且 `If-None-Match` 仍會與新產生的內容比對。
-> 2. 包含身分的自訂 `key_builder`，並搭配 `cache_authorized=True`：當你確實需要以使用者為單位的伺服器端快取時使用。未設定 `cache_authorized` 時，帶有 `Authorization` 標頭的請求會繞過後端（見下方說明）。
+> 2. 包含身分的自訂 `key_builder`，並搭配 `cache_authorized=True`：當你確實需要以使用者為單位的伺服器端快取時使用。未設定 `cache_authorized` 時，帶有 `Authorization` 標頭或 Session 的請求會繞過後端（見下方說明）。
 >
 > 身分請取自可信任的來源（已驗證的權杖 claim、透過依賴注入取得的使用者物件）；不要信任未經檢查的用戶端標頭。
 
@@ -197,7 +197,7 @@ return response
 > 「非 2xx 不寫入」是刻意的設計：暫時性的錯誤不應抹除最後一次正常的快取回應，也不應在之後被當成 200 重播。`206 Partial Content` 同樣不會快取，因為它的內容只對產生它的那個 `Range` 請求有意義。非 2xx 回應也永遠不會以 `304` 回應，且回傳時不帶裝飾器的 `Cache-Control` 標頭（只有 `no_store=True` 會在每個回應加上 `no-store`）。
 
 > [!NOTE]
-> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及繞過後端的 `Authorization` 請求的回應（200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 以前這類回應會被儲存並重播給每位呼叫者（#296）。
+> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），帶有 Session 的請求（Session 中介軟體從任何權杖來源載入了 Session，或 `request.session` 不是空的）也一樣，除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及繞過後端的 `Authorization` 或 Session 請求的回應（200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 以前這類回應會被儲存並重播給每位呼叫者（#296）；帶有 Session 的請求在 0.3.9 以前也不會繞過（#319）。
 
 ### 4. ETag 產生與驗證 {#4-etag-generation-and-validation}
 
@@ -348,7 +348,7 @@ async def cleanup_task():
 | `no_store=True` | 既不讀取也不寫入快取；端點每次都會執行 |
 | `no_cache=True` | 端點每次都會執行以重新計算 ETag；與用戶端的 `If-None-Match` 相符時仍回傳 304，ETag 改變時會更新快取 |
 | `private=True` | **共用後端**既不讀取也不寫入；仍會送出 `Cache-Control: private`，並以新產生的內容比對 ETag |
-| 帶有 `Authorization` 的請求 | 與 `private=True` 一樣，既不讀取也不寫入後端，`Cache-Control` 以 `private` 取代 `public`，除非路由設定了 `public=True` 或 `cache_authorized=True`（`must_revalidate=True` 不算） |
+| 帶有 `Authorization` 或 Session 的請求 | 與 `private=True` 一樣，既不讀取也不寫入後端，`Cache-Control` 以 `private` 取代 `public`，除非路由設定了 `public=True` 或 `cache_authorized=True`（`must_revalidate=True` 不算） |
 | handler 送出 `Cache-Control: private`／`no-store` | 回傳時保留 handler 的標頭，不寫入，既有項目也保持不變 |
 | 回應設定了 cookie | 回傳時 `Cache-Control` 以 `private` 取代 `public`，不寫入，既有項目也保持不變 |
 | 沒有 `ttl`（或 `ttl=0`） | 與 `private=True` 一樣，既不讀取也不寫入後端；端點每次都會執行，並以新產生的內容比對 ETag |

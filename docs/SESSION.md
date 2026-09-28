@@ -418,6 +418,12 @@ async def me(session=Depends(get_session)):
   `request.session`. Otherwise a CDN or reverse proxy could store the token and hand it to the
   next visitor. Responses without a token keep their headers. The deprecated `SessionMiddleware`
   does the same when it sends a token in its response header.
+- `@cache` does not read or write its backend for a request that arrived with a session (one
+  the middleware loaded, from any transport, with or without a user, or a non-empty
+  `request.session`), and answers it with `private`, as for `Authorization`. `public=True`
+  shares the route across sessions; `cache_authorized=True` with a `key_builder` that includes
+  the session's user caches per user. See
+  [Authenticated endpoints](HTTP_CACHING.md#authenticated-endpoints).
 
 The cookie is always `HttpOnly`; `Secure`, `SameSite`, `Domain`, `Path` and `Max-Age` follow the
 `cookie_*` settings.
