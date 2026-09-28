@@ -50,6 +50,8 @@ uv add "fastapi-cachex[jwt]"
 
 ```python
 from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel
+
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.session import (
     FastAPICacheXSessionMiddleware,
@@ -59,6 +61,7 @@ from fastapi_cachex.session import (
     get_optional_session,
     get_session,
 )
+from fastapi_cachex.session.dependencies import AuthenticatedSession
 
 # 建立 FastAPI 應用程式
 app = FastAPI()
@@ -90,17 +93,24 @@ app.add_middleware(
 # 省略 `config` 時，中介軟體會使用 `session_manager.config`。
 
 
+# 帳號密碼放在 JSON 請求本文中，絕不放在查詢字串，
+# 查詢字串會留在瀏覽器歷史紀錄與存取日誌裡。
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 # 登入端點
 @app.post("/login")
-async def login(username: str, password: str):
+async def login(credentials: LoginRequest):
     # 驗證使用者（此處為簡化版）
-    if username != "admin" or password != "secret":
+    if credentials.username != "admin" or credentials.password != "secret":
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # 建立 Session
     user = SessionUser(
         user_id="123",
-        username=username,
+        username=credentials.username,
         roles=["admin"],
     )
     session, token = await session_manager.create_session(user=user)
@@ -110,10 +120,10 @@ async def login(username: str, password: str):
     return {"message": "Login successful", "token": token}
 
 
-# 需要驗證的端點
+# 需要已登入使用者的端點
 @app.get("/profile")
-async def get_profile(session=Depends(get_session)):
-    """Requires a valid session."""
+async def get_profile(session: AuthenticatedSession):
+    """Requires a session with a user; 401 otherwise, anonymous sessions included."""
     return {
         "user_id": session.user.user_id,
         "username": session.user.username,
@@ -141,16 +151,7 @@ async def logout(session=Depends(get_session)):
 
 依賴項回傳的 Session 物件是後端的 `Session` 模型。由 `FastAPICacheXSessionMiddleware` 從 `request.session` 建立的 Session（見下方的遷移一節）是匿名的，因此 `session.user` 為 `None`。
 
-`get_session` 也接受這種 Session，因此它只能證明請求帶著「某個」Session，而不能證明有人登入。任何訪客只要進入會寫入 `request.session` 的路由（購物車、CSRF 值），就會得到一個。需要已登入使用者的路由，請改用 `require_user_session`（或其型別註記形式 `AuthenticatedSession`）保護，它在 `session.user` 為 `None` 時同樣回應 `401`：
-
-```python
-from fastapi_cachex.session.dependencies import AuthenticatedSession
-
-
-@app.get("/account")
-async def account(session: AuthenticatedSession):
-    return {"user_id": session.user.user_id}
-```
+`get_session` 也接受這種 Session，因此它只能證明請求帶著「某個」Session，而不能證明有人登入。任何訪客只要進入會寫入 `request.session` 的路由（購物車、CSRF 值），就會得到一個。需要已登入使用者的路由，請改用 `require_user_session`（或其型別註記形式 `AuthenticatedSession`）保護，它在 `session.user` 為 `None` 時同樣回應 `401`，上方的 `/profile` 就是這樣做的。`/logout` 只會刪除 Session，因此使用 `get_session` 就足夠。
 
 `UserSessionDep` 雖然名稱如此，卻不會檢查使用者；在 0.4.0 之前它是 `SessionDep` 的別名，0.4.0 預計改為要求使用者。
 
@@ -162,6 +163,8 @@ async def account(session: AuthenticatedSession):
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from pydantic import BaseModel
+
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.session import (
     FastAPICacheXSessionMiddleware,
@@ -170,7 +173,7 @@ from fastapi_cachex.session import (
     SessionUser,
     get_session,
 )
-from fastapi_cachex.session.dependencies import ClientIPDep
+from fastapi_cachex.session.dependencies import AuthenticatedSession, ClientIPDep
 
 app = FastAPI()
 
@@ -200,10 +203,16 @@ app.add_middleware(
 )
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 @app.post("/api/auth/login")
-async def login(username: str, password: str, request: Request, client_ip: ClientIPDep):
+async def login(credentials: LoginRequest, request: Request, client_ip: ClientIPDep):
     # 驗證使用者（實際上應查詢資料庫）
-    if not authenticate_user(username, password):
+    username = credentials.username
+    if not authenticate_user(username, credentials.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # 建立 Session
@@ -239,8 +248,8 @@ async def login(username: str, password: str, request: Request, client_ip: Clien
 
 
 @app.get("/api/user/profile")
-async def get_user_profile(session=Depends(get_session)):
-    """Return the user's profile (requires authentication)."""
+async def get_user_profile(session: AuthenticatedSession):
+    """Return the user's profile (requires a logged-in user)."""
     return {
         "user_id": session.user.user_id,
         "username": session.user.username,
@@ -254,7 +263,7 @@ async def get_user_profile(session=Depends(get_session)):
 @app.post("/api/user/update")
 async def update_user_profile(
     email: str,
-    session=Depends(get_session),
+    session: AuthenticatedSession,
 ):
     """Update the user's profile."""
     session.user.email = email
@@ -286,7 +295,7 @@ async def logout(session=Depends(get_session)):
 
 
 @app.post("/api/auth/logout-all")
-async def logout_all_devices(session=Depends(get_session)):
+async def logout_all_devices(session: AuthenticatedSession):
     """Log out from all devices."""
     user_id = session.user.user_id
     count = await session_manager.delete_user_sessions(user_id)
@@ -322,11 +331,11 @@ def get_user_roles(username: str) -> list[str]:
 - **`SessionMiddleware`**（一個 `BaseHTTPMiddleware`）：以自訂標頭（預設 `X-Session-Token`）和／或 `Authorization: Bearer` 傳遞權杖，適合由用戶端管理權杖的 API 優先架構。不支援以 Cookie 傳輸。
 - **`FastAPICacheXSessionMiddleware`**（一個純 ASGI 中介軟體）：與 Starlette 內建的 `SessionMiddleware` 相容，提供相同的類 dict `request.session`。它以 Cookie（預設 Cookie 名稱 `session`）傳遞簽署過的 Session 權杖，而 Session 內容則存放在後端（`SessionManager` 的快取後端），而不是像 Starlette 自己的實作那樣編碼進 Cookie 本身。權杖解析採「標頭優先、Cookie 其次」：它會先讀取自訂標頭（預設 `X-Session-Token`）和／或 `Authorization: Bearer`，只有兩者都不存在時才退回使用 Cookie，因此原本搭配 `SessionMiddleware` 使用 `X-Session-Token` 的用戶端不需修改即可繼續運作。回應端同樣依來源決定：從標頭傳入的權杖，更新後的權杖會在同一個回應標頭中傳回，且不會發出 `Set-Cookie`；從 Cookie 傳入的權杖（或全新的匿名 Session）則使用 `Set-Cookie`。
 
-兩個中介軟體都會將載入的 `Session` 物件放進 `request.state`，因此既有的 Session 依賴項 `get_session`、`get_optional_session` 與 `require_session` 在任一個中介軟體下都能直接運作，不需任何修改：
+兩個中介軟體都會將載入的 `Session` 物件放進 `request.state`，因此既有的 Session 依賴項 `get_session`、`get_optional_session`、`require_session` 與 `require_user_session` 在任一個中介軟體下都能直接運作，不需任何修改：
 
 ```python
 from fastapi import Depends
-from fastapi_cachex.session import FastAPICacheXSessionMiddleware, get_session
+from fastapi_cachex.session import FastAPICacheXSessionMiddleware, require_user_session
 
 app.add_middleware(
     FastAPICacheXSessionMiddleware, session_manager=manager, config=config
@@ -334,7 +343,7 @@ app.add_middleware(
 
 
 @app.get("/me")
-async def me(session=Depends(get_session)):
+async def me(session=Depends(require_user_session)):
     return {"user_id": session.user.user_id}
 ```
 
@@ -620,9 +629,12 @@ from fastapi_cachex.session import SessionUser
 from fastapi_cachex.session.dependencies import SessionManagerDep
 
 
+# LoginRequest 是基本用法中的請求本文模型
 @app.post("/login")
-async def login(username: str, manager: SessionManagerDep):
-    session, token = await manager.create_session(user=SessionUser(user_id=username))
+async def login(credentials: LoginRequest, manager: SessionManagerDep):
+    ...  # 驗證 credentials.password
+    user = SessionUser(user_id=credentials.username)
+    session, token = await manager.create_session(user=user)
     return {"token": token}
 ```
 
