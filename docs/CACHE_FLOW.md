@@ -364,7 +364,8 @@ value: the JSON document above
 #   get_cache_data() are no-ops that return 0/[]/{} and emit a RuntimeWarning;
 #   CacheManager.clear()/clear_prefix() therefore do nothing on this backend
 # - clear_path() only deletes a key exactly equal to the given path, so it
-#   cannot clear HTTP route entries
+#   cannot clear HTTP route entries, and it emits a RuntimeWarning on every
+#   call; use invalidate(request) to drop a cached route's entry
 # - clear() issues flush_all, which wipes the ENTIRE Memcached server (not just
 #   this key prefix) and emits a RuntimeWarning
 # - The synchronous pymemcache client runs in worker threads, with connection

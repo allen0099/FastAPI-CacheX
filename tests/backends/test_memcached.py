@@ -5,7 +5,13 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from starlette.requests import Request as StarletteRequest
 
+from fastapi_cachex import BackendProxy
+from fastapi_cachex import cache
+from fastapi_cachex import invalidate
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.backends.memcached import _CAS_MAX_RETRIES
@@ -139,7 +145,8 @@ async def test_memcached_clear_path(memcached_backend: MemcachedBackend):
     await memcached_backend.set(path, value)
 
     # Test clearing the exact path
-    cleared = await memcached_backend.clear_path(path, include_params=False)
+    with pytest.warns(RuntimeWarning, match="does not support pattern-based"):
+        cleared = await memcached_backend.clear_path(path, include_params=False)
     assert cleared == 1  # Should clear the exact path match
 
     # Verify the path is cleared
@@ -167,7 +174,8 @@ async def test_memcached_clear_path_not_match(memcached_backend: MemcachedBacken
     assert other_value is None
 
     # Test clearing a non-matching path
-    cleared = await memcached_backend.clear_path(other_path, include_params=False)
+    with pytest.warns(RuntimeWarning, match="does not support pattern-based"):
+        cleared = await memcached_backend.clear_path(other_path, include_params=False)
     assert cleared == 0  # Should return 0 as the path does not match
 
 
@@ -256,8 +264,27 @@ async def test_memcached_clear_path_raises_when_the_server_is_unreachable() -> N
         closed_port = probe.getsockname()[1]
     backend = MemcachedBackend(servers=[f"127.0.0.1:{closed_port}"])
 
-    with pytest.raises(ConnectionRefusedError):
+    with (
+        pytest.warns(RuntimeWarning, match="clear_path"),
+        pytest.raises(ConnectionRefusedError),
+    ):
         await backend.clear_path("/nope")
+
+
+@pytest.mark.parametrize("include_params", [False, True])
+async def test_memcached_clear_path_always_warns(include_params: bool) -> None:
+    """Without the warning, `clear_path()` after a write fails silently (#320).
+
+    Only ``include_params=True`` used to warn, yet the default call cannot
+    match an HTTP route key either.
+    """
+    backend = stubbed_backend()
+    backend.client.delete.return_value = False
+
+    with pytest.warns(RuntimeWarning, match=r"invalidate\(request\)") as record:
+        assert await backend.clear_path("/products/1", include_params) == 0
+
+    assert record[0].filename == __file__
 
 
 def _unreachable_backend() -> MemcachedBackend:
@@ -268,6 +295,12 @@ def _unreachable_backend() -> MemcachedBackend:
 
 
 _ENTRY = CacheEntry(fingerprint="f", content=b"x")
+
+
+async def _clear_path(backend: MemcachedBackend) -> int:
+    """`clear_path()` warns on every call (#320), before it reaches the server."""
+    with pytest.warns(RuntimeWarning, match="clear_path"):
+        return await backend.clear_path("/k")
 
 
 @pytest.mark.parametrize(
@@ -282,7 +315,7 @@ _ENTRY = CacheEntry(fingerprint="f", content=b"x")
         lambda b: b.expire_if_equals("k", _ENTRY, 5),
         lambda b: b.delete_many(["a", "b"]),
         lambda b: b.delete("k"),
-        lambda b: b.clear_path("/k"),
+        _clear_path,
     ],
     ids=[
         "get",
@@ -342,7 +375,10 @@ async def test_memcached_clear_path_propagates_client_errors(
         raise RuntimeError(msg)
 
     monkeypatch.setattr(memcached_backend.client, "delete", boom)
-    with pytest.raises(RuntimeError, match="delete failed"):
+    with (
+        pytest.warns(RuntimeWarning, match="clear_path"),
+        pytest.raises(RuntimeError, match="delete failed"),
+    ):
         await memcached_backend.clear_path("/nope", include_params=False)
 
 
@@ -1073,3 +1109,38 @@ async def test_memcached_aclose_closes_every_pooled_socket() -> None:
         not server.client_pool.free and not server.client_pool.used
         for server in backend.client.clients.values()
     )
+
+
+@requires_memcached
+async def test_memcached_invalidate_drops_what_clear_path_cannot(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """The #320 report: after a write, only `invalidate()` removes the entry."""
+    BackendProxy.set(memcached_backend)
+    app = FastAPI()
+    price = {"value": 9.99}
+
+    @app.get("/products/1")
+    @cache(ttl=60)
+    async def product() -> dict[str, float]:
+        return {"price": price["value"]}
+
+    client = TestClient(app)
+    client.get("/products/1")
+    price["value"] = 5.0
+
+    with pytest.warns(RuntimeWarning, match="clear_path"):
+        assert await memcached_backend.clear_path("/products/1") == 0
+    assert client.get("/products/1").json() == {"price": 9.99}
+
+    request = StarletteRequest(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/products/1",
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+        }
+    )
+    assert await invalidate(request) is True
+    assert client.get("/products/1").json() == {"price": 5.0}

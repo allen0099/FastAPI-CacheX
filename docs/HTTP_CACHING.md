@@ -484,6 +484,10 @@ pattern written as a bare path (for example `clear_pattern("/api/users/*")`)
 cannot match an HTTP key; when such a call clears nothing it emits a
 `RuntimeWarning` pointing you to `clear_path()`.
 
+On Memcached, which cannot enumerate keys, `clear_path()` cannot find HTTP
+entries at all: it deletes only a key named exactly as the path and emits a
+`RuntimeWarning` on every call. Use `invalidate()` (below) there instead.
+
 What each backend supports is listed under [Backends](BACKENDS.md).
 
 ### Invalidating a single cached route
