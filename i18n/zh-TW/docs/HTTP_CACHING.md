@@ -330,6 +330,8 @@ async def clear(cache: CacheBackend) -> None:
 
 `clear_path()` 會比對該路徑在所有方法與主機下的項目。只寫成路徑的模式（例如 `clear_pattern("/api/users/*")`）無法比對到 HTTP 鍵；這類呼叫沒有清除任何項目時，會發出 `RuntimeWarning`，提示你改用 `clear_path()`。
 
+Memcached 無法列舉鍵，因此 `clear_path()` 完全找不到 HTTP 項目：它只會刪除名稱與路徑完全相同的鍵，而且每次呼叫都會發出 `RuntimeWarning`。在 Memcached 上請改用下方的 `invalidate()`。
+
 各後端支援的功能列於[後端](BACKENDS.md)。
 
 ### 使單一快取路由失效 {#invalidating-a-single-cached-route}

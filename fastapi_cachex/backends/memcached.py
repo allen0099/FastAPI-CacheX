@@ -429,30 +429,32 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached CLEAR; flush_all issued")
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
-        """Clear cached responses for a specific path.
+        """Delete the key that is exactly ``path``; warns on every call.
 
-        Note: Memcached does not support pattern-based queries, so this
-        only deletes the key that is exactly ``path``. HTTP route keys
-        (``method|||host|||path|||query``) are not matched. For path-based
-        clearing, use the Redis or memory backend.
+        Memcached cannot enumerate keys, so this cannot find HTTP route keys
+        (``method|||host|||path|||query``): it only deletes a key stored under
+        the literal name ``path``, and ``include_params`` has no effect. It
+        warns every time, because on this backend ``clear_path()`` after a write
+        would otherwise leave the cached response in place without a sign. Use
+        ``invalidate(request)`` to drop a ``@cache`` route's entry, or the Redis
+        or memory backend for path-based clearing.
 
         Args:
             path: The exact key to delete
-            include_params: Unsupported; emits a ``RuntimeWarning`` and is
-                otherwise ignored
+            include_params: Unsupported; ignored
 
         Returns:
             Number of cache entries cleared (0 or 1 for exact match only)
         """
-        if include_params:
-            warnings.warn(
-                "Memcached backend does not support pattern-based key clearing. "
-                "Only exact key matches can be deleted. "
-                "The include_params option has no effect. "
-                "Consider using Redis backend for pattern support.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        warnings.warn(
+            "Memcached backend does not support pattern-based key clearing, so "
+            "clear_path() cannot remove HTTP cache entries "
+            "(method|||host|||path|||query): it only deletes a key named "
+            "exactly as the path, and include_params has no effect. Use "
+            "invalidate(request) to drop a cached route's entry.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
         # Try to delete the prefixed key (exact match only)
         prefixed_key = self._make_key(path)

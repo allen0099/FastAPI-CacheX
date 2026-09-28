@@ -285,7 +285,8 @@ value: 上述的 JSON 文件
 #   get_cache_data() 都是 no-op，回傳 0/[]/{} 並發出 RuntimeWarning；
 #   因此 CacheManager.clear()/clear_prefix() 在此後端上不會有任何作用
 # - clear_path() 只會刪除與指定路徑完全相同的快取鍵，因此
-#   無法清除 HTTP 路由的項目
+#   無法清除 HTTP 路由的項目，而且每次呼叫都會發出 RuntimeWarning；
+#   要刪除快取路由的項目請使用 invalidate(request)
 # - clear() 會送出 flush_all，清空「整個」Memcached 伺服器（不只是
 #   這個快取鍵前綴）並發出 RuntimeWarning
 # - 同步的 pymemcache 用戶端在 worker 執行緒中執行，並使用連線

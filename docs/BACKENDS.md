@@ -128,7 +128,11 @@ BackendProxy.set(backend)
 - Pattern-based key clearing (`clear_pattern`) is not supported by the Memcached protocol
 - Keys cannot be enumerated: `get_all_keys()`/`get_cache_data()` return empty
   results (with a `RuntimeWarning`), so the monitoring routes show nothing
-- `clear_path()` deletes only the exact key given; `include_params` has no effect
+- `clear_path()` cannot find HTTP cache entries: it deletes only a key named exactly
+  as the path, ignores `include_params` and emits a `RuntimeWarning` on every call.
+  To drop a cached route's entry after a write, call
+  [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route), which
+  rebuilds the exact key
 - `clear()` issues `flush_all`, which wipes the whole Memcached server, not just this namespace
 - A key Memcached would reject (over 250 bytes, whitespace, non-ASCII) is stored
   under its SHA-256 digest

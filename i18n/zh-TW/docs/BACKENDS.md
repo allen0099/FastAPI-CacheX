@@ -94,7 +94,7 @@ BackendProxy.set(backend)
 
 - Memcached 協定不支援依模式清除鍵（`clear_pattern`）
 - 無法列舉鍵：`get_all_keys()`／`get_cache_data()` 會回傳空結果（並發出 `RuntimeWarning`），因此監控路由不會顯示任何內容
-- `clear_path()` 只會刪除完全相符的那個鍵；`include_params` 沒有作用
+- `clear_path()` 找不到 HTTP 快取項目：它只會刪除名稱與路徑完全相同的鍵，忽略 `include_params`，而且每次呼叫都會發出 `RuntimeWarning`。資料變更後要刪除某個快取路由的項目，請呼叫 [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route)，它會重建完全相同的鍵
 - `clear()` 會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存
 - 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
