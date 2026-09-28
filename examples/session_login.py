@@ -3,8 +3,11 @@
 A visitor gets an anonymous session as soon as something is written to
 ``request.session`` (here, a shopping cart). Logging in rotates the session ID
 against session fixation and attaches the user, keeping the cart; logging out
-deletes the session. The token travels in a cookie, as with Starlette's
-``SessionMiddleware``; header and ``Authorization: Bearer`` tokens work too.
+deletes the session. The token travels in an HttpOnly cookie, as with
+Starlette's ``SessionMiddleware``; header and ``Authorization: Bearer`` tokens
+work too. A login here hands out only the cookie, so page scripts never see the
+token; an API client gets its token from an endpoint that returns it in the
+body, as ``session_jwt.py`` does.
 
 Run it from a checkout (see ``examples/README.md``)::
 
@@ -121,7 +124,6 @@ async def login(
         httponly=True,
         samesite=config.cookie_same_site,
     )
-    response.headers[config.header_name] = token  # for header and API clients
     # The token is a credential: no shared cache may store this response.
     response.headers["Cache-Control"] = "private, no-store"
     return {"user": user.user_id}
