@@ -45,8 +45,11 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
 - `get()` returns `None` (or a supplied `default=`) on a cache miss — it never
   raises for missing or corrupted entries.
 - `set()` lets `TypeError` propagate for values that are not JSON-serializable.
-- `get_or_set()` provides no stampede protection: concurrent misses for the same
-  key each run `factory`.
+- `get_or_set()` supports opt-in stampede protection via `lock=True` (or
+  manager-level default `CacheManager(lock=True)`), preventing concurrent misses
+  from running `factory` simultaneously, with graceful fallback to computing
+  directly if waiting times out. The distributed lock key is
+  `lock:<prefix><key>` (`lock:cache:user:42` by default).
 - `get_or_set()` returns the JSON-decoded value on a miss as well as on a hit
   (see [JSON round-trip](#json-round-trip)), so both paths give the same result.
 - `add()` stores a value only when the key is free and returns whether it did.
@@ -85,6 +88,38 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
 > methods — and `clear_pattern()` — are no-ops on a Memcached backend;
 > `get()`/`set()`/`add()`/`delete()`/`has()` work normally. Use Redis or the in-memory
 > backend if you need bulk clearing.
+
+## Stampede protection
+
+When the factory is expensive (a slow database query, a rate-limited upstream
+API) and the key is hot, cache expiry turns into simultaneous recomputations.
+You can enable distributed stampede protection built on `CacheLock` either
+per-call or manager-wide:
+
+```python
+# Per-call protection:
+profile = await manager.get_or_set(
+    "user:42",
+    lambda: load_user(42),
+    ttl=300,
+    lock=True,
+    lock_ttl=30,  # lease upper bound for factory run (default: 60)
+    wait_timeout=10,  # caller latency budget in seconds (default: None, wait while held)
+    raise_on_timeout=False,  # True raises LockTimeoutError, False falls back to factory (default: False)
+)
+
+# Or manager-wide default:
+manager = CacheManager(lock=True, lock_ttl=60)
+```
+
+1. **Miss**: On a miss, callers attempt non-blocking lock acquisition using `CacheLock` under the key `lock:<prefix><key>` (`lock:cache:user:42` by default).
+2. **Winner**: The winner re-checks the cache, invokes `factory`, stores the value in the backend, and releases the lock.
+3. **Waiters**: Other callers poll the cache with exponential backoff (50ms base, 1.5x factor, 500ms cap) and randomized jitter (±10%) until the value appears. When `wait_timeout` is omitted, callers wait bounded by the holder's `lock_ttl` without an arbitrary deadline.
+4. **Takeover**: If the winner fails or its lock expires, a waiting caller takes over the lock, re-checks the cache, and computes if necessary.
+5. **Re-entrancy**: Recursive calls to `get_or_set()` for the same key in the same task automatically skip locking to avoid self-deadlock.
+6. **Timeouts**: When an explicit `wait_timeout` elapses, `raise_on_timeout=False` logs a warning and falls back to direct factory computation (graceful degradation), while `raise_on_timeout=True` raises `LockTimeoutError`.
+
+Ensure `lock_ttl` exceeds the expected execution time of `factory`. If `factory` outlives `lock_ttl`, the lock expires mid-run and a waiting caller may start a second computation.
 
 ## JSON round-trip
 

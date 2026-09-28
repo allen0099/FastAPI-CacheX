@@ -40,8 +40,8 @@ class RequestNotFoundError(CacheXError):
     """Exception raised when a request is not found."""
 
 
-class LockTimeoutError(CacheXError):
-    """Exception raised when acquiring a lock times out."""
+class LockTimeoutError(CacheXError, TimeoutError):
+    """Exception raised when acquiring a lock or waiting for stampede protection times out."""
 
 
 def __getattr__(name: str) -> type[CacheXError]:

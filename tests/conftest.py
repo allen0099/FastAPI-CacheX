@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
+from fastapi_cachex import manager
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends import memory
 from fastapi_cachex.backends.base import BaseCacheBackend
@@ -106,8 +107,15 @@ class Clock:
     def time(self) -> float:
         return self.now
 
+    def monotonic(self) -> float:
+        return self.now
+
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+    async def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
+        await asyncio.sleep(0)
 
     async def wait(self, seconds: float, backend: BaseCacheBackend) -> None:
         """Let `seconds` pass as far as `backend` can tell.
@@ -135,6 +143,8 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
             return datetime.fromtimestamp(clock.now, tz)
 
     monkeypatch.setattr(memory, "time", SimpleNamespace(time=clock.time))
+    monkeypatch.setattr(manager, "_monotonic", clock.monotonic)
+    monkeypatch.setattr(manager, "_sleep", clock.sleep)
     for module in (session_manager, session_models, state_manager, state_models):
         monkeypatch.setattr(module, "datetime", ClockDatetime)
     return clock

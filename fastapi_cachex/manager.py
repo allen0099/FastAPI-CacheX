@@ -1,10 +1,14 @@
 """Generic application-level cache manager for FastAPI-CacheX."""
 
+import asyncio
+import contextvars
 import fnmatch
 import hashlib
 import inspect
 import json
 import logging
+import secrets
+import time
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
@@ -12,6 +16,8 @@ from typing import Any
 
 from .backends.base import BaseCacheBackend
 from .backends.base import validate_ttl
+from .exceptions import LockTimeoutError
+from .lock import CacheLock
 from .proxy import BackendProxy
 from .types import CacheEntry
 from .types import log_ref
@@ -24,6 +30,62 @@ _DECODE_ERRORS = (AttributeError, UnicodeDecodeError, json.JSONDecodeError)
 # ``backends/redis.py`` (fnmatch treats the backslash literally, but a prefix
 # holding one still cannot be passed through to Redis unescaped).
 _GLOB_SPECIAL = frozenset("*?[]\\")
+
+# Keys currently held under a stampede-protection lock by the running task.
+# Stored as a set of unique backend-and-key identifiers to skip locking on
+# re-entrancy within the same task.
+_HELD_LOCKS: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
+    "_HELD_LOCKS", default=frozenset()
+)
+
+# Polling configuration for stampede protection waiters
+_INITIAL_POLL_INTERVAL: float = 0.05
+_MAX_POLL_INTERVAL: float = 0.5
+_BACKOFF_FACTOR: float = 1.5
+_JITTER_RATIO: float = 0.1
+
+_system_random = secrets.SystemRandom()
+_SENTINEL = object()
+
+# Hooks for tests to inject artificial clocks and sleeping
+_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+_monotonic: Callable[[], float] = time.monotonic
+
+
+def _validate_lock(lock: Any, *, allow_none: bool = False) -> None:
+    if lock is None:
+        if allow_none:
+            return
+        msg = "lock must be a bool, got None"
+        raise TypeError(msg)
+    if not isinstance(lock, bool):
+        expected = "a bool or None" if allow_none else "a bool"
+        msg = f"lock must be {expected}, got {type(lock).__name__}"
+        raise TypeError(msg)
+
+
+def _validate_get_or_set_args(
+    lock: bool | None,
+    ttl: int | None,
+    lock_ttl: int | None,
+    wait_timeout: float | None,
+) -> float | None:
+    _validate_lock(lock, allow_none=True)
+    validate_ttl(ttl)
+    if lock_ttl is not None:
+        validate_ttl(lock_ttl)
+    if wait_timeout is not None:
+        if isinstance(wait_timeout, bool) or not isinstance(wait_timeout, (int, float)):
+            msg = (
+                f"wait_timeout must be a number of seconds or None, "
+                f"got {type(wait_timeout).__name__}"
+            )
+            raise TypeError(msg)
+        if wait_timeout <= 0:
+            msg = f"wait_timeout must be greater than zero, got {wait_timeout!r}"
+            raise ValueError(msg)
+        return float(wait_timeout)
+    return None
 
 
 class CacheManager:
@@ -40,6 +102,9 @@ class CacheManager:
         backend: BaseCacheBackend | None = None,
         key_prefix: str = "cache:",
         default_ttl: int | None = None,
+        *,
+        lock: bool = False,
+        lock_ttl: int = 60,
     ) -> None:
         r"""Initialize CacheManager.
 
@@ -48,11 +113,15 @@ class CacheManager:
             key_prefix: Prefix prepended to all logical keys in the cache backend.
             default_ttl: Default TTL (seconds) applied when set() is called
                 without an explicit ttl. None means no expiry by default.
+            lock: Whether get_or_set() uses distributed locking by default to
+                prevent cache stampedes (default: False).
+            lock_ttl: Default TTL in seconds for stampede protection locks (default: 60).
 
         Raises:
             BackendNotFoundError: If ``backend`` is None and no backend has
                 been set with ``BackendProxy.set()``.
-            ValueError: If ``default_ttl`` is zero or negative.
+            TypeError: If ``lock`` is not a bool or ``lock_ttl`` is not an int.
+            ValueError: If ``default_ttl`` or ``lock_ttl`` is zero or negative.
 
         Warns:
             UserWarning: If ``key_prefix`` contains a glob metacharacter
@@ -63,6 +132,16 @@ class CacheManager:
         self.backend = backend if backend is not None else BackendProxy.get()
         self.key_prefix = key_prefix
         self.default_ttl = validate_ttl(default_ttl)
+
+        _validate_lock(lock, allow_none=False)
+
+        effective_lock_ttl = validate_ttl(lock_ttl)
+        if effective_lock_ttl is None:
+            msg = "lock_ttl must be a positive int, got None"
+            raise ValueError(msg)
+        self.lock = lock
+        self.lock_ttl: int = effective_lock_ttl
+
         if self._prefix_has_glob:
             warnings.warn(
                 f"CacheManager key_prefix {key_prefix!r} contains a glob "
@@ -188,18 +267,133 @@ class CacheManager:
         """
         return await self.backend.get(self._cache_key(key)) is not None
 
-    async def get_or_set(
+    async def _compute_and_store(
+        self,
+        key: str,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        ttl: int | None,
+    ) -> Any:
+        value = factory()
+        if inspect.isawaitable(value):
+            value = await value
+
+        effective_ttl = ttl if ttl is not None else self.default_ttl
+        entry = self._encode(value)
+        await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
+        logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
+        return json.loads(entry.content)
+
+    async def _execute_as_winner(
+        self,
+        key: str,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        ttl: int | None,
+        lock_instance: CacheLock,
+    ) -> Any:
+        lock_id = f"{id(self.backend)}:{self._cache_key(key)}"
+        token = _HELD_LOCKS.set(_HELD_LOCKS.get() | {lock_id})
+        try:
+            cached = await self.get(key, default=_SENTINEL)
+            if cached is not _SENTINEL:
+                return cached
+            return await self._compute_and_store(key, factory, ttl)
+        finally:
+            try:
+                try:
+                    await lock_instance.release()
+                except Exception:
+                    logger.warning(
+                        "Failed to release stampede protection lock for key_ref=%s",
+                        log_ref(key),
+                        exc_info=True,
+                    )
+            finally:
+                _HELD_LOCKS.reset(token)
+
+    async def _poll_for_value(  # noqa: PLR0913
+        self,
+        key: str,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        ttl: int | None,
+        lock_ttl: int,
+        wait_timeout: float | None,
+        *,
+        raise_on_timeout: bool,
+    ) -> Any:
+        start = _monotonic()
+        interval = _INITIAL_POLL_INTERVAL
+        while True:
+            if wait_timeout is not None:
+                elapsed = _monotonic() - start
+                if elapsed >= wait_timeout:
+                    cached = await self.get(key, default=_SENTINEL)
+                    if cached is not _SENTINEL:
+                        return cached
+                    if raise_on_timeout:
+                        msg = f"Waiting for cache key {key!r} timed out after {wait_timeout}s"
+                        raise LockTimeoutError(msg)
+                    logger.warning(
+                        "Cache stampede wait timeout exceeded for key_ref=%s; computing directly",
+                        log_ref(key),
+                    )
+                    return await self._compute_and_store(key, factory, ttl)
+
+            jitter = _system_random.uniform(
+                -interval * _JITTER_RATIO, interval * _JITTER_RATIO
+            )
+            sleep_time = max(0.0, interval + jitter)
+            if wait_timeout is not None:
+                remaining = wait_timeout - elapsed
+                sleep_time = min(sleep_time, remaining)
+            await _sleep(sleep_time)
+
+            interval = min(interval * _BACKOFF_FACTOR, _MAX_POLL_INTERVAL)
+
+            # 1. Check cache, return on hit
+            cached = await self.get(key, default=_SENTINEL)
+            if cached is not _SENTINEL:
+                return cached
+
+            # 2. Otherwise try to take lock
+            lock_instance = CacheLock(
+                name=self._cache_key(key),
+                ttl=lock_ttl,
+                backend=self.backend,
+            )
+            if await lock_instance.acquire(blocking=False):
+                return await self._execute_as_winner(key, factory, ttl, lock_instance)
+
+    async def get_or_set(  # noqa: PLR0913
         self,
         key: str,
         factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
         ttl: int | None = None,
+        *,
+        lock: bool | None = None,
+        lock_ttl: int | None = None,
+        wait_timeout: float | None = None,
+        raise_on_timeout: bool = False,
     ) -> Any:
         """Get a cached value, computing and storing it via ``factory`` on a miss.
 
         ``factory`` is only invoked when ``key`` is missing, expired, or its
         stored content cannot be decoded; on a hit the cached value is
-        returned directly. This method does not provide stampede protection:
-        concurrent misses for the same key may each invoke ``factory``.
+        returned directly.
+
+        When stampede protection is enabled (via ``lock=True`` or the
+        manager's ``lock`` default), concurrent misses for the same key acquire
+        a distributed lock built on :class:`~fastapi_cachex.lock.CacheLock`.
+        The winner re-checks the cache, invokes ``factory``, stores the result,
+        and releases the lock. Waiting callers poll the cache with exponential
+        backoff and jitter until the value appears, taking over the lock if the
+        winner fails or the lock lease expires.
+
+        Re-entrant calls to ``get_or_set()`` for the same key within the
+        current task skip locking to prevent self-deadlock.
+
+        Ensure ``lock_ttl`` exceeds the expected execution time of ``factory``.
+        If ``factory`` outlives ``lock_ttl``, the lock expires mid-run and a
+        waiting caller may start a second computation.
 
         A miss returns the value as it will be read back from the cache, not
         the object ``factory`` returned: it goes through the same JSON
@@ -216,36 +410,63 @@ class CacheManager:
                 the result is awaited.
             ttl: Time-to-live in seconds for a newly created value. If None,
                 uses ``self.default_ttl``.
+            lock: Whether to use distributed locking for stampede protection.
+                If None, inherits the manager's ``lock`` setting.
+            lock_ttl: Upper bound in seconds for the lock lease. If None,
+                inherits the manager's ``lock_ttl``.
+            wait_timeout: Maximum seconds waiting callers poll the cache before
+                timing out. If None, callers wait without a fixed deadline,
+                bounded by the holder's lock lease, and attempt to take over the
+                lock if it expires.
+            raise_on_timeout: If True, raise :exc:`~fastapi_cachex.exceptions.LockTimeoutError`
+                when ``wait_timeout`` elapses. If False (default), log a warning and
+                fall back to invoking ``factory`` directly.
 
         Returns:
             The cached value (existing or newly created), JSON-decoded in
             both cases.
 
         Raises:
-            TypeError: If the value produced by ``factory`` is not JSON-serializable.
-            ValueError: If ``ttl`` is zero or negative.
+            TypeError: If the value produced by ``factory`` is not JSON-serializable,
+                or if ``lock``, ``ttl``, ``lock_ttl``, or ``wait_timeout``
+                have invalid types.
+            ValueError: If ``ttl``, ``lock_ttl``, or ``wait_timeout`` is zero or negative.
+            LockTimeoutError: If ``raise_on_timeout=True`` and waiting exceeds ``wait_timeout``.
         """
-        # Reject a bad ttl before the factory does any (possibly costly) work.
-        validate_ttl(ttl)
-        sentinel = object()
-        cached = await self.get(key, default=sentinel)
-        if cached is not sentinel:
+        validated_wait_timeout = _validate_get_or_set_args(
+            lock, ttl, lock_ttl, wait_timeout
+        )
+
+        cached = await self.get(key, default=_SENTINEL)
+        if cached is not _SENTINEL:
             return cached
 
-        # Await whatever comes back awaitable, not just from coroutine
-        # functions: `lambda: load(42)` and `functools.partial` return one too.
-        value = factory()
-        if inspect.isawaitable(value):
-            value = await value
+        use_lock = self.lock if lock is None else lock
+        if not use_lock:
+            return await self._compute_and_store(key, factory, ttl)
 
-        # Encode once, store those bytes and return them decoded, so a miss
-        # returns exactly what a later hit will: a tuple comes back as a
-        # list, int dict keys as strings.
-        effective_ttl = ttl if ttl is not None else self.default_ttl
-        entry = self._encode(value)
-        await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
-        logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
-        return json.loads(entry.content)
+        lock_id = f"{id(self.backend)}:{self._cache_key(key)}"
+        if lock_id in _HELD_LOCKS.get():
+            logger.debug("Re-entrant get_or_set call for key=%s; skipping lock", key)
+            return await self._compute_and_store(key, factory, ttl)
+
+        effective_lock_ttl = self.lock_ttl if lock_ttl is None else lock_ttl
+        lock_instance = CacheLock(
+            name=self._cache_key(key),
+            ttl=effective_lock_ttl,
+            backend=self.backend,
+        )
+        if await lock_instance.acquire(blocking=False):
+            return await self._execute_as_winner(key, factory, ttl, lock_instance)
+
+        return await self._poll_for_value(
+            key,
+            factory,
+            ttl,
+            effective_lock_ttl,
+            validated_wait_timeout,
+            raise_on_timeout=raise_on_timeout,
+        )
 
     async def clear_pattern(self, pattern: str) -> int:
         r"""Clear all keys under this manager's namespace matching a glob pattern.
