@@ -709,14 +709,18 @@ async def login(request: Request, session: OptionalSession):
         session.user = user
         await session_manager.update_session(session)
     else:
-        # No session yet: create one with the user and deliver its token yourself,
-        # as in the login example in Basic Usage.
+        # No session yet: the middleware has no token to send, so create one
+        # with the user and deliver its token yourself.
         _, token = await session_manager.create_session(user=user)
         ...
     return {"ok": True}
 ```
 
-The complete version, including the cookie for a new visitor, is
+In that last branch the response is yours to secure, since the middleware adds nothing
+to a token it did not send: set the cookie with every `cookie_*` attribute of the config
+(`domain` included, or the cookie cleared at logout will not match it), return the token to
+header clients as well, and send `Cache-Control: private, no-store` so no shared cache stores
+the credential. The complete version is
 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py).
 A `login()` helper that does all of this is planned
 ([#293](https://github.com/allen0099/FastAPI-CacheX/issues/293)).
