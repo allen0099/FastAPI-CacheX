@@ -43,7 +43,7 @@ async def non_store_endpoint():
 | `no-cache`               | `no_cache=True`                          | :white_check_mark: | 每個請求都執行 handler；回應仍會儲存，`If-None-Match` 相符時回 304。                                            |
 | `no-store`               | `no_store=True`                          | :white_check_mark: | 不讀取也不儲存，也不設定 ETag。                                                                                |
 | `private`                | `private=True`                           | :white_check_mark: | 完全不經過後端；每個請求都執行 handler，ETag 重新驗證仍有效。                                                   |
-| `public`                 | `public=True`                            | :white_check_mark: | 帶有 `Authorization` 的請求仍會使用後端（否則會繞過後端）。                                                    |
+| `public`                 | `public=True`                            | :white_check_mark: | 帶有 `Authorization` 或 Session 的請求仍會使用後端（否則會繞過後端）。                                         |
 | `immutable`              | `immutable=True`                         | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | 無（僅寫入標頭）：伺服器端快取不會回傳過期內容。                                                               |
@@ -74,7 +74,7 @@ async def non_store_endpoint():
 
 屬於單一呼叫者的回應同樣不會被儲存（#296）：
 
-- **請求帶有 `Authorization`。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限，設定 `cache_authorized=True` 的路由也一樣；後者是給包含呼叫者身分的 key builder 使用的明確選項（見[需驗證身分的端點](#authenticated-endpoints)）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。
+- **請求帶有 `Authorization` 或 Session。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限，設定 `cache_authorized=True` 的路由也一樣；後者是給包含呼叫者身分的 key builder 使用的明確選項（見[需驗證身分的端點](#authenticated-endpoints)）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。請求「帶有 Session」是指 `FastAPICacheXSessionMiddleware`（或已棄用的 `SessionMiddleware`）為它載入了 Session（權杖來自標頭、Bearer 權杖或 Session Cookie 皆可，有沒有使用者都算），或在任何 Session 中介軟體（包括 Starlette 的）下 `request.session` 不是空的。解析不出 Session 的權杖（偽造、過期）不算，因此無法用來略過快取。0.3.9 以前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。
 - **handler 自己的 `Cache-Control` 含有 `private` 或 `no-store`**（完整指令，不分大小寫）。回應照常送出但不儲存，而且 handler 的標頭會原樣送出，不會被裝飾器的標頭取代。
 - **回應設定了 cookie。** 回應照常送出（包含 `Set-Cookie`），但不儲存；它（以及 304）會以 `private` 取代 `public` 送出並保留其他指令，讓下游的共用快取也不會儲存它。
 
@@ -179,7 +179,7 @@ GET|||example.com|||/me|||||||authorization=sha256:3f0a…（64 個十六進位�
 
 同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。其他標頭（包括以其他名稱設定的 Session 標頭）都維持可讀；若你的標頭帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
 
-`vary=["Authorization"]` 不會解除針對已授權請求的規則（見[需驗證身分的端點](#authenticated-endpoints)）：除非路由設定 `public=True` 或傳入 `cache_authorized=True`，帶有 `Authorization` 標頭的請求仍會繞過後端。兩者都沒有設定時，只會儲存匿名的 `authorization=` 那一筆。
+`vary=["Authorization"]` 不會解除針對已授權請求的規則（見[需驗證身分的端點](#authenticated-endpoints)）：除非路由設定 `public=True` 或傳入 `cache_authorized=True`，帶有 `Authorization` 標頭（或 Session）的請求仍會繞過後端。兩者都沒有設定時，只會儲存匿名的 `authorization=` 那一筆。
 
 #### `vary=["Cookie"]` 會發出警告 {#varycookie-warns}
 
@@ -188,7 +188,7 @@ GET|||example.com|||/me|||||||authorization=sha256:3f0a…（64 個十六進位�
 - 讓 `key_builder` 回傳 `build_cache_key(request, <真正重要的那個 Cookie 或使用者 ID>)`，並自行在回應設定 `Vary: Cookie`；
 - `private=True`，把每位訪客各自的回應交給瀏覽器快取。
 
-針對單一呼叫者的規則仍然適用：帶有 Cookie 的請求會被快取（只有 `Authorization` 會觸發繞過），但設定 Cookie 的回應一律不會儲存，並以 `private` 送出，因此每個請求都會更新 Session Cookie 的路由什麼也不會存。若你確實需要 `vary=["Cookie"]`，請在匯入定義該路由的模組之前，用標準的過濾器關閉這個警告：
+針對單一呼叫者的規則仍然適用：帶有 Cookie 的請求會被快取（只有 `Authorization` 或 Session 會觸發繞過），但設定 Cookie 的回應一律不會儲存，並以 `private` 送出，因此每個請求都會更新 Session Cookie 的路由什麼也不會存。若你確實需要 `vary=["Cookie"]`，請在匯入定義該路由的模組之前，用標準的過濾器關閉這個警告：
 
 ```python
 import warnings
@@ -230,7 +230,9 @@ warnings.filterwarnings("ignore", message="cache vary on Cookie")
 > 回應內容取決於請求者身分的端點，請擇一處理：
 >
 > 1. **`private=True`**：回應永遠不會從共用後端讀取，也不會寫入。`Cache-Control: private` 仍允許使用者自己的瀏覽器快取它，而 `If-None-Match` 重新驗證仍會對新產生的內容運作。
-> 2. **包含呼叫者身分的 key builder**：確實需要依使用者區分的伺服器端快取時使用。不要設定 `private`：`private=True` 會繞過後端，key builder 就永遠不會被使用。呼叫者以 `Authorization` 標頭驗證身分時，請傳入 `cache_authorized=True`：沒有它，這類請求同樣會繞過後端。
+> 2. **包含呼叫者身分的 key builder**：確實需要依使用者區分的伺服器端快取時使用。不要設定 `private`：`private=True` 會繞過後端，key builder 就永遠不會被使用。呼叫者以 `Authorization` 標頭或 Session 驗證身分時，請傳入 `cache_authorized=True`：沒有它，這類請求同樣會繞過後端。
+>
+> 若呼叫者以你自己的 Cookie（而非本函式庫的 Session）驗證身分，沒有任何條件會觸發繞過：只加上 `@cache` 會把第一位呼叫者的回應提供給所有人，請改用上面兩種做法之一。
 
 ```python
 from fastapi import Request, Response
@@ -277,7 +279,7 @@ async def my_dashboard(user: CurrentUser, response: Response):
 >
 > 以原始請求標頭組成的鍵等同於水平權限提升：送出 `X-User-Id: <someone-else>` 就會拿到該使用者的快取回應。
 
-key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True`、沒有 `ttl` 的路由，以及路由未設定 `public=True` 或 `cache_authorized=True` 時帶有 `Authorization` 的請求，都不會呼叫它。0.3.8 以前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
+key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True`、沒有 `ttl` 的路由，以及路由未設定 `public=True` 或 `cache_authorized=True` 時帶有 `Authorization` 或 Session 的請求，都不會呼叫它。0.3.8 以前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
 
 ## 清除快取 {#clearing-the-cache}
 

@@ -18,10 +18,11 @@ Build the cache key: method|||host|||path|||query_params
 no-store? ── yes → run the handler, neither read nor write the cache,
     │              respond with Cache-Control: no-store
     ↓ no
-private, or Authorization without public/cache_authorized?
+private, or Authorization/session without public/cache_authorized?
     ── yes → run the handler; compare If-None-Match to decide 304 or 200
     │        (the shared backend is neither read nor written; for
-    │        Authorization, Cache-Control says private instead of public)
+    │        Authorization or a session, Cache-Control says private
+    │        instead of public)
     ↓ no
 Read the backend entry
     ↓
@@ -120,9 +121,9 @@ The decorator arguments control both the server-side behaviour and the
 
 # Normal caching behaviour
 @cache(ttl=3600)          # Cache for 1 hour (also used as the max-age value)
-@cache(public=True)       # Allow shared caches, also for Authorization requests
+@cache(public=True)       # Allow shared caches, also for Authorization/session requests
 @cache(private=True)      # Private only; never touches the shared backend
-@cache(ttl=60, key_builder=per_user_key, cache_authorized=True)  # Authorization requests use the backend
+@cache(ttl=60, key_builder=per_user_key, cache_authorized=True)  # Authorization/session requests use the backend
 @cache(immutable=True)    # Content never changes
 
 # Header-only directives (they do not change server-side behaviour)
@@ -165,7 +166,7 @@ The header value is built once per decorated route:
 > 2. A custom `key_builder` that includes the identity, together with
 >    `cache_authorized=True` — when you really do want a per-user server-side
 >    cache. Without `cache_authorized`, a request with an `Authorization` header
->    bypasses the backend (see below).
+>    or a session bypasses the backend (see below).
 >
 > Take the identity from a trusted source (a verified token claim, a
 > dependency-injected user object); do not trust unchecked client headers.
@@ -248,13 +249,14 @@ return response
 > [!NOTE]
 > **Responses that belong to one caller are never stored.** Following RFC 9111
 > §3.5, a request with an `Authorization` header bypasses the backend (no read,
-> no write) unless the route is `public=True` or opts in with
+> no write), and so does one with a session (loaded by the session middleware
+> from any token transport, or a non-empty `request.session`), unless the route is `public=True` or opts in with
 > `cache_authorized=True` (for a `key_builder` that includes the verified
 > identity). On a render, a response whose own `Cache-Control` contains
 > `private` or `no-store` (whole directive, any case), or that sets a cookie,
 > is served but not written. A `private`/`no-store` header from the handler is
 > sent unchanged instead of the decorator's. A cookie response, and the answer
-> to a bypassed `Authorization` request, are sent (200 or 304) with `private`
+> to a bypassed `Authorization` or session request, are sent (200 or 304) with `private`
 > in place of `public` and the decorator's other directives kept (`private,
 > no-cache` on a `no_cache` route), so a downstream shared cache does not
 > store them either. `must_revalidate=True` does not lift the `Authorization`
@@ -262,7 +264,8 @@ return response
 > library requires the explicit opt-in. An entry already stored under the
 > key is left alone, and a request that hits it before the handler runs is
 > served from it as usual. Each skip is logged at `DEBUG`. Before 0.3.9 such
-> responses were stored and replayed to every caller (#296).
+> responses were stored and replayed to every caller (#296); session
+> requests were not bypassed until 0.3.9 either (#319).
 
 ### 4. ETag generation and validation
 
@@ -429,7 +432,7 @@ lookup. Which backend to pick is covered in [Backends](BACKENDS.md#choosing-a-ba
 | `no_store=True` | The cache is neither read nor written; the endpoint runs every time |
 | `no_cache=True` | The endpoint runs every time to recompute the ETag; a match with the client's `If-None-Match` still returns 304, and the cache is updated when the ETag changes |
 | `private=True` | The **shared backend** is neither read nor written; `Cache-Control: private` is still sent and the ETag is compared against fresh content |
-| Request with `Authorization` | The backend is neither read nor written, as with `private=True`, and `Cache-Control` has `private` instead of `public`, unless the route has `public=True` or `cache_authorized=True` (`must_revalidate=True` is not enough) |
+| Request with `Authorization` or a session | The backend is neither read nor written, as with `private=True`, and `Cache-Control` has `private` instead of `public`, unless the route has `public=True` or `cache_authorized=True` (`must_revalidate=True` is not enough) |
 | Handler sends `Cache-Control: private`/`no-store` | Returned with the handler's header intact, not written, and any existing entry is left untouched |
 | Response sets a cookie | Returned with `private` instead of `public` in `Cache-Control`, not written, and any existing entry is left untouched |
 | No `ttl` (or `ttl=0`) | The backend is neither read nor written, as with `private=True`; the endpoint runs every time and the ETag is compared against fresh content |

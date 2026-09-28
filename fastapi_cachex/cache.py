@@ -218,6 +218,30 @@ def _vary_components(request: Request, names: Sequence[str]) -> list[str]:
     return components
 
 
+# Where `FastAPICacheXSessionMiddleware` (and the deprecated
+# `SessionMiddleware`) put the session they loaded; `get_session` reads it.
+_SESSION_STATE_KEY = "__fastapi_cachex_session"
+
+
+def _request_credential(request: Request) -> str | None:
+    """What identifies the caller of ``request``, or ``None`` if nothing does.
+
+    ``Authorization``, a session the session middleware loaded (from the
+    token header, a bearer token or the session cookie, anonymous or not), or
+    a non-empty ``request.session`` from any session middleware (Starlette's
+    cookie sessions included). Only a token that resolved to a session
+    counts, so an invalid or expired one does not keep a request away from
+    the cache.
+    """
+    if "authorization" in request.headers:
+        return "Authorization header"
+    if getattr(request.state, _SESSION_STATE_KEY, None) is not None:
+        return "Session"
+    if request.scope.get("session"):
+        return "Session data"
+    return None
+
+
 _COOKIE_VARY_WARNING = (
     "cache vary on Cookie: @cache(vary=[...]) lists Cookie, so every distinct "
     "Cookie header gets its own entry and the number of entries grows with "
@@ -773,9 +797,13 @@ def cache(
             leaves the response unstored. ``False`` lets the error propagate,
             so the request fails.
         cache_authorized: Read and write the backend for requests that carry
-            an ``Authorization`` header. By default such a request bypasses
-            the backend as ``private=True`` does (RFC 9111 §3.5), unless
+            an ``Authorization`` header or arrive with a session: one the
+            session middleware loaded (from its token header, a bearer token
+            or the session cookie, with or without a user) or a non-empty
+            ``request.session``. By default such a request bypasses the
+            backend as ``private=True`` does (RFC 9111 §3.5), unless
             ``public`` is set, and its response is sent with ``private``.
+            A token that does not resolve to a session does not count.
             RFC 9111 would also allow reuse under ``must-revalidate``, but
             ``must_revalidate=True`` does not lift the bypass: only this
             explicit opt-in or ``public`` does. Set this only when
@@ -797,8 +825,8 @@ def cache(
             appears in the key; missing or empty, they stay ``name=``.
             Listing ``Cookie`` emits a ``UserWarning`` when the decorator is
             applied, since every visitor then gets their own entry.
-            A request with ``Authorization`` still bypasses the backend
-            unless ``public`` or ``cache_authorized`` is set, and a response
+            A request with ``Authorization`` or a session still bypasses the
+            backend unless ``public`` or ``cache_authorized`` is set, and a response
             that sets a cookie is still not stored.
 
     Returns:
@@ -892,7 +920,7 @@ def cache(
         )
         # Sent instead for a response that must not be stored downstream
         # either: one that sets a cookie, or one answering an `Authorization`
-        # request the backend was bypassed for. `public` becomes `private`;
+        # or session request the backend was bypassed for. `public` becomes `private`;
         # `no_cache` leaves the scope out of `cache_control`, so it is added.
         private_cache_control = (
             f"{DirectiveType.PRIVATE.value}, {cache_control}"
@@ -954,16 +982,19 @@ def cache(
             # RFC 9111 §3.5: a shared cache must not reuse a response to a
             # request with `Authorization` unless the response allows it. The
             # default key carries no identity, so treat such requests as
-            # private unless the route is `public` or opted in.
-            authorized_bypass = (
-                not bypass_backend
-                and not public
-                and not cache_authorized
-                and "authorization" in req.headers
+            # private unless the route is `public` or opted in. A request that
+            # arrived with a session is the same case, whichever transport
+            # carried its token (#319).
+            credential = (
+                None
+                if bypass_backend or public or cache_authorized
+                else _request_credential(req)
             )
+            authorized_bypass = credential is not None
             if authorized_bypass:
                 logger.debug(
-                    "Authorization header present; bypassing the backend for path=%s",
+                    "%s present; bypassing the backend for path=%s",
+                    credential,
                     req.url.path,
                 )
 
@@ -976,8 +1007,9 @@ def cache(
             if bypass_backend or authorized_bypass:
                 # Without `public`/`cache_authorized`, RFC 9111 §3.5 would still
                 # let a downstream shared cache reuse the answer to an
-                # `Authorization` request under `must-revalidate`; `private`
-                # rules that out.
+                # `Authorization` request under `must-revalidate`, and nothing
+                # at all stops one reusing the answer to a cookie; `private`
+                # rules both out.
                 bypass_cache_control = (
                     private_cache_control if authorized_bypass else cache_control
                 )
