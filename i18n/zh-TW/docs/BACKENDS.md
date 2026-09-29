@@ -52,7 +52,7 @@ BackendProxy.set(backend)
 - 預設以 `fastapi_cachex:` 前綴建立命名空間；多租戶情境可傳入 `key_prefix="myapp:cache:"`
 - `clear()`、`clear_pattern()` 與 `clear_path()` 只刪除這個後端 `key_prefix` 之下的鍵；同一台伺服器上其他應用程式的鍵不受影響
 - 只有傳給 `clear_pattern()` 的模式是萬用字元（glob）模式。鍵前綴與傳給 `clear_path()` 的路徑都以字面值比對，因此其中的 `*`、`?`、`[` 或 `]` 不會觸及前綴以外的鍵，也不會漏掉該路徑
-- `clear_pattern()` 比對的是邏輯鍵，也就是不含後端前綴的鍵，並一律自行加上前綴。0.3.8 以前，以前綴開頭的模式會先去掉前綴再比對。在只有這種寫法能比對到項目時，它仍可使用，但會發出 `DeprecationWarning`，直到 0.4.0 為止
+- `clear_pattern()` 比對的是邏輯鍵，也就是不含後端前綴的鍵，並一律自行加上前綴，因此模式中不要寫出前綴。以前綴開頭的模式不會被去掉前綴：它只會比對到本身以前綴開頭的邏輯鍵（見[遷移至 0.4.0](MIGRATING_0_4.md#redis-clear-pattern)）
 
 **從模型設定**：`RedisConfig` 是具有相同設定項與驗證的 pydantic 模型，當設定來自環境變數或設定檔時很方便：
 

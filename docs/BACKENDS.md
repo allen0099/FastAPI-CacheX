@@ -77,9 +77,9 @@ BackendProxy.set(backend)
   given to `clear_path()` are matched literally, so `*`, `?`, `[` or `]` in them cannot
   reach keys outside the prefix or miss the path
 - `clear_pattern()` matches the logical key, the key without the backend prefix, and
-  always adds the prefix itself. Before 0.3.8 a pattern that started with the prefix
-  was matched with the prefix stripped. That form still works when it is the only one
-  that matches anything, with a `DeprecationWarning`, until 0.4.0
+  always adds the prefix itself, so leave the prefix out of the pattern. A pattern that
+  starts with the prefix is not stripped: it matches only logical keys that start with
+  the prefix (see [Migrating to 0.4.0](MIGRATING_0_4.md#redis-clear-pattern))
 
 **Configuring from a model**: `RedisConfig` is a pydantic model with the same
 settings and validation, which is handy when they come from environment
