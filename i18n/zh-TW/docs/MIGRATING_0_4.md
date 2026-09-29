@@ -252,7 +252,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 - 分隔符號改為單一的 `|`（`CACHE_KEY_SEPARATOR`）。
 - 鍵以格式標籤 `http:v2|`（`CacheKey.FORMAT_TAG`）開頭，讓下一次格式變更可以用模式移除舊鍵：`clear_pattern("http:v2|*")` 會移除這個格式的所有鍵。
 - host 會正規化：轉為小寫，並去除空的連接埠或該 scheme 的預設連接埠（http 為 `:80`，https 為 `:443`）。
-- 過長的查詢字串（約超過 200 位元組）會以 `sha256:` 加上十六進位摘要儲存；路徑仍保持可讀。
+- 超過 200 位元組（以鍵中的編碼計算）的查詢字串會以 `sha256:` 加上十六進位摘要儲存；路徑仍保持可讀，監控路由則顯示這個摘要。
 - 查詢參數會依名稱排序：`sort_query`（0.3.9 起可選用）在 `@cache`、`build_cache_key()` 與 `invalidate()` 中預設為 `True`，因此 `?b=2&a=1` 與 `?a=1&b=2` 共用同一筆項目。
 - 由單一、公開的 `CacheKey` 型別負責建立、編碼與解析鍵。`fastapi_cachex.routes` 中的 `CACHE_KEY_MIN_PARTS`、`CACHE_KEY_MAX_SPLIT` 與 `CACHE_KEY_MAX_PARTS` 已移除；請改用 `CacheKey.parse(key)` 讀取鍵的各段。
 

@@ -331,6 +331,16 @@ query order as sent can keep `sort_query=False`.
 Pass `sort_query=True` to `invalidate()` for such a route as well (see
 [Invalidating a single cached route](#invalidating-a-single-cached-route)).
 
+A query string longer than 200 bytes, as encoded in the key, is stored as
+`sha256:` and its 64-digit hex digest instead, so a client cannot make the
+query part of the key arbitrarily long. (Memcached still hashes a whole key over
+250 bytes, prefix included; a query just under the threshold with a long host
+or path can get there.) The digest is taken after sorting, so `sort_query` still
+merges reordered long queries. The path stays readable, so `clear_path()` still
+finds the entry (with `include_params=True`, since the query is not empty), and
+the monitoring routes show the digest as `query_params`. A query as sent never
+looks like one: the key writes `:` as `%3A`.
+
 The host and path come from the client, so `|` and `%` in them are percent-encoded
 (`%7C` and `%25`). A `Host` header or path containing `|` therefore cannot shift
 the components and make one request's key equal another's. The query string is
@@ -352,8 +362,8 @@ proxy keeps its port. A request without a `Host` header uses `unknown`.
 
 Otherwise the host is still whatever the client sends. Unless a reverse proxy
 or load balancer in front of the app already rejects unknown hosts, add
-Starlette's `TrustedHostMiddleware`, so a forged `Host` gets a `400` instead of filling the
-cache with entries no one else will request:
+Starlette's `TrustedHostMiddleware`, so a forged `Host` gets a `400` instead of
+filling the cache with entries no one else will request:
 
 ```python
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -747,7 +757,8 @@ add_routes(
 ```
 
 - `GET {prefix}/cached-hits` — every cached entry split into method, host, path
-  and query, with its ETag and expiry, plus counts of valid and expired entries
+  and query (`sha256:<hex>` for a query over 200 bytes), with its ETag and
+  expiry, plus counts of valid and expired entries
   and the distinct cached paths. It does not count hits.
 - `GET {prefix}/cached-records` — every cached record with its size, expiry,
   `media_type` (the stored response's media type, `null` if it had none) and a

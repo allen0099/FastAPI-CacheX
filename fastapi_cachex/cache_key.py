@@ -5,6 +5,7 @@ monitoring routes all go through ``CacheKey``, so the format is defined here
 and nowhere else.
 """
 
+import hashlib
 from dataclasses import dataclass
 from operator import itemgetter
 from typing import ClassVar
@@ -22,6 +23,13 @@ _MIN_PARTS = 5
 
 # The port a scheme implies when the Host header names none.
 _DEFAULT_PORTS = {"http": "80", "https": "443", "ws": "80", "wss": "443"}
+
+# A query component longer than this many bytes is stored as its digest.
+_QUERY_HASH_THRESHOLD = 200
+
+# Marks a hashed query. A query as sent never starts with it: the encoding
+# writes ``:`` as ``%3A``.
+_QUERY_HASH_PREFIX = "sha256:"
 
 # Characters that are live in a Redis glob pattern.
 _GLOB_SPECIAL = frozenset("*?[]\\")
@@ -41,10 +49,20 @@ def _query_component(request: Request, sort_query: bool) -> str:
     pairs by name before encoding them the same way, so only the order of
     differently named parameters changes: repeated values of one name keep
     their relative order, and an already sorted query gives the unsorted key.
+
+    A query longer than 200 bytes (``_QUERY_HASH_THRESHOLD``) is replaced by
+    ``sha256:`` and its full hex digest, so a client cannot make the query
+    part of the key arbitrarily long; the digest is taken after sorting, so ``sort_query``
+    still merges reordered long queries.
     """
-    if not sort_query:
-        return str(request.query_params)
-    return urlencode(sorted(request.query_params.multi_items(), key=itemgetter(0)))
+    if sort_query:
+        query = urlencode(sorted(request.query_params.multi_items(), key=itemgetter(0)))
+    else:
+        query = str(request.query_params)
+    encoded = query.encode()
+    if len(encoded) > _QUERY_HASH_THRESHOLD:
+        return _QUERY_HASH_PREFIX + hashlib.sha256(encoded).hexdigest()
+    return query
 
 
 def _host_component(request: Request) -> str:
@@ -103,7 +121,9 @@ class CacheKey:
     ``extra`` item hold the plain text and are percent-encoded by ``to_str()``
     (see ``escape_key_component``), so a client-controlled value cannot
     contain the separator; a method token may contain ``|``. ``query`` is
-    kept URL-encoded, as it appears in the key.
+    kept URL-encoded, as it appears in the key; ``from_request()`` stores a
+    query longer than 200 bytes as ``sha256:`` and its hex digest instead,
+    which no query as sent can look like.
 
     Build one from a request with ``from_request()`` and turn a stored key
     back into one with ``parse()``::
