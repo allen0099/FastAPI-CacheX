@@ -694,12 +694,20 @@ async def log_in(credentials: LoginRequest, request: Request):
     return {"ok": True}
 ```
 
-A loaded session (an anonymous visitor's cart, say) keeps its data under a new ID and gets the
-user; the old token no longer resolves. With no session loaded (a new visitor, or a token that
-did not resolve) `login()` creates a session with the user, bound to the client IP and
-User-Agent as configured. The middleware then saves the session, keys written to
-`request.session` before or after the call included, and sends its token through the transport
-the request used: the response header for a header or `Authorization: Bearer` token, otherwise
+What happens to the session the request arrived with depends on whose it is:
+
+- **Anonymous** (a visitor's cart, say): it keeps its data under a new ID and gets the user.
+- **The same `user_id`** (a re-login): the same, and the `SessionUser` you pass replaces the
+  stored one, so changed roles or metadata take effect.
+- **A different user's**: it is deleted, along with anything written to `request.session`
+  earlier in the request, and `login()` starts a new session. None of the previous user's data
+  (a cart, an `elevated` flag) reaches the new user.
+- **None** (a new visitor, or a token that did not resolve): `login()` creates a session with
+  the user, bound to the client IP and User-Agent as configured.
+
+In every case the old token no longer resolves. The middleware then saves the session, keys
+written to `request.session` after the call included (and before it, unless the loaded session
+was a different user's), and sends its token through the transport the request used: the response header for a header or `Authorization: Bearer` token, otherwise
 an HttpOnly `Set-Cookie` with every `cookie_*` attribute. Like every response that carries a
 token, it gets `Cache-Control: private, no-store`. A later request with that token passes
 `require_user_session` and `AuthenticatedSession`. `login()` returns the session, which

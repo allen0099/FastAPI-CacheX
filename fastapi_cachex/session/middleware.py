@@ -672,6 +672,17 @@ async def _log_in(
             await manager.delete_session(current.session_id)
         current = None
         request_session.cleared = False
+    elif (
+        current is not None
+        and current.user is not None
+        and current.user.user_id != user.user_id
+    ):
+        # Another user's session: nothing in it belongs to the new user. Delete
+        # it and empty the request dict (without marking a logout), so the new
+        # session starts with only what the handler writes after login().
+        await manager.delete_session(current.session_id)
+        current = None
+        dict.clear(request_session)
 
     if current is None:
         current, _ = await manager.create_session(

@@ -555,7 +555,14 @@ async def log_in(credentials: LoginRequest, request: Request):
     return {"ok": True}
 ```
 
-已載入的 Session（例如匿名訪客的購物車）會以新 ID 保留其資料並得到使用者；舊的權杖就無法再解析出 Session。沒有載入 Session 時（新訪客，或權杖無法解析），`login()` 會建立帶有使用者的 Session，並依設定綁定用戶端 IP 與 User-Agent。接著中介軟體會儲存該 Session（包括呼叫前後寫入 `request.session` 的鍵），並透過該請求使用的傳輸方式送出權杖：以標頭或 `Authorization: Bearer` 權杖送來的請求使用回應標頭，否則使用帶有所有 `cookie_*` 屬性的 HttpOnly `Set-Cookie`。和每個帶有權杖的回應一樣，它會加上 `Cache-Control: private, no-store`。之後帶著該權杖的請求會通過 `require_user_session` 與 `AuthenticatedSession`。`login()` 會回傳該 Session，在該請求剩下的處理中，`get_session` 也會回傳它。
+請求帶來的 Session 會如何處理，取決於它屬於誰：
+
+- **匿名**（例如訪客的購物車）：以新 ID 保留其資料並得到使用者。
+- **相同的 `user_id`**（重新登入）：同上，並以你傳入的 `SessionUser` 取代儲存的使用者，讓變更後的角色或 metadata 生效。
+- **其他使用者的**：它會被刪除，連同該請求中先前寫入 `request.session` 的內容，`login()` 會建立新的 Session。前一位使用者的資料（購物車、`elevated` 旗標）都不會帶給新使用者。
+- **沒有**（新訪客，或權杖無法解析）：`login()` 會建立帶有使用者的 Session，並依設定綁定用戶端 IP 與 User-Agent。
+
+無論哪種情況，舊的權杖都無法再解析出 Session。接著中介軟體會儲存該 Session（包括呼叫之後寫入 `request.session` 的鍵；除非已載入的 Session 屬於其他使用者，也包括呼叫之前寫入的鍵），並透過該請求使用的傳輸方式送出權杖：以標頭或 `Authorization: Bearer` 權杖送來的請求使用回應標頭，否則使用帶有所有 `cookie_*` 屬性的 HttpOnly `Set-Cookie`。和每個帶有權杖的回應一樣，它會加上 `Cache-Control: private, no-store`。之後帶著該權杖的請求會通過 `require_user_session` 與 `AuthenticatedSession`。`login()` 會回傳該 Session，在該請求剩下的處理中，`get_session` 也會回傳它。
 
 完全沒有帶權杖的請求只會收到 Cookie，頁面上的指令碼讀不到它。不要把權杖複製到瀏覽器登入回應的標頭或本文中。沒有權杖就登入的 API 用戶端需要從本文取得權杖：對 `login()` 回傳的 Session 回傳 `manager.issue_token(session)`，或由另一個端點發出權杖，如 [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) 所示。完整的瀏覽器版本請見 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)。
 
