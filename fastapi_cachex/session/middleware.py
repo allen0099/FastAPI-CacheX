@@ -231,8 +231,17 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
         Args:
             app: ASGI application
-            session_manager: Session manager instance
-            config: Session configuration
+            session_manager: Session manager instance; defaults to the one
+                set in ``SessionManagerProxy``
+            config: Session configuration; defaults to
+                ``session_manager.config``
+
+        Raises:
+            ProxyNotSetError: If ``session_manager`` is omitted and
+                ``SessionManagerProxy`` holds none.
+
+        Warns:
+            DeprecationWarning: Always; use ``FastAPICacheXSessionMiddleware``.
         """
         warnings.warn(
             "SessionMiddleware is deprecated, use FastAPICacheXSessionMiddleware. "
@@ -365,7 +374,10 @@ class FastAPICacheXSessionMiddleware:
     session payload is persisted via the configured ``SessionManager``/cache
     backend instead of being encoded into the cookie itself. Only a signed
     session token is stored client-side, in the cookie named by
-    ``SessionConfig.cookie_name``.
+    ``SessionConfig.cookie_name``. A token in the custom header or an
+    ``Authorization: Bearer`` header is read before the cookie, and a request
+    that sent one (even one that no longer resolves) gets its token back in
+    the ``header_name`` response header instead of ``Set-Cookie``.
     """
 
     def __init__(
@@ -378,8 +390,14 @@ class FastAPICacheXSessionMiddleware:
 
         Args:
             app: ASGI application
-            session_manager: Session manager instance
-            config: Session configuration
+            session_manager: Session manager instance; defaults to the one
+                set in ``SessionManagerProxy``
+            config: Session configuration; defaults to
+                ``session_manager.config``
+
+        Raises:
+            ProxyNotSetError: If ``session_manager`` is omitted and
+                ``SessionManagerProxy`` holds none.
 
         Warns:
             FutureWarning: If the configuration leaves ``cookie_name`` or
@@ -612,12 +630,15 @@ class FastAPICacheXSessionMiddleware:
         loaded_token: str | None,
         renewed_token: str | None,
     ) -> tuple[str, str | None]:
-        """Create-or-update the backend session for a modified, non-empty dict.
+        """Create-or-update the backend session for a modified dict.
+
+        The dict is non-empty, or was emptied on a session that has a user.
 
         Args:
             session: The Starlette session dict for this request
             connection: Incoming HTTP connection (for IP / User-Agent binding)
-            backend_session: Loaded backend session, or None for a new session
+            backend_session: The session the dict belongs to (loaded, or
+                started by ``login()``), or None to create an anonymous one
             loaded_token: Token for the loaded session (None when creating anew)
             renewed_token: Sliding-expiration renewed token, if any
 

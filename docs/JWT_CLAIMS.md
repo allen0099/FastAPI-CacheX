@@ -104,7 +104,7 @@ A valid JWT signature is necessary but not sufficient: after decoding, `SessionM
     - Reduces the impact of a leaked JWT
 
 3. **Flexible session management**
-    - Supports sliding expiration: when a session is renewed, a new token with an updated `exp` is returned in the response header named by `header_name` (`X-Session-Token` by default)
+    - Supports sliding expiration: when a session is renewed, the middleware sends a new token with an updated `exp` through the transport the request used: the response header named by `header_name` (`X-Session-Token` by default), or `Set-Cookie` for a cookie
     - Supports updating session data in real time
     - Supports features such as flash messages
 
