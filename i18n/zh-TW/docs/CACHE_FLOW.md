@@ -10,24 +10,25 @@ HTTP 請求抵達
 @cache 裝飾器攔截請求（只有 GET 會經過快取；其他所有
 方法直接執行 handler，也不會帶上 Cache-Control 標頭）
     ↓
-建立快取鍵：method|||host|||path|||query_params
-    ↓
 no-store？ ── 是 → 執行 handler，既不讀取也不寫入快取，
     │              回應帶上 Cache-Control: no-store
     ↓ 否
-private，或帶有 Authorization／Session 且未設定 public／cache_authorized？
+private、沒有正數的 ttl，或帶有 Authorization／Session 且未設定 public／cache_authorized？
     ── 是 → 執行 handler；比對 If-None-Match 決定回傳 304 或 200
-    │        （共用後端既不讀取也不寫入；Authorization 或 Session 的情況下
-    │         Cache-Control 以 private 取代 public）
+    │        （共用後端既不讀取也不寫入，key builder 也不會執行；
+    │         Authorization 或 Session 的情況下 Cache-Control 以 private 取代 public）
     ↓ 否
-讀取後端項目
+建立快取鍵：key_builder（預設為 method|||host|||path|||query_params），
+再為每個 vary 標頭附加一個 name=value 段
+    ↓
+讀取後端項目（fail_open 時，後端錯誤視為未命中）
     ↓
 請求帶有 If-None-Match？
     ├─ 且為 no-cache → 先執行 handler 計算目前的 ETag；相符 → 304
     ├─ 其他情況      → 與快取項目的 ETag 比對；相符 → 帶 Age 的 304
     └─ 不相符／沒有此標頭 → 繼續
     ↓
-快取項目存在、已設定 ttl，且未啟用 no-cache？
+快取項目存在，且未啟用 no-cache？
     ├─ 是 → 以快取內容回應（包含儲存的狀態碼
     │        與標頭，並加上 Age；handler **不會**執行）
     └─ 否 → 執行 handler
@@ -39,10 +40,13 @@ private，或帶有 Authorization／Session 且未設定 public／cache_authoriz
               │       private／no-store 標頭保留原樣）
               └─ 一般回應 → 設定 ETag；只有與既有項目的 ETag
                             不同時才寫入後端
+                            （fail_open 時，寫入失敗會記錄警告，
+                            回應照常送出但不儲存）
     ↓
 在回應中附加 Cache-Control（非 2xx 回應回傳時不帶此標頭，
 handler 自己送出的 private／no-store Cache-Control 永遠不會被取代，
-設定 Set-Cookie 的回應則以 private 取代 public）
+設定 Set-Cookie 的回應則以 private 取代 public）；設定 vary 時，
+會把這些名稱加入每個 GET 回應的 Vary
 ```
 
 ## 詳細步驟 {#detailed-steps}
@@ -76,7 +80,7 @@ host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`�
 
 自訂的 `key_builder` 可以用 `build_cache_key(request, *components)` 在查詢字串之後加入其他段；這些段以同樣方式編碼，`clear_path()` 也仍會比對路徑（見 [HTTP 快取](HTTP_CACHING.md#adding-components-to-the-key)中的「在鍵中加入其他段」）。`@cache(vary=[...])` 會在 key builder 回傳的鍵之後，為每個列出的請求標頭附加一個 `name=value` 段，並把這些名稱加入回應的 `Vary` 標頭（見 [HTTP 快取](HTTP_CACHING.md#varying-on-request-headers)中的「依請求標頭區分」）。對於憑證標頭 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`，非空的值會寫成 `sha256:<十六進位摘要>`，因此鍵中不會出現任何權杖。
 
-查詢參數依請求送出的順序串接（`str(request.query_params)`），**不會排序**，因此 `?page=1&limit=10` 與 `?limit=10&page=1` 是兩個不同的快取項目。若希望兩者視為同一個，請傳入自訂的 `key_builder` 將查詢字串正規化。
+查詢參數依請求送出的順序串接（`str(request.query_params)`），預設**不會排序**，因此 `?page=1&limit=10` 與 `?limit=10&page=1` 是兩個不同的快取項目。若希望兩者視為同一個，請設定 `@cache(sort_query=True)`，先依名稱排序參數（見 [HTTP 快取](HTTP_CACHING.md#cache-keys)中的「快取鍵」）。
 
 這個快取鍵格式讓每個維度各自獨立快取：
 
@@ -91,7 +95,7 @@ host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`�
 
 ```python
 # 改變伺服器端快取的使用方式
-@cache(no_cache=True)     # 每次都重新執行 handler（重新驗證）；項目仍會寫入
+@cache(no_cache=True)     # 每次都重新執行 handler（重新驗證）；ttl 為正數時項目仍會寫入
 @cache(no_store=True)     # 永不讀取或寫入快取
 
 # 一般快取行為
@@ -107,7 +111,7 @@ host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`�
 @cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
 ```
 
-參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`，或只提供 `stale`／`stale_ttl` 其中之一，會拋出 `CacheXError`。
+參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 不是 `int`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起使用，或 `key_builder` 是 `async` 可呼叫物件，會拋出 `CacheXError`。
 
 標頭值在每個被裝飾的路由上只建立一次：
 
@@ -160,11 +164,14 @@ if request.method != "GET":
 if no_store:
     return await render()                    # 不讀取，不寫入
 
-authorized = "authorization" in request.headers and not (public or cache_authorized)
-if private or not ttl or authorized:
+bypass = private or not ttl
+# Authorization 標頭、中介軟體載入的 Session，或不是空的 request.session
+credential = None if bypass or public or cache_authorized else request_credential(request)
+if bypass or credential:
     response, etag = await render()          # 既不讀取也不寫入後端
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
+cache_key = key_builder(request) + vary_components(request)  # 只在這裡建立
 entry = await backend.get(cache_key)         # 過期的項目已在此略過
 
 if client_etag and no_cache:
@@ -380,6 +387,7 @@ class CacheEntry:
     media_type: str | None = None
     status_code: int = 200  # 原樣重播
     headers: dict[str, str] | None = None  # 重播時送回
+    stored_at: float | None = None  # @cache 儲存它時的 epoch 秒數；用來計算 Age
 
 
 @dataclass
@@ -388,7 +396,7 @@ class CacheItem:
     expiry: float | None = None  # epoch 秒數；僅 MemoryBackend 使用
 ```
 
-`headers` 儲存 handler 自行設定的標頭，但排除每次回應都必須重新計算或不得重播的欄位：`Set-Cookie`、`Content-Length`、`Transfer-Encoding`、`Connection`、`Date`、`ETag`、`Cache-Control` 與 `Content-Type`（`Content-Type` 會由 `media_type` 還原；兩者都儲存會使該標頭送出兩次）。
+`headers` 儲存 handler 自行設定的標頭，但排除每次回應都必須重新計算或不得重播的欄位：`Set-Cookie`、`Content-Length`、`Transfer-Encoding`、`Connection`、`Date`、`ETag`、`Cache-Control`、`Content-Type` 與 `Age`（`Content-Type` 會由 `media_type` 還原；兩者都儲存會使該標頭送出兩次）。
 
 計數器（`backend.increment()`）同樣以 `CacheEntry` 表示：fingerprint 一律為 `counter`，`content` 為十進位數值的位元組，因此刪除、清除與監控都以相同方式處理它們。
 
@@ -412,7 +420,7 @@ handler 不必自行宣告 `Request`：`@cache` 會在函式簽名中注入一�
 
 **Q：為什麼 POST／PUT 的回應不會被快取？** A：`@cache` 只適用於 GET。其他所有方法都直接執行 handler，不讀取或寫入快取，也不會加上 `Cache-Control` 標頭。
 
-**Q：為什麼同一個端點有好幾個快取項目？** A：因為快取鍵包含查詢參數，而且查詢參數**不會排序**。`/users?page=1` 與 `/users?page=2` 是不同的項目，`?a=1&b=2` 與 `?b=2&a=1` 也是。
+**Q：為什麼同一個端點有好幾個快取項目？** A：因為快取鍵包含查詢參數，而且查詢參數預設**不會排序**。`/users?page=1` 與 `/users?page=2` 是不同的項目；除非路由設定了 `sort_query=True`，`?a=1&b=2` 與 `?b=2&a=1` 也是。
 
 **Q：MemoryBackend 在多個行程下如何運作？** A：無法運作。每個行程都有自己的快取；正式環境請使用 Redis。
 
