@@ -20,7 +20,6 @@ from fastapi_cachex.session.dependencies import AuthenticatedSession
 from fastapi_cachex.session.dependencies import OptionalSession
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
-from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.models import SessionUser
 
 _AUTH = {"Authorization": "Bearer alice"}
@@ -182,29 +181,3 @@ async def test_routes_that_do_not_read_the_session_do_not_vary(
     )
 
     assert "vary" not in response.headers
-
-
-async def test_deprecated_middleware_varies_on_a_session_read(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    app = FastAPI()
-    app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
-
-    @app.get("/greeting")
-    async def greeting(session: OptionalSession) -> dict[str, str]:
-        return {"hello": session.user.user_id if session and session.user else "guest"}
-
-    @app.get("/plain")
-    async def plain() -> dict[str, bool]:
-        return {"ok": True}
-
-    client = TestClient(app)
-    token = await _token(manager, "alice")
-    with pytest.warns(DeprecationWarning, match="FastAPICacheXSessionMiddleware"):
-        response = client.get("/greeting", headers={config.header_name: token})
-
-    assert response.json() == {"hello": "alice"}
-    assert config.header_name.lower() in _vary(response)
-    assert (
-        "vary" not in client.get("/plain", headers={config.header_name: token}).headers
-    )

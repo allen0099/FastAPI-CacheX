@@ -213,8 +213,7 @@ async def rotate_session_id(request: Request) -> bool:
     ``SessionUser`` that ``require_user_session`` / ``AuthenticatedSession``
     check, and makes the middleware save the session and send its token,
     also for a visitor who had no session yet. Use this function on its own
-    when the ID should change without a login (a privilege change, say), or
-    under the deprecated ``SessionMiddleware``.
+    when the ID should change without a login (a privilege change, say).
 
     A session token the client arrived with may have been planted by someone
     else; after rotation the old token no longer resolves, and the middleware
@@ -322,10 +321,9 @@ async def login(request: Request, user: "SessionUser") -> Session:
 
     Raises:
         RuntimeError: If the request did not pass through
-            ``FastAPICacheXSessionMiddleware``. The deprecated
-            ``SessionMiddleware`` cannot send a token for a session it did not
-            load; there, create the session with
-            ``SessionManager.create_session(user=...)`` and return its token.
+            ``FastAPICacheXSessionMiddleware``. Without it, create the
+            session with ``SessionManager.create_session(user=...)`` and
+            return its token.
     """
     request_session = request.scope.get("session")
     if (

@@ -250,8 +250,8 @@ def _vary_components(request: Request, names: Sequence[str]) -> list[str]:
     return components
 
 
-# Where `FastAPICacheXSessionMiddleware` (and the deprecated
-# `SessionMiddleware`) put the session they loaded; `get_session` reads it.
+# Where `FastAPICacheXSessionMiddleware` puts the session it loaded;
+# `get_session` reads it.
 _SESSION_STATE_KEY = "__fastapi_cachex_session"
 
 

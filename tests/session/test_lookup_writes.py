@@ -8,20 +8,16 @@ also modified the session cost two.
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
-from typing import Annotated
 
 import pytest
-from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.testclient import TestClient
 
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
-from fastapi_cachex.session.dependencies import require_session
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
-from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.models import Session
 from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.types import CacheEntry
@@ -138,25 +134,3 @@ def test_middleware_reads_without_writing_and_writes_changes_once() -> None:
     assert client.get("/bump").json() == {"count": 2}
     assert len(backend.writes) == 1
     assert client.get("/read").json() == {"count": 2}
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-async def test_header_middleware_lookup_does_not_write() -> None:
-    """The deprecated header middleware loads sessions the same way."""
-    manager, backend = _manager()
-    app = FastAPI()
-    app.add_middleware(SessionMiddleware, session_manager=manager)
-
-    @app.get("/me")
-    async def me(
-        session: Annotated[Session, Depends(require_session)],
-    ) -> dict[str, object]:
-        return {"user": session.user.user_id if session.user else None}
-
-    _, token = await manager.create_session(SessionUser(user_id="u1"))
-    backend.writes.clear()
-
-    response = TestClient(app).get("/me", headers={"X-Session-Token": token})
-
-    assert response.json() == {"user": "u1"}
-    assert backend.writes == []

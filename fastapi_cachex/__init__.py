@@ -27,7 +27,6 @@ from .session import Session as Session
 from .session import SessionConfig as SessionConfig
 from .session import SessionManager as SessionManager
 from .session import SessionManagerProxy as SessionManagerProxy
-from .session import SessionMiddleware as SessionMiddleware
 from .session import SessionUser as SessionUser
 from .session import get_optional_session as get_optional_session
 from .session import get_session as get_session
@@ -94,7 +93,6 @@ __all__ = [
     "SessionInvalidError",
     "SessionManager",
     "SessionManagerProxy",
-    "SessionMiddleware",
     "SessionNotFoundError",
     "SessionSecurityError",
     "SessionTokenError",

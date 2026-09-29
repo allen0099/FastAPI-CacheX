@@ -13,7 +13,7 @@ from fastapi_cachex.session.dependencies import get_optional_session
 from fastapi_cachex.session.dependencies import get_session
 from fastapi_cachex.session.dependencies import require_session
 from fastapi_cachex.session.manager import SessionManager
-from fastapi_cachex.session.middleware import SessionMiddleware
+from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session.models import SessionUser
 
 
@@ -65,18 +65,17 @@ class TestRequireSessionAlias:
     def test_require_session_is_get_session_alias(self) -> None:
         assert require_session is get_session
 
-    @pytest.mark.filterwarnings(
-        "ignore:SessionMiddleware is deprecated:DeprecationWarning"
-    )
     def test_require_session_via_http_endpoint(self) -> None:
         """require_session used as a route dependency must return 401 without session."""
-        config = SessionConfig(secret_key="a" * 32)
+        config = SessionConfig(
+            secret_key="a" * 32, cookie_name="session", cookie_https_only=False
+        )
         backend = MemoryBackend()
         manager = SessionManager(backend, config)
 
         dep_app = FastAPI()
         dep_app.add_middleware(
-            SessionMiddleware, session_manager=manager, config=config
+            FastAPICacheXSessionMiddleware, session_manager=manager, config=config
         )
 
         @dep_app.get("/protected")
@@ -89,18 +88,17 @@ class TestRequireSessionAlias:
         r = dep_client.get("/protected")
         assert r.status_code == 401
 
-    @pytest.mark.filterwarnings(
-        "ignore:SessionMiddleware is deprecated:DeprecationWarning"
-    )
     async def test_require_session_with_valid_session(self) -> None:
         """require_session passes when a valid session is present."""
-        config = SessionConfig(secret_key="a" * 32)
+        config = SessionConfig(
+            secret_key="a" * 32, cookie_name="session", cookie_https_only=False
+        )
         backend = MemoryBackend()
         manager = SessionManager(backend, config)
 
         dep_app = FastAPI()
         dep_app.add_middleware(
-            SessionMiddleware, session_manager=manager, config=config
+            FastAPICacheXSessionMiddleware, session_manager=manager, config=config
         )
 
         @dep_app.get("/me")

@@ -22,7 +22,6 @@ from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.dependencies import get_session
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
-from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.models import SessionUser
 
 _NO_STORE = "private, no-store"
@@ -59,11 +58,12 @@ def _vary(response: Any) -> list[str]:
 def _app(
     manager: SessionManager,
     config: SessionConfig,
-    middleware: Any = FastAPICacheXSessionMiddleware,
 ) -> FastAPI:
     """An app with a publicly cacheable route and routes that touch the session."""
     app = FastAPI()
-    app.add_middleware(middleware, session_manager=manager, config=config)
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
 
     @app.get("/public")
     @cache(ttl=60, public=True)
@@ -272,37 +272,6 @@ async def test_an_emptied_anonymous_header_session_sends_nothing_to_forbid(
     assert config.header_name not in response.headers
     assert "set-cookie" not in response.headers
     assert "cache-control" not in response.headers
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-async def test_the_deprecated_middleware_renewal_is_not_storable(
-    sliding_manager: SessionManager, sliding_config: SessionConfig
-) -> None:
-    _session, token = await sliding_manager.create_session(
-        user=SessionUser(user_id="u")
-    )
-    client = TestClient(
-        _app(sliding_manager, sliding_config, middleware=SessionMiddleware)
-    )
-
-    response = client.get("/public", headers={sliding_config.header_name: token})
-
-    assert sliding_config.header_name in response.headers
-    _assert_not_storable(response, {sliding_config.header_name.lower()})
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-async def test_the_deprecated_middleware_leaves_a_tokenless_response_alone(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    _session, token = await manager.create_session(user=SessionUser(user_id="u"))
-    client = TestClient(_app(manager, config, middleware=SessionMiddleware))
-
-    response = client.get("/public", headers={config.header_name: token})
-
-    assert config.header_name not in response.headers
-    assert response.headers["cache-control"] == _PUBLIC
-    assert "vary" not in response.headers
 
 
 async def test_a_response_without_a_token_keeps_its_cache_control(

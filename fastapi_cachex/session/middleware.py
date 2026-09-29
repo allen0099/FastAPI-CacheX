@@ -5,11 +5,7 @@ import warnings
 from typing import TYPE_CHECKING
 from typing import Any
 
-from fastapi import Request
-from fastapi import Response
 from starlette.datastructures import MutableHeaders
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.sessions import Session as StarletteSession
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp
@@ -83,26 +79,6 @@ def get_client_ip(connection: HTTPConnection, config: SessionConfig) -> str | No
         logger.debug("Client IP from connection: %s", peer)
 
     return peer
-
-
-def _extract_header_token(
-    connection: HTTPConnection, config: SessionConfig
-) -> str | None:
-    """Extract a session token from request headers.
-
-    Honours ``SessionConfig.token_source_priority``: checks the configured
-    custom header (``config.header_name``) and/or an ``Authorization: Bearer``
-    token. This is the header/bearer transport shared with ``SessionMiddleware``.
-
-    Args:
-        connection: Incoming HTTP connection (or a `Request`, which IS-A
-            `HTTPConnection`)
-        config: Session configuration
-
-    Returns:
-        Session token or None
-    """
-    return _read_header_token(connection, config)[0]
 
 
 def _read_header_token(
@@ -249,146 +225,6 @@ def _warn_if_priority_without_cookie(config: SessionConfig) -> None:
     )
 
 
-class SessionMiddleware(BaseHTTPMiddleware):
-    """Middleware to handle session loading and token extraction.
-
-    Extracts the session token from the request (via a custom header and/or
-    an ``Authorization: Bearer`` header, per ``SessionConfig.token_source_priority``)
-    and loads the corresponding session into ``request.state``. Cookie-based
-    token transport is not supported, so a ``"cookie"`` entry in the list is
-    ignored.
-
-    .. deprecated:: 0.3.1
-        Use :class:`FastAPICacheXSessionMiddleware` instead. Will be removed in
-        version 0.4.0.
-    """
-
-    def __init__(
-        self,
-        app: ASGIApp,
-        session_manager: SessionManager | None = None,
-        config: SessionConfig | None = None,
-    ) -> None:
-        """Initialize session middleware.
-
-        Args:
-            app: ASGI application
-            session_manager: Session manager instance; defaults to the one
-                set in ``SessionManagerProxy``
-            config: Session configuration; defaults to
-                ``session_manager.config``
-
-        Raises:
-            ProxyNotSetError: If ``session_manager`` is omitted and
-                ``SessionManagerProxy`` holds none.
-
-        Warns:
-            DeprecationWarning: Always; use ``FastAPICacheXSessionMiddleware``.
-        """
-        warnings.warn(
-            "SessionMiddleware is deprecated, use FastAPICacheXSessionMiddleware. "
-            "Will be removed in version 0.4.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        super().__init__(app)
-        self.session_manager = session_manager or SessionManagerProxy.get()
-
-        if config is None:
-            config = self.session_manager.config
-
-        self.config = config
-
-        logger.debug(
-            "SessionMiddleware initialized; header=%s bearer=%s",
-            config.header_name,
-            config.use_bearer_token,
-        )
-
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-        """Process request and handle session.
-
-        Args:
-            request: Incoming request
-            call_next: Next handler in chain
-
-        Returns:
-            Response
-        """
-        _stash_session_manager(request.app, self.session_manager)
-
-        # Extract session token from request
-        token = self._extract_token(request)
-
-        # Try to load session
-        session: Session | None = None
-        renewed_token: str | None = None
-        if token:
-            try:
-                ip_address = self._get_client_ip(request)
-                user_agent = request.headers.get("user-agent")
-                session, renewed_token = await self.session_manager.get_session(
-                    token,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
-                )
-                logger.debug("Session loaded in middleware; id=%s", session.session_id)
-            except SessionError:
-                # Session invalid/expired, continue without session
-                session = None
-                logger.debug("Session failed to load; token invalid/expired")
-
-        # Store session in request state
-        setattr(request.state, "__fastapi_cachex_session", session)
-
-        loaded_session_id = session.session_id if session is not None else None
-
-        # Process request
-        response: Response = await call_next(request)
-
-        if session is not None and session.session_id != loaded_session_id:
-            # The handler regenerated the session ID; a renewed token would
-            # name the deleted record, so send a token for the new ID.
-            response_token: str | None = self.session_manager.issue_token(session)
-        else:
-            # Propagate renewed token to client so its JWT exp stays in sync
-            response_token = renewed_token
-
-        if response_token is not None or _session_was_read(request):
-            add_vary(response.headers, _read_header_token(request, self.config)[1])
-        if response_token is not None:
-            response.headers[self.config.header_name] = response_token
-            _forbid_storing(response.headers)
-
-        return response
-
-    def _extract_token(self, request: Request) -> str | None:
-        """Extract session token from request.
-
-        Args:
-            request: Incoming request
-
-        Returns:
-            Session token or None
-        """
-        return _extract_header_token(request, self.config)
-
-    def _get_client_ip(self, request: Request) -> str | None:
-        """Get client IP address from request.
-
-        Args:
-            request: Incoming request
-
-        Returns:
-            Client IP address or None
-        """
-        return get_client_ip(request, self.config)
-
-
 class _RequestSession(StarletteSession):
     """``request.session`` that remembers an explicit ``clear()``.
 
@@ -489,8 +325,8 @@ class FastAPICacheXSessionMiddleware:
         loaded_session_id: str | None = None
 
         # Resolve the incoming session token: prefer the header/bearer transport
-        # (e.g. X-Session-Token, as used by SessionMiddleware) and fall back to
-        # the session cookie, so header-based clients authenticate here too.
+        # (e.g. X-Session-Token) and fall back to the session cookie, so
+        # header-based clients authenticate here too.
         # `header_token` is captured so the response is routed by transport: a
         # header-sourced token is echoed back via the response header, otherwise
         # via Set-Cookie (see send_wrapper).

@@ -19,5 +19,3 @@ See the [session management guide](../SESSION.md) for how the pieces fit togethe
 ::: fastapi_cachex.session.dependencies
 
 ::: fastapi_cachex.session.exceptions
-
-::: fastapi_cachex.session.middleware.SessionMiddleware
