@@ -20,7 +20,313 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-09-29
+
 0.3.9 is the last 0.3.x release. 0.4.0 contains breaking changes; see [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/).
+
+### Added
+
+- **`CacheManager.get_or_set()` supports lock-based stampede protection.** Pass
+  `lock=True` (or configure `lock=True` on `CacheManager`) to coordinate
+  concurrent misses for the same key through `CacheLock` so only one caller
+  executes `factory` while others wait for the cached value. `LockTimeoutError`
+  now also subclasses the standard library `TimeoutError`, so `except TimeoutError`
+  catches it. ([#66](https://github.com/allen0099/FastAPI-CacheX/issues/66))
+- **Every backend can be closed with `aclose()` and used with `async with`.**
+  `AsyncRedisCacheBackend.aclose()` closes the redis-py client and the connection
+  pool it created, and `MemcachedBackend.aclose()` closes every pooled socket, so
+  the lifespan pattern in the backends guide works for all three backends instead
+  of raising `AttributeError` on Redis and Memcached. `BaseCacheBackend` gains a
+  no-op `aclose()` that custom backends may override, and `__aenter__`/`__aexit__`
+  that close the backend when the block ends. Calling `aclose()` twice is safe; a
+  Redis `connection_pool=` you pass in is left for you to close. ([#243](https://github.com/allen0099/FastAPI-CacheX/issues/243))
+- **`build_cache_key(request, *components)` builds the default cache key plus
+  extra components.** A custom `key_builder` that adds a user ID, tenant or
+  locale no longer rebuilds `method|||host|||path|||query` by hand: with no
+  components the helper returns exactly the default key (existing entries keep
+  their keys), and each `str` or `int` component is appended after the query
+  string, percent-encoded like the host and path so it cannot inject the
+  separator. `clear_path()` on the memory and Redis backends still clears such
+  keys by path, and without `include_params` no longer mistakes the extra
+  components for a query string; the monitoring routes report them, decoded, in
+  a new `extra_components` field. The per-user example in HTTP_CACHING.md
+  ("Authenticated endpoints") now uses it. `default_key_builder` stays and
+  returns `build_cache_key(request)`. ([#264](https://github.com/allen0099/FastAPI-CacheX/issues/264))
+- **Add `@cache(sort_query=True)` so reordered query strings share one entry.**
+  The default key builder then orders the query parameters by name, so
+  `?a=1&b=2` and `?b=2&a=1` hit the same entry. The sort is stable: repeated
+  values of one name keep the order the client sent, so `?tag=b&tag=a` and
+  `?tag=a&tag=b` stay distinct, and names and values are encoded exactly as in
+  the unsorted key. The default `False` leaves every existing key unchanged.
+  Combining it with a custom `key_builder` raises `CacheXError`; such a builder
+  can call `build_cache_key(request, sort_query=True)` instead.
+  `invalidate()` takes the same `sort_query` keyword. ([#267](https://github.com/allen0099/FastAPI-CacheX/issues/267))
+- **`@cache(vary=[...])` caches one entry per value of the listed request
+  headers.** A route whose response depends on `Accept-Language` or `Accept` no
+  longer serves the first cached variant to everyone: each listed header adds a
+  `name=value` component (name lower-cased, value trimmed, missing as empty) to
+  the key, after whatever the `key_builder` returns, and the names are added to
+  the `Vary` header of every GET response, 200 or 304, stored or not, without
+  repeating names already there and leaving `Vary: *` alone. `vary` is checked
+  when the decorator is applied; a bare string such as `vary="Accept"` is
+  rejected. `invalidate()` takes the same `vary` list, and `clear_path()` clears
+  every variant of a path. Routes without `vary` keep their keys. The credential
+  headers `Authorization`, `Proxy-Authorization`, `Cookie` and `X-Session-Token`
+  are keyed on `sha256:` plus the SHA-256 of their value, so no token or session
+  cookie shows up in `get_all_keys()`, the monitoring routes or the Redis and
+  Memcached keyspace; missing or empty, they stay `name=` so anonymous callers
+  share one entry. Listing `Cookie` emits a `UserWarning` when the decorator is
+  applied, since every visitor then gets an entry of their own. The header
+  values are client-controlled, so HTTP_CACHING.md shows how to normalise them
+  with a `key_builder` and `build_cache_key` instead. ([#268](https://github.com/allen0099/FastAPI-CacheX/issues/268))
+- **`login(request, user)` logs a user in through `FastAPICacheXSessionMiddleware`.**
+  It gives the request's session a new ID against session fixation, or starts a
+  new session for a visitor who has none, and attaches the `SessionUser`, so a
+  later request with the new token passes `require_user_session` /
+  `AuthenticatedSession`. A session that belonged to a different user is
+  deleted and replaced by a new one, so none of its data reaches the new user.
+  The middleware sends that token through the request's transport (cookie, header or `Authorization: Bearer`) with
+  `Cache-Control: private, no-store`. Before, a login needed
+  `rotate_session_id()`, then `update_session()` to save the user, and for a new
+  visitor a hand-built cookie; writing `request.session["user_id"]`, as the
+  `rotate_session_id()` docstring showed, never attached a user at all.
+  `login()` raises `RuntimeError` outside `FastAPICacheXSessionMiddleware`.
+  `examples/session_login.py` and the session guide now use it. ([#293](https://github.com/allen0099/FastAPI-CacheX/issues/293))
+- **Added a security policy.** `SECURITY.md` explains how to report a
+  vulnerability privately through GitHub private vulnerability reporting instead
+  of a public issue, which release line gets security fixes (the latest 0.3.x)
+  and what to include in a report. It is linked from the contributing guide and
+  the README. ([#300](https://github.com/allen0099/FastAPI-CacheX/issues/300))
+- **`@cache` warns once when a credential makes a route bypass the backend.**
+  The first request that bypasses the shared backend on a route because it
+  carried an `Authorization` header, a session token or non-empty
+  `request.session` data is logged at `WARNING` on the `fastapi_cachex.cache`
+  logger, once per route and credential kind, naming the route template and the
+  credential (never its value). The message points to `public=True` for a
+  response that is the same for every user (which also sends `Cache-Control:
+  public` downstream) and to `cache_authorized=True` with a per-user
+  `key_builder` for a per-user one. Each bypass is still logged at `DEBUG`.
+  `docs/HTTP_CACHING.md` gains a "Requests with credentials" section on choosing
+  between the two. ([#326](https://github.com/allen0099/FastAPI-CacheX/issues/326))
+
+### Changed
+
+- **The implicit `MemoryBackend` fallback now logs a warning.** When `@cache`,
+  `CacheBackend` or `AppCache` registers a `MemoryBackend` because no backend was
+  set, the `fastapi_cachex.proxy` logger logs a `WARNING` once per process: the
+  cache is per process, so under multiple workers an invalidation reaches only
+  one worker. Configure a backend with `BackendProxy.set(...)` at startup to
+  silence it; an explicit `BackendProxy.set(MemoryBackend())` does not warn. The
+  fallback used to be logged only at `DEBUG`. ([#327](https://github.com/allen0099/FastAPI-CacheX/issues/327))
+
+### Deprecated
+
+- **Setting `token_source_priority` without `"cookie"`.** In 0.4.0 the list names
+  every token source. Its default becomes `["header", "bearer", "cookie"]`, the
+  order used today, and a list without `"cookie"` means the middleware neither
+  reads nor sets the session cookie. The list now accepts `"cookie"` as its last
+  entry, which changes nothing yet since the cookie is read there anyway; any
+  other position raises a `ValidationError`. `FastAPICacheXSessionMiddleware`
+  now emits a `FutureWarning` when the list was set explicitly without
+  `"cookie"`: add it as the last entry to keep the cookie. The default list does
+  not warn. See "Migrating to 0.4.0" in the docs. ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75))
+- **The `encoding` option of `AsyncRedisCacheBackend` and `RedisConfig`.** 0.4.0
+  removes it and reads raw bytes; entries were always UTF-8. Passing a UTF-8
+  `encoding` to `AsyncRedisCacheBackend`, or setting `encoding` on a
+  `RedisConfig` given to `load_from_config()`, now emits a `DeprecationWarning`.
+  Any other value passed to `AsyncRedisCacheBackend` gets no
+  `DeprecationWarning`: it keeps its `RuntimeWarning`, which already announces the
+  removal. Leave it out: UTF-8 is what you get without it. ([#126](https://github.com/allen0099/FastAPI-CacheX/issues/126))
+- **JWT HMAC secrets shorter than the hash output.** The `UserWarning` that
+  `JWTTokenSerializer` emits for an `HS384` key under 48 bytes or an `HS512` key
+  under 64 bytes now says that 0.4.0 will reject such a key at startup. ([#129](https://github.com/allen0099/FastAPI-CacheX/issues/129))
+- **`get_session_manager` finding the manager only on `app.state`.** 0.4.0
+  resolves `get_session_manager` (and `SessionManagerDep`, `ClientIPDep` and
+  `rotate_session_id()`, which use it) through `SessionManagerProxy` only. It now
+  emits a `FutureWarning`, once per app, when the proxy holds no manager or a
+  different one than the session middleware. Call
+  `SessionManagerProxy.set(session_manager)` at startup; the middleware can then
+  pick the manager up from the proxy. ([#131](https://github.com/allen0099/FastAPI-CacheX/issues/131))
+- **Relying on the session cookie defaults of `FastAPICacheXSessionMiddleware`.**
+  0.4.0 names the session cookie `__Host-session` and sets the `Secure` flag by
+  default, so every cookie session is logged out once on upgrade and a plain-HTTP
+  setup stops receiving the cookie. The middleware now emits a `FutureWarning`
+  when its config leaves `cookie_name` or `cookie_https_only` at the default. Set
+  both: `cookie_name="session", cookie_https_only=False` keeps the current cookie,
+  `cookie_name="__Host-session", cookie_https_only=True` switches now. The
+  warning does not depend on how clients send the token: a header-only app on
+  this middleware warns too. See "Migrating to 0.4.0" in the docs. ([#256](https://github.com/allen0099/FastAPI-CacheX/issues/256))
+- **`SessionConfig` with a `__Host-` or `__Secure-` cookie name that browsers
+  refuse.** A `__Host-` name without `cookie_https_only=True`, with a
+  `cookie_path` other than `"/"` or with a `cookie_domain`, and a `__Secure-` name
+  without `cookie_https_only=True`, now emit a `UserWarning`: browsers drop such a
+  cookie, so the session never sticks. 0.4.0 will reject these settings. ([#256](https://github.com/allen0099/FastAPI-CacheX/issues/256))
+- **Relying on the `lock=False` default of `CacheManager.get_or_set()`.** 0.4.0
+  turns stampede protection on by default. A `get_or_set()` call that passes no
+  `lock=`, on a manager created without `lock=` (including the one `AppCache`
+  creates), now emits a `FutureWarning` once per manager. Pass `lock=False` to
+  keep the current behaviour or `lock=True` to opt in now, per call or to
+  `CacheManager(...)`; for `AppCache`, register a manager with
+  `CacheManagerProxy.set()`. `CacheManager(lock=None)` is now accepted and means
+  "not chosen". ([#280](https://github.com/allen0099/FastAPI-CacheX/issues/280))
+- **Calling `add_routes()` without `dependencies`.** The monitoring routes have
+  no access control of their own and expose every cached key (including query
+  strings) and response previews, so leaving `dependencies` unset now emits a
+  `UserWarning`. 0.4.0 will require the parameter and turn
+  `include_content_preview` off by default
+  ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)). Pass a guard
+  such as `dependencies=[Depends(verify_admin)]`, or `dependencies=[]` to keep
+  the routes open on purpose without the warning. ([#301](https://github.com/allen0099/FastAPI-CacheX/issues/301))
+- **`SessionConfig.use_bearer_token`.** `token_source_priority` already decides
+  whether bearer tokens are read, and 0.4.0 removes the flag. Passing it now
+  emits a `DeprecationWarning`, whatever its value. Replace
+  `use_bearer_token=False` by leaving `"bearer"` out of the list (for example
+  `token_source_priority=["header", "cookie"]`); `use_bearer_token=True` is the
+  default and can be dropped. ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377))
+
+### Fixed
+
+- **`CacheManager.clear_pattern()` matches the manager's `key_prefix` literally.**
+  The prefix used to be passed to the backend as part of the glob, so glob
+  characters in it were live: `key_prefix="cache[1]:"` missed its own keys, and
+  `key_prefix="a?:"` also cleared the keys of a manager with prefix `ab:`. A
+  prefix without `*`, `?`, `[`, `]` or `\` still goes to the backend's native
+  `clear_pattern()` as before. A prefix with one makes `clear_pattern()` list
+  every key and match the rest of the key against `pattern` with
+  `fnmatch.fnmatchcase`, which is slower on Redis and uses fnmatch rather than
+  Redis glob syntax for `pattern`. Constructing a `CacheManager` with such a
+  prefix emits a `UserWarning`. ([#140](https://github.com/allen0099/FastAPI-CacheX/issues/140))
+- **`CacheManager.get_or_set()` returns the same value on a miss as on a hit.**
+  On a miss it used to return the object the factory produced, and on a later
+  hit the JSON-decoded copy, so a tuple came back as a tuple and then as a list,
+  and `{1: "a"}` as itself and then as `{"1": "a"}`. A miss now encodes the value
+  once, stores those bytes and returns them decoded. A value JSON cannot encode
+  (`datetime`, `Decimal`, `UUID`, a pydantic model) still raises `TypeError`
+  after the factory has run, and nothing is stored. ([#235](https://github.com/allen0099/FastAPI-CacheX/issues/235))
+- **Responses served from the cache carry an `Age` header, so downstream caches no longer keep them for up to twice the `ttl`.**
+  A hit, and a 304 answered from the stored entry's ETag, used to send
+  `Cache-Control: max-age=<ttl>` with no `Age`, so a browser or CDN restarted
+  the freshness clock on every hit. They now send `Age`, the whole seconds since
+  the entry was stored, clamped to `0`–`ttl` against clock skew between hosts;
+  downstream subtracts it from `max-age` (RFC 9111 §4.2.3). `CacheEntry` has a
+  new optional `stored_at` field (epoch seconds, wall clock) that `@cache` sets
+  and the Redis/Memcached codec stores. Entries written by older releases decode
+  with `stored_at=None` and are served without `Age`; responses the handler
+  renders (misses, `no_cache`, bypassed requests) never carry one. An `Age`
+  header the handler sets is no longer stored and replayed. ([#254](https://github.com/allen0099/FastAPI-CacheX/issues/254))
+- **`MemcachedBackend.increment()` no longer fails when a new short-lived counter expires mid-call.**
+  Creating a counter takes an `ADD` and then an `INCR`, and Memcached keeps time
+  in whole seconds, so a counter created with `ttl=1` could expire between the
+  two and `increment()` raised `CacheXError("Counter vanished between ADD and
+  INCR")`. The `ADD` + `INCR` pair is now retried up to 16 times in the same
+  worker call, starting a new window at `delta`; `CacheXError` is raised only if
+  the counter vanishes on every attempt. ([#315](https://github.com/allen0099/FastAPI-CacheX/issues/315))
+- **`MemcachedBackend.clear_path()` warns on every call, not only with `include_params=True`.** Memcached cannot enumerate keys, so `clear_path()` deletes only a key named exactly as the path and never an HTTP cache entry; the default call used to return `0` silently, leaving a response cached after a write. The warning and BACKENDS.md now point to `invalidate(request)`, which drops a cached route's entry on every backend. ([#320](https://github.com/allen0099/FastAPI-CacheX/issues/320))
+- **An `async` key builder is rejected when `@cache` is applied instead of failing every request with a 500.**
+  `@cache(key_builder=...)` accepted an `async def` builder (or an object with an
+  `async def __call__`, or a `functools.partial` of either) and then raised
+  `TypeError` on every request, plus a "coroutine was never awaited" warning. It
+  now raises `CacheXError` at decoration time, and `invalidate(request,
+  key_builder=...)` raises it before touching the backend. A builder that returns
+  anything but a `str` raises `CacheXError` on the request, whatever `fail_open`
+  says. Key builders must be sync functions returning `str`. ([#323](https://github.com/allen0099/FastAPI-CacheX/issues/323))
+- **`StateManager` treats more kinds of malformed stored state as malformed.**
+  A stored value that is JSON but not an object, such as `[1, 2]` or `"x"`, used
+  to escape as `TypeError`, and one holding an integer longer than Python's
+  digit limit (4300 by default) as `ValueError`. Now `consume_state()` raises
+  `StateDataError`, `validate_state()` returns `False` and
+  `get_state_metadata()` returns `None`, as documented for malformed data. ([#368](https://github.com/allen0099/FastAPI-CacheX/issues/368))
+- **Clearer warnings.** The `FutureWarning` from `get_session_manager()`
+  now says whether `SessionManagerProxy` is empty or holds a different manager,
+  the `UserWarning` for a `__Host-`/`__Secure-` cookie name the browser would
+  refuse links to the 0.4.0 issue, and the Memcached `RuntimeWarning`s of
+  `clear()`, `clear_path()`, `clear_pattern()` and `get_all_keys()` name the
+  application's line when raised through `CacheManager` or `SessionManager`,
+  rather than a line in the library. ([#386](https://github.com/allen0099/FastAPI-CacheX/issues/386))
+
+### Security
+
+- **`@cache` no longer stores responses that belong to one caller.** A request
+  with an `Authorization` header now bypasses the backend like `private=True`
+  (RFC 9111 §3.5), unless the route is `public=True` or opts in with the new
+  `cache_authorized=True`, meant for a `key_builder` that includes the verified
+  caller's identity. A response whose own `Cache-Control` contains `private` or
+  `no-store`, or that sets a cookie, is served but not stored, and the handler's
+  `private`/`no-store` header is no longer replaced by the decorator's. A cookie
+  response and a bypassed `Authorization` response are sent with `private` in
+  place of `public` (keeping the other directives; `private, no-cache` on
+  `no_cache` routes), so a CDN or proxy does not store them either;
+  `must_revalidate=True` does not lift the bypass. Previously all three were
+  stored and replayed to every caller, so one user's response could reach
+  another. The per-user example in HTTP_CACHING.md ("Authenticated endpoints")
+  now passes `cache_authorized=True`. ([#296](https://github.com/allen0099/FastAPI-CacheX/issues/296))
+- **Responses that carry a session token are never cacheable.** When
+  `FastAPICacheXSessionMiddleware` sends a token (a new session, a sliding
+  renewal, a regenerated ID) or a cookie-clearing `Set-Cookie`, it now sets
+  `Cache-Control: private, no-store`, replacing whatever the route set, and adds
+  `Vary` for the token transport even when the handler never touched
+  `request.session`. Before, a `@cache(public=True)` route could return
+  `Cache-Control: public` with a valid session cookie, and a CDN or reverse proxy
+  could hand that cookie to the next visitors. The deprecated `SessionMiddleware`
+  does the same when it sends a token, and neither middleware repeats a `Vary`
+  name the response already has. ([#297](https://github.com/allen0099/FastAPI-CacheX/issues/297))
+- **`@cache` backend-failure warnings no longer log the cache key.** The
+  "Cache backend read failed" and "Cache backend write failed" warnings wrote
+  the full key, which holds the raw query string (`?token=...`, `?code=...`,
+  e-mail addresses), `vary` header values and any `build_cache_key` components,
+  into application logs. They now log the method, the path (formatted with `%r`,
+  so a control character in it is escaped) and `key_ref`, the first 12 hex
+  digits of the key's SHA-256, the same digest format as the OAuth state logs;
+  the full key is logged at `DEBUG` under the same `key_ref`.
+  `CacheManager.get()`'s "Failed to decode cached value" warning likewise logs
+  `key_ref` instead of the developer's key, which often embeds user IDs or
+  e-mail addresses. ([#299](https://github.com/allen0099/FastAPI-CacheX/issues/299))
+- **`@cache` no longer shares a response to a request that arrived with a
+  session.** Only `Authorization` bypassed the backend, so a plain `@cache` on a
+  route that read the session served the first visitor's response to everyone:
+  the session token in `X-Session-Token` or the session cookie, and anonymous
+  sessions (a cart in `request.session`), were not recognised. A request now
+  bypasses the backend and is answered with `private`, as for `Authorization`,
+  when the session middleware loaded a session for it (from any token transport,
+  with or without a user) or `request.session` is non-empty under any session
+  middleware. A token that resolves to no session does not count. `public=True`
+  and `cache_authorized=True` lift the bypass as before. ([#319](https://github.com/allen0099/FastAPI-CacheX/issues/319))
+- **`examples/session_login.py` no longer sends a new visitor's login token in a
+  cacheable response.** When no session was loaded, the example set the cookie
+  itself, and the middleware adds `Cache-Control: private, no-store` only to
+  tokens it sends, so a shared cache could store the login and hand it to the
+  next visitor. That branch now sends `Cache-Control: private, no-store`, sets the
+  cookie with every configured `cookie_*` attribute (`domain` was missing, so the
+  cookie cleared at logout did not match it), and keeps the token out of headers
+  and the body so page scripts cannot read it; API clients get theirs from a
+  token endpoint, as in `examples/session_jwt.py`. The session guide says the
+  same for this case. ([#322](https://github.com/allen0099/FastAPI-CacheX/issues/322))
+- **`@cache` routes without a positive `ttl` now send `private` to requests with
+  credentials.** A route with `ttl=0` or no `ttl` skips the backend anyway, so it
+  did not check for `Authorization` or a session, and it answered them with its
+  plain `Cache-Control`: `@cache(ttl=0, must_revalidate=True)` sent `max-age=0,
+  must-revalidate`, which RFC 9111 §3.5 lets a shared cache such as a CDN store
+  and reuse for other users after revalidation. Such a response now gets `private`
+  like on every other route (`private, max-age=0, must-revalidate`), unless the
+  route is `public=True`. No bypass warning is logged
+  for these routes, since they never read the backend. ([#362](https://github.com/allen0099/FastAPI-CacheX/issues/362))
+- **`cache_authorized=True` routes now send `private` to requests with
+  credentials, and session dependencies add `Vary`.** The option keys the backend
+  entry on the caller, but a shared cache in front of the app keys on the URL
+  alone, and the response kept the decorator's header: `max-age=60,
+  must-revalidate` let a CDN serve one user's answer to the next under RFC 9111
+  §3.5, and a session token in `X-Session-Token` or a cookie needs no directive
+  at all. Such responses (200, cache hit and 304) now carry `private` in place of
+  `public`, and the backend is still used. `get_session`, `get_optional_session`
+  and the dependencies built on them now make `FastAPICacheXSessionMiddleware`
+  (and the deprecated `SessionMiddleware`) add `Vary` for the token sources, as
+  reading `request.session` already did. Routes that serve the same answer to
+  every user should use `public=True`. ([#372](https://github.com/allen0099/FastAPI-CacheX/issues/372))
+- **The session examples no longer fall back to a fixed placeholder key.** With
+  `SESSION_SECRET_KEY` unset they emitted valid sessions signed with a key
+  published in the repository, so a copied example that reached production
+  without the variable accepted forged tokens. They now warn and sign with a
+  random key made up for that run. ([#384](https://github.com/allen0099/FastAPI-CacheX/issues/384))
 
 ## [0.3.8] - 2026-09-27
 
@@ -726,7 +1032,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.5...v0.3.6
