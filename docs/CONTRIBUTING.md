@@ -16,6 +16,30 @@ Report them privately through
 instead. The [security policy](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)
 lists the supported versions and what to include in a report.
 
+## Before You Open a Pull Request
+
+Pull requests from outside contributors start from an issue:
+
+1. Find or open an issue for the change, and say on it that you would like to
+   work on it.
+2. Wait until a maintainer assigns the issue to you.
+3. Open the pull request with `Fixes #<issue>` in its description.
+
+A change under `fastapi_cachex/` also needs a test under `tests/` and a
+changelog fragment (see [Pull Request Process](#pull-request-process)).
+
+A check, **PR gate**, enforces this for outside contributors; maintainers,
+collaborators and bots such as Renovate are exempt. It closes a pull request
+that does not close an issue assigned to its author. Editing a closed pull
+request does not reopen it, so open a new one once the issue is assigned to
+you. When only the tests or the fragment are missing, the pull request stays
+open, the check fails with a comment listing what is missing, and it runs
+again on every push or edit. The check asks for a fragment on every change
+under `fastapi_cachex/`; when a change needs none, such as a refactor, a
+maintainer waives the check with the `skip-pr-gate` label. A maintainer who
+reopens a pull request the check closed adds that label first, or the check
+closes it again.
+
 ## Development Process
 
 1. Fork the project
