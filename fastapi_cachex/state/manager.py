@@ -124,7 +124,7 @@ class StateManager:
 
         try:
             return StateData(**state_dict)
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
             msg = f"Invalid state data structure: {e}"
             raise StateDataError(msg) from e
 
