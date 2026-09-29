@@ -117,31 +117,6 @@ def test_backend_proxy_cannot_be_instantiated():
         BackendProxy()
 
 
-def test_get_backend_alias_warns_and_delegates():
-    """The 0.3.0 deprecation shims stay callable until 0.4.0 removes them."""
-    backend = MemoryBackend()
-    BackendProxy.set(backend)
-
-    with pytest.warns(DeprecationWarning, match="get_backend\\(\\) is deprecated"):
-        assert BackendProxy.get_backend() is backend
-
-
-def test_set_backend_alias_warns_and_delegates():
-    """Same for the setter, including clearing with `None`."""
-    backend = MemoryBackend()
-
-    with pytest.warns(DeprecationWarning, match="set_backend\\(\\) is deprecated"):
-        BackendProxy.set_backend(backend)
-
-    assert BackendProxy.get() is backend
-
-    with pytest.warns(DeprecationWarning, match="set_backend\\(\\) is deprecated"):
-        BackendProxy.set_backend(None)
-
-    with pytest.raises(BackendNotFoundError):
-        BackendProxy.get()
-
-
 @pytest.mark.parametrize(
     "proxy", [CacheManagerProxy, SessionManagerProxy, StateManagerProxy]
 )
