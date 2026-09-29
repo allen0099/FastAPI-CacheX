@@ -47,10 +47,11 @@ In your own project, install the extras an example needs, for example
 
 ## Secrets
 
-The session examples read their signing key from `SESSION_SECRET_KEY` and fall
-back to an obvious development placeholder. The monitoring routes in
-`http_cache.py` stay closed until `CACHE_ADMIN_TOKEN` is set. Always set real,
-random values outside local development:
+The session examples read their signing key from `SESSION_SECRET_KEY`. When it
+is unset they warn and sign with a random key made up for that run, so sessions
+end when the process restarts and are not shared between workers. The
+monitoring routes in `http_cache.py` stay closed until `CACHE_ADMIN_TOKEN` is
+set. Always set real, random values outside local development:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"

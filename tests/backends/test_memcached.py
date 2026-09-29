@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import socket
 import sys
 from unittest.mock import MagicMock
@@ -16,9 +17,11 @@ from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.backends.memcached import _CAS_MAX_RETRIES
 from fastapi_cachex.backends.memcached import _DEAD_TIMEOUT
+from fastapi_cachex.backends.memcached import _caller_stacklevel
 from fastapi_cachex.backends.memcached import _expiry
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.lock import CacheLock
+from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from tests.live_servers import MEMCACHED_SERVER
@@ -1144,3 +1147,36 @@ async def test_memcached_invalidate_drops_what_clear_path_cannot(
     )
     assert await invalidate(request) is True
     assert client.get("/products/1").json() == {"price": 5.0}
+
+
+async def test_unsupported_operation_warnings_name_the_callers_line() -> None:
+    backend = stubbed_backend()
+
+    with pytest.warns(RuntimeWarning, match="pattern matching") as record:
+        await backend.clear_pattern("users:*")
+    assert record[0].filename == __file__
+
+    with pytest.warns(RuntimeWarning, match="key enumeration") as record:
+        await backend.get_all_keys()
+    assert record[0].filename == __file__
+
+
+async def test_warnings_through_cache_manager_name_the_applications_line() -> None:
+    # Called through CacheManager, the warning skips the library's frames
+    # instead of pointing at manager.py.
+    manager = CacheManager(stubbed_backend())
+
+    with pytest.warns(RuntimeWarning, match="pattern matching") as record:
+        assert await manager.clear_pattern("users:*") == 0
+    assert record[0].filename == __file__
+
+    with pytest.warns(RuntimeWarning, match="key enumeration") as record:
+        assert await manager.clear() == 0
+    assert record[0].filename == __file__
+
+
+def test_caller_stacklevel_without_frame_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(inspect, "currentframe", lambda: None)
+    assert _caller_stacklevel() == 2

@@ -176,14 +176,19 @@ def get_session_manager(request: Request) -> "SessionManager":
                 "FastAPICacheXSessionMiddleware is added to the app."
             ),
         )
-    if not getattr(state, _PROXY_WARNED, False) and manager is not _proxy_manager():
+    proxy_manager = _proxy_manager()
+    if not getattr(state, _PROXY_WARNED, False) and manager is not proxy_manager:
         setattr(state, _PROXY_WARNED, True)
+        registered = (
+            "no SessionManager is set in SessionManagerProxy"
+            if proxy_manager is None
+            else "a different SessionManager is set in SessionManagerProxy"
+        )
         warnings.warn(
             "get_session_manager() returned the SessionManager the session "
-            "middleware registered, which is not the one set in "
-            "SessionManagerProxy. Version 0.4.0 resolves get_session_manager() "
-            "(and SessionManagerDep, ClientIPDep and rotate_session_id(), which use "
-            "it) through SessionManagerProxy "
+            f"middleware registered, but {registered}. Version 0.4.0 resolves "
+            "get_session_manager() (and SessionManagerDep, ClientIPDep and "
+            "rotate_session_id(), which use it) through SessionManagerProxy "
             "only. Call SessionManagerProxy.set(session_manager) at startup "
             "(https://github.com/allen0099/FastAPI-CacheX/issues/131).",
             FutureWarning,

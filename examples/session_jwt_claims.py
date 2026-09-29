@@ -16,6 +16,7 @@ see ``redis_backend.py`` for Redis. Run it from a checkout (see
 # --8<-- [start:serializer]
 import os
 import secrets
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -130,15 +131,30 @@ class MultiTenantJWTSerializer(CustomClaimsJWTSerializer):
 
 # --8<-- [end:multi-tenant]
 
+
 # --8<-- [start:setup]
+def session_secret_key() -> str:
+    """Return SESSION_SECRET_KEY, or a random key for this run with a warning."""
+    key = os.environ.get("SESSION_SECRET_KEY")
+    if key:
+        return key
+    warnings.warn(
+        "SESSION_SECRET_KEY is not set, so this run signs sessions with a "
+        "random key: they end when the process restarts and are not shared "
+        "between workers. Set SESSION_SECRET_KEY to a random value of at least "
+        "32 characters, e.g. the output of "
+        '`python -c "import secrets; print(secrets.token_urlsafe(48))"`.',
+        UserWarning,
+        stacklevel=2,
+    )
+    return secrets.token_urlsafe(48)
+
+
 backend = MemoryBackend()
 config = SessionConfig(
-    # HS256 wants a key of at least 32 bytes (HS384: 48, HS512: 64). Set a real
-    # random value in production, e.g.
-    # `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
-    secret_key=os.environ.get(
-        "SESSION_SECRET_KEY", "dev-only-placeholder-change-me-before-deploying"
-    ),
+    # HS256 wants a key of at least 32 bytes (HS384: 48, HS512: 64); see
+    # session_secret_key().
+    secret_key=session_secret_key(),
     token_format="jwt",
     jwt_algorithm="HS256",
     jwt_issuer="acme-corp",
