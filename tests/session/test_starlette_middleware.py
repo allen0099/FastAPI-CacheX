@@ -963,12 +963,13 @@ async def test_cookie_token_varies_on_cookie_and_the_headers_checked_first(
 
 
 def test_disabled_bearer_transport_is_left_out_of_vary(manager: SessionManager) -> None:
-    config = SessionConfig(
-        secret_key="a" * 32,
-        use_bearer_token=False,
-        cookie_name="session",
-        cookie_https_only=False,
-    )
+    with pytest.warns(DeprecationWarning, match="use_bearer_token"):
+        config = SessionConfig(
+            secret_key="a" * 32,
+            use_bearer_token=False,
+            cookie_name="session",
+            cookie_https_only=False,
+        )
     client = TestClient(_session_reading_app(manager, config))
 
     response = client.get("/read")

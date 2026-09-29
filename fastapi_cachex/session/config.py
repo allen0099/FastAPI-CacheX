@@ -107,11 +107,14 @@ class SessionConfig(BaseModel):
     )
     use_bearer_token: bool = Field(
         default=True,
-        description="Whether to accept Authorization Bearer tokens",
+        description="Whether to accept Authorization Bearer tokens (deprecated: "
+        'leave "bearer" out of token_source_priority instead; removed in 0.4.0)',
     )
-    token_source_priority: list[Literal["header", "bearer"]] = Field(
+    token_source_priority: list[Literal["header", "bearer", "cookie"]] = Field(
         default=["header", "bearer"],
-        description="Priority order for token sources",
+        description="Priority order for token sources. The session cookie is "
+        'read after the header sources; "cookie" may only be the last entry '
+        "until 0.4.0, which drops the cookie from a list without it",
     )
 
     # JWT settings (used when token_format == 'jwt')
@@ -272,6 +275,47 @@ class SessionConfig(BaseModel):
                 "session cookie would never be stored. Version 0.4.0 will reject "
                 "this configuration.",
                 UserWarning,
+                stacklevel=3,
+            )
+        return self
+
+    @field_validator("token_source_priority")
+    @classmethod
+    def _check_cookie_is_last(
+        cls, value: list[Literal["header", "bearer", "cookie"]]
+    ) -> list[Literal["header", "bearer", "cookie"]]:
+        """Only accept ``"cookie"`` where the cookie is read today: last.
+
+        ``FastAPICacheXSessionMiddleware`` reads the cookie after the header
+        sources, so listing it last changes nothing before 0.4.0, when the
+        list decides the order and a list without it disables the cookie (#75).
+        """
+        if "cookie" in value and value.index("cookie") != len(value) - 1:
+            msg = (
+                '"cookie" must be the last entry of token_source_priority: the '
+                "session cookie is read after the header sources until 0.4.0 "
+                "(https://github.com/allen0099/FastAPI-CacheX/issues/75)"
+            )
+            raise ValueError(msg)
+        return value
+
+    @model_validator(mode="after")
+    def _warn_use_bearer_token(self) -> "SessionConfig":
+        """Deprecate ``use_bearer_token``, which 0.4.0 removes (#377).
+
+        ``token_source_priority`` already decides whether bearer tokens are
+        read, so passing the flag at all warns, whatever its value.
+        """
+        if "use_bearer_token" in self.model_fields_set:
+            warnings.warn(
+                "SessionConfig(use_bearer_token=...) is deprecated and will be "
+                "removed in version 0.4.0. token_source_priority decides the "
+                "token sources: drop use_bearer_token=True (the default), and "
+                'replace use_bearer_token=False by leaving "bearer" out of '
+                'token_source_priority, keeping "cookie" last, e.g. '
+                '["header", "cookie"] '
+                "(https://github.com/allen0099/FastAPI-CacheX/issues/377).",
+                DeprecationWarning,
                 stacklevel=3,
             )
         return self

@@ -31,6 +31,7 @@ filterwarnings = [
 | 明確的 `login()`／`logout()`、唯讀的 `Session.user` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | 否 | [登入與登出](#login-logout) |
 | `get_or_set()` 預設使用鎖 | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set 的鎖](#get-or-set-lock) |
 | `get_session_manager` 透過 `SessionManagerProxy` 取得 | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
+| `token_source_priority` 列出所有權杖來源；沒有 `"cookie"` 的清單會停用 Cookie | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | `FutureWarning` | [權杖來源](#token-source-priority) |
 | `add_routes()` 必須傳入 `dependencies`，預設不含內容預覽 | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning` | [監控路由](#add-routes) |
 | 移除 Redis 的 `encoding` 選項 | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning`（UTF-8 以外的值為 `RuntimeWarning`） | [Redis encoding](#redis-encoding) |
 | 拒絕短於雜湊輸出的 JWT HMAC 密鑰 | [#129](https://github.com/allen0099/FastAPI-CacheX/issues/129) | `UserWarning` | [JWT 密鑰長度](#jwt-secret) |
@@ -38,13 +39,13 @@ filterwarnings = [
 | 移除 `BackendProxy.get_backend()`／`set_backend()` | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
 | 移除 `CacheError` | [#130](https://github.com/allen0099/FastAPI-CacheX/issues/130) | `DeprecationWarning` | [CacheError](#cache-error) |
 | 移除 Redis `clear_pattern()` 去除前綴後的重試 | [#125](https://github.com/allen0099/FastAPI-CacheX/issues/125) | `DeprecationWarning` | [Redis clear_pattern](#redis-clear-pattern) |
+| 移除 `SessionConfig.use_bearer_token` | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [權杖來源](#token-source-priority) |
 | `UserSessionDep` 需要使用者 | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | 否 | [UserSessionDep](#user-session-dep) |
 | 移除 `memcache` extra | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | 否 | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` 回傳 `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | 否 | [delete() 的回傳值](#backend-delete) |
 | `CacheEntry.headers` 改為成對值的清單 | [#105](https://github.com/allen0099/FastAPI-CacheX/issues/105) | 否 | [重複的標頭](#cache-entry-headers) |
 | HTTP 快取鍵格式 | [#271](https://github.com/allen0099/FastAPI-CacheX/issues/271)、[#270](https://github.com/allen0099/FastAPI-CacheX/issues/270)、[#269](https://github.com/allen0099/FastAPI-CacheX/issues/269)、[#266](https://github.com/allen0099/FastAPI-CacheX/issues/266)、[#265](https://github.com/allen0099/FastAPI-CacheX/issues/265)、[#72](https://github.com/allen0099/FastAPI-CacheX/issues/72) | 否 | [快取鍵](#cache-keys) |
 | 有條件的 Session 寫入 | [#128](https://github.com/allen0099/FastAPI-CacheX/issues/128) | 否 | [Session 寫入](#session-writes) |
-| `token_source_priority` 可包含 Cookie | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | 否 | [權杖來源](#token-source-priority) |
 
 ## Session {#sessions}
 
@@ -185,7 +186,29 @@ SessionConfig(
 
 ### 權杖來源 {#token-source-priority}
 
-0.4.0 起，`SessionConfig.token_source_priority` 除了 `"header"` 與 `"bearer"` 之外也接受 `"cookie"`（[#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)），`FastAPICacheXSessionMiddleware` 會依照清單順序尋找權杖。現有的清單仍可運作；目前 Cookie 會在標頭與 bearer 來源之後讀取。預設清單是否加入 `"cookie"`、放在什麼位置，尚未決定。
+0.4.0 起，`SessionConfig.token_source_priority` 列出所有權杖來源（[#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)）。`FastAPICacheXSessionMiddleware` 會依照清單順序尋找權杖，`"cookie"` 可以放在任何位置，預設值改為 `["header", "bearer", "cookie"]`，也就是目前使用的順序。沒有 `"cookie"` 的清單代表不使用 Cookie：中介軟體既不讀取也不設定它，而為沒有權杖的請求建立的 Session 會在 `header_name` 回應標頭中送出權杖。純 API 的應用就是用這種方式關閉 Cookie。
+
+0.3.9 接受把 `"cookie"` 放在最後一項（也就是目前讀取 Cookie 的位置，因此暫時不會改變任何行為）；明確設定的清單沒有它時，`FastAPICacheXSessionMiddleware` 會發出 `FutureWarning`。預設清單不會發出警告。
+
+```python
+# 之前：雖然清單沒寫，Cookie 仍會在這兩者之後被讀取
+SessionConfig(secret_key=SECRET, token_source_priority=["bearer", "header"])
+
+# 之後，保留 Cookie（在 0.3.9 與 0.4.0 皆可運作）
+SessionConfig(secret_key=SECRET, token_source_priority=["bearer", "header", "cookie"])
+```
+
+`use_bearer_token` 已移除（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)），是否讀取 Bearer 權杖只由清單決定。0.3.9 在傳入它時，不論值為何，都會發出 `DeprecationWarning`：
+
+```python
+# 之前
+SessionConfig(secret_key=SECRET, use_bearer_token=False)
+
+# 之後
+SessionConfig(secret_key=SECRET, token_source_priority=["header", "cookie"])
+```
+
+`use_bearer_token=True` 是預設值，直接拿掉即可。
 
 ## 應用層快取 {#application-cache}
 

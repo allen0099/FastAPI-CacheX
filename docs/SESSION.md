@@ -235,8 +235,11 @@ SessionConfig(
     # Token sources (API-first architecture)
     token_format="simple",  # "simple" (default) or "jwt"
     header_name="X-Session-Token",
-    use_bearer_token=True,
-    token_source_priority=["header", "bearer"],  # only these two values (see below)
+    use_bearer_token=True,  # deprecated: leave "bearer" out of token_source_priority instead
+    token_source_priority=[
+        "header",
+        "bearer",
+    ],  # "cookie" only as the last entry (see below)
     # JWT (used when token_format == "jwt")
     jwt_algorithm="HS256",  # "none" is rejected
     jwt_issuer=None,  # if set, iss is written and verified on parsing
@@ -282,17 +285,29 @@ session that many seconds after it was created, regardless of sliding renewals: 
 the backend TTL and a JWT's `exp` never go past `created_at + absolute_timeout`, and once
 the expiry reaches that cap no further renewed tokens are issued.
 
-#### `token_source_priority` accepts only `"header"` and `"bearer"`
+#### `token_source_priority` and the session cookie
 
-The field's type is `list[Literal["header", "bearer"]]`; passing `"cookie"` is rejected by
-Pydantic with a `ValidationError`. The cookie is **not** part of the priority order:
-`FastAPICacheXSessionMiddleware` resolves tokens in a fixed order — it first reads
-header/bearer following `token_source_priority`, and only falls back to the cookie when neither
-yields a token. This is deliberate: the response side is routed by the token's source (header in,
-header out; cookie in, `Set-Cookie` out), and mixing the cookie into the same priority list would
-make a `["cookie"]` setting fail silently on the deprecated `SessionMiddleware`. Once
-`SessionMiddleware` is removed in 0.4.0, all three sources may be described by a single priority
-list.
+`FastAPICacheXSessionMiddleware` first reads the header sources in `token_source_priority` order,
+and only falls back to the cookie when none of them yields a token. The response side follows the
+token's source (header in, header out; cookie in, `Set-Cookie` out).
+
+Until 0.4.0 the cookie is read whether or not the list names it. `"cookie"` is accepted only as the
+last entry, which is where it is read anyway, so listing it changes nothing yet; any other position
+raises a `ValidationError`. The deprecated `SessionMiddleware` never reads the cookie and ignores
+the entry.
+
+In 0.4.0 the list names every token source, and its default becomes `["header", "bearer",
+"cookie"]`, the order used today. A list without `"cookie"` then means no cookie at all: the
+middleware neither reads nor sets it, and a session created for a request without a token sends
+its token in the `header_name` response header ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)).
+So `FastAPICacheXSessionMiddleware` emits a `FutureWarning` when the list was set explicitly
+without `"cookie"`. Add `"cookie"` as the last entry to keep the cookie; the default list does not
+warn. See [Migrating to 0.4.0](MIGRATING_0_4.md#token-source-priority).
+
+`use_bearer_token` is deprecated and removed in 0.4.0 ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)):
+passing it emits a `DeprecationWarning`. Instead of `use_bearer_token=False`, leave `"bearer"` out
+of the list (`token_source_priority=["header", "cookie"]`); `use_bearer_token=True` is the
+default and can simply be dropped.
 
 **Header/bearer clients** should store the token in `localStorage` or `sessionStorage` and send
 it as `Authorization: Bearer <token>` or `X-Session-Token: <token>`. **Cookie clients** (browsers)
