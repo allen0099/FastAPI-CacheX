@@ -4,6 +4,7 @@ import os
 import time
 from collections.abc import Awaitable
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -204,8 +205,28 @@ def test_cleanup_restarts_on_a_new_loop_after_the_old_one_closed():
         assert task is not stale
         assert task.get_loop() is second
         backend.stop_cleanup()  # the stale task's loop is closed: must not raise
+        assert stale is not None
+        assert not stale.done()  # left pending for good: its loop never runs again
     finally:
         _close(second)
+        _silence_pending_task_report(first)
+
+
+def _silence_pending_task_report(loop: asyncio.AbstractEventLoop) -> None:
+    """Keep ``loop``'s abandoned task from being reported when it is collected.
+
+    A task on a closed loop cannot be cancelled: cancelling schedules a
+    callback on its loop, which raises. Garbage-collecting it then reports
+    "Task was destroyed but it is pending!" through the loop's exception
+    handler, in whichever later test the collector happens to run (#295).
+    The loop object outlives its close, so its handler can still be set.
+    """
+
+    def handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        if context.get("message") != "Task was destroyed but it is pending!":
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
 
 
 def test_cleanup_moving_loops_cancels_the_task_on_a_loop_still_open():
