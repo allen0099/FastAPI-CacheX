@@ -1,4 +1,4 @@
-"""State manager for OAuth and session state handling."""
+"""State manager for one-time OAuth state tokens."""
 
 import hashlib
 import hmac
@@ -64,7 +64,7 @@ def _log_decode_failure(state: str) -> None:
 
 
 class StateManager:
-    """Manages OAuth state and session state lifecycle and storage."""
+    """Manages the lifecycle and storage of one-time OAuth state tokens."""
 
     def __init__(
         self,
@@ -82,7 +82,10 @@ class StateManager:
         Raises:
             BackendNotFoundError: If ``backend`` is None and no backend has
                 been set with ``BackendProxy.set()``.
-            ValueError: If ``default_ttl`` is zero or negative.
+            TypeError: If ``default_ttl`` is not an ``int`` (a float or bool
+                is rejected).
+            ValueError: If ``default_ttl`` is zero, negative or above
+                ``MAX_TTL``.
         """
         validate_ttl(default_ttl)
         self.backend = backend if backend is not None else BackendProxy.get()
@@ -166,7 +169,10 @@ class StateManager:
             The generated state string
 
         Raises:
-            ValueError: If ``ttl`` is zero or negative, or ``binding`` is empty.
+            TypeError: If ``ttl`` is not an ``int`` (a float or bool is
+                rejected).
+            ValueError: If ``ttl`` is zero, negative or above ``MAX_TTL``, or
+                ``binding`` is empty.
 
         Backend errors (for example a Redis connection error) propagate
         unchanged; they are not wrapped in ``StateDataError``.
@@ -222,6 +228,9 @@ class StateManager:
                 does not match
             StateExpiredError: If state has expired
             StateDataError: If state data format is invalid
+
+        Backend errors propagate unchanged; on Memcached, a value replaced by
+        other writers 16 times in a row raises ``CacheXError``.
         """
         # Take the state out of the backend atomically: of several concurrent
         # callers presenting the same state exactly one gets the entry, so a

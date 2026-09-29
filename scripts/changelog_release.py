@@ -13,7 +13,8 @@ line per change. Every entry therefore opens with a bold one-line summary::
 
 and the release body is those summaries with their issue links, grouped under
 the same `###` headings, followed by a link to the full entries on the
-documentation site.
+documentation site. A notice written above the section's first `###` heading or
+entry is copied verbatim to the top of the body.
 
 Three rules drive the implementation:
 

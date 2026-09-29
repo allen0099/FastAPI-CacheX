@@ -61,7 +61,8 @@ config = SessionConfig(
     cookie_https_only=True,
 )
 session_manager = SessionManager(backend, config)
-SessionManagerProxy.set(session_manager)  # ClientIPDep resolves it through the proxy
+# From 0.4.0 ClientIPDep resolves the manager only through the proxy.
+SessionManagerProxy.set(session_manager)
 
 
 @asynccontextmanager

@@ -27,7 +27,10 @@ from fastapi_cachex.backends import AsyncRedisCacheBackend
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Connect to Redis on startup and close the connection pool on shutdown."""
+    """Register a Redis backend on startup and close its connection pool on shutdown.
+
+    The client connects lazily, on the first command.
+    """
     backend = AsyncRedisCacheBackend(
         host=os.environ.get("REDIS_HOST", "127.0.0.1"),
         port=int(os.environ.get("REDIS_PORT", "6379")),

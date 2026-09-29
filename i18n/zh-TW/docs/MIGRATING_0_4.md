@@ -32,7 +32,7 @@ filterwarnings = [
 | `get_or_set()` 預設使用鎖 | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set 的鎖](#get-or-set-lock) |
 | `get_session_manager` 透過 `SessionManagerProxy` 取得 | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
 | `add_routes()` 必須傳入 `dependencies`，預設不含內容預覽 | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning` | [監控路由](#add-routes) |
-| 移除 Redis 的 `encoding` 選項 | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning` | [Redis encoding](#redis-encoding) |
+| 移除 Redis 的 `encoding` 選項 | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning`（UTF-8 以外的值為 `RuntimeWarning`） | [Redis encoding](#redis-encoding) |
 | 拒絕短於雜湊輸出的 JWT HMAC 密鑰 | [#129](https://github.com/allen0099/FastAPI-CacheX/issues/129) | `UserWarning` | [JWT 密鑰長度](#jwt-secret) |
 | 移除 `SessionMiddleware` | [#69](https://github.com/allen0099/FastAPI-CacheX/issues/69) | `DeprecationWarning` | [SessionMiddleware](#session-middleware) |
 | 移除 `BackendProxy.get_backend()`／`set_backend()` | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
@@ -257,7 +257,7 @@ entry.headers["link"]
 
 ### 監控路由 {#add-routes}
 
-0.4.0 起 `add_routes()` 必須傳入 `dependencies`，`include_content_preview` 預設為 `False`（[#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)）。0.3.x 在省略 `dependencies` 時會發出 `UserWarning`。
+0.4.0 起 `add_routes()` 必須傳入 `dependencies`，`include_content_preview` 預設為 `False`（[#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)）。0.3.9 在省略 `dependencies` 時會發出 `UserWarning`。
 
 ```python
 # 修改前
@@ -273,7 +273,7 @@ add_routes(app, dependencies=[], include_content_preview=True)
 
 ### Redis encoding {#redis-encoding}
 
-0.4.0 的 Redis 用戶端會直接讀取原始位元組，並從 `AsyncRedisCacheBackend` 與 `RedisConfig` 移除 `encoding` 選項（[#126](https://github.com/allen0099/FastAPI-CacheX/issues/126)）。項目一律以 UTF-8 寫入，因此省略它不會改變任何行為。在 0.3.9 中，只要傳入 `encoding` 就會發出 `DeprecationWarning`（UTF-8 以外的值仍會另外發出 `RuntimeWarning`）。
+0.4.0 的 Redis 用戶端會直接讀取原始位元組，並從 `AsyncRedisCacheBackend` 與 `RedisConfig` 移除 `encoding` 選項（[#126](https://github.com/allen0099/FastAPI-CacheX/issues/126)）。項目一律以 UTF-8 寫入，因此省略它不會改變任何行為。在 0.3.9 中，傳給 `AsyncRedisCacheBackend` 的 UTF-8 `encoding` 會發出 `DeprecationWarning`，其他值則只會發出原有的 `RuntimeWarning`，其訊息同樣預告此參數將被移除。設定了 `encoding` 的 `RedisConfig` 在傳入 `load_from_config()` 時會發出 `DeprecationWarning`，若值不是 UTF-8 還會另外發出 `RuntimeWarning`。
 
 ```python
 # 修改前

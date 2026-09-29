@@ -8,7 +8,7 @@ class StateError(CacheXError):
 
 
 class InvalidStateError(StateError):
-    """Raised when a state is invalid or not found."""
+    """Raised when a state is invalid or not found, or its binding does not match."""
 
 
 class StateExpiredError(StateError):
