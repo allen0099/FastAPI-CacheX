@@ -137,7 +137,9 @@ A response that belongs to one caller is never stored either (#296):
   included. A token that resolves to no session (forged, expired) does not
   count, so it cannot be used to skip the cache. Before 0.3.9 only
   `Authorization` did, and a plain `@cache` on a route that read the session
-  served one visitor's response to the next (#319).
+  served one visitor's response to the next (#319). The first bypass on each
+  route is logged at `WARNING` (see
+  [Requests with credentials](#requests-with-credentials)).
 - **The handler's own `Cache-Control` contains `private` or `no-store`**
   (as whole directives, in any case). The response is served but not stored,
   and the handler's header is sent unchanged instead of the decorator's.
@@ -156,6 +158,53 @@ treatment it would without `@cache`: the value is validated and filtered by the
 route's response model (declared or inferred from the return annotation, with
 the `response_model_*` options), the route's `status_code` applies, and the
 status and headers set on an injected `response: Response` parameter are kept.
+
+### Requests with credentials
+
+A single-page app that sends `Authorization` on every request, or a site where
+every visitor has a session, gets no cache hits at all on a plain `@cache`
+route: each request bypasses the backend (see above). Pick the option that
+matches what the handler returns:
+
+- **The response is the same for every user** (a product list, a public
+  article): set `public=True`. Requests with `Authorization` or a session then
+  read and write the backend like any other. Note that `public=True` also
+  changes the header sent downstream to `Cache-Control: public, ...`, which
+  tells a CDN or reverse proxy that it may store the response even though the
+  request carried credentials. Only use it when that is true.
+- **The response is per user** (a profile, a cart, a dashboard): set
+  `cache_authorized=True` together with a `key_builder` that puts the verified
+  caller's identity into the key, so each user gets their own entry (see
+  [Authenticated endpoints](#authenticated-endpoints)). Without the identity in
+  the key, one user's response is served to the next. If you do not need a
+  server-side cache for it, leave both options unset (or use `private=True`)
+  and let only the browser cache it.
+
+So that a 0% hit rate does not go unnoticed, the first request that bypasses
+a route because of a credential is logged once at `WARNING` on the
+`fastapi_cachex.cache` logger, naming the route template (such as
+`'/items/{item_id}'`), the credential that caused it (an `Authorization`
+header, a session token, or non-empty `request.session` data) and the two
+options above:
+
+```text
+@cache bypassed the shared backend for route '/products': the request carried an Authorization header, so the response is not cached and is sent with Cache-Control: private. If the response is the same for every user, set @cache(public=True) (this also sends Cache-Control: public, so shared caches downstream may store it). If it is per user, set cache_authorized=True with a key_builder that puts the verified caller's identity into the key. Logged once per route and credential; each bypass is logged at DEBUG.
+```
+
+The warning is logged once per route and credential kind for the life of the
+process (so once per worker), never with a header value or token. Every
+bypass is still logged at `DEBUG`. When the bypass is what you want, set
+`private=True` on the route, which bypasses the backend without a warning, or
+raise the logger's level:
+
+```python
+import logging
+
+logging.getLogger("fastapi_cachex.cache").setLevel(logging.ERROR)
+```
+
+That also hides the backend-failure warnings described below, so prefer
+`private=True` where it fits.
 
 ### When the backend fails
 
