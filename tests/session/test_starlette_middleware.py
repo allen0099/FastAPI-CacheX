@@ -400,6 +400,36 @@ async def test_ip_binding_mismatch_starts_fresh_session(
     assert response.json() == {"has_data": False}
 
 
+@pytest.mark.parametrize(
+    ("user_agent", "loaded"), [("App/1.0", True), ("Other/2.0", False)]
+)
+async def test_user_agent_binding_checks_the_request_user_agent(
+    config: SessionConfig, user_agent: str, loaded: bool
+) -> None:
+    """A session bound to a User-Agent loads only for that User-Agent."""
+    config.user_agent_binding = True
+    manager = SessionManager(MemoryBackend(), config)
+
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    @app.get("/test")
+    async def test_route(request: Request) -> dict[str, bool]:
+        return {"has_data": bool(dict(request.session))}
+
+    _session, token = await manager.create_session(
+        user=SessionUser(user_id="u1"), user_agent="App/1.0", k="v"
+    )
+
+    client = TestClient(app)
+    client.cookies.set(config.cookie_name, token)
+    response = client.get("/test", headers={"User-Agent": user_agent})
+
+    assert response.json() == {"has_data": loaded}
+
+
 def test_get_client_ip_from_x_forwarded_for(config: SessionConfig) -> None:
     """Shared _get_client_ip reads X-Forwarded-For behind a trusted proxy."""
     from starlette.requests import HTTPConnection
