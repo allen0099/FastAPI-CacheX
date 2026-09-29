@@ -100,13 +100,13 @@ async def report(cache: AppCache):
 
 ## Documentation
 
+- [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/) — what 0.4.0 changes and how to act on the 0.3.9 warnings now
 - [HTTP caching](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation and monitoring routes
-- [Cache flow](https://fastapi-cachex.readthedocs.io/en/latest/CACHE_FLOW/) — what happens inside a cached request
 - [Application cache](https://fastapi-cachex.readthedocs.io/en/latest/APP_CACHE/) — `CacheManager`
 - [Backends](https://fastapi-cachex.readthedocs.io/en/latest/BACKENDS/) — choosing and configuring a backend, atomic primitives
-- [Session management](https://fastapi-cachex.readthedocs.io/en/latest/SESSION/) and [JWT claims](https://fastapi-cachex.readthedocs.io/en/latest/JWT_CLAIMS/)
-- [OAuth state](https://fastapi-cachex.readthedocs.io/en/latest/STATE/) — one-shot OAuth/CSRF state tokens
 - [Distributed lock](https://fastapi-cachex.readthedocs.io/en/latest/LOCK/) — `CacheLock` for multi-process mutual exclusion
+- [Session management](https://fastapi-cachex.readthedocs.io/en/latest/SESSION/), [OAuth state](https://fastapi-cachex.readthedocs.io/en/latest/STATE/) (one-shot OAuth/CSRF state tokens) and [JWT claims](https://fastapi-cachex.readthedocs.io/en/latest/JWT_CLAIMS/)
+- [Cache flow](https://fastapi-cachex.readthedocs.io/en/latest/CACHE_FLOW/) — what happens inside a cached request
 - [Runnable examples](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples) — one complete app per feature, each covered by the test suite
 - [API reference](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)
 - [Development guide](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/) and [contributing](https://fastapi-cachex.readthedocs.io/en/latest/CONTRIBUTING/) · [Security policy](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md) — report vulnerabilities privately, not in public issues

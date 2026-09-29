@@ -22,17 +22,21 @@ site_dir = "site-zh-TW"
 # to the local file once its translation lands.
 nav = [
   { "首頁" = "index.md" },
-  { "指南" = [
+  { "遷移至 0.4.0" = "MIGRATING_0_4.md" },
+  { "快取" = [
     { "HTTP 快取" = "HTTP_CACHING.md" },
-    { "快取流程" = "CACHE_FLOW.md" },
     { "應用層快取" = "APP_CACHE.md" },
     { "後端" = "BACKENDS.md" },
-    { "Session 管理" = "SESSION.md" },
-    { "JWT claims" = "JWT_CLAIMS.md" },
-    { "OAuth state" = "STATE.md" },
     { "分散式鎖" = "LOCK.md" },
   ] },
-  { "遷移至 0.4.0" = "MIGRATING_0_4.md" },
+  { "Session 與登入" = [
+    { "Session 管理" = "SESSION.md" },
+    { "OAuth state" = "STATE.md" },
+    { "JWT claims" = "JWT_CLAIMS.md" },
+  ] },
+  { "深入了解" = [
+    { "快取流程" = "CACHE_FLOW.md" },
+  ] },
   { "API 參考（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/" },
   { "開發" = [
     { "開發指南（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/" },

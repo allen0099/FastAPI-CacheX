@@ -18,21 +18,25 @@ site_dir = "site"
 
 nav = [
   { "Home" = "index.md" },
-  { "Guides" = [
+  { "Migrating to 0.4.0" = "MIGRATING_0_4.md" },
+  { "Caching" = [
     { "HTTP caching" = "HTTP_CACHING.md" },
-    { "Cache flow" = "CACHE_FLOW.md" },
     { "Application cache" = "APP_CACHE.md" },
     { "Backends" = "BACKENDS.md" },
-    { "Session management" = "SESSION.md" },
-    { "JWT claims" = "JWT_CLAIMS.md" },
-    { "State management" = "STATE.md" },
     { "Distributed lock" = "LOCK.md" },
   ] },
-  { "Migrating to 0.4.0" = "MIGRATING_0_4.md" },
+  { "Sessions and sign-in" = [
+    { "Session management" = "SESSION.md" },
+    { "OAuth state" = "STATE.md" },
+    { "JWT claims" = "JWT_CLAIMS.md" },
+  ] },
+  { "Under the hood" = [
+    { "Cache flow" = "CACHE_FLOW.md" },
+  ] },
   { "API reference" = [
     { "HTTP caching" = "api/http-caching.md" },
-    { "Backends" = "api/backends.md" },
     { "CacheManager" = "api/cache-manager.md" },
+    { "Backends" = "api/backends.md" },
     { "CacheLock" = "api/lock.md" },
     { "Session" = "api/session.md" },
     { "State" = "api/state.md" },
