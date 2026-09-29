@@ -485,20 +485,21 @@ async def test_redis_clear_pattern_no_matches(
 
 
 @requires_redis
-async def test_redis_clear_pattern_with_prefixed_pattern(
+async def test_redis_clear_pattern_does_not_strip_a_repeated_prefix(
     async_redis_backend: AsyncRedisCacheBackend,
 ):
-    """A pattern that repeats the key prefix still clears, with a deprecation (#109)."""
+    """A pattern that repeats the key prefix is not retried without it (#125)."""
     value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     await async_redis_backend.set("/api/users/1", value)
     await async_redis_backend.set("/api/users/2", value)
 
     prefixed = f"{async_redis_backend.key_prefix}/api/users/*"
-    with pytest.warns(DeprecationWarning, match=r"'/api/users/\*' instead"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         cleared = await async_redis_backend.clear_pattern(prefixed)
-    assert cleared == 2
-    assert await async_redis_backend.get("/api/users/1") is None
-    assert await async_redis_backend.get("/api/users/2") is None
+    assert cleared == 0
+    assert await async_redis_backend.get("/api/users/1") == value
+    assert await async_redis_backend.get("/api/users/2") == value
 
 
 @requires_redis
@@ -1334,9 +1335,8 @@ async def test_redis_glob_characters_in_prefix_do_not_reach_other_prefixes() -> 
         assert await globbed.get_all_keys() == ["mine"]
         assert await globbed.clear_pattern("*") == 1
         await globbed.set("mine", entry)
-        with pytest.warns(DeprecationWarning, match="key prefix"):
-            assert await globbed.clear_pattern("cachex-test?*:*") == 1
-        await globbed.set("mine", entry)
+        # The repeated prefix is not stripped, so it matches nothing (#125).
+        assert await globbed.clear_pattern("cachex-test?*:*") == 0
         await globbed.clear()
 
         assert await globbed.get_all_keys() == []

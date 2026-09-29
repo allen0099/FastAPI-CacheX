@@ -509,12 +509,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         Only ``pattern`` is a live glob; the backend's key prefix is matched
         literally and always added, so ``pattern`` matches the logical key like
-        on every other backend.
-
-        Before 0.3.8 a pattern that started with the key prefix was matched
-        with the prefix stripped instead. When a pattern like that clears
-        nothing, the old form is still tried, and a ``DeprecationWarning`` is
-        emitted if it clears anything. That retry will be removed in 0.4.0.
+        on every other backend. A pattern that itself starts with the key
+        prefix gets it twice, so ``"fastapi_cachex:GET*"`` matches only logical
+        keys that start with ``fastapi_cachex:``.
 
         Args:
             pattern: A glob pattern to match cache keys against
@@ -524,23 +521,6 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """
         full_pattern = self._prefix_pattern + pattern
         cleared_count = await self._delete_matching(full_pattern)
-        if (
-            cleared_count == 0
-            and self.key_prefix
-            and pattern.startswith(self.key_prefix)
-        ):
-            full_pattern = self._prefix_pattern + pattern.removeprefix(self.key_prefix)
-            cleared_count = await self._delete_matching(full_pattern)
-            if cleared_count:
-                warnings.warn(
-                    f"clear_pattern({pattern!r}) matched only with the backend's "
-                    f"key prefix {self.key_prefix!r} stripped. Patterns match the "
-                    "logical key, without the backend prefix; pass "
-                    f"{pattern.removeprefix(self.key_prefix)!r} instead. The "
-                    "stripped retry will be removed in version 0.4.0.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
         warn_if_path_shaped(pattern, cleared_count)
         logger.debug(
             "Redis CLEAR_PATTERN; pattern=%s removed=%s", full_pattern, cleared_count
