@@ -89,13 +89,13 @@ async def report(cache: AppCache):
 
 ## 文件 {#documentation}
 
+- [遷移至 0.4.0](MIGRATING_0_4.md)：0.4.0 的變更，以及現在如何處理 0.3.9 的警告
 - [HTTP 快取](HTTP_CACHING.md)：`@cache` 裝飾器、Cache-Control 指令、快取鍵、快取失效與監控路由
-- [快取流程](CACHE_FLOW.md)：快取請求內部的處理流程
 - [應用層快取](APP_CACHE.md)：`CacheManager`
 - [後端](BACKENDS.md)：選擇與設定後端、原子操作的基本功能
-- [Session 管理](SESSION.md)與 [JWT claims](JWT_CLAIMS.md)
-- [OAuth state](STATE.md)：一次性的 OAuth / CSRF state 權杖
 - [分散式鎖](LOCK.md)：以 `CacheLock` 在多個行程之間互斥
+- [Session 管理](SESSION.md)、[OAuth state](STATE.md)（一次性的 OAuth / CSRF state 權杖）與 [JWT claims](JWT_CLAIMS.md)
+- [快取流程](CACHE_FLOW.md)：快取請求內部的處理流程
 - [可執行範例](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples)（英文）：每個功能一個完整的應用程式，皆由測試套件涵蓋
 - [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)（英文）
 - [開發指南](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/)（英文）與[貢獻指南](CONTRIBUTING.md) · [安全性政策](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)（英文）：請私下回報漏洞，不要開公開 issue
