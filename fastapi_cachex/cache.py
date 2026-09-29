@@ -83,7 +83,9 @@ def build_cache_key(
         def per_user_key(request: Request) -> str:
             return build_cache_key(request, request.state.user_id)
 
-    ``|`` and ``%`` in the host, the path and every extra component are
+    The host is the ``Host`` header lower-cased, without an empty or default
+    port (``:80`` on http, ``:443`` on https), or ``unknown`` when there is
+    none. ``|`` and ``%`` in the host, the path and every extra component are
     percent-encoded (see ``escape_key_component``), so none of them can
     contain the separator and make one request's key equal another's. The
     query string is already URL-encoded and never contains ``|``.

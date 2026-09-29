@@ -68,7 +68,7 @@ cache_key = "|".join(
     [
         CacheKey.FORMAT_TAG,  # "http:v2"
         escape_key_component(request.method),
-        escape_key_component(request.headers.get("host", "unknown")),
+        escape_key_component(host),  # Host 標頭，已正規化（見下文）
         escape_key_component(request.url.path),
         query,
     ]
@@ -92,7 +92,7 @@ cache_key = "|".join(
 這個快取鍵格式讓每個維度各自獨立快取：
 
 - **方法隔離**：GET 與 POST 不共用快取（而且目前只有 GET 會進入快取流程）
-- **Host 隔離**：`example.com` 與 `api.example.com` 分開快取
+- **Host 隔離**：`example.com` 與 `api.example.com` 分開快取；`Example.com` 與（在 http 上的）`example.com:80` 都是 `example.com`
 - **路徑隔離**：每個端點有各自的項目
 - **查詢參數隔離**：同一端點上不同的查詢參數分開快取
 

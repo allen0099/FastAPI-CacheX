@@ -20,6 +20,9 @@ from .types import unescape_key_component
 # Format tag, method, host, path and query: a key never has fewer components.
 _MIN_PARTS = 5
 
+# The port a scheme implies when the Host header names none.
+_DEFAULT_PORTS = {"http": "80", "https": "443", "ws": "80", "wss": "443"}
+
 # Characters that are live in a Redis glob pattern.
 _GLOB_SPECIAL = frozenset("*?[]\\")
 
@@ -42,6 +45,35 @@ def _query_component(request: Request, sort_query: bool) -> str:
     if not sort_query:
         return str(request.query_params)
     return urlencode(sorted(request.query_params.multi_items(), key=itemgetter(0)))
+
+
+def _host_component(request: Request) -> str:
+    """The ``Host`` header as it appears in the key.
+
+    Hostnames are case-insensitive (RFC 9110 section 4.2.3), and an empty port
+    or the scheme's default one (``:80`` for http, ``:443`` for https) names
+    the same origin as no port (RFC 3986 section 6.2.3). So the host is
+    lower-cased and such a port dropped, and every spelling of one origin
+    shares an entry. An IPv6 literal keeps its brackets. The scheme is the
+    one the app sees (the ASGI scope's ``scheme``, which ``request.url``
+    also uses); behind a TLS-terminating proxy that is ``http`` unless the
+    proxy's headers are applied. A missing ``Host`` header gives
+    ``unknown``.
+    """
+    host = request.headers.get("host")
+    if host is None:
+        return "unknown"
+    host = host.lower()
+    name, colon, port = host.rpartition(":")
+    # No colon, no name before it, or the last colon is inside an IPv6
+    # literal (``[::1]``) or an unbracketed one (not a valid Host, kept as
+    # sent): no port to drop.
+    bracketed = name.startswith("[") and name.endswith("]")
+    if not colon or not name or (":" in name and not bracketed):
+        return host
+    if port in ("", _DEFAULT_PORTS.get(request.scope.get("scheme", "http"))):
+        return name
+    return host
 
 
 def _component_text(component: str | int) -> str:
@@ -117,7 +149,7 @@ class CacheKey:
         """
         return cls(
             method=request.method,
-            host=request.headers.get("host", "unknown"),
+            host=_host_component(request),
             path=request.url.path,
             query=_query_component(request, sort_query),
             extra=tuple(_component_text(component) for component in components),
