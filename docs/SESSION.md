@@ -4,24 +4,19 @@ FastAPI-CacheX Session Management provides complete user session handling, inclu
 tokens, sliding expiration, and optional IP/User-Agent binding. Session contents always live in
 the cache backend; the client only holds a single signed token.
 
-**How the token travels depends on which middleware you install:**
+**How the token travels with `FastAPICacheXSessionMiddleware`:**
 
-| Middleware | Token source | Response side | Status |
-|------------|--------------|---------------|--------|
-| `FastAPICacheXSessionMiddleware` | Custom header (default `X-Session-Token`) / `Authorization: Bearer` / **cookie** (default name `session`) | Routed by source: a request that sent a header or bearer token (even one that no longer resolves) gets its token in the response header; otherwise (a cookie, or no token at all) it gets `Set-Cookie` | **Recommended** |
-| `SessionMiddleware` | Custom header / `Authorization: Bearer`; **no cookie support** | A renewed token, or one for a regenerated ID, is sent back in the response header | Deprecated, **removed in 0.4.0** |
+| Token source | Response side |
+|--------------|---------------|
+| Custom header (default `X-Session-Token`) / `Authorization: Bearer` / **cookie** (default name `session`) | Routed by source: a request that sent a header or bearer token (even one that no longer resolves) gets its token in the response header; otherwise (a cookie, or no token at all) it gets `Set-Cookie` |
 
-**Use `FastAPICacheXSessionMiddleware` for all new projects.** It covers every transport of
-`SessionMiddleware` (it reads `X-Session-Token` and `Authorization: Bearer` in the same way) and
-adds cookie support. Since 0.3.1, `SessionMiddleware` emits a `DeprecationWarning` when it is
-constructed, and it will be **removed in 0.4.0**. Both middlewares feed the same session
-dependencies (`get_session`, `get_optional_session`, `require_session`), so migrating usually only
-means changing the `add_middleware` line; existing clients that send the token in a header need no
-changes.
+The header-only `SessionMiddleware`, deprecated since 0.3.1, was **removed in 0.4.0**; see
+[Migration](#migration-sessionmiddleware-fastapicachexsessionmiddleware).
 
 The six `cookie_*` settings of `SessionConfig` (`cookie_name`, `cookie_max_age`, `cookie_path`,
 `cookie_same_site`, `cookie_https_only`, `cookie_domain`) are **read only by
-`FastAPICacheXSessionMiddleware`**; setting them has no effect when `SessionMiddleware` is installed.
+`FastAPICacheXSessionMiddleware`**; setting them has no effect when `SessionManager` is used
+without it.
 
 Complete runnable examples: [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py) and [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py).
 
@@ -136,12 +131,12 @@ Both methods delete what they find with a single `backend.delete_many()` call.
 
 ## Migration: SessionMiddleware → FastAPICacheXSessionMiddleware
 
-`SessionMiddleware` has been deprecated since 0.3.1 (it emits a `DeprecationWarning` when
-constructed) and will be removed in 0.4.0. Use `FastAPICacheXSessionMiddleware` instead:
+`SessionMiddleware`, deprecated since 0.3.1, was removed in 0.4.0. Use
+`FastAPICacheXSessionMiddleware` instead:
 
-- **`SessionMiddleware`** (a `BaseHTTPMiddleware`): passes the token in a custom header (default
-  `X-Session-Token`) and/or `Authorization: Bearer`, suited to API-first architectures where the
-  client manages the token. Cookie transport is not supported.
+- **`SessionMiddleware`** (a `BaseHTTPMiddleware`, removed): passed the token in a custom header
+  (default `X-Session-Token`) and/or `Authorization: Bearer`, suited to API-first architectures
+  where the client manages the token. Cookie transport was not supported.
 - **`FastAPICacheXSessionMiddleware`** (a pure ASGI middleware): compatible with Starlette's
   built-in `SessionMiddleware`, exposing the same dict-like `request.session`. It passes the signed
   session token in a cookie (default cookie name `session`), while the session contents are stored
@@ -155,9 +150,9 @@ constructed) and will be removed in 0.4.0. Use `FastAPICacheXSessionMiddleware` 
   `Set-Cookie` is emitted; a token that arrived in a cookie (or a brand-new anonymous session for a
   request without a token) uses `Set-Cookie`.
 
-Both middlewares put the loaded `Session` object into `request.state`, so the existing session
-dependencies `get_session`, `get_optional_session`, `require_session` and `require_user_session`
-work under either middleware without any changes:
+`FastAPICacheXSessionMiddleware` puts the loaded `Session` object into `request.state` as
+`SessionMiddleware` did, so the session dependencies `get_session`, `get_optional_session`,
+`require_session` and `require_user_session` work without any changes:
 
 ```python
 from fastapi import Depends
@@ -205,8 +200,7 @@ async def me(session=Depends(require_user_session)):
   `Cache-Control: private, no-store`, replacing whatever the route set (a `@cache(public=True)`
   route included), and adds the same `Vary` names as above even when the handler never touched
   `request.session`. Otherwise a CDN or reverse proxy could store the token and hand it to the
-  next visitor. Responses without a token keep their headers. The deprecated `SessionMiddleware`
-  does the same when it sends a token in its response header.
+  next visitor. Responses without a token keep their headers.
 - `@cache` does not read or write its backend for a request that arrived with a session (one
   the middleware loaded, from any transport, with or without a user, or a non-empty
   `request.session`), and answers it with `private`, as for `Authorization`. `public=True`
@@ -293,8 +287,7 @@ token's source (header in, header out; cookie in, `Set-Cookie` out).
 
 Until 0.4.0 the cookie is read whether or not the list names it. `"cookie"` is accepted only as the
 last entry, which is where it is read anyway, so listing it changes nothing yet; any other position
-raises a `ValidationError`. The deprecated `SessionMiddleware` never reads the cookie and ignores
-the entry.
+raises a `ValidationError`.
 
 In 0.4.0 the list names every token source, and its default becomes `["header", "bearer",
 "cookie"]`, the order used today. A list without `"cookie"` then means no cookie at all: the
@@ -525,9 +518,9 @@ session `login()` returned, or issue the token from a separate endpoint, as
 Within one request, `request.session.clear()` after `login()` is a logout: the new session is
 deleted and no token is sent (a cookie client gets its cookie expired). `clear()` before
 `login()` logs the loaded session out, and `login()` then starts a new session instead of
-rotating it. Without `FastAPICacheXSessionMiddleware`, `login()` raises `RuntimeError`: the
-deprecated `SessionMiddleware` cannot send a token for a session it did not load, so there
-create the session with `create_session(user=...)` and return its token.
+rotating it. Without `FastAPICacheXSessionMiddleware`, `login()` raises `RuntimeError`, because
+nothing would send the token; create the session with `create_session(user=...)` and return its
+token instead.
 
 `request.session["user_id"] = "123"` is not a login. It is application data, which
 `require_user_session` and `AuthenticatedSession` do not recognise, and it keeps the session ID

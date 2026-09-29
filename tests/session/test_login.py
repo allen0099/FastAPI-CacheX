@@ -15,7 +15,6 @@ from fastapi_cachex.session.dependencies import OptionalSession
 from fastapi_cachex.session.exceptions import SessionNotFoundError
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
-from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.models import SessionUser
 
 TRANSPORTS = ["cookie", "header", "bearer"]
@@ -328,24 +327,6 @@ async def test_login_outside_the_middleware_raises() -> None:
 
     with pytest.raises(RuntimeError, match="FastAPICacheXSessionMiddleware"):
         await login(request, SessionUser(user_id="alice"))
-
-
-def test_login_under_the_deprecated_middleware_raises(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """The header-only SessionMiddleware cannot send a session it did not load."""
-    app = FastAPI()
-    app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
-
-    @app.post("/login")
-    async def log_in(request: Request) -> None:
-        await login(request, SessionUser(user_id="alice"))
-
-    with (
-        pytest.warns(DeprecationWarning, match="SessionMiddleware is deprecated"),
-        pytest.raises(RuntimeError, match="FastAPICacheXSessionMiddleware"),
-    ):
-        TestClient(app).post("/login", headers={config.header_name: "stale"})
 
 
 async def test_login_as_another_user_starts_a_clean_session(

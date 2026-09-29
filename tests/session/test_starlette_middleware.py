@@ -26,7 +26,6 @@ from fastapi_cachex.session.dependencies import rotate_session_id
 from fastapi_cachex.session.exceptions import SessionNotFoundError
 from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
-from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.session.proxy import SessionManagerProxy
 
@@ -666,18 +665,6 @@ async def test_header_source_invalid_token_new_session_via_header(
     assert created.data == {"k": "v"}
 
 
-def test_session_middleware_construction_is_deprecated(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    """SessionMiddleware is deprecated in favor of FastAPICacheXSessionMiddleware."""
-
-    async def app(scope, receive, send):
-        pass
-
-    with pytest.warns(DeprecationWarning, match="FastAPICacheXSessionMiddleware"):
-        SessionMiddleware(app, manager, config)
-
-
 async def test_header_source_cleared_session_is_deleted_without_a_cookie(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -715,11 +702,12 @@ def _regenerating_app(
     config: SessionConfig,
     *,
     write_data: bool,
-    middleware: Any = FastAPICacheXSessionMiddleware,
 ) -> FastAPI:
     """An app whose /login regenerates the request's session ID, as docs advise."""
     app = FastAPI()
-    app.add_middleware(middleware, session_manager=manager, config=config)
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
 
     @app.post("/login")
     async def login(request: Request, session=Depends(get_session)):
@@ -788,30 +776,6 @@ async def test_regenerated_session_id_is_sent_in_the_header(
     assert "set-cookie" not in response.headers
     new_token = response.headers[config.header_name]
     assert new_token != old_token
-    await manager.get_session(new_token)
-    with pytest.raises(SessionNotFoundError):
-        await manager.get_session(old_token)
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-@pytest.mark.parametrize("sliding", [True, False])
-async def test_deprecated_middleware_sends_regenerated_token(
-    manager: SessionManager, config: SessionConfig, sliding: bool
-) -> None:
-    """SessionMiddleware must not overwrite the new ID's token with a renewed old one."""
-    _session, old_token = await manager.create_session(user=SessionUser(user_id="u"))
-    if sliding:
-        await _shorten_expiry(manager, old_token)
-    client = TestClient(
-        _regenerating_app(
-            manager, config, write_data=False, middleware=SessionMiddleware
-        )
-    )
-
-    response = client.post("/login", headers={config.header_name: old_token})
-
-    assert response.status_code == 200
-    new_token = response.headers[config.header_name]
     await manager.get_session(new_token)
     with pytest.raises(SessionNotFoundError):
         await manager.get_session(old_token)

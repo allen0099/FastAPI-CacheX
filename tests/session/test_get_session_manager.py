@@ -8,15 +8,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fastapi_cachex.exceptions import BackendNotFoundError
+from fastapi_cachex.session import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session import SessionConfig
 from fastapi_cachex.session import SessionManager
-from fastapi_cachex.session import SessionMiddleware
 from fastapi_cachex.session import SessionUser
 from fastapi_cachex.session import get_session_manager
 from fastapi_cachex.session.proxy import SessionManagerProxy
 
 
-@pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
 def test_get_session_manager_dependency(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -25,7 +24,9 @@ def test_get_session_manager_dependency(
     SessionManagerProxy.set(manager)
 
     # Add middleware which stores manager in app.state
-    app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
 
     # Create endpoint that uses get_session_manager
     @app.get("/test")
@@ -41,7 +42,6 @@ def test_get_session_manager_dependency(
     assert response.json()["has_manager"] is True
 
 
-@pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
 async def test_get_session_manager_allows_create_session(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -50,7 +50,9 @@ async def test_get_session_manager_allows_create_session(
     SessionManagerProxy.set(manager)
 
     # Add middleware
-    app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
 
     # Create login endpoint
     @app.post("/login")
@@ -92,14 +94,15 @@ def test_get_session_manager_without_middleware_raises_error() -> None:
     assert "SessionManager not initialized" in response.json()["detail"]
 
 
-@pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
 async def test_get_session_manager_full_workflow(
     manager: SessionManager, config: SessionConfig
 ) -> None:
     """Test complete workflow: create, get, delete session using dependency."""
     app = FastAPI()
     SessionManagerProxy.set(manager)
-    app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
 
     @app.post("/login")
     async def login(
@@ -134,7 +137,6 @@ async def test_get_session_manager_full_workflow(
     assert logout_response.json()["message"] == "logged out"
 
 
-@pytest.mark.filterwarnings("ignore:SessionMiddleware is deprecated:DeprecationWarning")
 def test_session_manager_type_annotation(
     manager: SessionManager, config: SessionConfig
 ) -> None:
@@ -143,7 +145,9 @@ def test_session_manager_type_annotation(
 
     app = FastAPI()
     SessionManagerProxy.set(manager)
-    app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
 
     @app.get("/test")
     async def test_endpoint(session_manager: SessionManagerDep):

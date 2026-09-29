@@ -146,8 +146,8 @@ A response that belongs to one caller is never stored either (#296):
   backend anyway, but its response to such a request still gets `private`
   (before 0.3.9 it was sent without it, #362); `private=True` routes send it
   already.
-  A request has a session when `FastAPICacheXSessionMiddleware` (or the
-  deprecated `SessionMiddleware`) loaded one for it, from the token header, a
+  A request has a session when `FastAPICacheXSessionMiddleware` loaded one
+  for it, from the token header, a
   bearer token or the session cookie, with or without a user, or when
   `request.session` is non-empty under any session middleware, Starlette's
   included. A token that resolves to no session (forged, expired) does not

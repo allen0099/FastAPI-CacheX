@@ -11,7 +11,6 @@ from .dependencies import require_user_session
 from .dependencies import rotate_session_id
 from .manager import SessionManager
 from .middleware import FastAPICacheXSessionMiddleware
-from .middleware import SessionMiddleware
 from .middleware import get_client_ip
 from .models import Session
 from .models import SessionUser
@@ -23,7 +22,6 @@ __all__ = [
     "SessionConfig",
     "SessionManager",
     "SessionManagerProxy",
-    "SessionMiddleware",
     "SessionUser",
     "get_client_ip",
     "get_optional_session",
