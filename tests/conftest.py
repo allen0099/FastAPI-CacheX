@@ -95,13 +95,48 @@ async def memory_backend():
 
 
 @pytest.fixture(autouse=True)
-def setup_default_backend():
-    """Auto-use fixture to set MemoryBackend as default for all tests."""
+async def setup_default_backend() -> AsyncGenerator[None, None]:
+    """Auto-use fixture to set MemoryBackend as default for all tests.
+
+    Async so that its teardown runs on the test's loop while that loop is
+    still open; see `close_memory_backends`.
+    """
     backend = MemoryBackend()
     backend.start_cleanup()
     BackendProxy.set(backend)
     yield
-    backend.stop_cleanup()
+    await backend.aclose()
+
+
+@pytest.fixture(autouse=True)
+async def close_memory_backends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncGenerator[None, None]:
+    """Stop the cleanup task of every `MemoryBackend` a test builds.
+
+    A backend starts its cleanup task on the first operation, on the test's
+    loop. pytest-asyncio 1.x runs each test in an `asyncio.Runner`, which
+    cancels leftover tasks before it closes the loop; 0.26 (our floor, run by
+    the `lowest` tox env) closes the loop without cancelling them. Such a task
+    stays pending for good and is reported as "Task was destroyed but it is
+    pending!" when collected (#295). Closing each backend here, on the test's
+    loop, finishes its task on either version.
+
+    Like `close_network_clients`, this records backends in `__new__`,
+    including ones the library builds itself, such as the fallback backend.
+    """
+    opened: list[MemoryBackend] = []
+
+    def record(cls: type[Any], *args: Any, **kwargs: Any) -> Any:
+        backend = object.__new__(cls)
+        opened.append(backend)
+        return backend
+
+    monkeypatch.setattr(MemoryBackend, "__new__", record)
+    yield
+    for backend in opened:
+        if hasattr(backend, "_cleanup_task"):  # missing if the constructor raised
+            await backend.aclose()
 
 
 @pytest.fixture(autouse=True)
