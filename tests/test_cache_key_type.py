@@ -53,11 +53,11 @@ def test_from_request_is_what_build_cache_key_returns(
     assert key.extra == tuple(str(arg) for arg in args)
 
 
-def test_from_request_sorts_the_query_only_when_asked() -> None:
+def test_from_request_sorts_the_query_unless_told_not_to() -> None:
     request = _request(query=b"b=2&a=1")
 
-    assert CacheKey.from_request(request).query == "b=2&a=1"
-    assert CacheKey.from_request(request, sort_query=True).query == "a=1&b=2"
+    assert CacheKey.from_request(request).query == "a=1&b=2"
+    assert CacheKey.from_request(request, sort_query=False).query == "b=2&a=1"
 
 
 def test_build_cache_key_format_is_pinned() -> None:

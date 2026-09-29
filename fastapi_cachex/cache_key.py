@@ -52,8 +52,8 @@ def _query_component(request: Request, sort_query: bool) -> str:
 
     A query longer than 200 bytes (``_QUERY_HASH_THRESHOLD``) is replaced by
     ``sha256:`` and its full hex digest, so a client cannot make the query
-    part of the key arbitrarily long; the digest is taken after sorting, so ``sort_query``
-    still merges reordered long queries.
+    part of the key arbitrarily long; the digest is taken after sorting, so
+    reordered long queries still share a key.
     """
     if sort_query:
         query = urlencode(sorted(request.query_params.multi_items(), key=itemgetter(0)))
@@ -157,7 +157,7 @@ class CacheKey:
 
     @classmethod
     def from_request(
-        cls, request: Request, *components: str | int, sort_query: bool = False
+        cls, request: Request, *components: str | int, sort_query: bool = True
     ) -> "CacheKey":
         """The key ``@cache`` stores ``request`` under, plus extra components.
 

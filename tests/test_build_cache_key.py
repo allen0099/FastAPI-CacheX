@@ -65,7 +65,8 @@ REQUESTS = [
 def test_without_components_the_key_is_unchanged(kwargs: dict[str, object]) -> None:
     request = _request(**kwargs)  # type: ignore[arg-type]
 
-    assert build_cache_key(request) == _key_before_264(request)
+    # Unsorted: the query was kept as sent until #72.
+    assert build_cache_key(request, sort_query=False) == _key_before_264(request)
     assert default_key_builder(request) == build_cache_key(request)
 
 

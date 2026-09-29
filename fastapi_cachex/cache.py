@@ -71,7 +71,7 @@ _now = time.time
 
 
 def build_cache_key(
-    request: Request, *components: str | int, sort_query: bool = False
+    request: Request, *components: str | int, sort_query: bool = True
 ) -> str:
     """Build the default cache key for ``request``, plus extra components.
 
@@ -105,9 +105,9 @@ def build_cache_key(
             ``build_cache_key(request)``.
         sort_query: Order the query parameters by name (a stable sort, so
             ``?tag=b&tag=a`` stays distinct from ``?tag=a&tag=b``), so that
-            ``?a=1&b=2`` and ``?b=2&a=1`` give the same key. This is what
-            ``@cache(sort_query=True)`` uses; a custom ``key_builder`` passes
-            it here instead.
+            ``?a=1&b=2`` and ``?b=2&a=1`` give the same key. On by default,
+            as in ``@cache``; ``False`` keeps the order the client sent, as
+            ``@cache(sort_query=False)`` does.
 
     Returns:
         Generated cache key string
@@ -319,7 +319,8 @@ class _BypassWarner:
 def default_key_builder(request: Request) -> str:
     """Default cache key builder function: ``build_cache_key(request)``.
 
-    Generates cache key in format: http:v2|method|host|path|query
+    Generates cache key in format: http:v2|method|host|path|query, with the
+    query parameters sorted by name.
 
     Kept as the name ``@cache`` and ``invalidate()`` fall back to. To add
     components to the default key, call ``build_cache_key`` instead.
@@ -333,15 +334,15 @@ def default_key_builder(request: Request) -> str:
     return build_cache_key(request)
 
 
-def _sorted_query_key_builder(request: Request) -> str:
-    """The key builder of ``@cache(sort_query=True)``."""
-    return build_cache_key(request, sort_query=True)
+def _unsorted_query_key_builder(request: Request) -> str:
+    """The key builder of ``@cache(sort_query=False)``."""
+    return build_cache_key(request, sort_query=False)
 
 
 _SORT_QUERY_WITH_KEY_BUILDER_MSG = (
     "sort_query only applies to the default key builder; a custom key_builder "
-    "builds its own key, so return build_cache_key(request, sort_query=True) "
-    "from it instead"
+    "builds its own key, so pass sort_query to build_cache_key() in it instead "
+    "(it sorts unless told otherwise)"
 )
 
 
@@ -350,20 +351,23 @@ def _resolve_key_builder(
 ) -> CacheKeyBuilder:
     """Pick the key builder for ``key_builder`` and ``sort_query``.
 
+    ``sort_query=None`` means it was not passed: the default key builder
+    sorts, and a custom one is used as is.
+
     Raises:
-        CacheXError: If ``sort_query`` is not a ``bool``, if it is combined
-            with a custom ``key_builder`` (the flag would silently do
-            nothing), or if ``key_builder`` is an ``async`` callable.
+        CacheXError: If ``sort_query`` is not a ``bool`` or ``None``, if it
+            is passed with a custom ``key_builder`` (the flag would silently
+            do nothing), or if ``key_builder`` is an ``async`` callable.
     """
-    if not isinstance(sort_query, bool):
+    if sort_query is not None and not isinstance(sort_query, bool):
         msg = f"sort_query must be a bool, got {type(sort_query).__name__}"
         raise CacheXError(msg)
     if key_builder is not None:
-        if sort_query:
+        if sort_query is not None:
             raise CacheXError(_SORT_QUERY_WITH_KEY_BUILDER_MSG)
         _validate_key_builder(key_builder)
         return key_builder
-    return _sorted_query_key_builder if sort_query else default_key_builder
+    return _unsorted_query_key_builder if sort_query is False else default_key_builder
 
 
 _ASYNC_KEY_BUILDER_MSG = (
@@ -414,7 +418,7 @@ async def invalidate(
     key_builder: CacheKeyBuilder | None = None,
     vary: Sequence[str] | None = None,
     *,
-    sort_query: bool = False,
+    sort_query: bool | None = None,
 ) -> bool:
     """Invalidate the cache entry a ``@cache``-decorated route would use.
 
@@ -436,10 +440,10 @@ async def invalidate(
             Credential headers (``Authorization``, ``Cookie``, ...) are
             hashed exactly as ``@cache`` hashes them, so pass a request
             carrying the same header value.
-        sort_query: The target route's ``sort_query``. With ``True`` the
-            query is sorted as ``@cache(sort_query=True)`` sorts it, so
-            ``?b=2&a=1`` deletes the entry stored for ``?a=1&b=2``. It is not
-            read from the route: pass the same value the route uses, or the
+        sort_query: The target route's ``sort_query``. By default the query
+            is sorted as ``@cache`` sorts it, so ``?b=2&a=1`` deletes the
+            entry stored for ``?a=1&b=2``. It is not read from the route: for
+            a route with ``sort_query=False`` pass ``False`` here too, or the
             key will not match.
 
     Returns:
@@ -447,7 +451,7 @@ async def invalidate(
 
     Raises:
         CacheXError: If ``vary`` is not a list of header names, if
-            ``sort_query`` is not a ``bool`` or is combined with
+            ``sort_query`` is not a ``bool`` or is passed with
             ``key_builder``, if ``key_builder`` is an ``async`` callable, or
             if it returns something other than a ``str``. Raised before the
             backend is touched.
@@ -927,7 +931,7 @@ def cache(
     fail_open: bool = True,
     cache_authorized: bool = False,
     vary: Sequence[str] | None = None,
-    sort_query: bool = False,
+    sort_query: bool | None = None,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -1030,11 +1034,12 @@ def cache(
             stable: repeated values of one name keep the order the client
             sent, so ``?tag=b&tag=a`` and ``?tag=a&tag=b`` stay distinct, and
             the names and values are encoded exactly as in the unsorted key.
-            Off by default, which keeps every existing key unchanged. Only
-            the default key builder sorts: combined with a custom
-            ``key_builder`` it is rejected; call
-            ``build_cache_key(request, sort_query=True)`` in the builder
-            instead. Pass the same value to ``invalidate()``.
+            On by default (``None``); ``False`` keeps the order the client
+            sent, for a handler whose response depends on it. Only the
+            default key builder reads it: a custom ``key_builder`` is used as
+            is (``build_cache_key()`` sorts unless told otherwise), and
+            passing ``sort_query`` with one is rejected. Pass the same value
+            to ``invalidate()``.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -1045,7 +1050,7 @@ def cache(
             ``private`` are both set, if ``ttl`` is not an ``int``, is
             negative or is larger than ``MAX_TTL``, or if ``vary`` is not a
             list of header field names (a single string is rejected), if
-            ``sort_query`` is not a ``bool`` or is combined with
+            ``sort_query`` is not a ``bool`` or is passed with
             ``key_builder``, or if ``key_builder`` is an ``async`` callable.
             At request time, if
             ``key_builder`` returns anything but a ``str``.

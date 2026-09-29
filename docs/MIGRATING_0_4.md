@@ -254,7 +254,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 - Keys start with the format tag `http:v2|` (`CacheKey.FORMAT_TAG`), so the next format change can remove old keys by pattern: `clear_pattern("http:v2|*")` removes every key of this format.
 - The host is normalised: lower-cased, and an empty port or the scheme's default one (`:80` on http, `:443` on https) dropped.
 - A query string over 200 bytes (as encoded in the key) is stored as `sha256:` and its hex digest; the path stays readable, and the monitoring routes show the digest.
-- Query parameters are sorted by name: `sort_query` (opt-in since 0.3.9) defaults to `True` in `@cache`, `build_cache_key()` and `invalidate()`, so `?b=2&a=1` and `?a=1&b=2` share one entry.
+- Query parameters are sorted by name by default in `@cache`, `invalidate()`, `build_cache_key()` and `CacheKey.from_request()` (`sort_query`, opt-in since 0.3.9), so `?b=2&a=1` and `?a=1&b=2` share one entry.
 - One public `CacheKey` type builds, encodes and parses keys. `CACHE_KEY_MIN_PARTS`, `CACHE_KEY_MAX_SPLIT` and `CACHE_KEY_MAX_PARTS` are removed from `fastapi_cachex.routes`; read a key's components with `CacheKey.parse(key)` instead.
 
 ```text
@@ -265,11 +265,11 @@ After:  http:v2|GET|example.com|/users/1|page=2
 What to change:
 
 - `clear_pattern()` patterns that spell out the separator (`"GET|||*|||/users/*"`) need rewriting, and so do patterns that name a host in upper case or with a default port. `clear_path()` and `invalidate()` build the key themselves and need nothing.
-- A custom `key_builder` that calls `build_cache_key()` follows automatically. One that builds the key itself (joining with `CACHE_KEY_SEPARATOR` or hard-coding `|||`) still caches and still works with `invalidate()` and `clear_pattern()`, but its keys lack the `http:v2` tag, so `clear_path()` no longer finds them and the monitoring routes no longer list them. Switch it to `build_cache_key(request, *components)` to keep both.
-- A handler whose response depends on the order of the query string as sent, such as a self or pagination link copied from `request.url` or a signature over the raw query, should set `@cache(sort_query=False)`. Otherwise the first caller's order is cached and served to callers who sent another. `sort_query=False` works on 0.3.9 already.
+- A custom `key_builder` that calls `build_cache_key()` follows automatically, sorting included; pass `sort_query=False` to `build_cache_key()` to keep the order as sent. `@cache` and `invalidate()` now reject `sort_query` passed together with a custom `key_builder`, `False` included (0.3.9 accepted `False` there, where it did nothing): drop it, the builder decides. One that builds the key itself (joining with `CACHE_KEY_SEPARATOR` or hard-coding `|||`) still caches and still works with `invalidate()` and `clear_pattern()`, but its keys lack the `http:v2` tag, so `clear_path()` no longer finds them and the monitoring routes no longer list them. Switch it to `build_cache_key(request, *components)` to keep both.
+- A handler whose response depends on the order of the query string as sent, such as a self or pagination link copied from `request.url` or a signature over the raw query, should set `@cache(sort_query=False)`, and pass `sort_query=False` to `invalidate()` for that route. Otherwise the first caller's order is cached and served to callers who sent another. `sort_query=False` works on 0.3.9 already.
 - Entries written by 0.3.x are not read by 0.4.0. They expire on their TTL; on Redis and memory you can remove them right after the upgrade with `await backend.clear_pattern("*|||*")`. That pattern matches any key containing `|||`, so check first that none of your own keys (a `CacheManager` key, say) does. Memcached cannot enumerate keys, so there they just expire.
 
-0.3.9 does not warn: nothing in 0.3.x can tell whether a pattern or key builder will match the new format, and the only runtime cost is the one-off miss.
+0.3.9 does not warn: nothing in 0.3.x can tell whether a pattern or key builder will match the new format, and the only runtime cost is the one-off miss. It does not warn about `sort_query` passed with a custom `key_builder` either, but that raises `CacheXError` when the decorator is applied, usually at import, not at request time.
 
 ### Repeated headers {#cache-entry-headers}
 

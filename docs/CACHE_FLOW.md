@@ -79,7 +79,7 @@ cache_key = "|".join(
 )
 
 # For example:
-# http:v2|GET|example.com|/api/users|page=1&limit=10
+# http:v2|GET|example.com|/api/users|limit=10&page=1  (for ?page=1&limit=10)
 # http:v2|GET|api.example.com|/api/users/123|
 ```
 
@@ -110,11 +110,10 @@ For the credential headers `Authorization`, `Proxy-Authorization`, `Cookie`
 and `X-Session-Token` a non-empty value is written as `sha256:<hex digest>`,
 so no token appears in the key.
 
-Query parameters are joined in the order the request sent them
-(`str(request.query_params)`) and are **not sorted** by default, so
-`?page=1&limit=10` and `?limit=10&page=1` are two separate cache entries. To
-treat them as one, set `@cache(sort_query=True)`, which orders the parameters
-by name first (see [Cache keys](HTTP_CACHING.md#cache-keys)). A query longer
+Query parameters are **sorted** by name (a stable sort: repeated values of one
+name keep the order sent), so `?page=1&limit=10` and `?limit=10&page=1` share
+one cache entry. `@cache(sort_query=False)` keeps the order the request sent
+them instead (see [Cache keys](HTTP_CACHING.md#cache-keys)). A query longer
 than 200 bytes is then replaced by `sha256:<hex digest>`, so the query part of
 the key stays bounded.
 
@@ -155,7 +154,7 @@ Arguments are validated when the decorator is applied, and a `CacheXError` is
 raised if `public` and `private` are both set, if only one of `stale` /
 `stale_ttl` is given, if `ttl` is not an `int`, is negative or is larger than
 `MAX_TTL`, if `vary` is not a list of header field names, if `sort_query` is
-not a `bool` or is combined with a custom `key_builder`, or if `key_builder` is
+not a `bool` or is passed with a custom `key_builder`, or if `key_builder` is
 an `async` callable.
 
 The header value is built once per decorated route:
@@ -555,9 +554,9 @@ without reading or writing the cache and without adding a `Cache-Control`
 header.
 
 **Q: Why are there several cache entries for the same endpoint?**
-A: Because the cache key includes the query parameters, and by default they are
-**not sorted**. `/users?page=1` and `/users?page=2` are different entries, and
-so are `?a=1&b=2` and `?b=2&a=1` unless the route sets `sort_query=True`.
+A: Because the cache key includes the query parameters. `/users?page=1` and
+`/users?page=2` are different entries, and so are `?a=1&b=2` and `?b=2&a=1` if
+the route sets `sort_query=False`.
 
 **Q: How does MemoryBackend work across multiple processes?**
 A: It doesn't. Each process has its own cache; use Redis in production.
