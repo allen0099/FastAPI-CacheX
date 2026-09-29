@@ -17,6 +17,8 @@ Redis 與 Memcached 後端會以前綴為鍵建立命名空間（預設為 `fast
 
 若未指定後端，FastAPI-CacheX 預設會使用記憶體快取。這適合開發與測試用途。此後端會自動執行清理工作，每 60 秒移除一次已過期的項目（`MemoryBackend(cleanup_interval=60)`；間隔必須大於 0）。
 
+當 `@cache`、`CacheBackend` 或 `AppCache` 因為尚未設定後端而註冊這個後備後端時，`fastapi_cachex.proxy` logger 會在每個行程記錄一次 `WARNING`，因為它的快取是每個行程各自一份：在多個 worker 下，快取失效只會傳到其中一個 worker。在啟動時明確設定後端即可消除這個警告；明確設定的 `MemoryBackend` 不會發出警告：
+
 ```python
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex import BackendProxy

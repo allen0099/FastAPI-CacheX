@@ -31,7 +31,7 @@ async def non_store_endpoint():
     return {"Hello": "World"}
 ```
 
-只有 GET 請求會被快取；其他方法照常執行 handler。handler 不需要宣告 `Request` 參數：缺少時裝飾器會自動加上。如果尚未設定任何後端，`@cache` 會改用 `MemoryBackend`（見[後端](BACKENDS.md)）。
+只有 GET 請求會被快取；其他方法照常執行 handler。handler 不需要宣告 `Request` 參數：缺少時裝飾器會自動加上。如果尚未設定任何後端，`@cache` 會改用 `MemoryBackend`，並在每個行程記錄一次警告（見[後端](BACKENDS.md#in-memory-default)）。
 
 ### 裝飾器順序 {#decorator-order}
 

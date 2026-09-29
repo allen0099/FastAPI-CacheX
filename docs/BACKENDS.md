@@ -24,6 +24,12 @@ This is suitable for development and testing purposes. The backend automatically
 a cleanup task to remove expired entries every 60 seconds (`MemoryBackend(cleanup_interval=60)`;
 the interval must be positive).
 
+When `@cache`, `CacheBackend` or `AppCache` registers this fallback because no
+backend was set, the `fastapi_cachex.proxy` logger logs a `WARNING` once per
+process, since its cache is per process: under multiple workers, invalidation
+reaches only one worker. Set the backend explicitly at startup to silence it;
+an explicit `MemoryBackend` stays silent:
+
 ```python
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex import BackendProxy

@@ -36,7 +36,8 @@ async def non_store_endpoint():
 Only GET requests are cached; other methods run the handler as usual. The
 handler does not need to declare a `Request` parameter — the decorator adds one
 when it is missing. If no backend has been configured, `@cache` falls back to a
-`MemoryBackend` (see [Backends](BACKENDS.md)).
+`MemoryBackend` and logs a warning once per process (see
+[Backends](BACKENDS.md#in-memory-default)).
 
 ### Decorator order
 
