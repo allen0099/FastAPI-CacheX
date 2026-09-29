@@ -107,8 +107,8 @@ class StateManager:
             StateData instance
 
         Raises:
-            StateDataError: If the content is not UTF-8 text, not JSON, or does
-                not fit the StateData model
+            StateDataError: If the content is not UTF-8 text, not a JSON object,
+                or does not fit the StateData model
         """
         try:
             json_content = cached.content.decode("utf-8")
@@ -116,11 +116,17 @@ class StateManager:
             msg = "Unexpected state data format"
             raise StateDataError(msg) from e
 
+        # ValueError covers JSONDecodeError and an integer longer than
+        # sys.int_info.default_max_str_digits.
         try:
-            state_dict: dict[str, Any] = json.loads(json_content)
-        except json.JSONDecodeError as e:
+            state_dict: object = json.loads(json_content)
+        except ValueError as e:
             msg = f"Failed to parse state data: {e}"
             raise StateDataError(msg) from e
+
+        if not isinstance(state_dict, dict):
+            msg = f"Invalid state data structure: expected a JSON object, got {type(state_dict).__name__}"
+            raise StateDataError(msg)
 
         try:
             return StateData(**state_dict)
