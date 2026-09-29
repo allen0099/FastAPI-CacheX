@@ -103,11 +103,9 @@ backend = AsyncRedisCacheBackend.load_from_config(config)
 BackendProxy.set(backend)
 ```
 
-Leave `encoding` out, of both `RedisConfig` and `AsyncRedisCacheBackend`: it is deprecated
-and removed in 0.4.0, and setting it at all emits a `DeprecationWarning`. Entries are always
-written as UTF-8 JSON, and the client decodes replies with `encoding`, so any value other than
-UTF-8 also corrupts non-ASCII content on the way back (with `"latin-1"`, a stored `b"\xe9"`
-reads back as `b"\xc3\xa9"`), and the backend emits a `RuntimeWarning` for it. See
+The client reads raw bytes, and entries are written as UTF-8 JSON. There is no
+`encoding` option: 0.4.0 removed it from both `RedisConfig` and `AsyncRedisCacheBackend`,
+and passing `encoding` or `decode_responses` to the backend raises `TypeError`. See
 [Migrating to 0.4.0](MIGRATING_0_4.md#redis-encoding).
 
 Keep `protocol=2` unless you need RESP3 features *and* your `hiredis` build
