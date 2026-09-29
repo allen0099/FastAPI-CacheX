@@ -166,7 +166,7 @@ if no_store:
 
 bypass = private or not ttl
 # Authorization 標頭、中介軟體載入的 Session，或不是空的 request.session
-credential = None if bypass or public or cache_authorized else request_credential(request)
+credential = None if private or public or cache_authorized else request_credential(request)
 if bypass or credential:
     response, etag = await render()          # 既不讀取也不寫入後端
     return not_modified(...) if etag_matches(client_etag, etag) else response
