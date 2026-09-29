@@ -254,7 +254,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 - 主機名稱會正規化：轉為小寫，並去除該 scheme 的預設連接埠（`:80`、`:443`）。
 - 過長的查詢字串（約超過 200 位元組）會以 `sha256:` 加上十六進位摘要儲存；路徑仍保持可讀。
 - 查詢參數會依名稱排序：`sort_query`（0.3.9 起可選用）在 `@cache`、`build_cache_key()` 與 `invalidate()` 中預設為 `True`，因此 `?b=2&a=1` 與 `?a=1&b=2` 共用同一筆項目。
-- 由單一的 `CacheKey` 型別負責編碼與解析鍵；`routes.py` 中解析鍵的內部實作會改變。
+- 由單一、公開的 `CacheKey` 型別負責建立、編碼與解析鍵。`fastapi_cachex.routes` 中的 `CACHE_KEY_MIN_PARTS`、`CACHE_KEY_MAX_SPLIT` 與 `CACHE_KEY_MAX_PARTS` 已移除；請改用 `CacheKey.parse(key)` 讀取鍵的各段。
 
 ```text
 修改前：GET|||Example.com:80|||/users/1|||page=2

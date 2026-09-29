@@ -8,6 +8,7 @@ from .cache import build_cache_key as build_cache_key
 from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
 from .cache import invalidate as invalidate
+from .cache_key import CacheKey as CacheKey
 from .dependencies import AppCache as AppCache
 from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_app_cache as get_app_cache
@@ -76,6 +77,7 @@ __all__ = [
     "BackendNotFoundError",
     "BackendProxy",
     "CacheBackend",
+    "CacheKey",
     "CacheKeyBuilder",
     "CacheLock",
     "CacheManager",

@@ -383,6 +383,21 @@ query string whatever its extra components, and with it every entry for the
 path. The monitoring routes show the extra components, decoded, in
 `extra_components`. `default_key_builder(request)` is `build_cache_key(request)`.
 
+`CacheKey` is the same key as a value. `CacheKey.from_request(request,
+*components)` builds it, `to_str()` gives the string `build_cache_key` returns,
+and `CacheKey.parse(key)` decodes a stored key into `method`, `host`, `path`,
+`query` and `extra`, or returns `None` for a key that is not an HTTP key
+(a `CacheManager` key, say):
+
+```python
+from fastapi_cachex import CacheKey
+
+for key in await backend.get_all_keys():
+    parsed = CacheKey.parse(key)
+    if parsed is not None and parsed.path.startswith("/reports/"):
+        print(parsed.host, parsed.query, parsed.extra)
+```
+
 The Redis and Memcached backends also put their own prefix (`fastapi_cachex:` by
 default) in front of every key, so other applications can share the server;
 `MemoryBackend` has no prefix. `CacheManager` (see

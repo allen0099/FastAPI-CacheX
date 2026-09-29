@@ -255,7 +255,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 - The host is normalised: lower-cased, and the scheme's default port (`:80`, `:443`) dropped.
 - A long query string (over about 200 bytes) is stored as `sha256:` and its hex digest; the path stays readable.
 - Query parameters are sorted by name: `sort_query` (opt-in since 0.3.9) defaults to `True` in `@cache`, `build_cache_key()` and `invalidate()`, so `?b=2&a=1` and `?a=1&b=2` share one entry.
-- One `CacheKey` type encodes and parses keys; the key-parsing internals of `routes.py` change.
+- One public `CacheKey` type builds, encodes and parses keys. `CACHE_KEY_MIN_PARTS`, `CACHE_KEY_MAX_SPLIT` and `CACHE_KEY_MAX_PARTS` are removed from `fastapi_cachex.routes`; read a key's components with `CacheKey.parse(key)` instead.
 
 ```text
 Before: GET|||Example.com:80|||/users/1|||page=2

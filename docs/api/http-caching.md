@@ -11,6 +11,8 @@ configured backend.
 
 ::: fastapi_cachex.cache.default_key_builder
 
+::: fastapi_cachex.cache_key.CacheKey
+
 ::: fastapi_cachex.proxy.BackendProxy
     options:
       inherited_members: true
