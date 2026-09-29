@@ -280,8 +280,33 @@ This ensures that:
 - Different query parameters get separate cache entries
 - The same endpoint with different parameters can be cached independently
 
-Query parameters are taken in the order the client sent them, without sorting, so
-`?a=1&b=2` and `?b=2&a=1` are two distinct cache entries for the same logical request.
+By default query parameters are taken in the order the client sent them, so
+`?a=1&b=2` and `?b=2&a=1` are two distinct cache entries for the same logical
+request. Set `sort_query=True` to share one entry between them:
+
+```python
+@app.get("/search")
+@cache(ttl=60, sort_query=True)
+async def search(q: str, limit: int = 10):
+    return await run_search(q, limit)
+```
+
+The parameters are then ordered by name before the key is built. The sort is
+stable: repeated values of one name keep the order the client sent, because a
+handler reading `tag: list[str]` sees them in that order, so `?tag=b&tag=a` and
+`?tag=a&tag=b` stay two entries. Names are compared decoded (`%61` sorts as
+`a`, which is how the key already writes it), and each name and value is encoded
+exactly as in the unsorted key, so only the order changes: a query already in
+order gets the same key with or without the flag. What the key already treats
+as equal stays equal (`?a` and `?a=`, an empty segment from `&&`), and nothing
+else is merged. The default is `False`, which leaves every existing key
+unchanged.
+
+`sort_query` applies to the default key builder only. Combined with a custom
+`key_builder` it raises `CacheXError` when the decorator is applied; call
+`build_cache_key(request, ..., sort_query=True)` inside the builder instead.
+Pass `sort_query=True` to `invalidate()` for such a route as well (see
+[Invalidating a single cached route](#invalidating-a-single-cached-route)).
 
 The host and path come from the client, so `|` and `%` in them are percent-encoded
 (`%7C` and `%25`). A `Host` header or path containing `|||` therefore cannot shift
@@ -635,14 +660,16 @@ async def update_item(item_id: int, request: Request):
     return {"invalidated": await invalidate(StarletteRequest(scope))}
 ```
 
-`invalidate(request, key_builder=None, vary=None)` returns `True` when an entry existed and
+`invalidate(request, key_builder=None, vary=None, *, sort_query=False)` returns `True` when an entry existed and
 was removed, `False` otherwise, including when no backend is configured. An
 error from the backend itself is raised to the caller (see
 [When the backend fails](#when-the-backend-fails)). The request you hand it must produce the cached route's key:
 same method, host, path and query string. If the cached route uses a custom
-`key_builder` or `vary`, pass the same here, or the key will not match; with
-`vary` only the variant selected by the request's own header values is
-deleted, and `clear_path()` removes all of them.
+`key_builder`, `vary` or `sort_query`, pass the same here, or the key will not
+match: `invalidate()` cannot read them from the route. With `vary` only the
+variant selected by the request's own header values is deleted, and
+`clear_path()` removes all of them. With `sort_query=True` the request's query
+is sorted the same way, so `?b=2&a=1` deletes the entry stored for `?a=1&b=2`.
 
 ## Monitoring routes
 

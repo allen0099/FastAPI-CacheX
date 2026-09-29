@@ -177,7 +177,18 @@ async def report():
 - 不同的查詢參數各有獨立的快取項目
 - 同一個端點搭配不同參數時可以各自快取
 
-查詢參數依用戶端送出的順序取用，不會排序，因此 `?a=1&b=2` 與 `?b=2&a=1` 對同一個邏輯上的請求而言是兩筆不同的快取項目。
+預設情況下，查詢參數依用戶端送出的順序取用，因此 `?a=1&b=2` 與 `?b=2&a=1` 對同一個邏輯上的請求而言是兩筆不同的快取項目。設定 `sort_query=True` 可讓它們共用同一筆項目：
+
+```python
+@app.get("/search")
+@cache(ttl=60, sort_query=True)
+async def search(q: str, limit: int = 10):
+    return await run_search(q, limit)
+```
+
+此時會先依名稱排序參數，再建立快取鍵。排序是穩定的：同名參數的多個值保留用戶端送出的順序，因為以 `tag: list[str]` 讀取的處理函式看到的正是這個順序，所以 `?tag=b&tag=a` 與 `?tag=a&tag=b` 仍是兩筆項目。名稱以解碼後的值比較（`%61` 視為 `a` 排序，快取鍵本來就這樣寫它），每個名稱與值的編碼都與未排序的快取鍵完全相同，只有順序改變：已經依序排列的查詢，不論是否開啟此選項都得到相同的鍵。快取鍵原本就視為相同的仍然相同（`?a` 與 `?a=`、`&&` 產生的空段），其餘一律不會合併。預設為 `False`，現有的快取鍵都不會改變。
+
+`sort_query` 只套用於預設的 key builder。與自訂的 `key_builder` 一起使用時，套用裝飾器就會拋出 `CacheXError`；請改在 builder 中呼叫 `build_cache_key(request, ..., sort_query=True)`。對這樣的路由呼叫 `invalidate()` 時也要傳入 `sort_query=True`（見[使單一快取路由失效](#invalidating-a-single-cached-route)）。
 
 host 與路徑來自用戶端，因此其中的 `|` 與 `%` 會以百分比編碼寫入（`%7C` 與 `%25`）。含有 `|||` 的 `Host` 標頭或路徑因此無法讓各段錯位，使某個請求的快取鍵與另一個請求相同。查詢字串本來就經過 URL 編碼。`clear_path()` 接受應用程式看到的路徑（`request.url.path`），並以同樣方式編碼；`clear_pattern()` 比對的是儲存的快取鍵，所以在模式中要把 `|` 寫成 `%7C`。0.3.8 之前兩者都照原樣儲存，因此升級後，host 或路徑含有 `|` 或 `%` 的項目會重新快取一次。
 
@@ -407,7 +418,7 @@ async def update_item(item_id: int, request: Request):
     return {"invalidated": await invalidate(StarletteRequest(scope))}
 ```
 
-`invalidate(request, key_builder=None, vary=None)` 在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳入的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder` 或 `vary`，這裡也要傳入相同的值，否則鍵不會相符；使用 `vary` 時，只會刪除請求本身的標頭值所選中的變體，`clear_path()` 則會移除所有變體。
+`invalidate(request, key_builder=None, vary=None, *, sort_query=False)` 在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳入的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder`、`vary` 或 `sort_query`，這裡也要傳入相同的值，否則鍵不會相符：`invalidate()` 無法從路由讀取這些設定。使用 `vary` 時，只會刪除請求本身的標頭值所選中的變體，`clear_path()` 則會移除所有變體。使用 `sort_query=True` 時，請求的查詢會以相同方式排序，因此 `?b=2&a=1` 會刪除為 `?a=1&b=2` 儲存的項目。
 
 ## 監控路由 {#monitoring-routes}
 
