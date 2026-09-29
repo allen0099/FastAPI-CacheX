@@ -123,8 +123,9 @@ def _read_header_token(
     """
     consulted: list[str] = []
     # `token_source_priority` is a list of Literals, so pydantic has already
-    # rejected anything that is neither branch; the chain stays an `elif` so a
-    # source added later falls through instead of being read as a bearer token.
+    # rejected anything else; the chain stays an `elif` so "cookie" (read by
+    # FastAPICacheXSessionMiddleware after these) and any source added later
+    # fall through instead of being read as a bearer token.
     for source in config.token_source_priority:
         if source == "header":
             consulted.append(config.header_name)
@@ -218,13 +219,44 @@ def _warn_if_default_cookie(config: SessionConfig) -> None:
     )
 
 
+def _warn_if_priority_without_cookie(config: SessionConfig) -> None:
+    """Warn that 0.4.0 stops using the cookie for a list without ``"cookie"``.
+
+    In 0.4.0 ``token_source_priority`` lists every token source, so a list
+    set without ``"cookie"`` means the middleware neither reads nor sets the
+    session cookie (#75). The default list becomes ``["header", "bearer",
+    "cookie"]``, which is today's order, so it does not warn.
+
+    Args:
+        config: The configuration the middleware uses
+    """
+    if (
+        "token_source_priority" not in config.model_fields_set
+        or "cookie" in config.token_source_priority
+    ):
+        return
+    warnings.warn(
+        f"SessionConfig(token_source_priority={config.token_source_priority!r}) "
+        'does not list "cookie". In version 0.4.0 the list names every token '
+        "source, so FastAPICacheXSessionMiddleware will neither read nor set the "
+        "session cookie, and a session created for a request without a token "
+        'sends its token in the header_name response header. Add "cookie" as the '
+        "last entry to keep the cookie; leaving it out opts into 0.4.0's "
+        "cookie-less behaviour, which only takes effect then "
+        "(https://github.com/allen0099/FastAPI-CacheX/issues/75).",
+        FutureWarning,
+        stacklevel=3,
+    )
+
+
 class SessionMiddleware(BaseHTTPMiddleware):
     """Middleware to handle session loading and token extraction.
 
     Extracts the session token from the request (via a custom header and/or
     an ``Authorization: Bearer`` header, per ``SessionConfig.token_source_priority``)
     and loads the corresponding session into ``request.state``. Cookie-based
-    token transport is not currently supported.
+    token transport is not supported, so a ``"cookie"`` entry in the list is
+    ignored.
 
     .. deprecated:: 0.3.1
         Use :class:`FastAPICacheXSessionMiddleware` instead. Will be removed in
@@ -413,12 +445,14 @@ class FastAPICacheXSessionMiddleware:
         Warns:
             FutureWarning: If the configuration leaves ``cookie_name`` or
                 ``cookie_https_only`` at its default, both of which change in
-                0.4.0.
+                0.4.0, or sets ``token_source_priority`` without ``"cookie"``,
+                which disables the cookie in 0.4.0.
         """
         self.app = app
         self.session_manager = session_manager or SessionManagerProxy.get()
         self.config = config or self.session_manager.config
         _warn_if_default_cookie(self.config)
+        _warn_if_priority_without_cookie(self.config)
 
         security_flags = f"httponly; samesite={self.config.cookie_same_site}"
         if self.config.cookie_https_only:

@@ -432,7 +432,8 @@ def test_header_wins_over_bearer_when_both_are_present(
 
 def test_bearer_source_is_skipped_when_bearer_tokens_are_disabled() -> None:
     """`use_bearer_token=False` must win over the priority list."""
-    config = SessionConfig(secret_key="a" * 32, use_bearer_token=False)
+    with pytest.warns(DeprecationWarning, match="use_bearer_token"):
+        config = SessionConfig(secret_key="a" * 32, use_bearer_token=False)
 
     token = _extract_header_token(
         _connection({"Authorization": "Bearer from-bearer"}), config
@@ -453,7 +454,7 @@ def test_an_unknown_source_is_skipped_rather_than_read_as_a_bearer_token() -> No
     stand where that maintainer will stand.
     """
     config = SessionConfig(secret_key="a" * 32)
-    config.token_source_priority[:] = ["cookie"]  # type: ignore[list-item]
+    config.token_source_priority[:] = ["query"]  # type: ignore[list-item]
 
     token = _extract_header_token(
         _connection({"Authorization": "Bearer from-bearer"}), config
@@ -466,7 +467,7 @@ def test_a_known_source_after_an_unknown_one_is_still_honoured(
     config: SessionConfig,
 ) -> None:
     """Falling through must continue the chain, not abandon it."""
-    config.token_source_priority[:] = ["cookie", "header"]  # type: ignore[list-item]
+    config.token_source_priority[:] = ["query", "header"]  # type: ignore[list-item]
 
     token = _extract_header_token(
         _connection({config.header_name: "from-header"}), config

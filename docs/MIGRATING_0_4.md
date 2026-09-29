@@ -31,6 +31,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | Explicit `login()` / `logout()`, read-only `Session.user` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | No | [Login and logout](#login-logout) |
 | `get_or_set()` locks by default | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set lock](#get-or-set-lock) |
 | `get_session_manager` resolves through `SessionManagerProxy` | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
+| `token_source_priority` names every token source; a list without `"cookie"` disables the cookie | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | `FutureWarning` | [Token sources](#token-source-priority) |
 | `add_routes()` requires `dependencies`, no content preview by default | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning` | [Monitoring routes](#add-routes) |
 | Redis `encoding` option removed | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning` (`RuntimeWarning` for a value other than UTF-8) | [Redis encoding](#redis-encoding) |
 | JWT HMAC secrets shorter than the hash output are rejected | [#129](https://github.com/allen0099/FastAPI-CacheX/issues/129) | `UserWarning` | [JWT secret length](#jwt-secret) |
@@ -38,13 +39,13 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | `BackendProxy.get_backend()` / `set_backend()` removed | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
 | `CacheError` removed | [#130](https://github.com/allen0099/FastAPI-CacheX/issues/130) | `DeprecationWarning` | [CacheError](#cache-error) |
 | Redis `clear_pattern()` prefix-stripped retry removed | [#125](https://github.com/allen0099/FastAPI-CacheX/issues/125) | `DeprecationWarning` | [Redis clear_pattern](#redis-clear-pattern) |
+| `SessionConfig.use_bearer_token` removed | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [Token sources](#token-source-priority) |
 | `UserSessionDep` requires a user | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | No | [UserSessionDep](#user-session-dep) |
 | `memcache` extra removed | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | No | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` returns `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | No | [delete() return value](#backend-delete) |
 | `CacheEntry.headers` becomes a list of pairs | [#105](https://github.com/allen0099/FastAPI-CacheX/issues/105) | No | [Repeated headers](#cache-entry-headers) |
 | HTTP cache key format | [#271](https://github.com/allen0099/FastAPI-CacheX/issues/271), [#270](https://github.com/allen0099/FastAPI-CacheX/issues/270), [#269](https://github.com/allen0099/FastAPI-CacheX/issues/269), [#266](https://github.com/allen0099/FastAPI-CacheX/issues/266), [#265](https://github.com/allen0099/FastAPI-CacheX/issues/265), [#72](https://github.com/allen0099/FastAPI-CacheX/issues/72) | No | [Cache keys](#cache-keys) |
 | Conditional session writes | [#128](https://github.com/allen0099/FastAPI-CacheX/issues/128) | No | [Session writes](#session-writes) |
-| Cookies in `token_source_priority` | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | No | [Token sources](#token-source-priority) |
 
 ## Sessions {#sessions}
 
@@ -186,7 +187,29 @@ SessionConfig(
 
 ### Token sources {#token-source-priority}
 
-`SessionConfig.token_source_priority` accepts `"cookie"` next to `"header"` and `"bearer"` in 0.4.0 ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)), and `FastAPICacheXSessionMiddleware` resolves the token by walking the list. Existing lists keep working; today the cookie is read after the header and bearer sources. Whether the default list gains `"cookie"`, and in which position, is not decided yet.
+In 0.4.0, `SessionConfig.token_source_priority` names every token source ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)). `FastAPICacheXSessionMiddleware` resolves the token by walking the list, `"cookie"` may appear anywhere in it, and the default becomes `["header", "bearer", "cookie"]`, which is the order used today. A list without `"cookie"` means no cookie: the middleware neither reads nor sets it, and a session created for a request without a token sends its token in the `header_name` response header. That is how an API-only app turns the cookie off.
+
+In 0.3.9, `"cookie"` is accepted as the last entry (where the cookie is read today, so it changes nothing yet), and `FastAPICacheXSessionMiddleware` emits a `FutureWarning` when the list was set explicitly without it. The default list does not warn.
+
+```python
+# Before: the cookie is read after these, although the list does not say so
+SessionConfig(secret_key=SECRET, token_source_priority=["bearer", "header"])
+
+# After, keeping the cookie (works on 0.3.9 and 0.4.0)
+SessionConfig(secret_key=SECRET, token_source_priority=["bearer", "header", "cookie"])
+```
+
+`use_bearer_token` is removed ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)); the list alone decides whether bearer tokens are read. 0.3.9 emits a `DeprecationWarning` when it is passed, whatever its value:
+
+```python
+# Before
+SessionConfig(secret_key=SECRET, use_bearer_token=False)
+
+# After
+SessionConfig(secret_key=SECRET, token_source_priority=["header", "cookie"])
+```
+
+`use_bearer_token=True` is the default and can be dropped.
 
 ## Application cache {#application-cache}
 

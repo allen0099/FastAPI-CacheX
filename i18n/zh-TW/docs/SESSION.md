@@ -142,8 +142,8 @@ SessionConfig(
     # 權杖來源（API 優先架構）
     token_format="simple",  # "simple"（預設）或 "jwt"
     header_name="X-Session-Token",
-    use_bearer_token=True,
-    token_source_priority=["header", "bearer"],  # 只接受這兩個值（見下文）
+    use_bearer_token=True,  # 已棄用：改為不在 token_source_priority 中列出 "bearer"
+    token_source_priority=["header", "bearer"],  # "cookie" 只能放在最後（見下文）
     # JWT（token_format == "jwt" 時使用）
     jwt_algorithm="HS256",  # 拒絕 "none"
     jwt_issuer=None,  # 若有設定，會寫入 iss 並在解析時驗證
@@ -182,9 +182,15 @@ SessionConfig(
 
 Session 會在 `session_ttl` 秒後過期。啟用 `sliding_expiration` 時，每個發現剩餘時間少於 `session_ttl * sliding_threshold` 秒的請求，都會將過期時間重新延長為完整的 `session_ttl`，並發行一個更新後的權杖，由中介軟體傳回給用戶端（回應標頭或 `Set-Cookie`，見上表）。標頭／Bearer 用戶端在回應帶有 `header_name` 標頭時，應以它取代已保存的權杖。`absolute_timeout` 會在 Session 建立後經過該秒數時結束 Session，不論是否有滑動更新：過期時間、後端 TTL 與 JWT 的 `exp` 都不會超過 `created_at + absolute_timeout`，過期時間到達這個上限後也不再發行更新後的權杖。
 
-#### `token_source_priority` 只接受 `"header"` 與 `"bearer"` {#token_source_priority-accepts-only-header-and-bearer}
+#### `token_source_priority` 與 Session Cookie {#token_source_priority-and-the-session-cookie}
 
-此欄位的型別為 `list[Literal["header", "bearer"]]`；傳入 `"cookie"` 會被 Pydantic 以 `ValidationError` 拒絕。Cookie **不**屬於優先順序的一部分：`FastAPICacheXSessionMiddleware` 以固定順序解析權杖——它先依照 `token_source_priority` 讀取標頭／Bearer，只有兩者都沒有產生權杖時才退回使用 Cookie。這是刻意的設計：回應端是依權杖的來源決定（標頭進、標頭出；Cookie 進、`Set-Cookie` 出），若將 Cookie 混入同一個優先順序清單，`["cookie"]` 這個設定在已棄用的 `SessionMiddleware` 上就會無聲地失效。等到 `SessionMiddleware` 於 0.4.0 移除後，三種來源或許可以用單一的優先順序清單描述。
+`FastAPICacheXSessionMiddleware` 先依照 `token_source_priority` 的順序讀取標頭來源，只有它們都沒有產生權杖時才退回使用 Cookie。回應端依權杖的來源決定（標頭進、標頭出；Cookie 進、`Set-Cookie` 出）。
+
+在 0.4.0 以前，不論清單是否列出 Cookie，都會讀取 Cookie。`"cookie"` 只能放在清單的最後一項，也就是它現在本來就被讀取的位置，因此列出它目前不會改變任何行為；放在其他位置會引發 `ValidationError`。已棄用的 `SessionMiddleware` 從不讀取 Cookie，會忽略這一項。
+
+0.4.0 起，這個清單列出所有權杖來源，預設值改為 `["header", "bearer", "cookie"]`，也就是目前使用的順序。沒有 `"cookie"` 的清單代表完全不使用 Cookie：中介軟體既不讀取也不設定它，而為沒有權杖的請求建立的 Session 會在 `header_name` 回應標頭中送出權杖（[#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)）。因此，明確設定了不含 `"cookie"` 的清單時，`FastAPICacheXSessionMiddleware` 會發出 `FutureWarning`。要保留 Cookie，請把 `"cookie"` 加在最後一項；預設清單不會發出警告。見[遷移至 0.4.0](MIGRATING_0_4.md#token-source-priority)。
+
+`use_bearer_token` 已棄用，並於 0.4.0 移除（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)）：傳入它會發出 `DeprecationWarning`。請以不在清單中列出 `"bearer"`（`token_source_priority=["header", "cookie"]`）取代 `use_bearer_token=False`；`use_bearer_token=True` 是預設值，直接拿掉即可。
 
 **標頭／Bearer 用戶端**應將權杖存放在 `localStorage` 或 `sessionStorage`，並以 `Authorization: Bearer <token>` 或 `X-Session-Token: <token>` 送出。**Cookie 用戶端**（瀏覽器）不需要自行處理權杖，但要留意 CSRF：瀏覽器會自動附上 Cookie，因此請將 `cookie_same_site` 與你自己的 CSRF 防護搭配使用。
 

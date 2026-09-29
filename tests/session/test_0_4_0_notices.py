@@ -2,6 +2,8 @@
 
 - #256: the default session cookie becomes ``__Host-session`` with Secure.
 - #131: ``get_session_manager`` resolves through ``SessionManagerProxy`` only.
+- #75: a ``token_source_priority`` without ``"cookie"`` disables the cookie.
+- #377: ``SessionConfig.use_bearer_token`` is removed.
 """
 
 import warnings
@@ -10,14 +12,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session import SessionConfig
 from fastapi_cachex.session import SessionManager
 from fastapi_cachex.session.dependencies import ClientIPDep
+from fastapi_cachex.session.dependencies import OptionalSession
 from fastapi_cachex.session.dependencies import SessionManagerDep
 from fastapi_cachex.session.dependencies import rotate_session_id
+from fastapi_cachex.session.models import SessionUser
 from fastapi_cachex.session.proxy import SessionManagerProxy
 
 SECRET = "a" * 32
@@ -237,3 +242,100 @@ def test_middleware_from_the_proxy_is_silent(config: SessionConfig) -> None:
         response = TestClient(app).get("/manager")
 
     assert response.json() == {"is_same": True}
+
+
+# --- #75: token_source_priority names every token source -----------------------
+
+_COOKIE = {"cookie_name": "session", "cookie_https_only": False}
+
+
+@pytest.mark.parametrize(
+    "priority", [["header", "bearer"], ["bearer", "header"], ["header"], []]
+)
+def test_middleware_warns_for_an_explicit_list_without_cookie(
+    priority: list[str],
+) -> None:
+    config = SessionConfig(secret_key=SECRET, token_source_priority=priority, **_COOKIE)
+
+    with pytest.warns(FutureWarning, match='does not list "cookie"') as record:
+        _middleware(config)
+
+    assert "issues/75" in str(record[0].message)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {},  # the default list becomes ["header", "bearer", "cookie"]: same order
+        {"token_source_priority": ["header", "bearer", "cookie"]},
+        {"token_source_priority": ["bearer", "cookie"]},
+        {"token_source_priority": ["cookie"]},
+    ],
+)
+def test_middleware_is_silent_for_the_default_or_a_list_with_cookie(
+    settings: dict[str, object],
+) -> None:
+    config = SessionConfig(secret_key=SECRET, **settings, **_COOKIE)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _middleware(config)
+
+
+@pytest.mark.parametrize(
+    "priority", [["cookie", "header"], ["header", "cookie", "bearer"]]
+)
+def test_cookie_is_accepted_only_as_the_last_source(priority: list[str]) -> None:
+    with pytest.raises(ValidationError, match="must be the last entry"):
+        SessionConfig(secret_key=SECRET, token_source_priority=priority)
+
+
+async def test_the_cookie_is_still_read_before_0_4_0_with_or_without_the_entry() -> (
+    None
+):
+    """Listing "cookie" last is today's order, and leaving it out changes nothing yet."""
+    backend = MemoryBackend()
+    for priority in (["header", "cookie"], ["header"]):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            config = SessionConfig(
+                secret_key=SECRET, token_source_priority=priority, **_COOKIE
+            )
+            manager = SessionManager(backend, config)
+            app = FastAPI()
+            app.add_middleware(
+                FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+            )
+
+            @app.get("/")
+            async def read(session: OptionalSession) -> dict[str, object]:
+                return {
+                    "user": session.user.user_id if session and session.user else None
+                }
+
+            _session, token = await manager.create_session(
+                user=SessionUser(user_id="u")
+            )
+            client = TestClient(app)
+            client.cookies.set("session", token)
+
+            assert client.get("/").json() == {"user": "u"}, priority
+
+
+# --- #377: use_bearer_token is removed ------------------------------------------
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_passing_use_bearer_token_warns(value: bool) -> None:
+    with pytest.warns(DeprecationWarning, match="use_bearer_token") as record:
+        SessionConfig(secret_key=SECRET, use_bearer_token=value)
+
+    message = str(record[0].message)
+    assert "0.4.0" in message
+    assert "issues/377" in message
+
+
+def test_leaving_use_bearer_token_out_is_silent() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        SessionConfig(secret_key=SECRET, token_source_priority=["header", "cookie"])
