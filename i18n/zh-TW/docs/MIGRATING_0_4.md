@@ -302,7 +302,7 @@ add_routes(app, dependencies=[], include_content_preview=True)
 
 ### Redis encoding {#redis-encoding}
 
-0.4.0 的 Redis 用戶端會直接讀取原始位元組，並從 `AsyncRedisCacheBackend` 與 `RedisConfig` 移除 `encoding` 選項（[#126](https://github.com/allen0099/FastAPI-CacheX/issues/126)）。項目一律以 UTF-8 寫入，因此省略它不會改變任何行為。在 0.3.9 中，傳給 `AsyncRedisCacheBackend` 的 UTF-8 `encoding` 會發出 `DeprecationWarning`，其他值則只會發出原有的 `RuntimeWarning`，其訊息同樣預告此參數將被移除。設定了 `encoding` 的 `RedisConfig` 在傳入 `load_from_config()` 時會發出 `DeprecationWarning`，若值不是 UTF-8 還會另外發出 `RuntimeWarning`。在 0.4.0 中，傳入 `encoding` 或 `decode_responses` 給 `AsyncRedisCacheBackend` 會引發 `TypeError`，而 `RedisConfig` 會像對待其他未知欄位一樣忽略 `encoding` 值。
+0.4.0 的 Redis 用戶端會直接讀取原始位元組，並從 `AsyncRedisCacheBackend` 與 `RedisConfig` 移除 `encoding` 選項（[#126](https://github.com/allen0099/FastAPI-CacheX/issues/126)）。項目一律以 UTF-8 寫入，因此省略它不會改變任何行為。在 0.3.9 中，傳給 `AsyncRedisCacheBackend` 的 UTF-8 `encoding` 會發出 `DeprecationWarning`，其他值則只會發出原有的 `RuntimeWarning`，其訊息同樣預告此參數將被移除。設定了 `encoding` 的 `RedisConfig` 在傳入 `load_from_config()` 時會發出 `DeprecationWarning`，若值不是 UTF-8 還會另外發出 `RuntimeWarning`。在 0.4.0 中，傳入 `encoding` 或 `decode_responses` 給 `AsyncRedisCacheBackend` 會引發 `TypeError`，而 `RedisConfig` 會像對待其他未知欄位一樣忽略 `encoding` 值。`decode_responses` 在 0.3.9 中不會發出警告：它一向只接受預設值 `True`，因此傳入它不會有任何效果。
 
 ```python
 # 修改前
