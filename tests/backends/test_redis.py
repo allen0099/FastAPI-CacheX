@@ -173,6 +173,42 @@ def test_redis_protocol_default_is_resp2() -> None:
 
 
 @requires_redis_package
+async def test_redis_fail_fast_settings_reach_the_client() -> None:
+    """The documented fail-fast example's kwargs reach redis-py (#325).
+
+    Built exactly as in docs/BACKENDS.md "Failing fast when Redis is down",
+    against a port with nothing listening: the retry policy and both timeouts
+    land in the connection kwargs, and a read fails without redis-py's default
+    retries (several seconds on redis-py 8).
+    """
+    from redis.asyncio.retry import Retry
+    from redis.backoff import NoBackoff
+
+    backend = AsyncRedisCacheBackend(
+        host=REDIS_HOST,
+        port=UNCONNECTED_PORT,
+        retry=Retry(NoBackoff(), 0),
+        socket_connect_timeout=0.25,
+        socket_timeout=0.5,
+    )
+    kwargs = backend.client.connection_pool.connection_kwargs
+    assert kwargs["socket_connect_timeout"] == 0.25
+    assert kwargs["socket_timeout"] == 0.5
+    retry = kwargs["retry"]
+    assert isinstance(retry, Retry)
+    # Private attributes (missing from the stubs): redis-py 5 has no public getter.
+    assert isinstance(retry._backoff, NoBackoff)  # type: ignore[attr-defined]
+    assert retry._retries == 0  # type: ignore[attr-defined]
+
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    start = time.perf_counter()
+    with pytest.raises(RedisConnectionError):
+        await backend.get("key")
+    assert time.perf_counter() - start < 1.0
+
+
+@requires_redis_package
 def test_redis_load_from_config_forwards_protocol() -> None:
     """load_from_config must forward the protocol field from RedisConfig."""
     from fastapi_cachex.backends.config import RedisConfig

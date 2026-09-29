@@ -167,6 +167,34 @@ served unstored. Either way a warning is logged on the `fastapi_cachex.cache`
 logger, and a backend outage cannot turn cached routes into 500s. The load
 goes to your handlers instead, so watch for those warnings.
 
+Failing open is only as fast as the backend's error. By default redis-py 8
+retries a failed Redis command 10 times with exponential backoff, so while
+Redis refuses connections each read and each write takes about 3 to 4 s to
+fail, and a cached request, which does both, about 7 s. When the Redis host
+does not answer at all, every attempt also waits out the connect timeout, and a
+request can take about 30 s. To fail within the timeouts, turn the retries off
+and shorten the timeouts through the backend's keyword arguments:
+
+```python
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
+
+from fastapi_cachex import BackendProxy
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+backend = AsyncRedisCacheBackend(
+    host="127.0.0.1",
+    port=6379,
+    retry=Retry(NoBackoff(), 0),  # no retries: the first error is final
+    socket_connect_timeout=0.25,  # seconds to open a connection
+    socket_timeout=0.5,  # seconds to wait for a reply
+)
+BackendProxy.set(backend)
+```
+
+See [Failing fast when Redis is down](BACKENDS.md#failing-fast-when-redis-is-down)
+for the trade-offs.
+
 The warning names the request's method and path and a `key_ref`, a short
 SHA-256 digest of the cache key, but not the key itself: the key holds the
 raw query string, `vary` header values and any `build_cache_key` components,

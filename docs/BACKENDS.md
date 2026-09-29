@@ -108,6 +108,51 @@ hiredis will fail to negotiate it.
 
 Complete runnable example: [`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py).
 
+### Failing fast when Redis is down
+
+`@cache` [fails open](HTTP_CACHING.md#when-the-backend-fails), but only once
+the backend has given up. By default redis-py 8 retries a command that fails
+with a connection error or timeout 10 times, with exponential backoff capped at
+1 s between attempts. With Redis refusing connections, each `get` or `set` then
+takes about 3 to 4 s to fail, so a cached request, which reads and then writes,
+takes about 7 s. When the host does not answer at all, each of the 11 attempts
+also waits for `socket_connect_timeout` (1 s by default), about 15 s per
+command and 30 s per request.
+
+Every keyword argument the backend does not name itself goes to the redis-py
+client, so the retry policy and the timeouts can be set there:
+
+```python
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
+
+from fastapi_cachex import BackendProxy
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+backend = AsyncRedisCacheBackend(
+    host="127.0.0.1",
+    port=6379,
+    retry=Retry(NoBackoff(), 0),  # no retries: the first error is final
+    socket_connect_timeout=0.25,  # seconds to open a connection
+    socket_timeout=0.5,  # seconds to wait for a reply
+)
+BackendProxy.set(backend)
+```
+
+With these settings a refused connection fails at once and an unreachable host
+after about 0.25 s. The costs:
+
+- Without retries, a single transient error, such as a connection reset in
+  the middle of a command, fails that command. `Retry(NoBackoff(), 1)` retries
+  once, immediately.
+- `socket_timeout` also bounds slow replies. Set both timeouts above your
+  normal Redis latency, including for the largest entries you cache.
+- The settings apply to every command the backend sends, not only to `@cache`.
+  `CacheManager`, `StateManager`, `CacheLock` and sessions, which raise backend
+  errors instead of failing open, see those errors sooner.
+
+`RedisConfig` has no `retry` field, so pass it to the constructor.
+
 ## Memcached
 
 Install the extra with `uv add "fastapi-cachex[memcached]"`. Before 0.3.8 it was
