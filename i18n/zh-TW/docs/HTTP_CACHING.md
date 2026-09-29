@@ -6,30 +6,13 @@
 
 ## `@cache` 裝飾器 {#the-cache-decorator}
 
+<!-- fmt:off -->
 ```python
-from fastapi import FastAPI
-from fastapi_cachex import cache
-
-app = FastAPI()
-
-
-@app.get("/")
-@cache(ttl=60)  # 快取 60 秒
-async def read_root():
-    return {"Hello": "World"}
-
-
-@app.get("/no-cache")
-@cache(no_cache=True)  # 一律重新驗證：每個請求都會執行 handler
-async def non_cache_endpoint():
-    return {"Hello": "World"}
-
-
-@app.get("/no-store")
-@cache(no_store=True)  # 任何地方都不儲存這個回應
-async def non_store_endpoint():
-    return {"Hello": "World"}
+--8<-- "examples/http_cache.py:routes"
 ```
+<!-- fmt:on -->
+
+`ttl=60` 會在 60 秒內提供儲存的回應，`no_cache=True` 讓用戶端每次都重新驗證，`private=True` 則讓回應不存入共用的後端。`no_store=True` 讓回應不存入任何快取；所有選項列在 [Cache-Control 指令](#cache-control-directives)。
 
 只有 GET 請求會被快取；其他方法照常執行 handler。handler 不需要宣告 `Request` 參數：缺少時裝飾器會自動加上。如果尚未設定任何後端，`@cache` 會改用 `MemoryBackend`，並在每個行程記錄一次警告（見[後端](BACKENDS.md#in-memory-default)）。
 
@@ -456,6 +439,14 @@ add_routes(
 > **這些路由本身沒有任何身分驗證。** `include_in_schema=False` 只是讓它們不出現在 OpenAPI 文件中；任何猜到路徑的人都能讀取。`/cached-records` 含有快取內容的預覽（除非設定 `include_content_preview=False`），並會暴露整個路由結構。正式環境中請務必傳入 `dependencies=[Depends(your_auth)]`，或將它們掛載在僅供內部使用的應用程式上。
 >
 > 呼叫 `add_routes()` 時若未傳入 `dependencies`，會發出 `UserWarning`。0.4.0 版將要求必須傳入此參數，並將 `include_content_preview` 預設改為關閉（[#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)）。若本機或測試用的應用程式確實要保持開放，請傳入 `dependencies=[]` 明確選擇不設防護，這樣就不會出現警告。
+
+可執行範例以環境變數中的權杖保護它們，未設定該變數時路由一律拒絕存取：
+
+<!-- fmt:off -->
+```python
+--8<-- "examples/http_cache.py:admin"
+```
+<!-- fmt:on -->
 
 > [!NOTE]
 > Memcached 無法列舉鍵，因此在 Memcached 上這兩個路由都不會回傳任何內容。

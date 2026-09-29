@@ -251,6 +251,23 @@ The **Docs** workflow (`.github/workflows/docs.yml`) and Read the Docs
 (`.readthedocs.yaml`) both run `zensical build --strict`, so a broken link,
 snippet path or docstring reference fails the PR.
 
+A complete app shown in a guide is not copied into the page: it lives in
+`examples/`, where `tests/test_examples.py` runs it, and the page includes it
+inside a code fence, either the whole file or a named part:
+
+````markdown
+```python
+;--8<-- "examples/http_cache.py:routes"
+```
+````
+
+A part is marked in the example file with a start and an end comment (the
+syntax is in [`examples/README.md`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/README.md));
+the site drops the marker lines. Short fragments that illustrate one call stay inline. The included code keeps
+its English comments on the Traditional Chinese site too; explain it in the
+text around the fence. `README.md` keeps its quick start inline, since PyPI and
+GitHub render it without snippets.
+
 ### Traditional Chinese translation
 
 A Traditional Chinese (`zh-TW`) translation is published at

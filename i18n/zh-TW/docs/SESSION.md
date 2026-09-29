@@ -48,110 +48,28 @@ uv add "fastapi-cachex[jwt]"
 
 ### 2. 基本用法 {#2-basic-usage}
 
+以下是 [`examples/session_api.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_api.py)（程式碼註解為英文）：API 用戶端登入後保存取得的權杖，並在之後的請求中送出它。
+
+<!-- fmt:off -->
 ```python
-from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+--8<-- "examples/session_api.py"
+```
+<!-- fmt:on -->
 
-from fastapi_cachex.backends import MemoryBackend
-from fastapi_cachex.session import (
-    FastAPICacheXSessionMiddleware,
-    SessionConfig,
-    SessionManager,
-    SessionUser,
-    get_optional_session,
-    get_session,
-)
-from fastapi_cachex.session.dependencies import AuthenticatedSession
+也可以不把管理器傳給中介軟體，而是將它註冊到 proxy。省略 `config` 時，中介軟體會使用 `session_manager.config`：
 
-# 建立 FastAPI 應用程式
-app = FastAPI()
+```python
+from fastapi_cachex.session import SessionManagerProxy
 
-# Session 設定（API 優先架構：由用戶端管理權杖）
-config = SessionConfig(
-    secret_key="your-secret-key-min-32-chars-long!!!",  # 至少 32 個字元
-    session_ttl=3600,  # 1 小時
-)
-
-# 設定後端與 Session 管理器
-backend = MemoryBackend()
-session_manager = SessionManager(backend, config)
-
-# 加入 Session 中介軟體（SessionMiddleware 已棄用，將於 0.4.0 移除）
-app.add_middleware(
-    FastAPICacheXSessionMiddleware,
-    session_manager=session_manager,
-    config=config,
-)
-
-# 或者，也可以將管理器註冊到 proxy，而不是直接傳入：
-#
-#     from fastapi_cachex.session import SessionManagerProxy
-#
-#     SessionManagerProxy.set(session_manager)
-#     app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
-#
-# 省略 `config` 時，中介軟體會使用 `session_manager.config`。
-
-
-# 帳號密碼放在 JSON 請求本文中，絕不放在查詢字串，
-# 查詢字串會留在瀏覽器歷史紀錄與存取日誌裡。
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-# 登入端點
-@app.post("/login")
-async def login(credentials: LoginRequest):
-    # 驗證使用者（此處為簡化版）
-    if credentials.username != "admin" or credentials.password != "secret":
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    # 建立 Session
-    user = SessionUser(
-        user_id="123",
-        username=credentials.username,
-        roles=["admin"],
-    )
-    session, token = await session_manager.create_session(user=user)
-
-    # 回傳權杖供用戶端保存（localStorage/sessionStorage）。
-    # 用戶端之後的請求會在 Authorization 或 X-Session-Token 標頭中送出它。
-    return {"message": "Login successful", "token": token}
-
-
-# 需要已登入使用者的端點
-@app.get("/profile")
-async def get_profile(session: AuthenticatedSession):
-    """Requires a session with a user; 401 otherwise, anonymous sessions included."""
-    return {
-        "user_id": session.user.user_id,
-        "username": session.user.username,
-        "roles": session.user.roles,
-    }
-
-
-# 可選驗證的端點
-@app.get("/public")
-async def public_endpoint(session=Depends(get_optional_session)):
-    """Accessible with or without a session."""
-    if session and session.user:
-        return {"message": f"Hello, {session.user.username}!"}
-    return {"message": "Hello, guest!"}
-
-
-# 登出端點
-@app.post("/logout")
-async def logout(session=Depends(get_session)):
-    await session_manager.delete_session(session.session_id)
-    return {"message": "Logged out"}
+SessionManagerProxy.set(session_manager)
+app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
 ```
 
 當請求沒有帶著有效的 Session 時，`get_session`（及其別名 `require_session`）會拋出 `401 Authentication required`，並附上 `WWW-Authenticate: Bearer` 標頭。格式錯誤、偽造、已過期、已失效或未通過綁定檢查的權杖，在中介軟體層級都不會被視為錯誤：請求只會在沒有 Session 的情況下繼續處理。
 
 依賴項回傳的 Session 物件是後端的 `Session` 模型。由 `FastAPICacheXSessionMiddleware` 從 `request.session` 建立的 Session（見下方的遷移一節）是匿名的，因此 `session.user` 為 `None`。
 
-`get_session` 也接受這種 Session，因此它只能證明請求帶著「某個」Session，而不能證明有人登入。任何訪客只要進入會寫入 `request.session` 的路由（購物車、CSRF 值），就會得到一個。需要已登入使用者的路由，請改用 `require_user_session`（或其型別註記形式 `AuthenticatedSession`）保護，它在 `session.user` 為 `None` 時同樣回應 `401`，上方的 `/profile` 就是這樣做的。`/logout` 只會刪除 Session，因此使用 `get_session` 就足夠。
+`get_session` 也接受這種 Session，因此它只能證明請求帶著「某個」Session，而不能證明有人登入。任何訪客只要進入會寫入 `request.session` 的路由（購物車、CSRF 值），就會得到一個。需要已登入使用者的路由，請改用 `require_user_session`（或其型別註記形式 `AuthenticatedSession`）保護，它在 `session.user` 為 `None` 時同樣回應 `401`，上方的 `/profile` 就是這樣做的。`/logout` 只會刪除 Session，因此使用 `SessionDep`（`get_session` 的型別註記形式）就足夠；`/public` 則使用 `OptionalSession`（`get_optional_session`），沒有 Session 時得到 `None`，而不是回應 `401`。
 
 `UserSessionDep` 雖然名稱如此，卻不會檢查使用者；在 0.4.0 之前它是 `SessionDep` 的別名，0.4.0 預計改為要求使用者。
 
@@ -159,164 +77,13 @@ async def logout(session=Depends(get_session)):
 
 ### 3. 完整範例（Redis 後端） {#3-full-example-redis-backend}
 
+以下是 [`examples/session_redis.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_redis.py)（程式碼註解為英文）。它與 [`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py) 一樣，從 `REDIS_HOST`、`REDIS_PORT`、`REDIS_DB` 與 `REDIS_PASSWORD` 讀取 Redis 設定。
+
+<!-- fmt:off -->
 ```python
-from datetime import datetime, timezone
-
-from fastapi import Depends, FastAPI, HTTPException, Request
-from pydantic import BaseModel
-
-from fastapi_cachex.backends import AsyncRedisCacheBackend
-from fastapi_cachex.session import (
-    FastAPICacheXSessionMiddleware,
-    SessionConfig,
-    SessionManager,
-    SessionUser,
-    get_session,
-)
-from fastapi_cachex.session.dependencies import AuthenticatedSession, ClientIPDep
-
-app = FastAPI()
-
-# Redis 後端
-backend = AsyncRedisCacheBackend(
-    host="localhost",
-    port=6379,
-    db=0,
-)
-
-# 包含安全性選項的 Session 設定
-config = SessionConfig(
-    secret_key="your-very-secret-key-at-least-32-characters-long!!",
-    session_ttl=3600,
-    sliding_expiration=True,
-    sliding_threshold=0.5,
-    ip_binding=True,  # 啟用 IP 綁定
-    user_agent_binding=False,  # UA 綁定（可選）
-)
-
-session_manager = SessionManager(backend, config)
-
-app.add_middleware(
-    FastAPICacheXSessionMiddleware,
-    session_manager=session_manager,
-    config=config,
-)
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-@app.post("/api/auth/login")
-async def login(credentials: LoginRequest, request: Request, client_ip: ClientIPDep):
-    # 驗證使用者（實際上應查詢資料庫）
-    username = credentials.username
-    if not authenticate_user(username, credentials.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    # 建立 Session
-    user = SessionUser(
-        user_id=get_user_id(username),
-        username=username,
-        email=f"{username}@example.com",
-        roles=get_user_roles(username),
-    )
-
-    # 收集綁定所需的用戶端資訊。`client_ip` 就是中介軟體之後
-    # 會檢查的位址，在受信任的 proxy 後方也是如此。
-    user_agent = request.headers.get("user-agent")
-
-    session, token = await session_manager.create_session(
-        user=user,
-        ip_address=client_ip,
-        user_agent=user_agent,
-    )
-
-    # 加入 Flash 訊息
-    session.add_flash_message("Login successful!", "success")
-    await session_manager.update_session(session)
-
-    return {
-        "message": "Login successful",
-        "token": token,  # 用戶端保存這個權杖，並在之後的請求中送出
-        "user": {
-            "username": user.username,
-            "roles": user.roles,
-        },
-    }
-
-
-@app.get("/api/user/profile")
-async def get_user_profile(session: AuthenticatedSession):
-    """Return the user's profile (requires a logged-in user)."""
-    return {
-        "user_id": session.user.user_id,
-        "username": session.user.username,
-        "email": session.user.email,
-        "roles": session.user.roles,
-        "session_created": session.created_at.isoformat(),
-        "last_accessed": session.last_accessed.isoformat(),
-    }
-
-
-@app.post("/api/user/update")
-async def update_user_profile(
-    email: str,
-    session: AuthenticatedSession,
-):
-    """Update the user's profile."""
-    session.user.email = email
-    session.data["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-    # 儲存更新後的 Session
-    await session_manager.update_session(session)
-
-    return {"message": "Profile updated"}
-
-
-@app.get("/api/messages")
-async def get_flash_messages(session=Depends(get_session)):
-    """Return and clear the flash messages."""
-    messages = session.get_flash_messages(clear=True)
-    # 清除只會改變記憶體中的物件；請儲存它，
-    # 以免下一個請求再次顯示這些訊息。
-    await session_manager.update_session(session)
-    return {"messages": messages}
-
-
-@app.post("/api/auth/logout")
-async def logout(session=Depends(get_session)):
-    """Log out."""
-    await session_manager.delete_session(session.session_id)
-
-    # 用戶端應丟棄已保存的權杖
-    return {"message": "Logged out successfully"}
-
-
-@app.post("/api/auth/logout-all")
-async def logout_all_devices(session: AuthenticatedSession):
-    """Log out from all devices."""
-    user_id = session.user.user_id
-    count = await session_manager.delete_user_sessions(user_id)
-    return {"message": f"Logged out from {count} devices"}
-
-
-# 輔助函式（僅為示意）
-def authenticate_user(username: str, password: str) -> bool:
-    # 實際的實作會查詢資料庫並驗證密碼雜湊
-    return True
-
-
-def get_user_id(username: str) -> str:
-    # 實際的實作會從資料庫讀取
-    return f"user_{username}"
-
-
-def get_user_roles(username: str) -> list[str]:
-    # 實際的實作會從資料庫讀取
-    return ["user"] if username != "admin" else ["admin", "user"]
+--8<-- "examples/session_redis.py"
 ```
+<!-- fmt:on -->
 
 在 handler 中對 `Session` 物件所做的變更（Flash 訊息、`session.data`、`session.user`），只有在呼叫 `session_manager.update_session(session)` 時才會被儲存。
 

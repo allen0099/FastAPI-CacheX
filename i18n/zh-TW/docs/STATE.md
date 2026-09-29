@@ -8,55 +8,15 @@ State 與 HTTP 快取存放在同一個後端，但使用自己的鍵前綴（�
 
 本指南中的所有內容也都可以從頂層的 `fastapi_cachex` 套件匯入。
 
-完整可執行範例（英文）：[`examples/oauth_state.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/oauth_state.py)。
+下方的快速開始就是完整可執行的範例 [`examples/oauth_state.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/oauth_state.py)，程式碼註解為英文。
 
 ## 快速開始 {#quick-start}
 
+<!-- fmt:off -->
 ```python
-import secrets
-
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
-
-from fastapi_cachex import BackendProxy
-from fastapi_cachex.backends import MemoryBackend
-from fastapi_cachex.state import StateError, StateManagerDep
-
-app = FastAPI()
-BackendProxy.set(MemoryBackend())
-
-BINDING_COOKIE = "oauth_binding"
-
-
-@app.get("/login")
-async def login(states: StateManagerDep):
-    nonce = secrets.token_urlsafe(32)
-    state = await states.create_state(binding=nonce, metadata={"next": "/dashboard"})
-    response = RedirectResponse(
-        f"https://provider.example.com/authorize?state={state}&client_id=..."
-    )
-    # 使用 Lax 而非 Strict：回呼是從提供者發起的跨站導覽。
-    response.set_cookie(
-        BINDING_COOKIE, nonce, max_age=600, httponly=True, secure=True, samesite="lax"
-    )
-    return response
-
-
-@app.get("/callback")
-async def callback(request: Request, state: str, code: str, states: StateManagerDep):
-    try:
-        # 一次性：取出時即刪除。除非是這個瀏覽器發起的流程，否則會被拒絕。
-        data = await states.consume_state(
-            state, binding=request.cookies.get(BINDING_COOKIE)
-        )
-    except StateError as e:  # 未知、已過期、格式錯誤或發給其他瀏覽器的 state
-        raise HTTPException(status_code=400, detail="Invalid state") from e
-
-    # 以 code 換取權杖、建立 Session……
-    response = RedirectResponse(data.metadata.get("next", "/"))
-    response.delete_cookie(BINDING_COOKIE)
-    return response
+--8<-- "examples/oauth_state.py"
 ```
+<!-- fmt:on -->
 
 若提供者以 POST 送出回呼（`response_mode=form_post`），`SameSite=Lax` 的 Cookie 不會隨這個跨站 POST 送出；此時綁定用的 Cookie 請改用 `samesite="none"`（需要 `secure=True`）。在另一個分頁再次開始登入會覆寫這個 Cookie，因此第一個分頁的回呼會被拒絕；使用者只要重新登入即可。
 

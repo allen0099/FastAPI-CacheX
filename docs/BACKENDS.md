@@ -217,28 +217,11 @@ answers again.
 Every backend has `aclose()`, which releases what it holds open. Call it on
 shutdown, at the end of the FastAPI lifespan:
 
+<!-- fmt:off -->
 ```python
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-
-from fastapi_cachex import BackendProxy
-from fastapi_cachex.backends import AsyncRedisCacheBackend
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379)
-    BackendProxy.set(backend)
-    try:
-        yield
-    finally:
-        BackendProxy.set(None)
-        await backend.aclose()
-
-
-app = FastAPI(lifespan=lifespan)
+--8<-- "examples/redis_backend.py:lifespan"
 ```
+<!-- fmt:on -->
 
 The same lifespan works for every backend. A backend is also an async context
 manager, so `async with MemcachedBackend(servers=[...]) as backend:` closes it

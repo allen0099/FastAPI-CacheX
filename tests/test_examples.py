@@ -5,10 +5,10 @@ loaded fresh from its file, started with its lifespan, and driven through
 `TestClient`. A `DeprecationWarning` fails the test, so an example cannot keep
 showing an API we are phasing out.
 
-`session_jwt` and `redis_backend` need optional packages and are skipped
-without them (checked with `find_spec`, never imported here). `redis_backend`
-also talks to a real server, so it follows the opt-in rules in
-`tests/live_servers.py`.
+`session_jwt`, `session_jwt_claims`, `redis_backend` and `session_redis` need
+optional packages and are skipped without them (checked with `find_spec`, never
+imported here). `redis_backend` and `session_redis` also talk to a real server,
+so they follow the opt-in rules in `tests/live_servers.py`.
 """
 
 import importlib.util
@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.session.exceptions import SessionSecurityError
 from fastapi_cachex.session.proxy import SessionManagerProxy
 from fastapi_cachex.state.proxy import StateManagerProxy
 from tests.live_servers import REDIS_HOST
@@ -74,8 +75,11 @@ def test_every_example_has_a_test() -> None:
         "oauth_state",
         "rate_limit",
         "redis_backend",
+        "session_api",
         "session_jwt",
+        "session_jwt_claims",
         "session_login",
+        "session_redis",
     }
     assert {p.stem for p in EXAMPLES_DIR.glob("*.py")} == tested
     readme = (EXAMPLES_DIR / "README.md").read_text(encoding="utf-8")
@@ -301,6 +305,66 @@ def test_session_jwt() -> None:
         assert client.get("/me", headers=auth).status_code == 401
 
 
+def test_session_api() -> None:
+    example = load_example("session_api")
+    credentials = {"username": "alice", "password": "alice-demo-password"}
+    with TestClient(example.app) as client:
+        assert client.get("/public").json() == {"message": "Hello, guest!"}
+        assert client.get("/profile").status_code == 401
+        wrong = {"username": "alice", "password": "nope"}
+        assert client.post("/login", json=wrong).status_code == 401
+
+        token = client.post("/login", json=credentials).json()["token"]
+        # The token is only in the body: no cookie for an API client.
+        assert not client.cookies.get("session")
+        bearer = {"Authorization": f"Bearer {token}"}
+        header = {"X-Session-Token": token}
+        assert client.get("/profile", headers=bearer).json() == {
+            "user_id": "alice",
+            "username": "alice",
+            "roles": ["user"],
+        }
+        assert client.get("/public", headers=header).json() == {
+            "message": "Hello, alice!"
+        }
+
+        assert client.post("/logout", headers=bearer).status_code == 200
+        assert client.get("/profile", headers=bearer).status_code == 401
+        assert client.post("/logout", headers=bearer).status_code == 401
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("jwt") is None,
+    reason="session_jwt_claims needs the jwt extra (PyJWT)",
+)
+def test_session_jwt_claims() -> None:
+    example = load_example("session_jwt_claims")
+    credentials = {"username": "alice", "password": "alice-demo-password"}
+    with TestClient(example.app) as client:
+        wrong = {"username": "alice", "password": "nope"}
+        assert client.post("/auth/login", json=wrong).status_code == 401
+        issued = client.post("/auth/login", json=credentials)
+        assert issued.status_code == 200
+        token = issued.json()["token"]
+        claims = example.jwt.decode(token, options={"verify_signature": False})
+        assert claims["tenant_id"] == "acme-corp"
+        assert claims["api_version"] == "v2"
+        assert claims["iss"] == "acme-corp"
+        auth = {"Authorization": f"Bearer {token}"}
+        assert client.get("/api/profile", headers=auth).json() == {
+            "user_id": "alice",
+            "username": "alice",
+        }
+
+        # The same session, signed with the same key, for another tenant.
+        other = example.MultiTenantJWTSerializer(example.config, tenant_id="other")
+        foreign = other.to_string(example.serializer.from_string(token))
+        with pytest.raises(ValueError, match="Invalid tenant_id"):
+            example.serializer.from_string(foreign)
+        foreign_auth = {"Authorization": f"Bearer {foreign}"}
+        assert client.get("/api/profile", headers=foreign_auth).status_code == 401
+
+
 def test_oauth_state() -> None:
     example = load_example("oauth_state")
     # https: the binding cookie is Secure.
@@ -416,3 +480,68 @@ def test_redis_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     # The lifespan unregistered the backend on shutdown.
     with pytest.raises(BackendNotFoundError):
         BackendProxy.get()
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("redis") is None,
+    reason="session_redis needs the redis extra",
+)
+def test_session_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    reason = redis_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
+    monkeypatch.setenv("REDIS_HOST", REDIS_HOST)
+    monkeypatch.setenv("REDIS_PORT", str(REDIS_PORT))
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+    monkeypatch.delenv("REDIS_DB", raising=False)
+    example = load_example("session_redis")
+    credentials = {"username": "alice", "password": "alice-demo-password"}
+    with TestClient(example.app) as client:
+        portal = client.portal
+        assert portal is not None
+        # clear() removes only this app's namespace, not the whole server.
+        portal.call(example.backend.clear)
+        try:
+            wrong = {"username": "alice", "password": "nope"}
+            assert client.post("/api/auth/login", json=wrong).status_code == 401
+
+            first = client.post("/api/auth/login", json=credentials).json()
+            assert first["user"] == {"username": "alice", "roles": ["user"]}
+            auth = {"Authorization": f"Bearer {first['token']}"}
+
+            profile = client.get("/api/user/profile", headers=auth).json()
+            assert profile["user_id"] == "user_alice"
+            assert profile["email"] == "alice@example.com"
+
+            # The flash message from the login is shown once.
+            messages = client.get("/api/messages", headers=auth).json()["messages"]
+            assert [m["message"] for m in messages] == ["Login successful!"]
+            assert client.get("/api/messages", headers=auth).json() == {"messages": []}
+
+            updated = client.post(
+                "/api/user/update", params={"email": "a@example.org"}, headers=auth
+            )
+            assert updated.status_code == 200
+            profile = client.get("/api/user/profile", headers=auth).json()
+            assert profile["email"] == "a@example.org"
+
+            # The session is bound to the client's IP address. (A second
+            # TestClient would run on another event loop than the Redis pool.)
+            with pytest.raises(SessionSecurityError):
+                portal.call(
+                    example.session_manager.get_session, first["token"], "203.0.113.9"
+                )
+
+            second = client.post("/api/auth/login", json=credentials).json()
+            auth2 = {"X-Session-Token": second["token"]}
+            assert client.post("/api/auth/logout", headers=auth2).status_code == 200
+            assert client.get("/api/user/profile", headers=auth2).status_code == 401
+
+            third = client.post("/api/auth/login", json=credentials).json()
+            auth3 = {"Authorization": f"Bearer {third['token']}"}
+            ended = client.post("/api/auth/logout-all", headers=auth3).json()
+            assert ended == {"message": "Logged out from 2 devices"}
+            assert client.get("/api/user/profile", headers=auth).status_code == 401
+            assert client.get("/api/user/profile", headers=auth3).status_code == 401
+        finally:
+            portal.call(example.backend.clear)

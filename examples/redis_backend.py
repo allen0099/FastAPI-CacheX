@@ -12,6 +12,7 @@ server. The settings are read from ``REDIS_HOST`` (default ``127.0.0.1``),
     REDIS_PORT=6379 uv run --with "fastapi-cli[standard]" fastapi dev examples/redis_backend.py
 """
 
+# --8<-- [start:lifespan]
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -44,6 +45,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
+# --8<-- [end:lifespan]
 
 
 @app.get("/hello/{name}")

@@ -8,30 +8,16 @@ Complete runnable example: [`examples/http_cache.py`](https://github.com/allen00
 
 ## The `@cache` decorator
 
+<!-- fmt:off -->
 ```python
-from fastapi import FastAPI
-from fastapi_cachex import cache
-
-app = FastAPI()
-
-
-@app.get("/")
-@cache(ttl=60)  # Cache for 60 seconds
-async def read_root():
-    return {"Hello": "World"}
-
-
-@app.get("/no-cache")
-@cache(no_cache=True)  # Always revalidate: the handler runs on every request
-async def non_cache_endpoint():
-    return {"Hello": "World"}
-
-
-@app.get("/no-store")
-@cache(no_store=True)  # Never store the response anywhere
-async def non_store_endpoint():
-    return {"Hello": "World"}
+--8<-- "examples/http_cache.py:routes"
 ```
+<!-- fmt:on -->
+
+`ttl=60` serves a stored response for 60 seconds, `no_cache=True` makes clients
+revalidate every time, and `private=True` keeps a response out of the shared
+backend. `no_store=True` keeps it out of every cache; all options are listed
+under [Cache-Control directives](#cache-control-directives).
 
 Only GET requests are cached; other methods run the handler as usual. The
 handler does not need to declare a `Request` parameter — the decorator adds one
@@ -737,6 +723,15 @@ add_routes(
 > default ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)). For
 > a local or test app that should stay open, pass `dependencies=[]` to opt out
 > deliberately without the warning.
+
+The runnable example guards them with a token from an environment variable, and
+keeps them closed while the variable is unset:
+
+<!-- fmt:off -->
+```python
+--8<-- "examples/http_cache.py:admin"
+```
+<!-- fmt:on -->
 
 > [!NOTE]
 > On Memcached, which cannot enumerate keys, both routes return nothing.
