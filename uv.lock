@@ -520,9 +520,6 @@ dependencies = [
 jwt = [
     { name = "pyjwt" },
 ]
-memcache = [
-    { name = "pymemcache" },
-]
 memcached = [
     { name = "pymemcache" },
 ]
@@ -564,12 +561,11 @@ requires-dist = [
     { name = "orjson", marker = "extra == 'redis'", specifier = ">=3.4.7" },
     { name = "pydantic", specifier = ">=2.7.0" },
     { name = "pyjwt", marker = "extra == 'jwt'", specifier = ">=2.9.0" },
-    { name = "pymemcache", marker = "extra == 'memcache'", specifier = ">=4.0.0" },
     { name = "pymemcache", marker = "extra == 'memcached'", specifier = ">=4.0.0" },
     { name = "redis", extras = ["hiredis"], marker = "extra == 'redis'", specifier = ">=5.3.0" },
     { name = "starlette", specifier = ">=1.0.0" },
 ]
-provides-extras = ["memcached", "memcache", "redis", "jwt"]
+provides-extras = ["memcached", "redis", "jwt"]
 
 [package.metadata.requires-dev]
 dev = [

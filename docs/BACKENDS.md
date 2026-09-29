@@ -164,9 +164,10 @@ after about 0.25 s. The costs:
 ## Memcached
 
 Install the extra with `uv add "fastapi-cachex[memcached]"`. Before 0.3.8 it was
-called `memcache`; that name still works but is deprecated and will be removed in
-0.4.0. An unknown extra only produces a warning at install time, so after 0.4.0
-`fastapi-cachex[memcache]` would install without `pymemcache`.
+called `memcache`; 0.4.0 removed that name. An unknown extra only produces a
+warning at install time, so `fastapi-cachex[memcache]` installs without
+`pymemcache` and `MemcachedBackend` raises when it is constructed. See
+[Migrating to 0.4.0](MIGRATING_0_4.md#memcache-extra).
 
 ```python
 from fastapi_cachex.backends import MemcachedBackend

@@ -113,7 +113,7 @@ BackendProxy.set(backend)
 
 ## Memcached {#memcached}
 
-以 `uv add "fastapi-cachex[memcached]"` 安裝此 extra。0.3.8 以前這個 extra 名為 `memcache`；舊名稱仍可使用但已棄用，將於 0.4.0 移除。安裝時遇到不存在的 extra 只會顯示警告，因此 0.4.0 之後 `fastapi-cachex[memcache]` 會裝好套件但不含 `pymemcache`。
+以 `uv add "fastapi-cachex[memcached]"` 安裝此 extra。0.3.8 以前這個 extra 名為 `memcache`，0.4.0 已移除這個名稱。安裝時遇到不存在的 extra 只會顯示警告，因此 `fastapi-cachex[memcache]` 會裝好套件但不含 `pymemcache`，建構 `MemcachedBackend` 時才會拋出錯誤。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#memcache-extra)。
 
 ```python
 from fastapi_cachex.backends import MemcachedBackend
