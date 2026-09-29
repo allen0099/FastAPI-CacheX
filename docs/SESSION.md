@@ -91,8 +91,10 @@ its annotated form `AuthenticatedSession`), which also answers `401` when `sessi
 annotated form of `get_session`) is enough there, and `/public` uses `OptionalSession`
 (`get_optional_session`), which gives `None` instead of answering `401`.
 
-`UserSessionDep` does not check for a user despite its name; it is an alias of `SessionDep`
-until 0.4.0, which is planned to make it require one.
+`UserSessionDep` is the same as `AuthenticatedSession`: it answers `401` for an anonymous
+session. Before 0.4.0 it was an alias of `SessionDep` and admitted anonymous sessions; use
+`SessionDep` where that is what a route needs (see
+[Migrating to 0.4.0](MIGRATING_0_4.md#user-session-dep)).
 
 Under `FastAPICacheXSessionMiddleware`, log a user in with `await login(request, user)`. It
 attaches the `SessionUser` that `require_user_session` / `AuthenticatedSession` check, under a
@@ -607,7 +609,7 @@ from fastapi_cachex.session.dependencies import (
     OptionalSession,  # Session | None
     RequiredSession,  # Session
     SessionDep,  # Session
-    UserSessionDep,  # Session; anonymous sessions pass too, see above
+    UserSessionDep,  # same as AuthenticatedSession since 0.4.0
     AuthenticatedSession,  # Session with a user (require_user_session)
     SessionManagerDep,  # SessionManager
 )

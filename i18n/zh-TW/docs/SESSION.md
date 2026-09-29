@@ -67,7 +67,7 @@ app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
 
 `get_session` 也接受這種 Session，因此它只能證明請求帶著「某個」Session，而不能證明有人登入。任何訪客只要進入會寫入 `request.session` 的路由（購物車、CSRF 值），就會得到一個。需要已登入使用者的路由，請改用 `require_user_session`（或其型別註記形式 `AuthenticatedSession`）保護，它在 `session.user` 為 `None` 時同樣回應 `401`，上方的 `/profile` 就是這樣做的。`/logout` 只會刪除 Session，因此使用 `SessionDep`（`get_session` 的型別註記形式）就足夠；`/public` 則使用 `OptionalSession`（`get_optional_session`），沒有 Session 時得到 `None`，而不是回應 `401`。
 
-`UserSessionDep` 雖然名稱如此，卻不會檢查使用者；在 0.4.0 之前它是 `SessionDep` 的別名，0.4.0 預計改為要求使用者。
+`UserSessionDep` 與 `AuthenticatedSession` 相同：匿名 Session 會得到 `401`。0.4.0 之前它是 `SessionDep` 的別名，也接受匿名 Session；路由確實需要接受匿名 Session 時，請使用 `SessionDep`（見[遷移至 0.4.0](MIGRATING_0_4.md#user-session-dep)）。
 
 在 `FastAPICacheXSessionMiddleware` 底下，請以 `await login(request, user)` 讓使用者登入。它會以新的 Session ID 附加 `require_user_session`／`AuthenticatedSession` 檢查的 `SessionUser`，並由中介軟體送出權杖；見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)。上面的 `/login` 則是在本文中把權杖交給 API 用戶端：`create_session(user=...)` 同樣會設定 `session.user`，但中介軟體不會為不是由它載入或建立的 Session 送出任何東西。寫入 `request.session` 的鍵（`request.session["user_id"] = ...`）是應用程式資料：函式庫不會把它視為登入，因此這種 Session 仍會讓 `AuthenticatedSession` 回應 `401`。
 
@@ -405,7 +405,7 @@ from fastapi_cachex.session.dependencies import (
     OptionalSession,  # Session | None
     RequiredSession,  # Session
     SessionDep,  # Session
-    UserSessionDep,  # Session；匿名 Session 也會通過，見上文
+    UserSessionDep,  # 自 0.4.0 起與 AuthenticatedSession 相同
     AuthenticatedSession,  # 帶有使用者的 Session（require_user_session）
     SessionManagerDep,  # SessionManager
 )
