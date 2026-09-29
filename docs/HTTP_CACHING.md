@@ -139,7 +139,9 @@ A response that belongs to one caller is never stored either (#296):
   caller's identity (see [Authenticated endpoints](#authenticated-endpoints)).
   `must_revalidate=True` does not lift the bypass: RFC 9111 would let a shared
   cache reuse such a response under `must-revalidate`, but the library
-  requires an explicit opt-in.
+  requires an explicit opt-in. Routes that skip the backend anyway
+  (`private=True`, or no positive `ttl`) do not check for credentials and
+  send their own `Cache-Control` unchanged.
   A request has a session when `FastAPICacheXSessionMiddleware` (or the
   deprecated `SessionMiddleware`) loaded one for it, from the token header, a
   bearer token or the session cookie, with or without a user, or when
@@ -398,7 +400,7 @@ lower-cased, the value trimmed (repeated header lines joined with `,`), and a
 missing header treated as an empty one. The components are escaped like the
 rest of the key and come after whatever the `key_builder` returns, so `vary`
 and a custom key builder compose:
-`GET|||example.com|||/greeting|||||||tenant-1|||accept-language=de` for
+`GET|||example.com|||/greeting||||||tenant-1|||accept-language=de` for
 `key_builder` returning `build_cache_key(request, "tenant-1")`. Routes without
 `vary` keep their keys.
 
@@ -424,7 +426,7 @@ holds the full hex SHA-256 of the value (trimmed and joined as above) instead
 of the value:
 
 ```
-GET|||example.com|||/me|||||||authorization=sha256:3f0a…(64 hex digits)
+GET|||example.com|||/me||||||authorization=sha256:3f0a…(64 hex digits)
 ```
 
 The same token always gives the same digest, so it hits its own entry, and two
@@ -709,6 +711,9 @@ add_routes(
   body leaves the server; keys, sizes and expiry are still reported.
   `content_type` is always `"bytes"` and is kept for compatibility; read
   `media_type` instead.
+
+Both routes list only route entries (keys in the `method|||host|||path|||query`
+format); `CacheManager`, session, state and lock keys are skipped.
 
 > [!WARNING]
 > **These routes have no authentication of their own.** `include_in_schema=False`

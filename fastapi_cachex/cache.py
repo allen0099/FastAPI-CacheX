@@ -1020,6 +1020,9 @@ def cache(
             backend as ``private=True`` does (RFC 9111 §3.5), unless
             ``public`` is set, and its response is sent with ``private``.
             A token that does not resolve to a session does not count.
+            Routes that skip the backend anyway (``private=True``, or no
+            positive ``ttl``) do not check for credentials, so their
+            ``Cache-Control`` is sent unchanged.
             The first such bypass is logged at ``WARNING`` once per route
             and credential kind (the route template and the kind, never the
             value), since it otherwise leaves the route with no cache hits.
@@ -1340,8 +1343,8 @@ def cache(
                         _age_headers(cached_data, ttl),
                     )
 
-            # If we don't have If-None-Match header, check if we have a valid cached copy
-            # and can serve it directly (cache hit without ETag comparison)
+            # No 304 was sent (no If-None-Match, or it did not match): serve a
+            # valid cached copy directly (cache hit without running the handler)
             if cached_data and not no_cache:
                 logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
                 return Response(

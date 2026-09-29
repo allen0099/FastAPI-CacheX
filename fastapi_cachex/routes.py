@@ -341,7 +341,8 @@ def add_routes(
     async def get_cached_hits() -> CacheHitsResponse:
         """List the cached route entries.
 
-        Splits every cached key into method, host, path, query and any
+        Splits every cached route key (other keys are skipped) into
+        method, host, path, query and any
         extra components a key builder appended, with its
         ETag and expiry, plus counts of valid and expired entries and the
         distinct cached paths. Cache hits are not counted.
@@ -359,8 +360,9 @@ def add_routes(
     async def get_cached_records() -> CachedRecordsResponse:
         """Display currently cached records.
 
-        Returns all currently cached records in the cache backend with their
-        content information and expiry details.
+        Returns every route entry in the cache backend (keys in the
+        ``method|||host|||path|||query`` format; other keys are skipped) with
+        its content information and expiry details.
 
         Returns:
             CachedRecordsResponse containing cached records and statistics

@@ -13,25 +13,26 @@ HTTP request arrives
 @cache decorator intercepts it (only GET goes through the cache; every other
 method runs the handler directly and gets no Cache-Control header)
     ↓
-Build the cache key: method|||host|||path|||query_params
-    ↓
 no-store? ── yes → run the handler, neither read nor write the cache,
     │              respond with Cache-Control: no-store
     ↓ no
-private, or Authorization/session without public/cache_authorized?
+private, no positive ttl, or Authorization/session without public/cache_authorized?
     ── yes → run the handler; compare If-None-Match to decide 304 or 200
-    │        (the shared backend is neither read nor written; for
-    │        Authorization or a session, Cache-Control says private
-    │        instead of public)
+    │        (the shared backend is neither read nor written and the key
+    │        builder does not run; for Authorization or a session,
+    │        Cache-Control says private instead of public)
     ↓ no
-Read the backend entry
+Build the cache key: key_builder (default method|||host|||path|||query_params),
+plus one name=value component per vary header
+    ↓
+Read the backend entry (with fail_open, a backend error counts as a miss)
     ↓
 Request carries If-None-Match?
     ├─ and no-cache → run the handler first to compute the current ETag; match → 304
     ├─ otherwise    → compare with the cached entry's ETag; match → 304 with Age
     └─ no match / no header → continue
     ↓
-Cached entry exists, ttl is set, and no-cache is off?
+Cached entry exists and no-cache is off?
     ├─ yes → respond with the cached content (including the stored status code
     │        and headers, plus Age; the handler does **not** run)
     └─ no  → run the handler
@@ -43,10 +44,13 @@ Cached entry exists, ttl is set, and no-cache is off?
               │       entry is left alone; a private/no-store header is kept)
               └─ regular response → set the ETag; write to the backend only if it
                                     differs from the existing entry's ETag
+                                    (with fail_open, a failed write is logged
+                                    and the response served unstored)
     ↓
 Attach Cache-Control to the response (non-2xx responses are returned without it,
 a handler's own private/no-store Cache-Control is never replaced, and a
-Set-Cookie response gets private instead of public)
+Set-Cookie response gets private instead of public); with vary, add the
+names to Vary on every GET response
 ```
 
 ## Detailed steps
@@ -96,9 +100,10 @@ and `X-Session-Token` a non-empty value is written as `sha256:<hex digest>`,
 so no token appears in the key.
 
 Query parameters are joined in the order the request sent them
-(`str(request.query_params)`) and are **not sorted**, so `?page=1&limit=10` and
-`?limit=10&page=1` are two separate cache entries. If you want them treated as
-one, pass a custom `key_builder` that normalises the query string.
+(`str(request.query_params)`) and are **not sorted** by default, so
+`?page=1&limit=10` and `?limit=10&page=1` are two separate cache entries. To
+treat them as one, set `@cache(sort_query=True)`, which orders the parameters
+by name first (see [Cache keys](HTTP_CACHING.md#cache-keys)).
 
 The key format keeps each dimension cached independently:
 
@@ -116,7 +121,7 @@ The decorator arguments control both the server-side behaviour and the
 
 ```python
 # Change how the server-side cache is used
-@cache(no_cache=True)     # Always re-run the handler (revalidate); entries are still written
+@cache(no_cache=True)     # Always re-run the handler (revalidate); entries are still written with a positive ttl
 @cache(no_store=True)     # Never read or write the cache
 
 # Normal caching behaviour
@@ -133,8 +138,11 @@ The decorator arguments control both the server-side behaviour and the
 ```
 
 Arguments are validated when the decorator is applied, and a `CacheXError` is
-raised if `public` and `private` are both set, or if only one of `stale` /
-`stale_ttl` is given.
+raised if `public` and `private` are both set, if only one of `stale` /
+`stale_ttl` is given, if `ttl` is not an `int`, is negative or is larger than
+`MAX_TTL`, if `vary` is not a list of header field names, if `sort_query` is
+not a `bool` or is combined with a custom `key_builder`, or if `key_builder` is
+an `async` callable.
 
 The header value is built once per decorated route:
 
@@ -208,11 +216,14 @@ if request.method != "GET":
 if no_store:
     return await render()                    # no read, no write
 
-authorized = "authorization" in request.headers and not (public or cache_authorized)
-if private or not ttl or authorized:
+bypass = private or not ttl
+# Authorization header, a session the middleware loaded, or non-empty request.session
+credential = None if bypass or public or cache_authorized else request_credential(request)
+if bypass or credential:
     response, etag = await render()          # backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
+cache_key = key_builder(request) + vary_components(request)  # built only here
 entry = await backend.get(cache_key)         # expired entries are already skipped here
 
 if client_etag and no_cache:
@@ -475,6 +486,7 @@ class CacheEntry:
     media_type: str | None = None
     status_code: int = 200  # replayed as-is
     headers: dict[str, str] | None = None  # sent back on replay
+    stored_at: float | None = None  # epoch seconds when @cache stored it; drives Age
 
 
 @dataclass
@@ -486,7 +498,7 @@ class CacheItem:
 `headers` stores the headers the handler set itself, excluding fields that must
 be recomputed for every response or must not be replayed: `Set-Cookie`,
 `Content-Length`, `Transfer-Encoding`, `Connection`, `Date`, `ETag`,
-`Cache-Control` and `Content-Type` (`Content-Type` is restored from
+`Cache-Control`, `Content-Type` and `Age` (`Content-Type` is restored from
 `media_type`; storing both would emit the header twice).
 
 Counters (`backend.increment()`) are also represented as a `CacheEntry`: the
@@ -525,9 +537,9 @@ without reading or writing the cache and without adding a `Cache-Control`
 header.
 
 **Q: Why are there several cache entries for the same endpoint?**
-A: Because the cache key includes the query parameters, and they are **not
-sorted**. `/users?page=1` and `/users?page=2` are different entries, and so are
-`?a=1&b=2` and `?b=2&a=1`.
+A: Because the cache key includes the query parameters, and by default they are
+**not sorted**. `/users?page=1` and `/users?page=2` are different entries, and
+so are `?a=1&b=2` and `?b=2&a=1` unless the route sets `sort_query=True`.
 
 **Q: How does MemoryBackend work across multiple processes?**
 A: It doesn't. Each process has its own cache; use Redis in production.
