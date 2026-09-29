@@ -78,7 +78,10 @@ class MemcachedBackend(BaseCacheBackend):
     conflicts with other applications.
 
     Limitations:
-    - Pattern-based clearing (clear_pattern) is not supported by Memcached protocol
+    - Memcached cannot enumerate keys: clear_pattern clears nothing (returns
+      0) and get_all_keys/get_cache_data return empty results, each with a
+      RuntimeWarning; clear_path only deletes a key named exactly as the path
+    - clear() issues flush_all, which empties the whole server
     - Operations are wrapped to appear async but use blocking sync client internally
     """
 

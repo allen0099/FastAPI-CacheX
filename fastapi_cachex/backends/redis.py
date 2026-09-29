@@ -169,6 +169,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 broadest compatibility. Use 3 only when hiredis >= 3.0 is installed
                 and Redis 8.0+ RESP3 features are required.
             **kwargs: Additional arguments to pass to Redis client
+
+        Raises:
+            CacheXError: If redis-py is not installed
         """
         try:
             # Import top-level package first so tests that monkeypatch
@@ -218,12 +221,15 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         Args:
             config: RedisConfig instance
+
         Returns:
             An instance of AsyncRedisCacheBackend
 
         Warns:
             DeprecationWarning: ``config`` sets ``encoding`` explicitly; the
                 field is removed in 0.4.0.
+            RuntimeWarning: That ``encoding`` is not UTF-8, which corrupts
+                non-ASCII content read back (emitted by the constructor).
         """
         encoding: str | None = None
         if "encoding" in config.model_fields_set:

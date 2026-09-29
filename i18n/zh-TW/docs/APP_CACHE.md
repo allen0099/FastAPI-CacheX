@@ -52,7 +52,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 - `AppCache` 依賴項在第一次使用時會建立並註冊一個預設的 `CacheManager`；`CacheManagerProxy.set()` 則可改為註冊你自己的實例。
 
 > [!NOTE]
-> `clear()`／`clear_prefix()` 是以後端的 `get_all_keys()` 與 `delete_many()` 實作（在 Redis 上是一次批次 `DEL`）。由於 Memcached 不支援列舉鍵（見[後端](BACKENDS.md#memcached)），這些方法以及 `clear_pattern()` 在 Memcached 後端上不會有任何作用；`get()`／`set()`／`add()`／`delete()`／`has()` 則照常運作。若需要大量清除，請使用 Redis 或記憶體後端。
+> `clear()`／`clear_prefix()` 是以後端的 `get_all_keys()` 與 `delete_many()` 實作（在 Redis 上是每批 100 個鍵的 `DEL`）。由於 Memcached 不支援列舉鍵（見[後端](BACKENDS.md#memcached)），這些方法以及 `clear_pattern()` 在 Memcached 後端上不會有任何作用，只會回傳 0 並發出 `RuntimeWarning`；`get()`／`set()`／`add()`／`delete()`／`has()` 則照常運作。若需要大量清除，請使用 Redis 或記憶體後端。
 
 ## Cache stampede 保護 {#stampede-protection}
 

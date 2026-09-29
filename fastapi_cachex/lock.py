@@ -91,10 +91,13 @@ class CacheLock:
             ttl: Override default TTL (seconds)
 
         Returns:
-            True if the lock was acquired, False on timeout or failure
+            True if the lock was acquired; False if it is held elsewhere
+            (non-blocking) or the timeout elapsed first (blocking)
 
         Raises:
             RuntimeError: If this CacheLock instance is already held.
+            BackendNotFoundError: If no ``backend`` was passed and none is
+                registered with ``BackendProxy.set()``.
         """
         if self._is_held:
             msg = (
