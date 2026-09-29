@@ -127,7 +127,9 @@ def test_prefixed_cookie_names_browsers_refuse_warn(
     with pytest.warns(UserWarning, match="Version 0.4.0 will reject") as record:
         SessionConfig(secret_key=SECRET, **settings)
 
-    assert requirement in str(record[0].message)
+    message = str(record[0].message)
+    assert requirement in message
+    assert "issues/256" in message
 
 
 @pytest.mark.parametrize(
@@ -205,10 +207,25 @@ def test_get_session_manager_warns_when_the_proxy_holds_another_manager(
     SessionManagerProxy.set(SessionManager(MemoryBackend(), config))
     client = TestClient(_manager_app(manager, config))
 
-    with pytest.warns(FutureWarning, match="not the one set in SessionManagerProxy"):
+    with pytest.warns(
+        FutureWarning, match="a different SessionManager is set in SessionManagerProxy"
+    ):
         response = client.get("/manager")
 
     # 0.3.x still answers with the middleware's manager.
+    assert response.json() == {"is_same": True}
+
+
+def test_get_session_manager_warns_when_the_proxy_is_empty(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    client = TestClient(_manager_app(manager, config))
+
+    with pytest.warns(
+        FutureWarning, match="no SessionManager is set in SessionManagerProxy"
+    ):
+        response = client.get("/manager")
+
     assert response.json() == {"is_same": True}
 
 

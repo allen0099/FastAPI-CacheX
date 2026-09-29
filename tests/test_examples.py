@@ -49,6 +49,12 @@ def _reset_proxies() -> Iterator[None]:
         proxy.set(None)
 
 
+@pytest.fixture(autouse=True)
+def _session_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without SESSION_SECRET_KEY the session examples warn (an error here)."""
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-" + "k" * 43)
+
+
 def load_example(name: str) -> ModuleType:
     """Import `examples/<name>.py` as a new module, so no state is shared."""
     module_name = f"_cachex_example_{name}"
@@ -282,6 +288,40 @@ def test_session_login_response_is_private(returning_visitor: bool) -> None:
         assert "expires" in cleared
         assert not client.cookies.get("session")
         assert client.get("/me").status_code == 401
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "session_api",
+        "session_login",
+        *(
+            pytest.param(
+                name,
+                marks=pytest.mark.skipif(
+                    importlib.util.find_spec("jwt") is None,
+                    reason=f"{name} needs the jwt extra (PyJWT)",
+                ),
+            )
+            for name in ("session_jwt", "session_jwt_claims")
+        ),
+    ],
+)
+def test_session_example_warns_without_a_secret_key(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """No placeholder key: an unset SESSION_SECRET_KEY warns and a random one is used."""
+    monkeypatch.delenv("SESSION_SECRET_KEY")
+    with pytest.warns(UserWarning, match="SESSION_SECRET_KEY is not set") as record:
+        first = load_example(name)
+    assert record[0].filename == str(EXAMPLES_DIR / f"{name}.py")
+    with pytest.warns(UserWarning, match="SESSION_SECRET_KEY is not set"):
+        second = load_example(name)
+    assert len(first.config.secret_key.get_secret_value()) >= 32
+    assert (
+        first.config.secret_key.get_secret_value()
+        != second.config.secret_key.get_secret_value()
+    )
 
 
 @pytest.mark.skipif(

@@ -71,6 +71,8 @@ BackendProxy.set(backend)
 - Uses SCAN instead of KEYS for safe production use (non-blocking)
 - Namespaced with `fastapi_cachex:` prefix by default; pass `key_prefix="myapp:cache:"`
   for multi-tenant scenarios
+- `clear()`, `clear_pattern()` and `clear_path()` delete only keys under this backend's
+  `key_prefix`; other applications on the same server keep their keys
 - Only the pattern you pass to `clear_pattern()` is a glob. The key prefix and the path
   given to `clear_path()` are matched literally, so `*`, `?`, `[` or `]` in them cannot
   reach keys outside the prefix or miss the path
@@ -185,7 +187,10 @@ BackendProxy.set(backend)
   To drop a cached route's entry after a write, call
   [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route), which
   rebuilds the exact key
-- `clear()` issues `flush_all`, which wipes the whole Memcached server, not just this namespace
+- `backend.clear()` (`MemcachedBackend.clear()`) issues `flush_all`, which wipes the whole
+  Memcached server, not just this namespace. `CacheManager.clear()` is different: it
+  enumerates keys, so on Memcached it deletes nothing (see
+  [Application cache](APP_CACHE.md))
 - A key Memcached would reject (over 250 bytes, whitespace, non-ASCII) is stored
   under its SHA-256 digest
 - A `ttl` whose expiry falls after 2038-01-19 raises `ValueError` (see

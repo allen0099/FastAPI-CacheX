@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import inspect
 import logging
 import time
 import warnings
@@ -66,6 +67,26 @@ def _expiry(ttl: int | None) -> int:
             raise ValueError(msg)
         return expires_at
     return ttl
+
+
+def _caller_stacklevel() -> int:
+    """Return the ``stacklevel`` of the first frame outside fastapi_cachex.
+
+    For a ``warnings.warn`` in the method that calls this, so a warning raised
+    through ``CacheManager`` names the application's line, not manager.py.
+    """
+    frame = inspect.currentframe()
+    if frame is None or frame.f_back is None:  # no frame support
+        return 2
+    # Level 1 is the method that warns; start at its caller.
+    level, frame = 2, frame.f_back.f_back
+    while frame is not None:
+        module = frame.f_globals.get("__name__", "")
+        if module != "fastapi_cachex" and not module.startswith("fastapi_cachex."):
+            break
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 class MemcachedBackend(BaseCacheBackend):
@@ -426,7 +447,7 @@ class MemcachedBackend(BaseCacheBackend):
             "this namespace cannot be cleared on its own; delete known keys "
             "with delete() or delete_many() instead.",
             RuntimeWarning,
-            stacklevel=2,
+            stacklevel=_caller_stacklevel(),
         )
         await asyncio.to_thread(self.client.flush_all)
         logger.debug("Memcached CLEAR; flush_all issued")
@@ -456,7 +477,7 @@ class MemcachedBackend(BaseCacheBackend):
             "exactly as the path, and include_params has no effect. Use "
             "invalidate(request) to drop a cached route's entry.",
             RuntimeWarning,
-            stacklevel=2,
+            stacklevel=_caller_stacklevel(),
         )
 
         # Try to delete the prefixed key (exact match only)
@@ -490,7 +511,7 @@ class MemcachedBackend(BaseCacheBackend):
             "Consider using Redis backend for pattern support, "
             "or track keys manually in your application logic.",
             RuntimeWarning,
-            stacklevel=2,
+            stacklevel=_caller_stacklevel(),
         )
         logger.debug("Memcached CLEAR_PATTERN unsupported; pattern=%s", pattern)
         return 0
@@ -512,7 +533,7 @@ class MemcachedBackend(BaseCacheBackend):
             "Consider using Redis backend if you need cache monitoring, "
             "or track keys manually in your application.",
             RuntimeWarning,
-            stacklevel=2,
+            stacklevel=_caller_stacklevel(),
         )
         logger.debug("Memcached GET_ALL_KEYS unsupported; returning empty list")
         return []
@@ -531,6 +552,8 @@ class MemcachedBackend(BaseCacheBackend):
             "get_cache_data() returns an empty dictionary. "
             "Consider using Redis backend if you need cache monitoring.",
             RuntimeWarning,
+            # Called by the monitoring route, whose caller is FastAPI itself:
+            # routes.py names the source better than any frame outside it.
             stacklevel=2,
         )
         logger.debug("Memcached GET_CACHE_DATA unsupported; returning empty dict")

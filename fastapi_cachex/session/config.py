@@ -273,7 +273,8 @@ class SessionConfig(BaseModel):
                 f"cookie_name={self.cookie_name!r} requires {', '.join(problems)}: "
                 "browsers refuse a cookie with this prefix otherwise, so the "
                 "session cookie would never be stored. Version 0.4.0 will reject "
-                "this configuration.",
+                "this configuration "
+                "(https://github.com/allen0099/FastAPI-CacheX/issues/256).",
                 UserWarning,
                 stacklevel=3,
             )

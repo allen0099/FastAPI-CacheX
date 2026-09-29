@@ -83,13 +83,15 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
   first time it is used; `CacheManagerProxy.set()` registers your own instead.
 
 > [!NOTE]
-> `clear()`/`clear_prefix()` are implemented via the backend's `get_all_keys()`
+> `CacheManager.clear()`/`clear_prefix()` are implemented via the backend's `get_all_keys()`
 > and `delete_many()` (`DEL` in batches of 100 keys on Redis). Since Memcached doesn't
 > support key enumeration (see [Backends](BACKENDS.md#memcached)), these
-> methods — and `clear_pattern()` — are no-ops on a Memcached backend that
+> methods — and `CacheManager.clear_pattern()` — are no-ops on a Memcached backend that
 > return 0 with a `RuntimeWarning`;
 > `get()`/`set()`/`add()`/`delete()`/`has()` work normally. Use Redis or the in-memory
-> backend if you need bulk clearing.
+> backend if you need bulk clearing. Do not fall back to the backend's own `clear()`
+> on Memcached: `MemcachedBackend.clear()` issues `flush_all` and wipes the whole
+> server, HTTP responses, sessions, locks and other applications' keys included.
 
 ## Stampede protection
 

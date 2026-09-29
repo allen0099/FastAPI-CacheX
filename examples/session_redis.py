@@ -16,6 +16,7 @@ server, configured from ``REDIS_HOST``, ``REDIS_PORT``, ``REDIS_DB`` and
 
 import os
 import secrets
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -46,12 +47,27 @@ backend = AsyncRedisCacheBackend(
     key_prefix="fastapi_cachex_example:",
 )
 
+
+def session_secret_key() -> str:
+    """Return SESSION_SECRET_KEY, or a random key for this run with a warning."""
+    key = os.environ.get("SESSION_SECRET_KEY")
+    if key:
+        return key
+    warnings.warn(
+        "SESSION_SECRET_KEY is not set, so this run signs sessions with a "
+        "random key: they end when the process restarts and are not shared "
+        "between workers. Set SESSION_SECRET_KEY to a random value of at least "
+        "32 characters, e.g. the output of "
+        '`python -c "import secrets; print(secrets.token_urlsafe(48))"`.',
+        UserWarning,
+        stacklevel=2,
+    )
+    return secrets.token_urlsafe(48)
+
+
 config = SessionConfig(
-    # At least 32 characters. Set a real random value in production, e.g.
-    # `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
-    secret_key=os.environ.get(
-        "SESSION_SECRET_KEY", "dev-only-placeholder-change-me-before-deploying"
-    ),
+    # At least 32 characters, from the environment; see session_secret_key().
+    secret_key=session_secret_key(),
     session_ttl=3600,
     sliding_expiration=True,
     sliding_threshold=0.5,
