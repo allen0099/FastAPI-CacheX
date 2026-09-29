@@ -21,6 +21,7 @@ from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.dependencies import AuthenticatedSession
 from fastapi_cachex.session.dependencies import RequiredSession
+from fastapi_cachex.session.dependencies import UserSessionDep
 from fastapi_cachex.session.dependencies import get_session
 from fastapi_cachex.session.dependencies import rotate_session_id
 from fastapi_cachex.session.exceptions import SessionNotFoundError
@@ -1105,10 +1106,19 @@ async def test_writing_after_clear_starts_a_new_anonymous_session(
     assert fresh.data == {"flash": "signed out"}
 
 
+@pytest.mark.parametrize(
+    "user_session",
+    [AuthenticatedSession, UserSessionDep],
+    ids=["AuthenticatedSession", "UserSessionDep"],
+)
 async def test_require_user_session_rejects_anonymous_sessions(
-    manager: SessionManager, config: SessionConfig
+    manager: SessionManager, config: SessionConfig, user_session: Any
 ) -> None:
-    """An anonymous cart session passes get_session but not require_user_session (#114)."""
+    """An anonymous cart session passes get_session but not require_user_session.
+
+    ``AuthenticatedSession`` (#114) and, since 0.4.0, ``UserSessionDep`` (#127)
+    both require a session with a user.
+    """
     app = FastAPI()
     app.add_middleware(FastAPICacheXSessionMiddleware, session_manager=manager)
 
@@ -1122,7 +1132,7 @@ async def test_require_user_session_rejects_anonymous_sessions(
         return {"user": session.user is not None}
 
     @app.get("/account")
-    async def account(session: AuthenticatedSession) -> dict[str, str]:
+    async def account(session: user_session) -> dict[str, str]:
         assert session.user is not None
         return {"user_id": session.user.user_id}
 

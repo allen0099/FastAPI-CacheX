@@ -378,9 +378,8 @@ require_session = get_session  # Alias for required session dependency
 OptionalSession = Annotated[Session | None, Depends(get_optional_session)]
 RequiredSession = Annotated[Session, Depends(get_session)]
 SessionDep = Annotated[Session, Depends(get_session)]
-# Despite its name, UserSessionDep accepts anonymous sessions too; making it
-# require a user is a breaking change planned for 0.4.0. Use AuthenticatedSession.
-UserSessionDep = Annotated[Session, Depends(get_session)]
 AuthenticatedSession = Annotated[Session, Depends(require_user_session)]
+# Same as AuthenticatedSession; it admitted anonymous sessions before 0.4.0.
+UserSessionDep = Annotated[Session, Depends(require_user_session)]
 SessionManagerDep = Annotated["SessionManager", Depends(get_session_manager)]
 ClientIPDep = Annotated[str | None, Depends(get_session_client_ip)]
