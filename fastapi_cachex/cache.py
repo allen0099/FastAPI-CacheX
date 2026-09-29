@@ -3,6 +3,7 @@
 import hashlib
 import inspect
 import logging
+import threading
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
@@ -252,6 +253,66 @@ _COOKIE_VARY_WARNING = (
     "private=True. To keep vary=['Cookie'], silence this with "
     "warnings.filterwarnings('ignore', message='cache vary on Cookie')."
 )
+
+
+# How the one-time bypass warning names each `_request_credential` result.
+_CREDENTIAL_DESCRIPTIONS = {
+    "Authorization header": "an Authorization header",
+    "Session": "a session token (header, bearer token or cookie)",
+    "Session data": "non-empty session data (request.session)",
+}
+
+_BYPASS_WARNING = (
+    "@cache bypassed the shared backend for route %r: the request carried %s, "
+    "so the response is not cached and is sent with Cache-Control: private. "
+    "If the response is the same for every user, set @cache(public=True) "
+    "(this also sends Cache-Control: public, so shared caches downstream may "
+    "store it). If it is per user, set cache_authorized=True with a key_builder "
+    "that puts the verified caller's identity into the key. Logged once per "
+    "route and credential; each bypass is logged at DEBUG."
+)
+
+
+class _BypassWarner:
+    """Log the credential bypass at ``WARNING`` once per route and credential.
+
+    One instance lives in each ``@cache``-decorated function, so the state
+    goes away with the function (and a test's fresh app starts with none).
+    The route is keyed by its template (``/items/{item_id}``), never by the
+    requested path, so the set stays bounded by the routes the function is
+    registered on and client-chosen paths cannot grow it.
+    """
+
+    def __init__(self, fallback_name: str) -> None:
+        self._fallback_name = fallback_name
+        self._warned: set[tuple[str, str]] = set()
+        # The wrapper runs on an event loop, where check-then-add cannot be
+        # interleaved, but one decorated function can serve apps running on
+        # several loops in different threads (several servers in one process,
+        # each `TestClient`), and a set's check-then-add is not atomic across
+        # threads. The lock keeps "once" exact; it costs nothing on the hot
+        # path, which returns before taking it once the pair is recorded.
+        self._lock = threading.Lock()
+
+    def __call__(self, request: Request, credential: str) -> None:
+        route_path = getattr(request.scope.get("route"), "path", None)
+        # Without a matched route (not reachable through FastAPI's router),
+        # name the handler: the requested path is client input and unbounded.
+        route = route_path if isinstance(route_path, str) else self._fallback_name
+        pair = (route, credential)
+        if pair in self._warned:
+            return
+        with self._lock:
+            if pair in self._warned:
+                return
+            self._warned.add(pair)
+        # Only the route template and the credential kind: never a header
+        # value or token. `%r` escapes anything unusual in the template.
+        logger.warning(
+            _BYPASS_WARNING,
+            route,
+            _CREDENTIAL_DESCRIPTIONS.get(credential, credential),
+        )
 
 
 def default_key_builder(request: Request) -> str:
@@ -859,6 +920,9 @@ def cache(
             backend as ``private=True`` does (RFC 9111 §3.5), unless
             ``public`` is set, and its response is sent with ``private``.
             A token that does not resolve to a session does not count.
+            The first such bypass is logged at ``WARNING`` once per route
+            and credential kind (the route template and the kind, never the
+            value), since it otherwise leaves the route with no cache hits.
             RFC 9111 would also allow reuse under ``must-revalidate``, but
             ``must_revalidate=True`` does not lift the bypass: only this
             explicit opt-in or ``public`` does. Set this only when
@@ -1002,6 +1066,9 @@ def cache(
         # routes skip the backend like private ones. `ttl=0` is included, since
         # `max-age=0` allows no reuse either.
         bypass_backend = private or not ttl
+        warn_bypass = _BypassWarner(
+            f"{getattr(func, '__module__', '?')}.{getattr(func, '__qualname__', '?')}"
+        )
 
         @wraps(func)
         async def serve(*args: Any, **kwargs: Any) -> Response:
@@ -1050,12 +1117,13 @@ def cache(
                 else _request_credential(req)
             )
             authorized_bypass = credential is not None
-            if authorized_bypass:
+            if credential is not None:
                 logger.debug(
                     "%s present; bypassing the backend for path=%s",
                     credential,
                     req.url.path,
                 )
+                warn_bypass(req, credential)
 
             # A private response belongs to exactly one user, so it must never
             # be read from or written to the shared backend — the default cache
