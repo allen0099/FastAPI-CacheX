@@ -59,6 +59,12 @@ class CacheEntry:
     ``status_code`` and ``headers`` default to a plain ``200`` with no extra
     headers, so entries built by older callers (and documents written by older
     releases) keep their previous behaviour.
+
+    ``stored_at`` is when ``@cache`` stored the response, in epoch seconds
+    from the wall clock (``time.time()``), since an entry written by one
+    process or host may be served by another. It drives the ``Age`` header on
+    a hit; ``None`` (entries written by older releases, and anything not
+    stored by ``@cache``) sends no ``Age``.
     """
 
     fingerprint: str
@@ -66,6 +72,7 @@ class CacheEntry:
     media_type: str | None = None
     status_code: int = DEFAULT_STATUS_CODE
     headers: dict[str, str] | None = None
+    stored_at: float | None = None
 
 
 @dataclass

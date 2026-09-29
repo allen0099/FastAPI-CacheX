@@ -4,6 +4,8 @@ Both backends store a ``CacheEntry`` as a JSON document; ``orjson`` is used when
 it is installed and the standard library ``json`` module otherwise.
 """
 
+import math
+
 from fastapi_cachex.types import COUNTER_FINGERPRINT
 from fastapi_cachex.types import DEFAULT_STATUS_CODE
 from fastapi_cachex.types import CacheEntry
@@ -45,10 +47,18 @@ def encode_entry(entry: CacheEntry) -> bytes:
             "media_type": entry.media_type,
             "status_code": entry.status_code,
             "headers": entry.headers,
+            "stored_at": entry.stored_at,
         },
     )
     # orjson returns bytes, stdlib json returns str
     return serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
+
+
+def _stored_at(value: object) -> float | None:
+    """``stored_at`` from a document; anything but a finite number is unknown."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
 
 
 def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
@@ -61,7 +71,8 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
     cache miss.
 
     Documents written before entries carried a status code and headers simply
-    lack those keys and decode to a plain ``200`` with no extra headers.
+    lack those keys and decode to a plain ``200`` with no extra headers; those
+    written before entries carried ``stored_at`` decode with ``None``.
     """
     if raw is None:
         return None
@@ -76,6 +87,7 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
             media_type=data.get("media_type"),
             status_code=data.get("status_code", DEFAULT_STATUS_CODE),
             headers=data.get("headers"),
+            stored_at=_stored_at(data.get("stored_at")),
         )
     except _DECODE_ERRORS:
         return None

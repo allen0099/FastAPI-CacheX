@@ -24,12 +24,12 @@ private，或帶有 Authorization／Session 且未設定 public／cache_authoriz
     ↓
 請求帶有 If-None-Match？
     ├─ 且為 no-cache → 先執行 handler 計算目前的 ETag；相符 → 304
-    ├─ 其他情況      → 與快取項目的 ETag 比對；相符 → 304
+    ├─ 其他情況      → 與快取項目的 ETag 比對；相符 → 帶 Age 的 304
     └─ 不相符／沒有此標頭 → 繼續
     ↓
 快取項目存在、已設定 ttl，且未啟用 no-cache？
     ├─ 是 → 以快取內容回應（包含儲存的狀態碼
-    │        與標頭；handler **不會**執行）
+    │        與標頭，並加上 Age；handler **不會**執行）
     └─ 否 → 執行 handler
               ├─ 非 2xx（或 206）→ 原樣回傳且**不寫入**
               │                    （不會覆寫既有的正常項目）
@@ -143,10 +143,11 @@ entry = CacheEntry(
     media_type="application/json",
     status_code=200,  # 以原本的狀態碼重播
     headers={"Vary": "Accept-Encoding"},  # 重播時送回的標頭
+    stored_at=1702650540.5,  # @cache 儲存它時的 epoch 秒數；用來計算 Age
 )
 ```
 
-TTL 不儲存在 `CacheEntry` 中：過期由後端負責（`MemoryBackend` 將它存在 `CacheItem.expiry`，Redis 使用 `SET ... EX`，Memcached 使用 exptime）。
+TTL 不儲存在 `CacheEntry` 中：過期由後端負責（`MemoryBackend` 將它存在 `CacheItem.expiry`，Redis 使用 `SET ... EX`，Memcached 使用 exptime）。`stored_at` 是系統時鐘時間（`time.time()`），因為送出項目的行程不一定是儲存它的行程；0.3.9 以前的版本寫入的項目為 `None`。
 
 若尚未以 `BackendProxy.set()` 設定後端，裝飾器會在第一個請求時建立 `MemoryBackend`、註冊它，並記錄一則警告，說明這個快取是每個行程各自一份。
 
@@ -171,14 +172,15 @@ if client_etag and no_cache:
     if etag_matches(client_etag, fresh.etag):
         return not_modified(...)             # 304
 elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
-    return not_modified(...)                 # 304，handler 不執行
+    return not_modified(..., age_headers(entry, ttl))  # 304，handler 不執行
 
 if entry and not no_cache:
     return Response(                         # 200，handler 不執行
         content=entry.content,
         status_code=entry.status_code,
         media_type=entry.media_type,
-        headers={**(entry.headers or {}), "ETag": entry.fingerprint, ...},
+        headers={**(entry.headers or {}), "ETag": entry.fingerprint, ...,
+                 **age_headers(entry, ttl)},  # Age：now - stored_at，限制在 0..ttl
     )
 
 response, body, etag = await render()        # 未命中（若 no-cache 已產生過則直接沿用）
@@ -189,9 +191,12 @@ if etag is None:
 if marked_private_or_no_store(response) or "set-cookie" in response.headers:
     return response                          # 屬於單一呼叫者的回應：不寫入
 if not entry or entry.fingerprint != etag:
-    await backend.set(cache_key, CacheEntry(...), ttl=ttl)
+    await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
 return response
 ```
+
+> [!NOTE]
+> **由後端送出的回應帶有 `Age`。** 快取命中，以及依已儲存 ETag 回應的 304，會帶有 `Age: <自 stored_at 起的秒數>`，並限制在 `0`–`ttl` 之間，以防主機之間的時鐘偏差；`Cache-Control` 保持 `max-age=<ttl>`，由下游快取從中扣掉 `Age`（RFC 9111 §4.2.3）。handler 剛產生的回應（包括所有 `no_cache` 回應與所有繞過後端的回應）不帶 `Age`，沒有 `stored_at` 的項目也不帶。
 
 > [!NOTE]
 > 「非 2xx 不寫入」是刻意的設計：暫時性的錯誤不應抹除最後一次正常的快取回應，也不應在之後被當成 200 重播。`206 Partial Content` 同樣不會快取，因為它的內容只對產生它的那個 `Range` 請求有意義。非 2xx 回應也永遠不會以 `304` 回應，且回傳時不帶裝飾器的 `Cache-Control` 標頭（只有 `no_store=True` 會在每個回應加上 `no-store`）。
@@ -233,6 +238,7 @@ If-None-Match: *                  → 只要資源存在就相符 → 304
             media_type="application/json",
             status_code=200,
             headers=None,
+            stored_at=1702650540.5,
         ),
         expiry=1702650600.5,  # epoch 秒數；None 表示永不過期
     ),
@@ -259,12 +265,13 @@ Redis 與 Memcached 共用同一套 JSON 編解碼器；若已安裝 `orjson` �
   "content": "<response bytes decoded as latin-1>",
   "media_type": "application/json",
   "status_code": 200,
-  "headers": {"Vary": "Accept-Encoding"}
+  "headers": {"Vary": "Accept-Encoding"},
+  "stored_at": 1702650540.5
 }
 ```
 
 - `content` 使用 **latin-1 來回轉換**，而不是 base64：latin-1 與位元組一一對應，因此任何位元組序列都能放進 JSON 文字中，並原封不動地還原。
-- 舊版本寫入、沒有 `status_code`／`headers` 欄位的項目仍可讀取，解碼後為 `200` 且沒有額外標頭。
+- 舊版本寫入、沒有 `status_code`／`headers` 欄位的項目仍可讀取，解碼後為 `200` 且沒有額外標頭。沒有 `stored_at` 的項目（0.3.9 以前）解碼後為 `stored_at=None`，送出時不帶 `Age` 標頭。
 - 任何解碼失敗（損壞的 JSON、缺少欄位、型別錯誤）都視為**快取未命中**，回傳 `None` 而不是拋出例外。
 - `increment()` 會留下一個**單純的整數**（由 Redis／Memcached 的 INCR 系列指令寫入）；它會解碼成 fingerprint 為 `counter` 的 `CacheEntry`。
 

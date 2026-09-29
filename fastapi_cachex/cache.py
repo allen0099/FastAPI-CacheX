@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import logging
 import threading
+import time
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
@@ -61,6 +62,11 @@ AsyncResponseCallable = Callable[..., Awaitable[Response]]
 logger = logging.getLogger(__name__)
 
 _NO_STORE = DirectiveType.NO_STORE.value
+
+# Wall clock behind ``CacheEntry.stored_at`` and the ``Age`` header. Wall time,
+# not monotonic, because an entry stored by one process or host is served by
+# another. A module attribute so tests can move time without sleeping.
+_now = time.time
 
 
 def build_cache_key(request: Request, *components: str | int) -> str:
@@ -466,6 +472,7 @@ _UNCACHEABLE_HEADERS = frozenset(
         "etag",
         "cache-control",
         "content-type",
+        "age",
     }
 )
 
@@ -497,6 +504,28 @@ def _cacheable_headers(response: Response) -> dict[str, str] | None:
 # ``Date`` comes from Starlette, ``ETag`` and ``Cache-Control`` are set on the
 # 304 directly, which leaves these three to be carried over.
 _REVALIDATION_HEADERS = frozenset({"content-location", "expires", "vary"})
+
+
+def _age_headers(entry: CacheEntry, ttl: int | None) -> dict[str, str]:
+    """The ``Age`` header for a response served from a stored ``entry``.
+
+    ``Cache-Control`` keeps ``max-age=<ttl>`` on a hit: RFC 9111 §4.2.3 has a
+    downstream cache compute the remaining freshness as ``max-age`` minus
+    ``Age``, so a copy stored here N seconds ago is fresh downstream for
+    ``ttl - N`` more seconds, and the total never reaches twice the ttl.
+
+    ``Age`` is a non-negative integer number of seconds (RFC 9111 §5.1). The
+    value is clamped to ``[0, ttl]``: ``stored_at`` may come from another
+    host's clock, and the backend never keeps an entry longer than ``ttl``, so
+    anything outside that range is clock skew. An entry without ``stored_at``
+    (written by an older release) gets no ``Age`` at all.
+    """
+    if entry.stored_at is None:
+        return {}
+    age = max(0.0, _now() - entry.stored_at)
+    if ttl is not None:
+        age = min(age, ttl)
+    return {"age": str(int(age))}
 
 
 def _revalidation_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
@@ -643,14 +672,19 @@ def _etag_matches(if_none_match: str | None, etag: str) -> bool:
 
 
 def _not_modified(
-    etag: str, cache_control: str, headers: Mapping[str, str] | None = None
+    etag: str,
+    cache_control: str,
+    headers: Mapping[str, str] | None = None,
+    age: Mapping[str, str] | None = None,
 ) -> Response:
     """Build the 304 for a successful revalidation.
 
     ``headers`` is what the 200 for this resource would have carried; RFC 9110
     §15.4.5 requires the fields that steer caching to be repeated on the 304,
     otherwise a cache that stored the 200 would drop them on refresh. ``Date``
-    is added by Starlette and the other two are set here.
+    is added by Starlette and the other two are set here. ``age`` is the
+    ``Age`` header (see ``_age_headers``) when the 304 is answered from a
+    stored entry.
     """
     return Response(
         status_code=HTTP_304_NOT_MODIFIED,
@@ -658,6 +692,7 @@ def _not_modified(
             **_revalidation_headers(headers),
             "ETag": etag,
             "Cache-Control": cache_control,
+            **(age or {}),
         },
     )
 
@@ -1220,8 +1255,14 @@ def cache(
                     logger.debug(
                         "304 Not Modified (cached ETag match); key=%s", cache_key
                     )
+                    # Answered from the stored entry, so the 304 says how old
+                    # that entry is: a cache refreshing its copy with this 304
+                    # takes the new Age with it (RFC 9111 §4.3.4).
                     return _not_modified(
-                        cached_data.fingerprint, cache_control, cached_data.headers
+                        cached_data.fingerprint,
+                        cache_control,
+                        cached_data.headers,
+                        _age_headers(cached_data, ttl),
                     )
 
             # If we don't have If-None-Match header, check if we have a valid cached copy
@@ -1236,6 +1277,7 @@ def cache(
                         **(cached_data.headers or {}),
                         "ETag": cached_data.fingerprint,
                         "Cache-Control": cache_control,
+                        **_age_headers(cached_data, ttl),
                     },
                 )
 
@@ -1284,6 +1326,7 @@ def cache(
                             media_type=_media_type_of(current_response),
                             status_code=current_response.status_code,
                             headers=_cacheable_headers(current_response),
+                            stored_at=_now(),
                         ),
                         ttl=ttl,
                     )
