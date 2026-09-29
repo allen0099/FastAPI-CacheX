@@ -555,6 +555,78 @@ async def test_get_metadata_with_non_string_content(
     assert retrieved is None
 
 
+NON_OBJECT_JSON = [
+    pytest.param(b"[1, 2]", id="array"),
+    pytest.param(b'"x"', id="string"),
+    pytest.param(b"1", id="number"),
+    pytest.param(b"null", id="null"),
+]
+
+
+async def _store_raw_state(
+    state_manager: StateManager, state: str, content: bytes
+) -> None:
+    entry = CacheEntry(fingerprint=hashlib.sha256(content).hexdigest(), content=content)
+    await state_manager.backend.set(
+        f"{state_manager.key_prefix}{state}", entry, ttl=600
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(b"1" * 5000, id="top-level"),
+        pytest.param(
+            b'{"state": "s", "metadata": {"n": ' + b"1" * 5000 + b"}}", id="nested"
+        ),
+    ],
+)
+async def test_oversized_json_integer_is_malformed(
+    state_manager: StateManager, content: bytes
+) -> None:
+    """An integer past the interpreter's digit limit is malformed data, not a ValueError."""
+    await _store_raw_state(state_manager, "bad_state", content)
+
+    assert await state_manager.validate_state("bad_state") is False
+    assert await state_manager.get_state_metadata("bad_state") is None
+    with pytest.raises(StateDataError, match="Failed to parse state data"):
+        await state_manager.consume_state("bad_state")
+
+
+@pytest.mark.parametrize("content", NON_OBJECT_JSON)
+async def test_consume_state_with_non_object_json(
+    state_manager: StateManager, content: bytes
+) -> None:
+    """consume_state() raises StateDataError (not TypeError) for JSON that is not an object."""
+    await _store_raw_state(state_manager, "bad_state", content)
+
+    with pytest.raises(StateDataError, match="expected a JSON object"):
+        await state_manager.consume_state("bad_state")
+    assert (
+        await state_manager.backend.get(f"{state_manager.key_prefix}bad_state") is None
+    )
+
+
+@pytest.mark.parametrize("content", NON_OBJECT_JSON)
+async def test_validate_state_with_non_object_json(
+    state_manager: StateManager, content: bytes
+) -> None:
+    """validate_state() returns False for JSON that is not an object."""
+    await _store_raw_state(state_manager, "bad_state", content)
+
+    assert await state_manager.validate_state("bad_state") is False
+
+
+@pytest.mark.parametrize("content", NON_OBJECT_JSON)
+async def test_get_metadata_with_non_object_json(
+    state_manager: StateManager, content: bytes
+) -> None:
+    """get_state_metadata() returns None for JSON that is not an object."""
+    await _store_raw_state(state_manager, "bad_state", content)
+
+    assert await state_manager.get_state_metadata("bad_state") is None
+
+
 async def test_get_metadata_with_non_dict_metadata(state_manager: StateManager) -> None:
     """Test retrieving metadata when metadata is not a dict."""
     state = "test_state"
