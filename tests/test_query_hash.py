@@ -66,10 +66,10 @@ def test_the_digest_is_taken_after_sorting() -> None:
     forward = "a=1&" + _query(250)
     reverse = _query(250) + "&a=1"
 
-    sorted_keys = {
-        build_cache_key(_request(q), sort_query=True) for q in (forward, reverse)
+    sorted_keys = {build_cache_key(_request(q)) for q in (forward, reverse)}
+    unsorted_keys = {
+        build_cache_key(_request(q), sort_query=False) for q in (forward, reverse)
     }
-    unsorted_keys = {build_cache_key(_request(q)) for q in (forward, reverse)}
 
     assert len(sorted_keys) == 1
     assert len(unsorted_keys) == 2
@@ -156,14 +156,14 @@ async def test_invalidate_finds_a_hashed_entry() -> None:
     assert backend.cache == {}
 
 
-async def test_sorted_invalidate_finds_a_reordered_long_query() -> None:
+async def test_invalidate_finds_a_reordered_long_query() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
     stored = _request("a=1&" + _query(250))
-    await backend.set(build_cache_key(stored, sort_query=True), ENTRY)
+    await backend.set(build_cache_key(stored), ENTRY)
 
     reordered = _request(_query(250) + "&a=1")
 
-    assert await invalidate(reordered) is False
-    assert await invalidate(reordered, sort_query=True) is True
+    assert await invalidate(reordered, sort_query=False) is False
+    assert await invalidate(reordered) is True
     assert backend.cache == {}

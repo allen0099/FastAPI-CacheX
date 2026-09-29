@@ -1,4 +1,4 @@
-"""Tests for ``@cache(sort_query=True)`` (#267)."""
+"""Tests for ``sort_query`` (#267), on by default since #72."""
 
 from collections.abc import Callable
 
@@ -16,6 +16,7 @@ from fastapi_cachex.cache import invalidate
 from fastapi_cachex.cache_key import CacheKey
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.types import CacheEntry
 
 
 def _request(query: bytes) -> StarletteRequest:
@@ -37,10 +38,12 @@ def _query(key: str) -> str:
 
 
 def _sorted_query(query: bytes) -> str:
-    return _query(build_cache_key(_request(query), sort_query=True))
+    return _query(build_cache_key(_request(query)))
 
 
-def _app(*, sort_query: bool, sync: bool = False) -> tuple[TestClient, list[str]]:
+def _app(
+    *, sort_query: bool | None = None, sync: bool = False
+) -> tuple[TestClient, list[str]]:
     app = FastAPI()
     calls: list[str] = []
 
@@ -64,8 +67,11 @@ def _app(*, sort_query: bool, sync: bool = False) -> tuple[TestClient, list[str]
 
 
 @pytest.mark.parametrize("sync", [False, True], ids=["async", "sync"])
-def test_reordered_parameters_share_one_entry(sync: bool) -> None:
-    client, calls = _app(sort_query=True, sync=sync)
+@pytest.mark.parametrize("sort_query", [None, True], ids=["default", "explicit"])
+def test_reordered_parameters_share_one_entry(
+    sync: bool, sort_query: bool | None
+) -> None:
+    client, calls = _app(sort_query=sort_query, sync=sync)
 
     first = client.get("/items?limit=1&q=wid")
     second = client.get("/items?q=wid&limit=1")
@@ -76,7 +82,7 @@ def test_reordered_parameters_share_one_entry(sync: bool) -> None:
 
 @pytest.mark.parametrize("sync", [False, True], ids=["async", "sync"])
 def test_repeated_name_order_stays_distinct(sync: bool) -> None:
-    client, calls = _app(sort_query=True, sync=sync)
+    client, calls = _app(sync=sync)
 
     client.get("/items?tag=b&tag=a")
     client.get("/items?tag=a&tag=b")
@@ -88,7 +94,7 @@ def test_repeated_name_order_stays_distinct(sync: bool) -> None:
 
 
 @pytest.mark.parametrize("sync", [False, True], ids=["async", "sync"])
-def test_default_keeps_reordered_queries_apart(sync: bool) -> None:
+def test_sort_query_false_keeps_reordered_queries_apart(sync: bool) -> None:
     client, calls = _app(sort_query=False, sync=sync)
 
     client.get("/items?a=1&b=2")
@@ -99,7 +105,7 @@ def test_default_keeps_reordered_queries_apart(sync: bool) -> None:
 
 
 def test_only_parameter_order_merges() -> None:
-    client, calls = _app(sort_query=True)
+    client, calls = _app()
 
     for query in ("a=1&b=2", "b=2&a=1", "a=1&b=3", "a=1", "b=2", "a=1&b=2&c="):
         client.get(f"/items?{query}")
@@ -107,17 +113,24 @@ def test_only_parameter_order_merges() -> None:
     assert calls == ["a=1&b=2", "a=1&b=3", "a=1", "b=2", "a=1&b=2&c="]
 
 
-def test_default_key_is_unchanged() -> None:
+def test_the_default_key_is_the_sorted_one() -> None:
     for query in (b"b=2&a=1", b"tag=b&tag=a", b"q=a%20b&n%26=x%3D", b""):
         request = _request(query)
         assert default_key_builder(request) == build_cache_key(request)
-        assert _query(build_cache_key(request)) == str(request.query_params)
+        assert build_cache_key(request) == build_cache_key(request, sort_query=True)
 
 
-def test_sorted_key_matches_the_default_for_a_sorted_query() -> None:
+def test_the_unsorted_key_keeps_the_query_as_sent() -> None:
+    for query in (b"b=2&a=1", b"tag=b&tag=a", b"q=a%20b&n%26=x%3D", b""):
+        request = _request(query)
+        key = build_cache_key(request, sort_query=False)
+        assert _query(key) == str(request.query_params)
+
+
+def test_sorted_key_matches_the_unsorted_for_a_sorted_query() -> None:
     request = _request(b"a=1&b=x%26y&c=")
 
-    assert build_cache_key(request, sort_query=True) == build_cache_key(request)
+    assert build_cache_key(request) == build_cache_key(request, sort_query=False)
 
 
 @pytest.mark.parametrize(
@@ -166,12 +179,14 @@ def test_names_are_compared_decoded() -> None:
     assert _sorted_query(b"b=0&%61=1&a=2") == "a=1&a=2&b=0"
 
 
-def test_sort_query_with_custom_key_builder_is_rejected() -> None:
+@pytest.mark.parametrize("value", [True, False])
+def test_sort_query_with_custom_key_builder_is_rejected(value: bool) -> None:
+    # False is rejected too: build_cache_key() in the builder sorts anyway.
     with pytest.raises(CacheXError, match="sort_query only applies"):
-        cache(ttl=60, key_builder=default_key_builder, sort_query=True)(lambda: None)
+        cache(ttl=60, key_builder=default_key_builder, sort_query=value)(lambda: None)
 
 
-@pytest.mark.parametrize("value", [1, "yes", None])
+@pytest.mark.parametrize("value", [1, 0, "yes"])
 def test_sort_query_must_be_a_bool(value: object) -> None:
     with pytest.raises(CacheXError, match="sort_query must be a bool"):
         cache(ttl=60, sort_query=value)(lambda: None)  # type: ignore[arg-type]
@@ -182,7 +197,7 @@ def test_custom_key_builder_can_sort_through_build_cache_key() -> None:
     calls: list[int] = []
 
     def sorted_key(request: Request) -> str:
-        return build_cache_key(request, "tenant", sort_query=True)
+        return build_cache_key(request, "tenant")
 
     @app.get("/items")
     @cache(ttl=60, key_builder=sorted_key)
@@ -200,10 +215,10 @@ def test_custom_key_builder_can_sort_through_build_cache_key() -> None:
 async def test_invalidate_with_reordered_query_drops_the_entry() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
-    client, calls = _app(sort_query=True)
+    client, calls = _app()
     client.get("/items?a=1&b=2")
 
-    assert await invalidate(_request(b"b=2&a=1"), sort_query=True) is True
+    assert await invalidate(_request(b"b=2&a=1")) is True
     assert not backend.cache
     client.get("/items?a=1&b=2")
     assert calls == ["a=1&b=2", "a=1&b=2"]
@@ -211,15 +226,16 @@ async def test_invalidate_with_reordered_query_drops_the_entry() -> None:
 
 async def test_invalidate_needs_the_routes_sort_query() -> None:
     # invalidate() cannot read the route's settings: without the flag it
-    # builds the unsorted key and misses the entry stored for a reordered
-    # query.
+    # builds the sorted key and misses the entry an unsorted route stored.
     backend = MemoryBackend()
     BackendProxy.set(backend)
-    client, _ = _app(sort_query=True)
-    client.get("/items?a=1&b=2")
+    client, _ = _app(sort_query=False)
+    client.get("/items?b=2&a=1")
 
     assert await invalidate(_request(b"b=2&a=1")) is False
     assert len(backend.cache) == 1
+    assert await invalidate(_request(b"b=2&a=1"), sort_query=False) is True
+    assert not backend.cache
 
 
 @pytest.mark.parametrize(
@@ -228,9 +244,12 @@ async def test_invalidate_needs_the_routes_sort_query() -> None:
         lambda: invalidate(
             _request(b""), key_builder=default_key_builder, sort_query=True
         ),
+        lambda: invalidate(
+            _request(b""), key_builder=default_key_builder, sort_query=False
+        ),
         lambda: invalidate(_request(b""), sort_query=1),  # type: ignore[arg-type]
     ],
-    ids=["with-key-builder", "not-a-bool"],
+    ids=["true-with-key-builder", "false-with-key-builder", "not-a-bool"],
 )
 async def test_invalidate_validates_sort_query(
     call: Callable[[], object],
@@ -242,10 +261,23 @@ async def test_invalidate_validates_sort_query(
 async def test_clear_path_clears_sorted_entries() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
-    client, _ = _app(sort_query=True)
+    client, _ = _app()
     client.get("/items?b=2&a=1")
     client.get("/items")
 
     assert await backend.clear_path("/items") == 1
     assert await backend.clear_path("/items", include_params=True) == 1
+    assert not backend.cache
+
+
+async def test_invalidate_with_a_custom_key_builder_and_no_sort_query() -> None:
+    backend = MemoryBackend()
+    BackendProxy.set(backend)
+    request = _request(b"b=2&a=1")
+    await backend.set(build_cache_key(request, "t"), CacheEntry("e", b"v"))
+
+    def tenant_key(request: Request) -> str:
+        return build_cache_key(request, "t")
+
+    assert await invalidate(_request(b"a=1&b=2"), key_builder=tenant_key) is True
     assert not backend.cache

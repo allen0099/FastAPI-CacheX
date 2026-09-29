@@ -300,43 +300,45 @@ This ensures that:
 - Different query parameters get separate cache entries
 - The same endpoint with different parameters can be cached independently
 
-By default query parameters are taken in the order the client sent them, so
-`?a=1&b=2` and `?b=2&a=1` are two distinct cache entries for the same logical
-request. Set `sort_query=True` to share one entry between them:
-
-```python
-@app.get("/search")
-@cache(ttl=60, sort_query=True)
-async def search(q: str, limit: int = 10):
-    return await run_search(q, limit)
-```
-
-The parameters are then ordered by name before the key is built. The sort is
-stable: repeated values of one name keep the order the client sent, because a
-handler reading `tag: list[str]` sees them in that order, so `?tag=b&tag=a` and
+Query parameters are ordered by name before the key is built, so `?a=1&b=2`
+and `?b=2&a=1` share one entry. The sort is stable: repeated values of one name
+keep the order the client sent, because a handler reading `tag: list[str]` sees them in that order, so `?tag=b&tag=a` and
 `?tag=a&tag=b` stay two entries. Names are compared decoded (`%61` sorts as
 `a`, which is how the key already writes it), and each name and value is encoded
 exactly as in the unsorted key, so only the order changes: a query already in
-order gets the same key with or without the flag. What the key already treats
+order gets the same key sorted or not. What the key already treats
 as equal stays equal (`?a` and `?a=`, an empty segment from `&&`), and nothing
-else is merged. The default is `False`, which leaves every existing key
-unchanged. 0.4.0 makes `True` the default, together with its other cache key
-changes ([#72](https://github.com/allen0099/FastAPI-CacheX/issues/72), see
-[Migrating to 0.4.0](MIGRATING_0_4.md#cache-keys)). A handler that depends on the
-query order as sent can keep `sort_query=False`.
+else is merged. Sorting is the default since 0.4.0
+([#72](https://github.com/allen0099/FastAPI-CacheX/issues/72), see
+[Migrating to 0.4.0](MIGRATING_0_4.md#cache-keys)).
 
-`sort_query` applies to the default key builder only. Combined with a custom
-`key_builder` it raises `CacheXError` when the decorator is applied; call
-`build_cache_key(request, ..., sort_query=True)` inside the builder instead.
-Pass `sort_query=True` to `invalidate()` for such a route as well (see
+A handler whose response depends on the query order as sent, such as a self or
+pagination link copied from `request.url`, should turn it off, or the first
+caller's order is cached and served to callers who sent another:
+
+```python
+@app.get("/search")
+@cache(ttl=60, sort_query=False)
+async def search(request: Request, q: str, limit: int = 10):
+    return {"self": str(request.url), "items": await run_search(q, limit)}
+```
+
+Pass `sort_query=False` to `invalidate()` for such a route as well (see
 [Invalidating a single cached route](#invalidating-a-single-cached-route)).
+
+`sort_query` applies to the default key builder only. `build_cache_key()` sorts
+too, so a custom `key_builder` that calls it sorts without being told; passing
+`sort_query` to `@cache` together with a custom `key_builder` raises
+`CacheXError` when the decorator is applied. Call
+`build_cache_key(request, ..., sort_query=False)` inside the builder to keep the
+order as sent.
 
 A query string longer than 200 bytes, as encoded in the key, is stored as
 `sha256:` and its 64-digit hex digest instead, so a client cannot make the
 query part of the key arbitrarily long. (Memcached still hashes a whole key over
 250 bytes, prefix included; a query just under the threshold with a long host
-or path can get there.) The digest is taken after sorting, so `sort_query` still
-merges reordered long queries. The path stays readable, so `clear_path()` still
+or path can get there.) The digest is taken after sorting, so reordered long
+queries still share one entry. The path stays readable, so `clear_path()` still
 finds the entry (with `include_params=True`, since the query is not empty), and
 the monitoring routes show the digest as `query_params`. A query as sent never
 looks like one: the key writes `:` as `%3A`.
@@ -726,7 +728,7 @@ async def update_item(item_id: int, request: Request):
     return {"invalidated": await invalidate(StarletteRequest(scope))}
 ```
 
-`invalidate(request, key_builder=None, vary=None, *, sort_query=False)` returns `True` when an entry existed and
+`invalidate(request, key_builder=None, vary=None, *, sort_query=None)` returns `True` when an entry existed and
 was removed, `False` otherwise, including when no backend is configured. An
 error from the backend itself is raised to the caller (see
 [When the backend fails](#when-the-backend-fails)). The request you hand it must produce the cached route's key:
@@ -734,8 +736,9 @@ same method, host, path and query string. If the cached route uses a custom
 `key_builder`, `vary` or `sort_query`, pass the same here, or the key will not
 match: `invalidate()` cannot read them from the route. With `vary` only the
 variant selected by the request's own header values is deleted, and
-`clear_path()` removes all of them. With `sort_query=True` the request's query
-is sorted the same way, so `?b=2&a=1` deletes the entry stored for `?a=1&b=2`.
+`clear_path()` removes all of them. By default the request's query is sorted
+as `@cache` sorts it, so `?b=2&a=1` deletes the entry stored for `?a=1&b=2`;
+for a route with `sort_query=False` pass `sort_query=False` here too.
 
 ## Monitoring routes
 

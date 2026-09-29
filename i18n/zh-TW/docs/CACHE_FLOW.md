@@ -75,7 +75,7 @@ cache_key = "|".join(
 )
 
 # 例如：
-# http:v2|GET|example.com|/api/users|page=1&limit=10
+# http:v2|GET|example.com|/api/users|limit=10&page=1  （對應 ?page=1&limit=10）
 # http:v2|GET|api.example.com|/api/users/123|
 ```
 
@@ -87,7 +87,7 @@ cache_key = "|".join(
 
 自訂的 `key_builder` 可以用 `build_cache_key(request, *components)` 在查詢字串之後加入其他段；這些段以同樣方式編碼，`clear_path()` 也仍會比對路徑（見 [HTTP 快取](HTTP_CACHING.md#adding-components-to-the-key)中的「在鍵中加入其他段」）。`@cache(vary=[...])` 會在 key builder 回傳的鍵之後，為每個列出的請求標頭附加一個 `name=value` 段，並把這些名稱加入回應的 `Vary` 標頭（見 [HTTP 快取](HTTP_CACHING.md#varying-on-request-headers)中的「依請求標頭區分」）。對於憑證標頭 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`，非空的值會寫成 `sha256:<十六進位摘要>`，因此鍵中不會出現任何權杖。
 
-查詢參數依請求送出的順序串接（`str(request.query_params)`），預設**不會排序**，因此 `?page=1&limit=10` 與 `?limit=10&page=1` 是兩個不同的快取項目。若希望兩者視為同一個，請設定 `@cache(sort_query=True)`，先依名稱排序參數（見 [HTTP 快取](HTTP_CACHING.md#cache-keys)中的「快取鍵」）。超過 200 位元組的查詢接著會改寫為 `sha256:<十六進位摘要>`，讓鍵中查詢的部分維持有限長度。
+查詢參數會依名稱**排序**（穩定排序：同名參數的多個值保留送出的順序），因此 `?page=1&limit=10` 與 `?limit=10&page=1` 共用同一個快取項目。`@cache(sort_query=False)` 則保留請求送出的順序（見 [HTTP 快取](HTTP_CACHING.md#cache-keys)中的「快取鍵」）。超過 200 位元組的查詢接著會改寫為 `sha256:<十六進位摘要>`，讓鍵中查詢的部分維持有限長度。
 
 這個快取鍵格式讓每個維度各自獨立快取：
 
@@ -118,7 +118,7 @@ cache_key = "|".join(
 @cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
 ```
 
-參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 不是 `int`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起使用，或 `key_builder` 是 `async` 可呼叫物件，會拋出 `CacheXError`。
+參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 不是 `int`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起傳入，或 `key_builder` 是 `async` 可呼叫物件，會拋出 `CacheXError`。
 
 標頭值在每個被裝飾的路由上只建立一次：
 
@@ -428,7 +428,7 @@ handler 不必自行宣告 `Request`：`@cache` 會在函式簽名中注入一�
 
 **Q：為什麼 POST／PUT 的回應不會被快取？** A：`@cache` 只適用於 GET。其他所有方法都直接執行 handler，不讀取或寫入快取，也不會加上 `Cache-Control` 標頭。
 
-**Q：為什麼同一個端點有好幾個快取項目？** A：因為快取鍵包含查詢參數，而且查詢參數預設**不會排序**。`/users?page=1` 與 `/users?page=2` 是不同的項目；除非路由設定了 `sort_query=True`，`?a=1&b=2` 與 `?b=2&a=1` 也是。
+**Q：為什麼同一個端點有好幾個快取項目？** A：因為快取鍵包含查詢參數。`/users?page=1` 與 `/users?page=2` 是不同的項目；若路由設定了 `sort_query=False`，`?a=1&b=2` 與 `?b=2&a=1` 也是。
 
 **Q：MemoryBackend 在多個行程下如何運作？** A：無法運作。每個行程都有自己的快取；正式環境請使用 Redis。
 

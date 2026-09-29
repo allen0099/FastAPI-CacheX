@@ -165,36 +165,36 @@ def test_cache_key_builder_none_uses_default() -> None:
 
 def test_default_key_builder_function() -> None:
     """Test the default_key_builder function directly."""
-    from unittest.mock import MagicMock
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/items",
+            "query_string": b"page=1&limit=10",
+            "headers": [(b"host", b"example.com")],
+        }
+    )
 
-    # Create a mock request
-    mock_request = MagicMock(spec=Request)
-    mock_request.method = "GET"
-    mock_request.headers = {"host": "example.com"}
-    mock_request.url.path = "/api/items"
-    mock_request.query_params = "page=1&limit=10"
+    cache_key = default_key_builder(request)
 
-    # Generate cache key
-    cache_key = default_key_builder(mock_request)
-
-    # Verify format: http:v2|method|host|path|query
-    expected = "http:v2|GET|example.com|/api/items|page=1&limit=10"
+    # Verify format: http:v2|method|host|path|query, the query sorted by name
+    expected = "http:v2|GET|example.com|/api/items|limit=10&page=1"
     assert cache_key == expected
 
 
 def test_default_key_builder_without_host() -> None:
     """Test default_key_builder when host header is missing."""
-    from unittest.mock import MagicMock
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/items",
+            "query_string": b"",
+            "headers": [],
+        }
+    )
 
-    # Create a mock request without host
-    mock_request = MagicMock(spec=Request)
-    mock_request.method = "GET"
-    mock_request.headers = {}
-    mock_request.url.path = "/api/items"
-    mock_request.query_params = ""
-
-    # Generate cache key
-    cache_key = default_key_builder(mock_request)
+    cache_key = default_key_builder(request)
 
     # Should use 'unknown' as fallback for host
     expected = "http:v2|GET|unknown|/api/items|"
