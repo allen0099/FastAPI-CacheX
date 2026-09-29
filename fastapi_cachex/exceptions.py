@@ -1,26 +1,8 @@
 """Custom exception classes for FastAPI-CacheX."""
 
-import warnings
-from typing import TYPE_CHECKING
-
 
 class CacheXError(Exception):
     """Base class for all exceptions in FastAPI-CacheX."""
-
-
-class _CacheError(CacheXError):
-    """Exception raised for cache-related errors.
-
-    .. deprecated:: 0.3.8
-        Never raised by FastAPI-CacheX. Catch :class:`CacheXError` instead.
-        Will be removed in version 0.4.0.
-    """
-
-
-_CacheError.__name__ = _CacheError.__qualname__ = "CacheError"
-
-if TYPE_CHECKING:
-    CacheError = _CacheError
 
 
 class BackendNotFoundError(CacheXError):
@@ -42,17 +24,3 @@ class RequestNotFoundError(CacheXError):
 
 class LockTimeoutError(CacheXError, TimeoutError):
     """Exception raised when acquiring a lock or waiting for stampede protection times out."""
-
-
-def __getattr__(name: str) -> type[CacheXError]:
-    """Return the deprecated ``CacheError`` with a ``DeprecationWarning``."""
-    if name == "CacheError":
-        warnings.warn(
-            "CacheError is deprecated and never raised, catch CacheXError instead. "
-            "Will be removed in version 0.4.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _CacheError
-    msg = f"module {__name__!r} has no attribute {name!r}"
-    raise AttributeError(msg)
