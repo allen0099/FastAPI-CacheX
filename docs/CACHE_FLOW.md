@@ -72,7 +72,7 @@ cache_key = "|".join(
     [
         CacheKey.FORMAT_TAG,  # "http:v2"
         escape_key_component(request.method),
-        escape_key_component(request.headers.get("host", "unknown")),
+        escape_key_component(host),  # Host header, normalised (see below)
         escape_key_component(request.url.path),
         query,
     ]
@@ -120,7 +120,8 @@ The key format keeps each dimension cached independently:
 
 - **Method isolation**: GET and POST do not share a cache (and currently only GET
   enters the cache flow at all)
-- **Host isolation**: `example.com` and `api.example.com` are cached separately
+- **Host isolation**: `example.com` and `api.example.com` are cached separately;
+  `Example.com` and `example.com:80` (on http) are `example.com`
 - **Path isolation**: each endpoint has its own entries
 - **Query parameter isolation**: different query parameters on the same endpoint
   are cached separately

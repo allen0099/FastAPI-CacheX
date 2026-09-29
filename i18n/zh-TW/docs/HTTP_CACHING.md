@@ -188,7 +188,9 @@ async def search(q: str, limit: int = 10):
 
 host 與路徑來自用戶端，因此其中的 `|` 與 `%` 會以百分比編碼寫入（`%7C` 與 `%25`）。含有 `|` 的 `Host` 標頭或路徑因此無法讓各段錯位，使某個請求的快取鍵與另一個請求相同。查詢字串本來就經過 URL 編碼。`clear_path()` 接受應用程式看到的路徑（`request.url.path`），並以同樣方式編碼；`clear_pattern()` 比對的是儲存的快取鍵，所以在模式中要把 `|` 寫成 `%7C`。0.3.8 之前兩者都照原樣儲存，因此升級後，host 或路徑含有 `|` 或 `%` 的項目會重新快取一次。
 
-host 仍是用戶端送來的任何值。除非應用程式前方的反向代理或負載平衡器已會拒絕未知的 host，否則請加上 Starlette 的 `TrustedHostMiddleware`，讓偽造的 `Host` 得到 `400`，而不是在快取中塞滿沒有其他人會請求的項目：
+host 會先經過正規化，讓同一個來源的各種寫法共用同一筆項目：轉為小寫（主機名稱不分大小寫），並去除空的連接埠或該 scheme 的預設連接埠（http 為 `:80`，https 為 `:443`）。在 http 上，`Example.com`、`example.com:80` 與 `example.com` 是同一個鍵 `example.com`；`example.com:8080` 保留連接埠，IPv6 位址則保留方括號（`[::1]:8000`）。scheme 以應用程式看到的為準：在終止 TLS 的代理之後，除非套用了代理的標頭（例如 `uvicorn --proxy-headers`），否則 scheme 是 `http`，因此這類代理送來的 `Host: example.com:443` 會保留連接埠。沒有 `Host` 標頭的請求使用 `unknown`。
+
+除此之外，host 仍是用戶端送來的任何值。除非應用程式前方的反向代理或負載平衡器已會拒絕未知的 host，否則請加上 Starlette 的 `TrustedHostMiddleware`，讓偽造的 `Host` 得到 `400`，而不是在快取中塞滿沒有其他人會請求的項目：
 
 ```python
 from starlette.middleware.trustedhost import TrustedHostMiddleware

@@ -340,9 +340,19 @@ stored key, so write `%7C` there for a `|`. Before 0.3.8 both were stored as sen
 so after upgrading, entries for a host or path containing `|` or `%` are cached
 afresh once.
 
-The host is still whatever the client sends. Unless a reverse proxy or load
-balancer in front of the app already rejects unknown hosts, add Starlette's
-`TrustedHostMiddleware`, so a forged `Host` gets a `400` instead of filling the
+The host is normalised first, so every spelling of one origin shares an entry:
+it is lower-cased (hostnames are case-insensitive), and an empty port or the
+scheme's default one (`:80` for http, `:443` for https) is dropped.
+`Example.com`, `example.com:80` and `example.com` on http are one key,
+`example.com`; `example.com:8080` keeps its port, and an IPv6 literal keeps its
+brackets (`[::1]:8000`). The scheme is the one the app sees: behind a proxy that
+terminates TLS it is `http` unless the proxy's headers are applied (for
+example `uvicorn --proxy-headers`), so a `Host: example.com:443` from such a
+proxy keeps its port. A request without a `Host` header uses `unknown`.
+
+Otherwise the host is still whatever the client sends. Unless a reverse proxy
+or load balancer in front of the app already rejects unknown hosts, add
+Starlette's `TrustedHostMiddleware`, so a forged `Host` gets a `400` instead of filling the
 cache with entries no one else will request:
 
 ```python

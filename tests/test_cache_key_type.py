@@ -64,7 +64,7 @@ def test_build_cache_key_format_is_pinned() -> None:
     request = _request("/p|q", b"b=2&a=1", "Host|||x")
 
     assert build_cache_key(request, "a|b", 100, sort_query=True) == (
-        "http:v2|GET|Host%7C%7C%7Cx|/p%7Cq|a=1&b=2|a%7Cb|100"
+        "http:v2|GET|host%7C%7C%7Cx|/p%7Cq|a=1&b=2|a%7Cb|100"
     )
 
 
