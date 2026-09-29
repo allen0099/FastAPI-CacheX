@@ -367,6 +367,21 @@ def promote(text: str, version: str, date: str) -> tuple[str, str]:
     return rewritten, body.strip() + "\n"
 
 
+def _split_notice(body: str) -> tuple[str, str]:
+    """Split the notice off the top of a changelog section.
+
+    The notice is the text above the first `###` heading and the first `- `
+    entry, such as "This is the last 0.3.x release". Returns
+    `(notice, rest)`; the notice is `""` when the section has none.
+    """
+    lines = body.splitlines()
+    end = next(
+        (index for index, line in enumerate(lines) if line.startswith(("### ", "- "))),
+        len(lines),
+    )
+    return "\n".join(_trim(lines[:end])), "\n".join(lines[end:])
+
+
 def _entries(body: str) -> list[tuple[str, str]]:
     """Split a changelog section into `(### heading, entry text)` pairs.
 
@@ -397,24 +412,34 @@ def release_notes(body: str, version: str, date: str) -> str:
         date: The release date, `YYYY-MM-DD`.
 
     Returns:
-        Each entry's bold summary and issue links, under the section's `###`
-        headings, then a link to the full entries on the documentation site.
+        The section's notice, if any, verbatim; each entry's bold summary and
+        issue links, under the section's `###` headings; then a link to the
+        full entries on the documentation site.
 
     Raises:
-        ChangelogError: A line is neither a heading nor an entry, or an entry
-            does not open with a bold summary.
+        ChangelogError: The section has no entries, a line below the notice
+            is neither a heading nor an entry, or an entry does not open with
+            a bold summary.
     """
-    lines: list[str] = []
+    notice, rest = _split_notice(body)
+    entries = _entries(rest)
+    if not entries:
+        msg = (
+            "the release has no changelog entries; a notice alone is nothing to release"
+        )
+        raise ChangelogError(msg)
+
+    lines: list[str] = [notice, ""] if notice else []
     missing: list[str] = []
     heading = ""
-    for section, text in _entries(body):
+    for section, text in entries:
         summary = _SUMMARY.match(text)
         if summary is None:
             missing.append(text[:70])
             continue
         if section != heading:
             heading = section
-            lines += ["", heading, ""] if lines else [heading, ""]
+            lines += ["", heading, ""] if lines and lines[-1] else [heading, ""]
         links = " ".join(_ISSUE_LINK.findall(text))
         line = " ".join(summary["summary"].split())
         lines.append(f"- {line} {links}".rstrip())
