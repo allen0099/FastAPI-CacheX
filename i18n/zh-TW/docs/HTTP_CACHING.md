@@ -180,7 +180,7 @@ async def search(q: str, limit: int = 10):
     return await run_search(q, limit)
 ```
 
-此時會先依名稱排序參數，再建立快取鍵。排序是穩定的：同名參數的多個值保留用戶端送出的順序，因為以 `tag: list[str]` 讀取的處理函式看到的正是這個順序，所以 `?tag=b&tag=a` 與 `?tag=a&tag=b` 仍是兩筆項目。名稱以解碼後的值比較（`%61` 視為 `a` 排序，快取鍵本來就這樣寫它），每個名稱與值的編碼都與未排序的快取鍵完全相同，只有順序改變：已經依序排列的查詢，不論是否開啟此選項都得到相同的鍵。快取鍵原本就視為相同的仍然相同（`?a` 與 `?a=`、`&&` 產生的空段），其餘一律不會合併。預設為 `False`，現有的快取鍵都不會改變。
+此時會先依名稱排序參數，再建立快取鍵。排序是穩定的：同名參數的多個值保留用戶端送出的順序，因為以 `tag: list[str]` 讀取的處理函式看到的正是這個順序，所以 `?tag=b&tag=a` 與 `?tag=a&tag=b` 仍是兩筆項目。名稱以解碼後的值比較（`%61` 視為 `a` 排序，快取鍵本來就這樣寫它），每個名稱與值的編碼都與未排序的快取鍵完全相同，只有順序改變：已經依序排列的查詢，不論是否開啟此選項都得到相同的鍵。快取鍵原本就視為相同的仍然相同（`?a` 與 `?a=`、`&&` 產生的空段），其餘一律不會合併。預設為 `False`，現有的快取鍵都不會改變。0.4.0 會隨其他快取鍵變更一起把預設改為 `True`（[#72](https://github.com/allen0099/FastAPI-CacheX/issues/72)，見[遷移至 0.4.0](MIGRATING_0_4.md#cache-keys)）。依賴用戶端送出之查詢順序的處理函式可以維持 `sort_query=False`。
 
 `sort_query` 只套用於預設的 key builder。與自訂的 `key_builder` 一起使用時，套用裝飾器就會拋出 `CacheXError`；請改在 builder 中呼叫 `build_cache_key(request, ..., sort_query=True)`。對這樣的路由呼叫 `invalidate()` 時也要傳入 `sort_query=True`（見[使單一快取路由失效](#invalidating-a-single-cached-route)）。
 

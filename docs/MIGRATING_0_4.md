@@ -87,16 +87,16 @@ config = SessionConfig(
 
 ### Login and logout {#login-logout}
 
-0.4.0 makes becoming authenticated go through one explicit API that always issues a new session ID ([#256](https://github.com/allen0099/FastAPI-CacheX/issues/256)). Known so far:
+0.4.0 makes becoming authenticated go through one explicit API that always issues a new session ID ([#256](https://github.com/allen0099/FastAPI-CacheX/issues/256)):
 
 - `login(request, user)` (in 0.3.9 already, `from fastapi_cachex.session import login`) attaches the user and rotates the ID. Use it today instead of setting `session.user` yourself.
-- A logout API is added; `request.session.clear()` keeps meaning logout.
-- `Session.user` becomes read-only outside these calls. Code that assigns it directly breaks.
-- A login starts a new session instead of promoting the anonymous one. Which data is carried over (all by default, or a `keep=` list) is not decided yet.
-- For a few seconds after a rotation the old ID resolves to the new session, so in-flight requests carrying the old token do not fail.
-- `rotate_session_id()` stays for privilege changes without a new user, possibly renamed.
+- `await logout(request)` is added. It deletes the session, and a cookie client gets its cookie expired. `request.session.clear()` keeps meaning logout.
+- `Session.user` becomes read-only outside `login()` and `SessionManager.create_session(user=...)`. Code that assigns it directly breaks: under the middleware, use `login()`; without it, create the session with `create_session(user=...)`.
+- A login carries the anonymous session's data over by default, so a cart survives it. An optional `keep=` argument narrows that (`keep=["cart"]`, or `keep=[]` for nothing).
+- The old ID stops resolving the moment `login()` or `rotate_session_id()` rotates it, with no grace period: during one, a planted token would resolve to the logged-in session.
+- `rotate_session_id()` keeps its name, for privilege changes without a new user.
 
-The exact signatures are not final, so 0.3.9 does not warn about them. An application that decides "logged in" from its own `request.session` keys (`request.session.get("user_id")`) is outside what the library can see; use the library's identity (`session.user`, `AuthenticatedSession`) or rotate the ID yourself.
+Most of this is new API, and nothing in 0.3.x can tell which code assigns `session.user`, so 0.3.9 does not warn. An application that decides "logged in" from its own `request.session` keys (`request.session.get("user_id")`) is outside what the library can see; use the library's identity (`session.user`, `AuthenticatedSession`) or rotate the ID yourself.
 
 Before:
 
@@ -183,7 +183,12 @@ SessionConfig(
 
 ### Session writes {#session-writes}
 
-0.4.0 writes sessions conditionally ([#128](https://github.com/allen0099/FastAPI-CacheX/issues/128)): a request that loaded a session before another request deleted, invalidated or rotated it can no longer bring the record back when it saves. No code change is needed. A custom backend has to support the write-if-present primitive this adds; its shape is not decided yet.
+0.4.0 writes sessions conditionally ([#128](https://github.com/allen0099/FastAPI-CacheX/issues/128)): a request that loaded a session before another request deleted, invalidated or rotated it can no longer bring the record back when it saves. No code change is needed.
+
+- Ordinary saves become conditional: the middleware's save of `request.session` changes, sliding renewal and `update_session()`. Each succeeds only while the stored record still equals what this request last read or wrote. Deleting, invalidating, expiring and rotating stay unconditional, so a security action always wins.
+- A rejected save is dropped and logged. The response is still sent, without a session token.
+- **Side effect:** when two requests change the same session at the same time (two tabs adding to a cart), the first save wins and the second is dropped. Today the last save wins, so one of the two changes is already lost; 0.4.0 changes which one. Merging such changes is tracked in [#376](https://github.com/allen0099/FastAPI-CacheX/issues/376).
+- The backend gains `set_if_equals(key, expected, value, ttl=None)`, next to `delete_if_equals` and `expire_if_equals`. The base class provides a non-atomic fallback, so a custom backend keeps working unchanged; override it to make the save atomic.
 
 ### Token sources {#token-source-priority}
 
@@ -249,7 +254,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 - Keys start with a format tag, such as `http:v2|`, so the next format change can remove old keys by pattern.
 - The host is normalised: lower-cased, and the scheme's default port (`:80`, `:443`) dropped.
 - A long query string (over about 200 bytes) is stored as `sha256:` and its hex digest; the path stays readable.
-- Query parameters are sorted, as `@cache(sort_query=True)` does since 0.3.9; whether that becomes the default or stays opt-in is not decided yet.
+- Query parameters are sorted by name: `sort_query` (opt-in since 0.3.9) defaults to `True` in `@cache`, `build_cache_key()` and `invalidate()`, so `?b=2&a=1` and `?a=1&b=2` share one entry.
 - One `CacheKey` type encodes and parses keys; the key-parsing internals of `routes.py` change.
 
 ```text
@@ -261,6 +266,7 @@ What to change:
 
 - `clear_pattern()` patterns that spell out the separator (`"GET|||*|||/users/*"`) need rewriting. `clear_path()` and `invalidate()` build the key themselves and need nothing.
 - A custom `key_builder` that calls `build_cache_key()` or joins with `CACHE_KEY_SEPARATOR` follows automatically; one that hard-codes `|||` does not.
+- A handler whose response depends on the order of the query string as sent, such as a self or pagination link copied from `request.url` or a signature over the raw query, should set `@cache(sort_query=False)`. Otherwise the first caller's order is cached and served to callers who sent another. `sort_query=False` works on 0.3.9 already.
 - Entries written by 0.3.x are not read by 0.4.0. They expire on their TTL; on Redis and memory you can remove them right after the upgrade with `await backend.clear_pattern("*|||*")`. Memcached cannot enumerate keys, so there they just expire.
 
 0.3.9 does not warn: nothing in 0.3.x can tell whether a pattern or key builder will match the new format, and the only runtime cost is the one-off miss.

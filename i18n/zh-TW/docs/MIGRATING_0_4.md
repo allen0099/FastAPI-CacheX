@@ -87,16 +87,16 @@ config = SessionConfig(
 
 ### 登入與登出 {#login-logout}
 
-0.4.0 讓使用者只能透過一個明確的 API 成為已驗證狀態，而這個 API 一律會發出新的 Session ID（[#256](https://github.com/allen0099/FastAPI-CacheX/issues/256)）。目前已知：
+0.4.0 讓使用者只能透過一個明確的 API 成為已驗證狀態，而這個 API 一律會發出新的 Session ID（[#256](https://github.com/allen0099/FastAPI-CacheX/issues/256)）：
 
 - `login(request, user)`（0.3.9 已提供，`from fastapi_cachex.session import login`）會附加使用者並輪替 ID。現在就請改用它，而不是自行設定 `session.user`。
-- 新增登出 API；`request.session.clear()` 仍代表登出。
-- `Session.user` 在這些呼叫之外變成唯讀。直接指定它的程式碼會失效。
-- 登入會開始一個新的 Session，而不是將匿名 Session 升級。要保留哪些資料（預設全部，或使用 `keep=` 清單）尚未決定。
-- 輪替後的幾秒內，舊 ID 會解析到新的 Session，讓仍帶著舊權杖的進行中請求不會失敗。
-- `rotate_session_id()` 會保留，用於不更換使用者的權限變更，名稱可能會改變。
+- 新增 `await logout(request)`：刪除 Session，Cookie 用戶端會收到讓 Cookie 過期的回應。`request.session.clear()` 仍代表登出。
+- `Session.user` 在 `login()` 與 `SessionManager.create_session(user=...)` 之外變成唯讀。直接指定它的程式碼會失效：使用中介軟體時請改用 `login()`；沒有中介軟體時，請以 `create_session(user=...)` 建立 Session。
+- 登入時預設會帶入匿名 Session 的所有資料，因此購物車在登入後仍會保留。選用的 `keep=` 參數可以縮小範圍（`keep=["cart"]`，或以 `keep=[]` 什麼都不帶）。
+- `login()` 或 `rotate_session_id()` 輪替 ID 後，舊 ID 立即失效，沒有寬限期：若有寬限期，被植入的權杖在這段期間會解析到已登入的 Session。
+- `rotate_session_id()` 保留原名，用於不更換使用者的權限變更。
 
-確切的函式簽章尚未定案，因此 0.3.9 不會針對這些變更發出警告。若應用程式依據自己寫入 `request.session` 的鍵（`request.session.get("user_id")`）判斷是否已登入，這不在函式庫能察覺的範圍內；請使用函式庫的身分（`session.user`、`AuthenticatedSession`），或自行輪替 ID。
+這些大多是新的 API，而 0.3.x 無從判斷哪些程式碼會指定 `session.user`，因此 0.3.9 不會發出警告。若應用程式依據自己寫入 `request.session` 的鍵（`request.session.get("user_id")`）判斷是否已登入，這不在函式庫能察覺的範圍內；請使用函式庫的身分（`session.user`、`AuthenticatedSession`），或自行輪替 ID。
 
 修改前：
 
@@ -182,7 +182,12 @@ SessionConfig(
 
 ### Session 寫入 {#session-writes}
 
-0.4.0 會以有條件的方式寫入 Session（[#128](https://github.com/allen0099/FastAPI-CacheX/issues/128)）：若某個請求載入 Session 之後，另一個請求刪除、使其失效或輪替了它，前者儲存時不會再讓紀錄復活。不需要修改程式碼。自訂後端必須支援這項變更新增的「存在才寫入」原語，其形式尚未決定。
+0.4.0 會以有條件的方式寫入 Session（[#128](https://github.com/allen0099/FastAPI-CacheX/issues/128)）：若某個請求載入 Session 之後，另一個請求刪除、使其失效或輪替了它，前者儲存時不會再讓紀錄復活。不需要修改程式碼。
+
+- 一般的儲存改為有條件寫入：中介軟體儲存 `request.session` 的修改、滑動續期，以及 `update_session()`。只有在後端的紀錄仍等於這個請求最後一次讀到或寫入的值時才會成功。刪除、使其失效、過期與輪替 ID 仍無條件執行，因此安全動作永遠優先。
+- 被拒絕的儲存會被捨棄並記錄 log。回應照常送出，但不附 Session 權杖。
+- **副作用：**兩個請求同時修改同一個 Session 時（例如兩個分頁同時加入購物車），先儲存的成功，後儲存的被捨棄。目前是後儲存的覆蓋先儲存的，本來就會遺失其中一筆修改；0.4.0 改變的是遺失哪一筆。合併這類修改的做法由 [#376](https://github.com/allen0099/FastAPI-CacheX/issues/376) 追蹤。
+- 後端新增 `set_if_equals(key, expected, value, ttl=None)`，與 `delete_if_equals`、`expire_if_equals` 同一系列。基底類別提供不具原子性的預設實作，因此自訂後端不需修改也能運作；覆寫它才能讓儲存具有原子性。
 
 ### 權杖來源 {#token-source-priority}
 
@@ -248,7 +253,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 - 鍵以格式標籤開頭，例如 `http:v2|`，讓下一次格式變更可以用模式移除舊鍵。
 - 主機名稱會正規化：轉為小寫，並去除該 scheme 的預設連接埠（`:80`、`:443`）。
 - 過長的查詢字串（約超過 200 位元組）會以 `sha256:` 加上十六進位摘要儲存；路徑仍保持可讀。
-- 查詢參數會排序，如同 0.3.9 起的 `@cache(sort_query=True)`；這會成為預設還是維持選用，尚未決定。
+- 查詢參數會依名稱排序：`sort_query`（0.3.9 起可選用）在 `@cache`、`build_cache_key()` 與 `invalidate()` 中預設為 `True`，因此 `?b=2&a=1` 與 `?a=1&b=2` 共用同一筆項目。
 - 由單一的 `CacheKey` 型別負責編碼與解析鍵；`routes.py` 中解析鍵的內部實作會改變。
 
 ```text
@@ -260,6 +265,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 
 - 直接寫出分隔符號的 `clear_pattern()` 模式（`"GET|||*|||/users/*"`）需要改寫。`clear_path()` 與 `invalidate()` 會自行組出鍵，不需要修改。
 - 呼叫 `build_cache_key()` 或以 `CACHE_KEY_SEPARATOR` 串接的自訂 `key_builder` 會自動跟上；直接寫死 `|||` 的則不會。
+- 回應取決於用戶端送出的查詢字串順序的處理函式（例如從 `request.url` 複製的自身連結或分頁連結、對原始查詢字串計算的簽章），請設定 `@cache(sort_query=False)`。否則第一位呼叫者的順序會被快取，並提供給送出其他順序的呼叫者。`sort_query=False` 在 0.3.9 就能使用。
 - 0.4.0 不會讀取 0.3.x 寫入的項目。這些項目會在 TTL 到期後過期；在 Redis 與記憶體後端上，可以在升級後立即以 `await backend.clear_pattern("*|||*")` 移除。Memcached 無法列舉鍵，只能等它們過期。
 
 0.3.9 不會警告：0.3.x 無從判斷某個模式或 key builder 是否符合新格式，而執行期唯一的代價只是一次未命中。

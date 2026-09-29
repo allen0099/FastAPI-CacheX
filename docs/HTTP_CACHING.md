@@ -316,7 +316,10 @@ exactly as in the unsorted key, so only the order changes: a query already in
 order gets the same key with or without the flag. What the key already treats
 as equal stays equal (`?a` and `?a=`, an empty segment from `&&`), and nothing
 else is merged. The default is `False`, which leaves every existing key
-unchanged.
+unchanged. 0.4.0 makes `True` the default, together with its other cache key
+changes ([#72](https://github.com/allen0099/FastAPI-CacheX/issues/72), see
+[Migrating to 0.4.0](MIGRATING_0_4.md#cache-keys)). A handler that depends on the
+query order as sent can keep `sort_query=False`.
 
 `sort_query` applies to the default key builder only. Combined with a custom
 `key_builder` it raises `CacheXError` when the decorator is applied; call
