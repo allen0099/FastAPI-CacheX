@@ -37,6 +37,13 @@ def _login_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
         session = await login(request, SessionUser(user_id=name))
         return {"session_id": session.session_id}
 
+    @app.post("/write-then-login")
+    async def write_then_login(request: Request, name: str) -> dict[str, Any]:
+        request.session["before"] = 1
+        session = await login(request, SessionUser(user_id=name, roles=["fresh"]))
+        request.session["after"] = 2
+        return {"session_id": session.session_id}
+
     @app.post("/login-then-write")
     async def login_then_write(request: Request) -> dict[str, bool]:
         request.session["before"] = 1
@@ -335,3 +342,88 @@ def test_login_under_the_deprecated_middleware_raises(
         pytest.raises(RuntimeError, match="FastAPICacheXSessionMiddleware"),
     ):
         TestClient(app).post("/login", headers={config.header_name: "stale"})
+
+
+async def test_login_as_another_user_starts_a_clean_session(
+    manager: SessionManager, config: SessionConfig, backend: MemoryBackend
+) -> None:
+    """A's session and anything written before login() never reach B."""
+    session_a, token_a = await manager.create_session(
+        SessionUser(user_id="alice"), cart=["book"], elevated=True
+    )
+    client = TestClient(_login_app(manager, config))
+    client.cookies.set(config.cookie_name, token_a)
+
+    response = client.post("/write-then-login", params={"name": "bob"})
+
+    token_b = _token_sent(response, "cookie", config)
+    session_b, _ = await manager.get_session(token_b)
+    assert session_b.session_id != session_a.session_id
+    assert session_b.user is not None
+    assert session_b.user.user_id == "bob"
+    assert session_b.data == {"after": 2}
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(token_a)
+    assert len(await backend.get_all_keys()) == 1
+    assert _me(client, "cookie", config, token_b).json() == {
+        "user": "bob",
+        "data": {"after": 2},
+    }
+
+
+async def test_login_as_another_user_over_the_header(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    _session_a, token_a = await manager.create_session(
+        SessionUser(user_id="alice"), cart=["book"]
+    )
+    client = TestClient(_login_app(manager, config))
+
+    response = client.post(
+        "/write-then-login",
+        params={"name": "bob"},
+        headers={config.header_name: token_a},
+    )
+
+    token_b = _token_sent(response, "header", config)
+    session_b, _ = await manager.get_session(token_b)
+    assert session_b.data == {"after": 2}
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(token_a)
+
+
+async def test_relogin_keeps_the_data_and_updates_the_user(
+    manager: SessionManager, config: SessionConfig, backend: MemoryBackend
+) -> None:
+    """The same user_id logging in again keeps the data; the new SessionUser wins."""
+    session_a, token_a = await manager.create_session(
+        SessionUser(user_id="alice", roles=["stale"]), cart=["book"]
+    )
+    client = TestClient(_login_app(manager, config))
+    client.cookies.set(config.cookie_name, token_a)
+
+    response = client.post("/write-then-login", params={"name": "alice"})
+
+    token = _token_sent(response, "cookie", config)
+    session, _ = await manager.get_session(token)
+    assert session.session_id != session_a.session_id
+    assert session.user is not None
+    assert session.user.roles == ["fresh"]
+    assert session.data == {"cart": ["book"], "before": 1, "after": 2}
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(token_a)
+    assert len(await backend.get_all_keys()) == 1
+
+
+async def test_anonymous_login_keeps_writes_made_before_login(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    """The cart case: an anonymous session's data and earlier writes are kept."""
+    _anonymous, token = await manager.create_anonymous_session(cart=["book"])
+    client = TestClient(_login_app(manager, config))
+    client.cookies.set(config.cookie_name, token)
+
+    response = client.post("/write-then-login", params={"name": "bob"})
+
+    session, _ = await manager.get_session(_token_sent(response, "cookie", config))
+    assert session.data == {"cart": ["book"], "before": 1, "after": 2}

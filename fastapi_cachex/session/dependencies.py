@@ -215,16 +215,24 @@ async def login(request: Request, user: "SessionUser") -> Session:
     routes are guarded by ``require_user_session`` / ``AuthenticatedSession``:
     a later request with the token the response carries passes them.
 
-    - A loaded session (an anonymous visitor's cart, say) keeps its data and
+    - An anonymous loaded session (a visitor's cart, say) keeps its data and
       gets the user and a new ID, as with :func:`rotate_session_id`, so a
       token planted before the login is worthless: the old token no longer
       resolves.
+    - A loaded session of the same ``user_id`` (a re-login) is handled the
+      same way: its data is kept, the ID rotated, and ``user`` replaces the
+      stored ``SessionUser``, so changed roles or metadata take effect.
+    - A loaded session of a different user is deleted, and so is anything
+      written to ``request.session`` earlier in this request: none of the
+      previous user's data reaches the new one. A new session is created as
+      below, and its old token no longer resolves.
     - With no session loaded (a new visitor, or a token that did not
       resolve) a new session is created with the user, bound to the client
       IP and User-Agent as configured.
 
     The middleware then saves the session, including anything written to
-    ``request.session`` before or after the call, and sends its token through
+    ``request.session`` after the call (and, unless the loaded session was a
+    different user's, before it), and sends its token through
     the transport the request used: the response header (``header_name``)
     when the request carried a header or ``Authorization: Bearer`` token,
     otherwise an HttpOnly ``Set-Cookie``. So a request that carried no token
