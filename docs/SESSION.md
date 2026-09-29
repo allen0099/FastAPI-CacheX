@@ -178,12 +178,15 @@ there.
 `UserSessionDep` does not check for a user despite its name; it is an alias of `SessionDep`
 until 0.4.0, which is planned to make it require one.
 
-`session.user` is set only by passing `user=` to `create_session()` or by assigning it and
-saving the session. Keys written to `request.session` (`request.session["user_id"] = ...`)
-are application data: the library does not treat them as a login, so `AuthenticatedSession`
-still answers `401` for such a session. See
-[Regenerate the Session ID After Login](#5-regenerate-the-session-id-after-login) for a login
-that sets the user.
+Under `FastAPICacheXSessionMiddleware`, log a user in with `await login(request, user)`. It
+attaches the `SessionUser` that `require_user_session` / `AuthenticatedSession` check, under a
+new session ID, and the middleware sends the token; see
+[Regenerate the Session ID After Login](#5-regenerate-the-session-id-after-login). The `/login`
+above instead hands an API client its token in the body: `create_session(user=...)` sets
+`session.user` too, but the middleware sends nothing for a session it did not load or start.
+Keys written to `request.session` (`request.session["user_id"] = ...`) are application data:
+the library does not treat them as a login, so `AuthenticatedSession` still answers `401` for
+such a session.
 
 ### 3. Full Example (Redis Backend)
 
@@ -415,8 +418,9 @@ async def me(session=Depends(require_user_session)):
 - Logging in by writing to `request.session` keeps the session ID the request arrived with.
   With Starlette's middleware the cookie *is* the session, so the login response replaces
   whatever cookie was planted; here the cookie only names a server-side record, and a planted
-  one would be logged in along with the victim. Call `await rotate_session_id(request)` before
-  attaching the user (see [Regenerate the Session ID After Login](#5-regenerate-the-session-id-after-login)).
+  one would be logged in along with the victim. Log in with `await login(request, user)`, which
+  gives the session a new ID and attaches the user (see
+  [Regenerate the Session ID After Login](#5-regenerate-the-session-id-after-login)).
 - Any access to `request.session` adds `Vary` for every request header read to find the token:
   the headers checked in `token_source_priority` order (`header_name`, and `Authorization` when
   bearer tokens are enabled) up to the one that carried the token. `Cookie` is added only when
@@ -673,17 +677,65 @@ match the bound one (or has no address) is treated as having no session.
 
 Prevents session fixation. The token a client arrives with may have been planted by
 someone else (from a sibling subdomain, say); a login that keeps it hands that person a
-logged-in session. Give the session a new ID before attaching the user:
+logged-in session. Under `FastAPICacheXSessionMiddleware`, `login()` gives the session a new ID
+and attaches the user in one call:
+
+```python
+from fastapi import Request
+
+from fastapi_cachex.session import SessionUser, login
+
+
+# LoginRequest is the body model from Basic Usage
+@app.post("/login")
+async def log_in(credentials: LoginRequest, request: Request):
+    ...  # verify credentials.password
+    await login(request, SessionUser(user_id=credentials.username))
+    return {"ok": True}
+```
+
+A loaded session (an anonymous visitor's cart, say) keeps its data under a new ID and gets the
+user; the old token no longer resolves. With no session loaded (a new visitor, or a token that
+did not resolve) `login()` creates a session with the user, bound to the client IP and
+User-Agent as configured. The middleware then saves the session, keys written to
+`request.session` before or after the call included, and sends its token through the transport
+the request used: the response header for a header or `Authorization: Bearer` token, otherwise
+an HttpOnly `Set-Cookie` with every `cookie_*` attribute. Like every response that carries a
+token, it gets `Cache-Control: private, no-store`. A later request with that token passes
+`require_user_session` and `AuthenticatedSession`. `login()` returns the session, which
+`get_session` also returns for the rest of the request.
+
+A request that carried no token at all gets only the cookie, which page scripts cannot read. Do
+not copy the token into a response header or the body of a browser login. An API client that
+logs in without a token needs it in the body: return `manager.issue_token(session)` for the
+session `login()` returned, or issue the token from a separate endpoint, as
+[`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) does. The complete browser version is
+[`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py).
+
+Within one request, `request.session.clear()` after `login()` is a logout: the new session is
+deleted and no token is sent (a cookie client gets its cookie expired). `clear()` before
+`login()` logs the loaded session out, and `login()` then starts a new session instead of
+rotating it. Without `FastAPICacheXSessionMiddleware`, `login()` raises `RuntimeError`: the
+deprecated `SessionMiddleware` cannot send a token for a session it did not load, so there
+create the session with `create_session(user=...)` and return its token.
+
+`request.session["user_id"] = "123"` is not a login. It is application data, which
+`require_user_session` and `AuthenticatedSession` do not recognise, and it keeps the session ID
+the request arrived with.
+
+To change the ID without logging in (after a privilege change, say), call
+`await rotate_session_id(request)`:
 
 ```python
 from fastapi_cachex.session import rotate_session_id
+from fastapi_cachex.session.dependencies import AuthenticatedSession
 
 
-@app.post("/login")
-async def login(request: Request):
-    ...  # verify the credentials
+@app.post("/sudo")
+async def sudo(request: Request, session: AuthenticatedSession):
+    ...  # check the password again
     await rotate_session_id(request)
-    request.session["user_id"] = "123"
+    request.session["elevated"] = True
     return {"ok": True}
 ```
 
@@ -693,50 +745,12 @@ new ID, keeping its data, user, `created_at` and expiry. Either middleware sees 
 and sends a token for it through the transport the request used: `Set-Cookie` for a
 cookie, the response header for a header token. After that the old token no longer
 resolves to a session. For a new visitor there is no session to rotate, so it returns
-`False` and the first write starts a session under a fresh ID.
+`False`.
 
 A handler that already holds the request's session object can call
 `await manager.regenerate_session_id(session)` directly, with the same effect. Get it from
 `get_optional_session` and skip the call when it is `None`; `SessionDep` answers `401` to a
 visitor who has no session yet.
-
-The example above stores the user ID as application data, which `require_user_session` and
-`AuthenticatedSession` do not recognise. To pass them, attach a `SessionUser` after the
-rotation and save the session yourself: assigning `session.user` does not mark
-`request.session` as modified, so the middleware would not save it.
-
-```python
-from fastapi_cachex.session import SessionUser
-from fastapi_cachex.session.dependencies import OptionalSession
-
-
-@app.post("/login")
-async def login(request: Request, session: OptionalSession):
-    ...  # verify the credentials
-    user = SessionUser(user_id="123")
-    if session is not None:
-        await rotate_session_id(request)
-        session.user = user
-        await session_manager.update_session(session)
-    else:
-        # No session yet: the middleware has no token to send, so create one
-        # with the user and deliver its token yourself.
-        _, token = await session_manager.create_session(user=user)
-        ...
-    return {"ok": True}
-```
-
-In that last branch the response is yours to secure, since the middleware adds nothing
-to a token it did not send: set the cookie with every `cookie_*` attribute of the config
-(`domain` included, or the cookie cleared at logout will not match it) and send
-`Cache-Control: private, no-store` so no shared cache stores the credential. Do not copy the
-token into a response header or the body of a browser login: page scripts could read it,
-which is what the HttpOnly cookie prevents. Give API clients their token from a separate
-endpoint that returns it in the body, as
-[`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) does. The complete version is
-[`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py).
-A `login()` helper that does all of this is planned
-([#293](https://github.com/allen0099/FastAPI-CacheX/issues/293)).
 
 Outside a middleware, load the session with the same bindings the middleware would pass, and hand
 the returned token to the client yourself:
@@ -780,7 +794,8 @@ from fastapi_cachex.session import (
     require_session,  # alias of get_session
     require_user_session,  # 401 also when the session has no user
     get_session_manager,  # the SessionManager registered by the middleware
-    rotate_session_id,  # not a dependency: await it at login for a new session ID
+    login,  # not a dependency: await it to log a user in under a new session ID
+    rotate_session_id,  # not a dependency: await it for a new session ID
 )
 
 # Type annotations

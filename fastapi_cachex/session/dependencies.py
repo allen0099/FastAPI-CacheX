@@ -10,11 +10,14 @@ from fastapi import status
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.security import HTTPBearer
 
+from .middleware import _log_in
+from .middleware import _RequestSession
 from .middleware import get_client_ip
 from .models import Session
 
 if TYPE_CHECKING:
     from .manager import SessionManager
+    from .models import SessionUser
 
 
 # HTTPBearer security scheme for OpenAPI UI
@@ -153,33 +156,39 @@ def get_session_manager(request: Request) -> "SessionManager":
 async def rotate_session_id(request: Request) -> bool:
     """Give the request's session a new ID, as a defence against session fixation.
 
-    Call it at login, before attaching the user. A session token the client
-    arrived with may have been planted by someone else; after rotation the
-    old token no longer resolves, and the middleware sends the client a token
-    for the new ID through the transport the request used. The session keeps
-    its data, user and expiry.
+    To log a user in under ``FastAPICacheXSessionMiddleware``, call
+    :func:`login` instead: it rotates the ID the same way, attaches the
+    ``SessionUser`` that ``require_user_session`` / ``AuthenticatedSession``
+    check, and makes the middleware save the session and send its token,
+    also for a visitor who had no session yet. Use this function on its own
+    when the ID should change without a login (a privilege change, say), or
+    under the deprecated ``SessionMiddleware``.
+
+    A session token the client arrived with may have been planted by someone
+    else; after rotation the old token no longer resolves, and the middleware
+    sends the client a token for the new ID through the transport the request
+    used. The session keeps its data, user and expiry.
 
     With no session loaded there is nothing to rotate: the first write to
     ``request.session`` (or ``create_session()``) starts a session under a
-    fresh ID anyway. So this works for a new visitor and a returning one alike.
+    fresh ID anyway.
+
+    ``request.session["user_id"] = ...`` is application data, not a login:
+    ``require_user_session`` / ``AuthenticatedSession`` still answer ``401``
+    for such a session.
 
     Example:
         ```python
-        from fastapi_cachex.session.dependencies import rotate_session_id
+        from fastapi_cachex.session import rotate_session_id
 
 
-        @app.post("/login")
-        async def login(request: Request):
-            ...  # verify the credentials
+        @app.post("/sudo")
+        async def sudo(request: Request, session: AuthenticatedSession):
+            ...  # re-check the password
             await rotate_session_id(request)
-            request.session["user_id"] = "123"
+            request.session["elevated"] = True
             return {"ok": True}
         ```
-
-        ``request.session["user_id"]`` is application data. For
-        ``require_user_session`` / ``AuthenticatedSession`` to accept the
-        session, set ``session.user`` after the rotation and save it with
-        ``SessionManager.update_session()``; see the session guide.
 
     Args:
         request: FastAPI request object
@@ -197,6 +206,78 @@ async def rotate_session_id(request: Request) -> bool:
         return False
     await manager.regenerate_session_id(session)
     return True
+
+
+async def login(request: Request, user: "SessionUser") -> Session:
+    """Log ``user`` in on the request's session, under a new session ID.
+
+    This is the way to log in under ``FastAPICacheXSessionMiddleware`` when
+    routes are guarded by ``require_user_session`` / ``AuthenticatedSession``:
+    a later request with the token the response carries passes them.
+
+    - A loaded session (an anonymous visitor's cart, say) keeps its data and
+      gets the user and a new ID, as with :func:`rotate_session_id`, so a
+      token planted before the login is worthless: the old token no longer
+      resolves.
+    - With no session loaded (a new visitor, or a token that did not
+      resolve) a new session is created with the user, bound to the client
+      IP and User-Agent as configured.
+
+    The middleware then saves the session, including anything written to
+    ``request.session`` before or after the call, and sends its token through
+    the transport the request used: the response header (``header_name``)
+    when the request carried a header or ``Authorization: Bearer`` token,
+    otherwise an HttpOnly ``Set-Cookie``. So a request that carried no token
+    at all gets only the cookie; an API client that needs the token in the
+    body can return ``SessionManager.issue_token()`` for the returned session.
+    The response is marked ``Cache-Control: private, no-store``, as for every
+    response that carries a session token.
+
+    Within the same request, ``request.session.clear()`` after ``login()`` is
+    a logout: the logged-in session is deleted and no token is sent (a cookie
+    client gets its cookie expired). ``clear()`` before ``login()`` logs the
+    loaded session out, and ``login()`` then starts a new session instead of
+    rotating it. Calling ``login()`` twice rotates again and keeps the last
+    user.
+
+    Example:
+        ```python
+        from fastapi_cachex.session import SessionUser, login
+
+
+        @app.post("/login")
+        async def log_in(credentials: Credentials, request: Request):
+            ...  # verify the credentials
+            await login(request, SessionUser(user_id=credentials.username))
+            return {"ok": True}
+        ```
+
+    Args:
+        request: FastAPI request object
+        user: The user to attach
+
+    Returns:
+        The logged-in session, also what ``get_session`` returns for the rest
+        of the request
+
+    Raises:
+        RuntimeError: If the request did not pass through
+            ``FastAPICacheXSessionMiddleware``. The deprecated
+            ``SessionMiddleware`` cannot send a token for a session it did not
+            load; there, create the session with
+            ``SessionManager.create_session(user=...)`` and return its token.
+    """
+    request_session = request.scope.get("session")
+    if (
+        not isinstance(request_session, _RequestSession)
+        or request_session.middleware is None
+    ):
+        msg = (
+            "login() needs FastAPICacheXSessionMiddleware: add it to the app "
+            "so it can save the session and send its token"
+        )
+        raise RuntimeError(msg)
+    return await _log_in(request, request_session, user)
 
 
 def get_session_client_ip(

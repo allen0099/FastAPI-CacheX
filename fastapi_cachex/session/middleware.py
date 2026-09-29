@@ -27,6 +27,7 @@ from .proxy import SessionManagerProxy
 
 if TYPE_CHECKING:
     from .models import Session
+    from .models import SessionUser
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +314,11 @@ class _RequestSession(StarletteSession):
     """
 
     cleared: bool = False
+    # The backend session this dict belongs to: the one the middleware loaded,
+    # or the one ``login()`` started or rotated. Read when the response starts.
+    backend: "Session | None" = None
+    # The middleware that created this dict; ``login()`` goes through it.
+    middleware: "FastAPICacheXSessionMiddleware | None" = None
 
     def clear(self) -> None:
         self.cleared = True
@@ -400,15 +406,18 @@ class FastAPICacheXSessionMiddleware:
                 )
                 loaded_token = renewed_token or token_value
                 loaded_session_id = backend_session.session_id
-                scope["session"] = _RequestSession(backend_session.data)
             except SessionError:
                 logger.debug(
                     "FastAPICacheXSessionMiddleware: token invalid/expired; "
                     "starting empty session",
                 )
-                scope["session"] = _RequestSession()
-        else:
-            scope["session"] = _RequestSession()
+
+        request_session = _RequestSession(
+            backend_session.data if backend_session is not None else {}
+        )
+        request_session.backend = backend_session
+        request_session.middleware = self
+        scope["session"] = request_session
 
         scope.setdefault("state", {})["__fastapi_cachex_session"] = backend_session
 
@@ -422,15 +431,17 @@ class FastAPICacheXSessionMiddleware:
                 session: _RequestSession = scope["session"]
                 headers = MutableHeaders(scope=message)
 
+                # login() may have started a session, or replaced the loaded one.
+                target = request_session.backend
                 current_token, fresh_token = self._response_tokens(
-                    backend_session, loaded_session_id, loaded_token, renewed_token
+                    target, loaded_session_id, loaded_token, renewed_token
                 )
 
                 sent_token = await self._persist(
                     session,
                     headers,
                     connection,
-                    backend_session,
+                    target,
                     current_token,
                     fresh_token,
                     from_header=from_header,
@@ -628,3 +639,55 @@ class FastAPICacheXSessionMiddleware:
             f"expires=Thu, 01 Jan 1970 00:00:00 GMT; "
             f"{self._security_flags}"
         )
+
+
+async def _log_in(
+    connection: HTTPConnection,
+    request_session: _RequestSession,
+    user: "SessionUser",
+) -> "Session":
+    """Attach ``user`` to the request's session under a new session ID.
+
+    The public entry point is ``fastapi_cachex.session.login()``, which
+    documents the behaviour and checks that ``request_session`` belongs to
+    ``FastAPICacheXSessionMiddleware``.
+
+    Args:
+        connection: The request being handled
+        request_session: The middleware's ``request.session`` for it
+        user: The user to attach
+
+    Returns:
+        The logged-in session
+    """
+    middleware = request_session.middleware
+    assert middleware is not None  # noqa: S101 - checked by login()
+    manager = middleware.session_manager
+    current = request_session.backend
+    if request_session.cleared:
+        # clear() already logged the loaded session out. Delete it now, since
+        # the flag that would have deleted it is reset below, and log in on a
+        # new session.
+        if current is not None:
+            await manager.delete_session(current.session_id)
+        current = None
+        request_session.cleared = False
+
+    if current is None:
+        current, _ = await manager.create_session(
+            user,
+            ip_address=get_client_ip(connection, middleware.config),
+            user_agent=connection.headers.get("user-agent"),
+        )
+    else:
+        # Attach the user before the rotation, so the record under the old ID
+        # never holds it.
+        current.user = user
+        await manager.regenerate_session_id(current)
+
+    # The session is already stored with the user. Its ID differs from the one
+    # the middleware loaded (if any), so the middleware sends a token for it
+    # and saves ``request.session`` into it if the handler writes there.
+    request_session.backend = current
+    connection.scope.setdefault("state", {})["__fastapi_cachex_session"] = current
+    return current
