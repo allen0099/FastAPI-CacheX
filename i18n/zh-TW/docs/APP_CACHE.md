@@ -42,7 +42,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 - `get()` 在快取未命中時回傳 `None`（或你提供的 `default=`），遇到不存在或損毀的項目也絕不會拋出例外。
 - `set()` 遇到無法 JSON 序列化的值時，會讓 `TypeError` 直接往外拋出。
-- `get_or_set()` 不提供 cache stampede 保護：同一個鍵同時發生多次未命中時，每一次都會執行 `factory`。
+- `get_or_set()` 支援以 `lock=True`（或 manager 全域設定 `CacheManager(lock=True)`）選用 cache stampede 保護，避免多次並行未命中時同時執行 `factory`，若等待超時則具備直接計算的優雅降級回退。分散式鎖的鍵名格式為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
 - `get_or_set()` 在未命中與命中時都回傳經 JSON 解碼後的值（見 [JSON 往返](#json-round-trip)），因此兩條路徑的結果相同。
 - `add()` 只在鍵尚未被占用時寫入值，並回傳是否有寫入。檢查與寫入是同一個後端原子操作（`set_if_absent`），因此適合「每個鍵只做一次」的工作，例如 webhook 或電子郵件的去重。已過期的鍵視為未被占用；存放無法解碼之值的鍵則不算，即使 `get()` 會把它當成未命中。
 - 鍵預設位於獨立、以 `cache:` 為前綴的命名空間，與 HTTP 路由快取及 OAuth state 分開，因此 `clear()`／`clear_prefix()` 絕不會動到無關的快取項目。
@@ -52,6 +52,35 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 > [!NOTE]
 > `clear()`／`clear_prefix()` 是以後端的 `get_all_keys()` 與 `delete_many()` 實作（在 Redis 上是一次批次 `DEL`）。由於 Memcached 不支援列舉鍵（見[後端](BACKENDS.md#memcached)），這些方法以及 `clear_pattern()` 在 Memcached 後端上不會有任何作用；`get()`／`set()`／`add()`／`delete()`／`has()` 則照常運作。若需要大量清除，請使用 Redis 或記憶體後端。
+
+## Cache stampede 保護 {#stampede-protection}
+
+當 `factory` 的運算成本很高（例如慢速資料庫查詢、受速率限制的外部 API）且該鍵又是熱門鍵時，快取過期會導致多個請求同時重新計算。你可以透過 `CacheLock` 在單次呼叫或 manager 全域啟用分散式 cache stampede 保護：
+
+```python
+# 單次呼叫保護：
+profile = await manager.get_or_set(
+    "user:42",
+    lambda: load_user(42),
+    ttl=300,
+    lock=True,
+    lock_ttl=30,  # factory 執行的租約上限（秒，預設：60）
+    wait_timeout=10,  # 呼叫者等待的延遲預算（秒，預設：None，持鎖期間持續等待）
+    raise_on_timeout=False,  # True 拋出 LockTimeoutError，False 回退至執行 factory（預設：False）
+)
+
+# 或 manager 全域預設：
+manager = CacheManager(lock=True, lock_ttl=60)
+```
+
+1. **未命中**：未命中時，呼叫者嘗試使用 `CacheLock` 進行非阻塞式取鎖，鎖鍵名稱為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
+2. **勝出者**：取鎖成功的勝出者會再次檢查快取、執行 `factory`、將值存入後端並釋放鎖。
+3. **等待者**：其他呼叫者以指數退避（基準 50ms、倍率 1.5 倍、上限 500ms）與隨機抖動（±10%）輪詢快取，直到值出現為止。未指定 `wait_timeout` 時，呼叫者受限於持鎖者的 `lock_ttl` 期間持續等待，不會有固定的期限。
+4. **接手**：若勝出者失敗或其鎖已過期，等待中的呼叫者會接手取得鎖、重新檢查快取並在需要時執行計算。
+5. **可重新進入（Re-entrancy）**：同一工作（task）內對同一個鍵遞迴呼叫 `get_or_set()` 會自動跳過取鎖，避免自我死鎖。
+6. **逾時**：當明確指定的 `wait_timeout` 到期時，`raise_on_timeout=False` 會記錄警告並回退為直接執行 factory 計算（優雅降級），而 `raise_on_timeout=True` 則拋出 `LockTimeoutError`。
+
+請確保 `lock_ttl` 超過 `factory` 的預期執行時間。若 `factory` 執行時間超過 `lock_ttl`，鎖會在執行途中過期，導致等待中的呼叫者發起第二次計算。
 
 ## JSON 往返 {#json-round-trip}
 

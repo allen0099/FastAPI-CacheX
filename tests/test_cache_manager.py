@@ -4,29 +4,32 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from functools import partial
-from typing import TYPE_CHECKING
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
+from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.dependencies import get_app_cache
 from fastapi_cachex.exceptions import BackendNotFoundError
+from fastapi_cachex.exceptions import LockTimeoutError
+from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import log_ref
 from tests.conftest import Clock
+from tests.live_servers import MEMCACHED_SERVER
 from tests.live_servers import REDIS_HOST
 from tests.live_servers import REDIS_PORT
+from tests.live_servers import flush_memcached
+from tests.live_servers import requires_memcached
 from tests.live_servers import requires_redis
 from tests.live_servers import requires_redis_package
-
-if TYPE_CHECKING:
-    from fastapi_cachex.backends.base import BaseCacheBackend
 
 
 @pytest_asyncio.fixture(
@@ -713,3 +716,728 @@ def test_get_app_cache_reuses_existing_proxy_instance(
         assert get_app_cache() is existing
     finally:
         CacheManagerProxy.set(None)
+
+
+# --- Stampede protection (get_or_set) --------------------------------------------
+
+
+async def test_stampede_protection_default_off(
+    memory_backend: MemoryBackend,
+) -> None:
+    """By default (lock=False), concurrent misses for the same key each invoke factory."""
+    manager = CacheManager(backend=memory_backend)
+    calls = 0
+
+    async def factory() -> str:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.02)
+        return "data"
+
+    results = await asyncio.gather(
+        manager.get_or_set("key", factory),
+        manager.get_or_set("key", factory),
+    )
+    assert list(results) == ["data", "data"]
+    assert calls == 2
+
+
+async def test_stampede_protection_explicit_lock_false_overrides_manager(
+    memory_backend: MemoryBackend,
+) -> None:
+    """An explicit lock=False on get_or_set overrides manager.lock=True."""
+    manager = CacheManager(backend=memory_backend, lock=True)
+    calls = 0
+
+    async def factory() -> str:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.02)
+        return "data"
+
+    results = await asyncio.gather(
+        manager.get_or_set("key", factory, lock=False),
+        manager.get_or_set("key", factory, lock=False),
+    )
+    assert list(results) == ["data", "data"]
+    assert calls == 2
+
+
+async def test_stampede_protection_manager_default_lock(
+    memory_backend: MemoryBackend,
+) -> None:
+    """When manager has lock=True, get_or_set without lock parameter uses locking."""
+    manager = CacheManager(backend=memory_backend, lock=True)
+    calls = 0
+
+    async def factory() -> str:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.02)
+        return "computed"
+
+    results = await asyncio.gather(
+        manager.get_or_set("key", factory),
+        manager.get_or_set("key", factory),
+        manager.get_or_set("key", factory),
+    )
+    assert list(results) == ["computed", "computed", "computed"]
+    assert calls == 1
+
+
+async def test_stampede_protection_single_winner_concurrent_misses(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Concurrent calls with lock=True execute factory once, and all callers get the value."""
+    manager = CacheManager(backend=memory_backend)
+    calls = 0
+
+    async def slow_factory() -> dict[str, int]:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.03)
+        return {"count": 42}
+
+    results = await asyncio.gather(
+        *[manager.get_or_set("hot_key", slow_factory, lock=True) for _ in range(8)]
+    )
+    assert all(r == {"count": 42} for r in results)
+    assert calls == 1
+    assert await manager.get("hot_key") == {"count": 42}
+
+
+async def test_stampede_protection_winner_rechecks_cache(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Winner re-checks the cache after acquiring lock and does not run factory if populated."""
+    manager = CacheManager(backend=memory_backend)
+    calls = 0
+
+    def factory() -> str:
+        nonlocal calls
+        calls += 1
+        return "from_factory"
+
+    # Pre-populate cache directly before get_or_set
+    await manager.set("recheck_key", "pre_existing")
+
+    result = await manager.get_or_set("recheck_key", factory, lock=True)
+    assert result == "pre_existing"
+    assert calls == 0
+
+
+async def test_stampede_protection_winner_exception_releases_lock(
+    memory_backend: MemoryBackend,
+) -> None:
+    """If the winner's factory raises, the lock is released in finally, allowing a waiter to take over."""
+    manager = CacheManager(backend=memory_backend)
+    calls = 0
+
+    async def failing_factory() -> str:
+        nonlocal calls
+        calls += 1
+        msg = "factory failure"
+        raise ValueError(msg)
+
+    async def succeeding_factory() -> str:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)
+        return "recovered"
+
+    task1 = asyncio.create_task(
+        manager.get_or_set("fail_key", failing_factory, lock=True)
+    )
+    # Ensure task1 starts first and acquires lock
+    await asyncio.sleep(0.005)
+    task2 = asyncio.create_task(
+        manager.get_or_set("fail_key", succeeding_factory, lock=True)
+    )
+
+    with pytest.raises(ValueError, match="factory failure"):
+        await task1
+
+    result2 = await task2
+    assert result2 == "recovered"
+    assert calls == 2
+    assert await manager.get("fail_key") == "recovered"
+
+
+async def test_stampede_protection_crashed_winner_timeout_fallback(
+    memory_backend: MemoryBackend,
+    clock: Clock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If winner holds lock indefinitely, waiter times out, logs warning, and computes value."""
+    manager = CacheManager(backend=memory_backend)
+
+    # Acquire lock directly, simulating a crashed winner that never released
+    lock = CacheLock(
+        name=manager._cache_key("stuck_key"),
+        ttl=10,
+        backend=memory_backend,
+    )
+    assert await lock.acquire(blocking=False) is True
+
+    calls = 0
+
+    def factory() -> str:
+        nonlocal calls
+        calls += 1
+        return "fallback_value"
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.manager"):
+        result = await manager.get_or_set(
+            "stuck_key",
+            factory,
+            lock=True,
+            wait_timeout=1.0,
+            raise_on_timeout=False,
+        )
+
+    assert result == "fallback_value"
+    assert calls == 1
+    assert any(
+        "Cache stampede wait timeout exceeded" in r.getMessage() for r in caplog.records
+    )
+    await lock.release()
+
+
+async def test_stampede_protection_crashed_winner_timeout_raises(
+    memory_backend: MemoryBackend,
+    clock: Clock,
+) -> None:
+    """If raise_on_timeout=True and wait_timeout elapses, LockTimeoutError is raised."""
+    manager = CacheManager(backend=memory_backend)
+
+    # Simulate crashed lock holder
+    lock = CacheLock(
+        name=manager._cache_key("timeout_key"),
+        ttl=10,
+        backend=memory_backend,
+    )
+    assert await lock.acquire(blocking=False) is True
+
+    with pytest.raises(LockTimeoutError, match="timed out") as exc_info:
+        await manager.get_or_set(
+            "timeout_key",
+            lambda: "value",
+            lock=True,
+            wait_timeout=1.0,
+            raise_on_timeout=True,
+        )
+
+    assert isinstance(exc_info.value, TimeoutError)
+    assert isinstance(exc_info.value, LockTimeoutError)
+    await lock.release()
+
+
+async def test_stampede_protection_crashed_winner_single_takeover(
+    memory_backend: MemoryBackend,
+) -> None:
+    """When a winner crashes with default wait_timeout=None, waiters wait and exactly one takes over."""
+    manager = CacheManager(backend=memory_backend, lock=True, lock_ttl=1)
+    calls = 0
+
+    async def factory() -> str:
+        nonlocal calls
+        calls += 1
+        return "recovered"
+
+    # Simulate crashed lock holder
+    crashed_lock = CacheLock(
+        name=manager._cache_key("crashed_key"), ttl=1, backend=memory_backend
+    )
+    assert await crashed_lock.acquire(blocking=False) is True
+
+    # 10 concurrent misses: with wait_timeout=None, they do not time out at t=1.
+    # When crashed_lock expires at 1s, one waiter acquires the lock, executes factory once,
+    # and populates the cache. The other 9 waiters receive the cached value.
+    results = await asyncio.wait_for(
+        asyncio.gather(
+            *(manager.get_or_set("crashed_key", factory) for _ in range(10))
+        ),
+        timeout=10,
+    )
+    assert list(results) == ["recovered"] * 10
+    assert calls == 1
+    assert await manager.get("crashed_key") == "recovered"
+
+
+async def test_stampede_protection_reentrancy_same_key(
+    memory_backend: MemoryBackend,
+) -> None:
+    """A factory recursively calling get_or_set on the same key skips locking and avoids deadlock."""
+    manager = CacheManager(backend=memory_backend, lock=True)
+    calls = 0
+
+    async def outer_factory() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        inner = await manager.get_or_set("recursive", lambda: {"inner": 1})
+        return {"outer": inner}
+
+    result = await manager.get_or_set("recursive", outer_factory)
+    assert result == {"outer": {"inner": 1}}
+    assert calls == 1
+
+
+async def test_stampede_protection_reentrancy_different_keys(
+    memory_backend: MemoryBackend,
+) -> None:
+    """A factory calling get_or_set on a different key acquires a lock for that key normally."""
+    manager = CacheManager(backend=memory_backend, lock=True)
+
+    async def outer_factory() -> dict[str, str]:
+        inner = await manager.get_or_set("child", lambda: "child_val")
+        return {"parent": inner}
+
+    result = await manager.get_or_set("parent", outer_factory)
+    assert result == {"parent": "child_val"}
+    assert await manager.get("child") == "child_val"
+    assert await manager.get("parent") == {"parent": "child_val"}
+
+
+async def test_stampede_protection_ordering_store_before_release(
+    memory_backend: MemoryBackend,
+) -> None:
+    """The winner stores the value in backend before releasing the lock."""
+    import unittest.mock
+
+    manager = CacheManager(backend=memory_backend)
+    release_observed_cache: list[bool] = []
+
+    original_release = CacheLock.release
+
+    async def tracking_release(self_lock: CacheLock) -> bool:
+        has_val = await memory_backend.get(manager._cache_key("order_key")) is not None
+        release_observed_cache.append(has_val)
+        return await original_release(self_lock)
+
+    with unittest.mock.patch.object(CacheLock, "release", tracking_release):
+        await manager.get_or_set("order_key", lambda: "stored_val", lock=True)
+
+    assert release_observed_cache == [True]
+
+
+async def test_stampede_protection_non_json_serializable_releases_lock(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Non-JSON-serializable value raises TypeError and releases lock without corrupting cache."""
+    manager = CacheManager(backend=memory_backend)
+
+    with pytest.raises(TypeError):
+        await manager.get_or_set("bad_val", object, lock=True)
+
+    lock = CacheLock(name=manager._cache_key("bad_val"), backend=memory_backend)
+    assert await lock.locked() is False
+    assert await manager.get("bad_val") is None
+
+    assert (
+        await manager.get_or_set("bad_val", lambda: "recovered", lock=True)
+        == "recovered"
+    )
+
+
+async def test_stampede_protection_validation(memory_backend: MemoryBackend) -> None:
+    """Validation rejects invalid lock_ttl, wait_timeout, and lock settings."""
+    with pytest.raises(TypeError, match="lock must be a bool"):
+        CacheManager(backend=memory_backend, lock="no")  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="lock must be a bool"):
+        CacheManager(backend=memory_backend, lock=1)  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="lock must be a bool"):
+        CacheManager(backend=memory_backend, lock=None)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="ttl must be a positive number"):
+        CacheManager(backend=memory_backend, lock_ttl=0)
+
+    with pytest.raises(ValueError, match="ttl must be a positive number"):
+        CacheManager(backend=memory_backend, lock_ttl=-10)
+
+    with pytest.raises(ValueError, match="lock_ttl must be a positive int, got None"):
+        CacheManager(backend=memory_backend, lock_ttl=None)  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="ttl must be an int"):
+        CacheManager(backend=memory_backend, lock_ttl=1.5)  # type: ignore[arg-type]
+
+    manager = CacheManager(backend=memory_backend)
+
+    with pytest.raises(TypeError, match="lock must be a bool or None"):
+        await manager.get_or_set("key", lambda: 1, lock="yes")  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="lock must be a bool or None"):
+        await manager.get_or_set("key", lambda: 1, lock=1)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="ttl must be a positive number"):
+        await manager.get_or_set("key", lambda: 1, lock_ttl=0)
+
+    with pytest.raises(TypeError, match="ttl must be an int"):
+        await manager.get_or_set("key", lambda: 1, lock_ttl=1.5)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="wait_timeout must be greater than zero"):
+        await manager.get_or_set("key", lambda: 1, wait_timeout=0)
+
+    with pytest.raises(ValueError, match="wait_timeout must be greater than zero"):
+        await manager.get_or_set("key", lambda: 1, wait_timeout=-1.0)
+
+    with pytest.raises(TypeError, match="wait_timeout"):
+        await manager.get_or_set("key", lambda: 1, wait_timeout=True)
+
+    with pytest.raises(TypeError, match="wait_timeout"):
+        await manager.get_or_set("key", lambda: 1, wait_timeout="5")  # type: ignore[arg-type]
+
+
+async def test_stampede_protection_module_clock_and_sleep_hooks(
+    memory_backend: MemoryBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module-level _sleep and _monotonic hooks advance simulated time without real-world delay."""
+    virtual_time = 0.0
+    sleep_calls: list[float] = []
+
+    def fake_monotonic() -> float:
+        return virtual_time
+
+    async def fake_sleep(duration: float) -> None:
+        nonlocal virtual_time
+        sleep_calls.append(duration)
+        virtual_time += duration
+        await asyncio.sleep(0)
+
+    from fastapi_cachex import manager as manager_module
+
+    monkeypatch.setattr(manager_module, "_sleep", fake_sleep)
+    monkeypatch.setattr(manager_module, "_monotonic", fake_monotonic)
+
+    manager = CacheManager(backend=memory_backend)
+
+    lock = CacheLock(
+        name=manager._cache_key("tick_key"), ttl=10, backend=memory_backend
+    )
+    assert await lock.acquire(blocking=False) is True
+
+    start_real = time.monotonic()
+    result = await manager.get_or_set(
+        "tick_key",
+        lambda: "after_timeout",
+        lock=True,
+        wait_timeout=1.0,
+        raise_on_timeout=False,
+    )
+    elapsed_real = time.monotonic() - start_real
+
+    assert elapsed_real < 0.2
+    assert result == "after_timeout"
+    assert len(sleep_calls) >= 1
+    assert virtual_time >= 1.0
+    await lock.release()
+
+
+async def test_stampede_protection_release_failure_logged_not_propagated(
+    memory_backend: MemoryBackend,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed lock release logs a warning and does not overwrite the computed result."""
+    import unittest.mock
+
+    manager = CacheManager(backend=memory_backend)
+
+    async def failing_release(_self: CacheLock) -> bool:
+        msg = "backend release failure"
+        raise RuntimeError(msg)
+
+    with (
+        unittest.mock.patch.object(CacheLock, "release", failing_release),
+        caplog.at_level(logging.WARNING, logger="fastapi_cachex.manager"),
+    ):
+        result = await manager.get_or_set("release_fail", lambda: "success", lock=True)
+
+    assert result == "success"
+    assert any(
+        "Failed to release stampede protection lock" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_stampede_protection_release_failure_preserves_factory_exception(
+    memory_backend: MemoryBackend,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If factory raises and lock release also fails, the factory exception is preserved."""
+    import unittest.mock
+
+    manager = CacheManager(backend=memory_backend)
+
+    async def failing_release(_self: CacheLock) -> bool:
+        msg = "backend release failure"
+        raise RuntimeError(msg)
+
+    def failing_factory() -> None:
+        msg = "factory exception"
+        raise ValueError(msg)
+
+    with (
+        unittest.mock.patch.object(CacheLock, "release", failing_release),
+        caplog.at_level(logging.WARNING, logger="fastapi_cachex.manager"),
+        pytest.raises(ValueError, match="factory exception"),
+    ):
+        await manager.get_or_set("release_fail_factory", failing_factory, lock=True)
+
+    assert any(
+        "Failed to release stampede protection lock" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+@asynccontextmanager
+async def _stampede_backend_context(
+    backend_name: str,
+) -> AsyncGenerator[BaseCacheBackend, None]:
+    backend: BaseCacheBackend
+    if backend_name == "memory":
+        backend = MemoryBackend()
+        backend.start_cleanup()
+    elif backend_name == "redis":
+        from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+        backend = AsyncRedisCacheBackend(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            socket_timeout=1.0,
+            socket_connect_timeout=1.0,
+            key_prefix="test_stampede:",
+        )
+    else:
+        from fastapi_cachex.backends import MemcachedBackend
+
+        backend = MemcachedBackend(
+            servers=[MEMCACHED_SERVER],
+            key_prefix="test_stampede:",
+        )
+
+    BackendProxy.set(backend)
+    try:
+        yield backend
+    finally:
+        if backend_name == "memcached":
+            from fastapi_cachex.backends import MemcachedBackend
+
+            if isinstance(backend, MemcachedBackend):
+                await flush_memcached(backend)
+        else:
+            await backend.clear()
+        if backend_name == "memory" and isinstance(backend, MemoryBackend):
+            backend.stop_cleanup()
+        await backend.aclose()
+
+
+_STAMPEDE_BACKEND_PARAMS = [
+    pytest.param("memory", id="MemoryBackend"),
+    pytest.param(
+        "redis",
+        id="RedisBackend",
+        marks=[requires_redis, requires_redis_package],
+    ),
+    pytest.param(
+        "memcached",
+        id="MemcachedBackend",
+        marks=[requires_memcached],
+    ),
+]
+
+
+@pytest.mark.parametrize("backend_name", _STAMPEDE_BACKEND_PARAMS)
+async def test_stampede_protection_across_backends(backend_name: str) -> None:
+    """Stampede protection works across Memory, Redis, and Memcached backends."""
+    async with _stampede_backend_context(backend_name) as backend:
+        manager = CacheManager(backend=backend)
+        calls = 0
+
+        async def expensive_factory() -> dict[str, str]:
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.05)
+            return {"status": "ok"}
+
+        results = await asyncio.gather(
+            manager.get_or_set("report", expensive_factory, lock=True),
+            manager.get_or_set("report", expensive_factory, lock=True),
+            manager.get_or_set("report", expensive_factory, lock=True),
+        )
+
+        assert list(results) == [{"status": "ok"}, {"status": "ok"}, {"status": "ok"}]
+        assert calls == 1
+        assert await manager.get("report") == {"status": "ok"}
+
+
+@pytest.mark.parametrize("backend_name", _STAMPEDE_BACKEND_PARAMS)
+async def test_stampede_protection_crashed_winner_across_backends(
+    backend_name: str,
+) -> None:
+    """When a winner crashes, waiters wait for lock expiry and take over across backends."""
+    async with _stampede_backend_context(backend_name) as backend:
+        manager = CacheManager(backend=backend, lock=True, lock_ttl=1)
+        calls = 0
+
+        async def factory() -> str:
+            nonlocal calls
+            calls += 1
+            return "recovered"
+
+        # Simulate crashed winner holding the lock for 1 second
+        crashed_lock = CacheLock(
+            name=manager._cache_key("crashed_key"), ttl=1, backend=backend
+        )
+        assert await crashed_lock.acquire(blocking=False) is True
+
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                *(manager.get_or_set("crashed_key", factory) for _ in range(5))
+            ),
+            timeout=10,
+        )
+        assert list(results) == ["recovered"] * 5
+        assert calls == 1
+        assert await manager.get("crashed_key") == "recovered"
+
+
+@pytest.mark.parametrize("backend_name", _STAMPEDE_BACKEND_PARAMS)
+async def test_stampede_protection_raising_factory_across_backends(
+    backend_name: str,
+) -> None:
+    """If factory raises, lock is released cleanly and subsequent callers can compute across backends."""
+    async with _stampede_backend_context(backend_name) as backend:
+        manager = CacheManager(backend=backend, lock=True)
+
+        def failing_factory() -> None:
+            msg = "database error"
+            raise ValueError(msg)
+
+        with pytest.raises(ValueError, match="database error"):
+            await manager.get_or_set("fail_key", failing_factory)
+
+        # Lock is released and key is not cached
+        lock = CacheLock(name=manager._cache_key("fail_key"), backend=backend)
+        assert await lock.locked() is False
+        assert await manager.get("fail_key") is None
+
+        # Subsequent caller can compute and store normally
+        result = await manager.get_or_set("fail_key", lambda: "recovered")
+        assert result == "recovered"
+        assert await manager.get("fail_key") == "recovered"
+
+
+@pytest.mark.parametrize("backend_name", _STAMPEDE_BACKEND_PARAMS)
+async def test_stampede_protection_wait_timeout_across_backends(
+    backend_name: str,
+) -> None:
+    """Wait timeout raises LockTimeoutError or falls back to factory across backends."""
+    async with _stampede_backend_context(backend_name) as backend:
+        manager = CacheManager(backend=backend, lock=True)
+
+        # Hold lock with longer TTL
+        lock = CacheLock(
+            name=manager._cache_key("timeout_key"), ttl=10, backend=backend
+        )
+        assert await lock.acquire(blocking=False) is True
+
+        try:
+            # 1. raise_on_timeout=True raises LockTimeoutError
+            with pytest.raises(LockTimeoutError) as exc_info:
+                await manager.get_or_set(
+                    "timeout_key",
+                    lambda: "value",
+                    wait_timeout=0.05,
+                    raise_on_timeout=True,
+                )
+            assert isinstance(exc_info.value, TimeoutError)
+
+            # 2. raise_on_timeout=False falls back to factory
+            result = await manager.get_or_set(
+                "timeout_key",
+                lambda: "fallback_value",
+                wait_timeout=0.05,
+                raise_on_timeout=False,
+            )
+            assert result == "fallback_value"
+        finally:
+            await lock.release()
+
+
+async def test_stampede_protection_waiter_takes_over_lock(
+    memory_backend: MemoryBackend,
+) -> None:
+    """A waiter acquires the lock on a later tick when the previous lock is released."""
+    manager = CacheManager(backend=memory_backend)
+    calls = 0
+
+    lock = CacheLock(
+        name=manager._cache_key("takeover"), ttl=10, backend=memory_backend
+    )
+    assert await lock.acquire(blocking=False) is True
+
+    async def release_soon() -> None:
+        await asyncio.sleep(0.06)
+        await lock.release()
+
+    async def factory() -> str:
+        nonlocal calls
+        calls += 1
+        return "taken_over"
+
+    task = asyncio.create_task(release_soon())
+    result = await manager.get_or_set("takeover", factory, lock=True, wait_timeout=1.0)
+    await task
+    assert result == "taken_over"
+    assert calls == 1
+
+
+async def test_stampede_protection_value_found_on_timeout_check(
+    memory_backend: MemoryBackend,
+) -> None:
+    """If the value appears just as wait_timeout elapses, it returns the cached value."""
+    manager = CacheManager(backend=memory_backend)
+
+    lock = CacheLock(
+        name=manager._cache_key("late_val"), ttl=10, backend=memory_backend
+    )
+    assert await lock.acquire(blocking=False) is True
+
+    async def populate_late() -> None:
+        await asyncio.sleep(0.06)
+        await manager.set("late_val", "late_result")
+        await lock.release()
+
+    task = asyncio.create_task(populate_late())
+    result = await manager.get_or_set(
+        "late_val",
+        lambda: "should_not_run",
+        lock=True,
+        wait_timeout=0.08,
+        raise_on_timeout=True,
+    )
+    await task
+    assert result == "late_result"
+
+
+async def test_stampede_protection_winner_rechecks_inside_execution(
+    memory_backend: MemoryBackend,
+) -> None:
+    """If value appears after lock acquisition check, _execute_as_winner returns cached value."""
+    import unittest.mock
+
+    manager = CacheManager(backend=memory_backend)
+    first_get = True
+
+    async def sneaky_get(_key: str, default: Any = None) -> Any:
+        nonlocal first_get
+        if first_get:
+            first_get = False
+            return default
+        return "sneaky_cached"
+
+    with unittest.mock.patch.object(manager, "get", side_effect=sneaky_get):
+        result = await manager.get_or_set("sneaky", lambda: "from_factory", lock=True)
+        assert result == "sneaky_cached"
