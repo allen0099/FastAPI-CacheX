@@ -14,6 +14,7 @@ from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
 from inspect import Signature
+from operator import itemgetter
 from typing import TYPE_CHECKING
 from typing import Annotated
 from typing import Any
@@ -22,6 +23,7 @@ from typing import cast
 from typing import get_args
 from typing import get_origin
 from typing import get_type_hints
+from urllib.parse import urlencode
 
 from fastapi import Request
 from fastapi import Response
@@ -63,7 +65,24 @@ logger = logging.getLogger(__name__)
 _NO_STORE = DirectiveType.NO_STORE.value
 
 
-def build_cache_key(request: Request, *components: str | int) -> str:
+def _query_component(request: Request, sort_query: bool) -> str:
+    """The query string as it appears in the key.
+
+    Starlette parses the query (blank values kept, empty ``&&`` segments
+    dropped, names and values percent-decoded) and ``str()`` re-encodes the
+    pairs in the order sent. ``sort_query`` stable-sorts the same decoded
+    pairs by name before encoding them the same way, so only the order of
+    differently named parameters changes: repeated values of one name keep
+    their relative order, and an already sorted query gives the unsorted key.
+    """
+    if not sort_query:
+        return str(request.query_params)
+    return urlencode(sorted(request.query_params.multi_items(), key=itemgetter(0)))
+
+
+def build_cache_key(
+    request: Request, *components: str | int, sort_query: bool = False
+) -> str:
     """Build the default cache key for ``request``, plus extra components.
 
     With no ``components`` the key is ``method|||host|||path|||query_params``,
@@ -90,6 +109,11 @@ def build_cache_key(request: Request, *components: str | int) -> str:
             ``"1"`` give the same key. An empty string is a component of its
             own: ``build_cache_key(request, "")`` differs from
             ``build_cache_key(request)``.
+        sort_query: Order the query parameters by name (a stable sort, so
+            ``?tag=b&tag=a`` stays distinct from ``?tag=a&tag=b``), so that
+            ``?a=1&b=2`` and ``?b=2&a=1`` give the same key. This is what
+            ``@cache(sort_query=True)`` uses; a custom ``key_builder`` passes
+            it here instead.
 
     Returns:
         Generated cache key string
@@ -105,7 +129,7 @@ def build_cache_key(request: Request, *components: str | int) -> str:
                 request.method,
                 escape_key_component(request.headers.get("host", "unknown")),
                 escape_key_component(request.url.path),
-                str(request.query_params),
+                _query_component(request, sort_query),
             ]
         ),
         components,
@@ -332,6 +356,39 @@ def default_key_builder(request: Request) -> str:
     return build_cache_key(request)
 
 
+def _sorted_query_key_builder(request: Request) -> str:
+    """The key builder of ``@cache(sort_query=True)``."""
+    return build_cache_key(request, sort_query=True)
+
+
+_SORT_QUERY_WITH_KEY_BUILDER_MSG = (
+    "sort_query only applies to the default key builder; a custom key_builder "
+    "builds its own key, so return build_cache_key(request, sort_query=True) "
+    "from it instead"
+)
+
+
+def _resolve_key_builder(
+    key_builder: CacheKeyBuilder | None, sort_query: object
+) -> CacheKeyBuilder:
+    """Pick the key builder for ``key_builder`` and ``sort_query``.
+
+    Raises:
+        CacheXError: If ``sort_query`` is not a ``bool``, if it is combined
+            with a custom ``key_builder`` (the flag would silently do
+            nothing), or if ``key_builder`` is an ``async`` callable.
+    """
+    if not isinstance(sort_query, bool):
+        msg = f"sort_query must be a bool, got {type(sort_query).__name__}"
+        raise CacheXError(msg)
+    if key_builder is not None:
+        if sort_query:
+            raise CacheXError(_SORT_QUERY_WITH_KEY_BUILDER_MSG)
+        _validate_key_builder(key_builder)
+        return key_builder
+    return _sorted_query_key_builder if sort_query else default_key_builder
+
+
 _ASYNC_KEY_BUILDER_MSG = (
     "key_builder must be a sync function returning str; async key builders "
     "are not supported (the key is built without awaiting)"
@@ -379,6 +436,8 @@ async def invalidate(
     request: Request,
     key_builder: CacheKeyBuilder | None = None,
     vary: Sequence[str] | None = None,
+    *,
+    sort_query: bool = False,
 ) -> bool:
     """Invalidate the cache entry a ``@cache``-decorated route would use.
 
@@ -400,18 +459,23 @@ async def invalidate(
             Credential headers (``Authorization``, ``Cookie``, ...) are
             hashed exactly as ``@cache`` hashes them, so pass a request
             carrying the same header value.
+        sort_query: The target route's ``sort_query``. With ``True`` the
+            query is sorted as ``@cache(sort_query=True)`` sorts it, so
+            ``?b=2&a=1`` deletes the entry stored for ``?a=1&b=2``. It is not
+            read from the route: pass the same value the route uses, or the
+            key will not match.
 
     Returns:
         True if a cache entry existed and was deleted, False otherwise.
 
     Raises:
         CacheXError: If ``vary`` is not a list of header names, if
-            ``key_builder`` is an ``async`` callable, or if it returns
-            something other than a ``str``. Raised before the backend is
-            touched.
+            ``sort_query`` is not a ``bool`` or is combined with
+            ``key_builder``, if ``key_builder`` is an ``async`` callable, or
+            if it returns something other than a ``str``. Raised before the
+            backend is touched.
     """
-    builder = key_builder or default_key_builder
-    _validate_key_builder(builder)
+    builder = _resolve_key_builder(key_builder, sort_query)
     vary_names = _validate_vary(vary)
     cache_key = _append_key_components(
         _build_key(builder, request), _vary_components(request, vary_names)
@@ -857,6 +921,7 @@ def cache(
     fail_open: bool = True,
     cache_authorized: bool = False,
     vary: Sequence[str] | None = None,
+    sort_query: bool = False,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -947,6 +1012,16 @@ def cache(
             A request with ``Authorization`` or a session still bypasses the
             backend unless ``public`` or ``cache_authorized`` is set, and a response
             that sets a cookie is still not stored.
+        sort_query: Order the query parameters by name before building the
+            key, so ``?a=1&b=2`` and ``?b=2&a=1`` share one entry. The sort is
+            stable: repeated values of one name keep the order the client
+            sent, so ``?tag=b&tag=a`` and ``?tag=a&tag=b`` stay distinct, and
+            the names and values are encoded exactly as in the unsorted key.
+            Off by default, which keeps every existing key unchanged. Only
+            the default key builder sorts: combined with a custom
+            ``key_builder`` it is rejected; call
+            ``build_cache_key(request, sort_query=True)`` in the builder
+            instead. Pass the same value to ``invalidate()``.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -956,8 +1031,10 @@ def cache(
             ``stale_ttl`` are not given together, if ``public`` and
             ``private`` are both set, if ``ttl`` is not an ``int``, is
             negative or is larger than ``MAX_TTL``, or if ``vary`` is not a
-            list of header field names (a single string is rejected), or if
-            ``key_builder`` is an ``async`` callable. At request time, if
+            list of header field names (a single string is rejected), if
+            ``sort_query`` is not a ``bool`` or is combined with
+            ``key_builder``, or if ``key_builder`` is an ``async`` callable.
+            At request time, if
             ``key_builder`` returns anything but a ``str``.
     """
 
@@ -984,8 +1061,7 @@ def cache(
             msg = f"ttl must be at most {MAX_TTL} seconds"
             raise CacheXError(msg)
         vary_names = _validate_vary(vary)
-        if key_builder is not None:
-            _validate_key_builder(key_builder)
+        builder = _resolve_key_builder(key_builder, sort_query)
         if any(name.lower() == "cookie" for name in vary_names):
             # stacklevel=2: the caller applying the decorator, i.e. the line
             # of the user's @cache(...).
@@ -1059,7 +1135,6 @@ def cache(
                 must_revalidate=must_revalidate,
             )
         )
-        builder = key_builder or default_key_builder
         # Without a positive ttl nothing may be served from storage, and a 304
         # answered from a stored ETag would be exactly that: it would keep
         # confirming a copy that the handler no longer produces (#110). Such
