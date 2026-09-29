@@ -193,7 +193,8 @@ The TTL is not stored in `CacheEntry`: expiry is the backend's responsibility
 Memcached uses the exptime).
 
 If no backend has been configured with `BackendProxy.set()`, the decorator
-creates a `MemoryBackend` on the first request and registers it.
+creates a `MemoryBackend` on the first request, registers it and logs a
+warning that the cache is per process.
 
 **Decision logic** (the `cache.py` wrapper, in order):
 

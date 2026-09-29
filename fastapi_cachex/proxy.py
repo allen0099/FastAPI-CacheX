@@ -154,10 +154,21 @@ def get_backend_or_fallback() -> BaseCacheBackend:
     `BackendProxy.get_or_create`, so concurrent first callers, including ones
     on worker threads, all end up with the same fallback instead of each
     installing its own and overwriting the others.
+
+    Registering the fallback logs a warning. The factory runs under the
+    proxy's lock only while no backend is set, so that is once per process
+    (again only if something resets the proxy with `BackendProxy.set(None)`).
     """
     return BackendProxy.get_or_create(_memory_fallback)
 
 
 def _memory_fallback() -> BaseCacheBackend:
-    logger.debug("No backend configured; using MemoryBackend fallback")
+    logger.warning(
+        "No cache backend configured; registering an in-process MemoryBackend. "
+        "Its cache is per process: under multiple workers, invalidation reaches "
+        "only one worker and the others keep serving stale entries. Call "
+        "BackendProxy.set(...) at startup to configure a shared backend, or "
+        "BackendProxy.set(MemoryBackend()) to keep the in-memory cache without "
+        "this warning."
+    )
     return MemoryBackend()

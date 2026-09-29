@@ -148,7 +148,7 @@ entry = CacheEntry(
 
 TTL 不儲存在 `CacheEntry` 中：過期由後端負責（`MemoryBackend` 將它存在 `CacheItem.expiry`，Redis 使用 `SET ... EX`，Memcached 使用 exptime）。
 
-若尚未以 `BackendProxy.set()` 設定後端，裝飾器會在第一個請求時建立 `MemoryBackend` 並註冊它。
+若尚未以 `BackendProxy.set()` 設定後端，裝飾器會在第一個請求時建立 `MemoryBackend`、註冊它，並記錄一則警告，說明這個快取是每個行程各自一份。
 
 **判斷邏輯**（`cache.py` 的包裝函式，依序執行）：
 
