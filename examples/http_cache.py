@@ -9,6 +9,7 @@ Run it from a checkout (see ``examples/README.md``)::
     uv run --with "fastapi-cli[standard]" fastapi dev examples/http_cache.py
 """
 
+# --8<-- [start:routes]
 import os
 import secrets
 from collections.abc import AsyncIterator
@@ -87,6 +88,10 @@ async def my_preferences() -> dict[str, str]:
     return {"theme": "dark"}
 
 
+# --8<-- [end:routes]
+
+
+# --8<-- [start:admin]
 def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
     """Allow the monitoring routes only with the token from ``CACHE_ADMIN_TOKEN``."""
     expected = os.environ.get("CACHE_ADMIN_TOKEN")
@@ -100,3 +105,4 @@ def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
 # GET /_cache/cached-hits and /_cache/cached-records. They have no auth of
 # their own, so always pass a dependency that has.
 add_routes(app, prefix="/_cache", dependencies=[Depends(require_admin)])
+# --8<-- [end:admin]

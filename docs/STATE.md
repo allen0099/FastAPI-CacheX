@@ -19,55 +19,15 @@ does remove them, because it clears everything under the backend's namespace.
 
 Everything in this guide can also be imported from the top-level `fastapi_cachex` package.
 
-Complete runnable example: [`examples/oauth_state.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/oauth_state.py).
+The quick start below is the complete, runnable [`examples/oauth_state.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/oauth_state.py).
 
 ## Quick start
 
+<!-- fmt:off -->
 ```python
-import secrets
-
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
-
-from fastapi_cachex import BackendProxy
-from fastapi_cachex.backends import MemoryBackend
-from fastapi_cachex.state import StateError, StateManagerDep
-
-app = FastAPI()
-BackendProxy.set(MemoryBackend())
-
-BINDING_COOKIE = "oauth_binding"
-
-
-@app.get("/login")
-async def login(states: StateManagerDep):
-    nonce = secrets.token_urlsafe(32)
-    state = await states.create_state(binding=nonce, metadata={"next": "/dashboard"})
-    response = RedirectResponse(
-        f"https://provider.example.com/authorize?state={state}&client_id=..."
-    )
-    # Lax, not Strict: the callback is a cross-site navigation from the provider.
-    response.set_cookie(
-        BINDING_COOKIE, nonce, max_age=600, httponly=True, secure=True, samesite="lax"
-    )
-    return response
-
-
-@app.get("/callback")
-async def callback(request: Request, state: str, code: str, states: StateManagerDep):
-    try:
-        # One-time: deleted on retrieval. Rejected unless this browser started the flow.
-        data = await states.consume_state(
-            state, binding=request.cookies.get(BINDING_COOKIE)
-        )
-    except StateError as e:  # unknown, expired, malformed or issued to another browser
-        raise HTTPException(status_code=400, detail="Invalid state") from e
-
-    # Exchange the code for tokens, create a session ...
-    response = RedirectResponse(data.metadata.get("next", "/"))
-    response.delete_cookie(BINDING_COOKIE)
-    return response
+--8<-- "examples/oauth_state.py"
 ```
+<!-- fmt:on -->
 
 If the provider posts the callback (`response_mode=form_post`), a `SameSite=Lax` cookie is
 not sent with that cross-site POST; use `samesite="none"` (which requires `secure=True`)

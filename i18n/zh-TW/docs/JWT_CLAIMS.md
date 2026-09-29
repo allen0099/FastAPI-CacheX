@@ -177,77 +177,11 @@ await session_manager.delete_session("session-abc123")
 
 下面的基底類別做的事與內建的 `JWTTokenSerializer` 相同，並為額外的 claim 留下兩個掛鉤。它從 `SessionConfig` 的公開欄位讀取設定並自行保存，而不是存取 `JWTTokenSerializer` 的私有屬性，因為那些屬性在任何版本都可能改變。它與內建序列化器一樣，在 `to_string()` 中採用 `token.expires_at`，讓 `exp` 持續跟著滑動過期。
 
+<!-- fmt:off -->
 ```python
-from __future__ import annotations
-
-from datetime import datetime, timezone
-from typing import Any
-
-import jwt
-
-from fastapi_cachex.session import SessionConfig
-from fastapi_cachex.session.models import SessionToken
-
-
-class CustomClaimsJWTSerializer:
-    """JWT serializer with the built-in claims plus extra ones from subclasses."""
-
-    # 除了 sid、iat 與 exp 之外，from_string() 還要求的 claim。
-    required_claims: tuple[str, ...] = ()
-
-    def __init__(self, config: SessionConfig) -> None:
-        self.secret = config.secret_key.get_secret_value()
-        self.algorithm = config.jwt_algorithm  # 必須是 HS256、HS384 或 HS512
-        self.issuer = config.jwt_issuer
-        self.audience = config.jwt_audience
-        self.leeway = config.jwt_leeway
-        self.session_ttl = config.session_ttl
-
-    def extra_claims(self, token: SessionToken) -> dict[str, Any]:
-        """Return the claims to add to a new token."""
-        return {}
-
-    def check_claims(self, payload: dict[str, Any]) -> None:
-        """Raise ValueError if the extra claims of a verified token are wrong."""
-
-    def to_string(self, token: SessionToken) -> str:
-        """Encode a SessionToken as a signed JWT."""
-        iat = int(token.issued_at.timestamp())
-        if token.expires_at is not None:
-            exp = int(token.expires_at.timestamp())
-        else:
-            exp = iat + self.session_ttl
-
-        payload: dict[str, Any] = {"sid": token.session_id, "iat": iat, "exp": exp}
-        if self.issuer:
-            payload["iss"] = self.issuer
-        if self.audience:
-            payload["aud"] = self.audience
-        payload.update(self.extra_claims(token))
-        return jwt.encode(payload, self.secret, algorithm=self.algorithm)
-
-    def from_string(self, token_str: str) -> SessionToken:
-        """Verify a JWT and turn it back into a SessionToken."""
-        try:
-            payload = jwt.decode(
-                token_str,
-                self.secret,
-                algorithms=[self.algorithm],
-                issuer=self.issuer,
-                audience=self.audience,
-                leeway=self.leeway,
-                options={"require": ["sid", "iat", "exp", *self.required_claims]},
-            )
-        except jwt.InvalidTokenError as e:
-            msg = "Invalid JWT token"
-            raise ValueError(msg) from e
-
-        self.check_claims(payload)
-        issued_at = datetime.fromtimestamp(int(payload["iat"]), tz=timezone.utc)
-        return SessionToken(
-            session_id=str(payload["sid"]), signature="", issued_at=issued_at
-        )
+--8<-- "examples/session_jwt_claims.py:serializer"
 ```
+<!-- fmt:on -->
 
 PyJWT 預設會驗證簽章、`exp`、`iat` 與（存在時的）`nbf`，並在傳入 `issuer`／`audience` 時驗證 `iss`／`aud`。內建序列化器的兩項檢查在這裡沒有重複：它會拒絕非對稱的 `jwt_algorithm`，並在 `secret_key` 短於 HMAC 輸出長度時發出警告。這個類別同樣以 `secret_key` 簽署，因此請使用 `HS*` 演算法；若要使用非對稱演算法，請在類別中保存私鑰與公鑰，並在 `jwt.encode()` 與 `jwt.decode()` 中使用它們。
 
@@ -274,82 +208,25 @@ class ExtendedJWTSerializer(CustomClaimsJWTSerializer):
 
 ### 範例 2：加入多租戶的自訂 claim {#example-2-adding-multi-tenant-custom-claims}
 
+<!-- fmt:off -->
 ```python
-from typing import Any
-
-from fastapi_cachex.session import SessionConfig
-from fastapi_cachex.session.models import SessionToken
-
-
-class MultiTenantJWTSerializer(CustomClaimsJWTSerializer):
-    """Adds tenant_id and api_version, and rejects tokens for other tenants."""
-
-    required_claims = ("tenant_id", "api_version")
-
-    def __init__(
-        self, config: SessionConfig, tenant_id: str, api_version: str = "v1"
-    ) -> None:
-        super().__init__(config)
-        self.tenant_id = tenant_id
-        self.api_version = api_version
-
-    def extra_claims(self, token: SessionToken) -> dict[str, Any]:
-        return {"tenant_id": self.tenant_id, "api_version": self.api_version}
-
-    def check_claims(self, payload: dict[str, Any]) -> None:
-        if payload["tenant_id"] != self.tenant_id:
-            msg = f"Invalid tenant_id: expected {self.tenant_id}, got {payload['tenant_id']}"
-            raise ValueError(msg)
-        if payload["api_version"] != self.api_version:
-            msg = f"Unsupported API version: {payload['api_version']}"
-            raise ValueError(msg)
+--8<-- "examples/session_jwt_claims.py:multi-tenant"
 ```
+<!-- fmt:on -->
 
 ### 使用自訂序列化器 {#using-a-custom-serializer}
 
 #### 做法 1：傳給 `SessionManager`（建議） {#option-1-pass-it-to-sessionmanager-recommended}
 
+<!-- fmt:off -->
 ```python
-from fastapi import FastAPI
-
-from fastapi_cachex.backends import AsyncRedisCacheBackend
-from fastapi_cachex.session import (
-    FastAPICacheXSessionMiddleware,
-    SessionConfig,
-    SessionManager,
-)
-
-app = FastAPI()
-
-# 建立後端與設定
-backend = AsyncRedisCacheBackend(host="localhost", port=6379)
-config = SessionConfig(
-    secret_key="your-secret-key-at-least-32-characters",
-    token_format="jwt",
-    jwt_algorithm="HS256",
-    jwt_issuer="your-company",
-    jwt_audience="your-api",
-)
-
-# 建立自訂序列化器
-custom_serializer = MultiTenantJWTSerializer(
-    config=config,
-    tenant_id="acme-corp",
-    api_version="v2",
-)
-
-# 初始化 SessionManager
-manager = SessionManager(backend, config, token_serializer=custom_serializer)
-
-# 加入中介軟體
-app.add_middleware(
-    FastAPICacheXSessionMiddleware,
-    session_manager=manager,
-    config=config,
-)
+--8<-- "examples/session_jwt_claims.py:setup"
 ```
+<!-- fmt:on -->
 
 提供 `token_serializer` 時，它會取代依 `token_format` 選擇的內建序列化器。但仍請保留 `token_format="jwt"`：若設為 `"simple"`，`SessionManager` 會對解析出的權杖額外執行自己的 HMAC 簽章檢查，而以 JWT 為基礎的序列化器產生的權杖通不過這項檢查。
+
+範例使用 `MemoryBackend`，因此不需要伺服器即可執行；任何後端都可以，例如[後端](BACKENDS.md#closing-a-backend)中的 Redis 設定。
 
 #### 做法 2：繼承 `SessionManager`（進階） {#option-2-subclass-sessionmanager-advanced}
 
@@ -381,89 +258,13 @@ manager = MultiTenantSessionManager(backend, config, tenant_id="acme-corp")
 
 ## 完整應用程式範例 {#complete-application-example}
 
+[`examples/session_jwt_claims.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt_claims.py) 把上面的各個部分組合成可執行的應用程式（程式碼註解為英文）：
+
+<!-- fmt:off -->
 ```python
-from __future__ import annotations
-
-from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
-
-from fastapi_cachex.backends import AsyncRedisCacheBackend
-from fastapi_cachex.session import (
-    FastAPICacheXSessionMiddleware,
-    Session,
-    SessionConfig,
-    SessionManager,
-    SessionUser,
-    require_user_session,
-)
-
-# 使用上面定義的 MultiTenantJWTSerializer
-
-app = FastAPI()
-
-# 初始化
-backend = AsyncRedisCacheBackend(host="localhost", port=6379)
-config = SessionConfig(
-    secret_key="your-secret-key-min-32-chars-long!!",
-    token_format="jwt",
-    jwt_algorithm="HS256",
-    jwt_issuer="acme-corp",
-    jwt_audience="acme-api",
-)
-
-# 建立自訂序列化器
-serializer = MultiTenantJWTSerializer(
-    config=config,
-    tenant_id="acme-corp",
-    api_version="v2",
-)
-
-manager = SessionManager(backend, config, token_serializer=serializer)
-
-app.add_middleware(
-    FastAPICacheXSessionMiddleware,
-    session_manager=manager,
-    config=config,
-)
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-@app.post("/auth/login")
-async def login(credentials: LoginRequest) -> dict[str, str]:
-    """Login endpoint that returns a JWT containing tenant_id."""
-    # 驗證使用者（省略）
-    if credentials.username != "admin":
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    user = SessionUser(user_id="123", username=credentials.username)
-    session, token = await manager.create_session(user=user)
-
-    # 權杖現在包含 tenant_id 與 api_version claim
-    return {
-        "token": token,
-        "token_type": "bearer",
-        "tenant_id": "acme-corp",  # 也可以從設定讀取
-    }
-
-
-@app.get("/api/profile")
-async def get_profile(
-    session: Session = Depends(require_user_session),
-) -> dict[str, str | None]:
-    """Protected endpoint; tenant_id is validated automatically."""
-    # tenant_id 與 api_version 已在解碼 JWT 時驗證過。
-    # 其他租戶的權杖會解碼失敗，因此中介軟體不會載入
-    # Session，require_user_session 會回應 401。
-    assert session.user is not None
-    return {
-        "user_id": session.user.user_id,
-        "username": session.user.username,
-    }
+--8<-- "examples/session_jwt_claims.py"
 ```
+<!-- fmt:on -->
 
 ## 安全性考量 {#security-considerations}
 

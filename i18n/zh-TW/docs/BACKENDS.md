@@ -142,28 +142,11 @@ BackendProxy.set(backend)
 
 每個後端都有 `aclose()`，用來釋放它持有的連線與背景工作。請在關閉應用程式時，於 FastAPI lifespan 的結尾呼叫它：
 
+<!-- fmt:off -->
 ```python
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-
-from fastapi_cachex import BackendProxy
-from fastapi_cachex.backends import AsyncRedisCacheBackend
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379)
-    BackendProxy.set(backend)
-    try:
-        yield
-    finally:
-        BackendProxy.set(None)
-        await backend.aclose()
-
-
-app = FastAPI(lifespan=lifespan)
+--8<-- "examples/redis_backend.py:lifespan"
 ```
+<!-- fmt:on -->
 
 每種後端都適用同一個 lifespan。後端也是非同步 context manager，因此 `async with MemcachedBackend(servers=[...]) as backend:` 會在區塊結束時關閉它，區塊拋出例外時也一樣。
 

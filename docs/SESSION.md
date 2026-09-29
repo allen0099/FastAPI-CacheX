@@ -60,103 +60,23 @@ uv add "fastapi-cachex[jwt]"
 
 ### 2. Basic Usage
 
+This is [`examples/session_api.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_api.py): an API client logs in,
+keeps the token it gets back and sends it on later requests.
+
+<!-- fmt:off -->
 ```python
-from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+--8<-- "examples/session_api.py"
+```
+<!-- fmt:on -->
 
-from fastapi_cachex.backends import MemoryBackend
-from fastapi_cachex.session import (
-    FastAPICacheXSessionMiddleware,
-    SessionConfig,
-    SessionManager,
-    SessionUser,
-    get_optional_session,
-    get_session,
-)
-from fastapi_cachex.session.dependencies import AuthenticatedSession
+Instead of passing the manager to the middleware, you can register it on the
+proxy. When `config` is omitted, the middleware uses `session_manager.config`:
 
-# Create the FastAPI application
-app = FastAPI()
+```python
+from fastapi_cachex.session import SessionManagerProxy
 
-# Session configuration (API-first architecture: the client manages the token)
-config = SessionConfig(
-    secret_key="your-secret-key-min-32-chars-long!!!",  # at least 32 characters
-    session_ttl=3600,  # 1 hour
-)
-
-# Set up the backend and the session manager
-backend = MemoryBackend()
-session_manager = SessionManager(backend, config)
-
-# Add the session middleware (SessionMiddleware is deprecated and removed in 0.4.0)
-app.add_middleware(
-    FastAPICacheXSessionMiddleware,
-    session_manager=session_manager,
-    config=config,
-)
-
-# Alternatively, register the manager on the proxy instead of passing it in:
-#
-#     from fastapi_cachex.session import SessionManagerProxy
-#
-#     SessionManagerProxy.set(session_manager)
-#     app.add_middleware(FastAPICacheXSessionMiddleware)  # picked up from the proxy
-#
-# When `config` is omitted, the middleware uses `session_manager.config`.
-
-
-# Credentials arrive in the JSON request body, never in the query string,
-# which ends up in browser history and access logs.
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-# Login endpoint
-@app.post("/login")
-async def login(credentials: LoginRequest):
-    # Authenticate the user (simplified here)
-    if credentials.username != "admin" or credentials.password != "secret":
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    # Create the session
-    user = SessionUser(
-        user_id="123",
-        username=credentials.username,
-        roles=["admin"],
-    )
-    session, token = await session_manager.create_session(user=user)
-
-    # Return the token for the client to store (localStorage/sessionStorage).
-    # The client sends it on later requests in the Authorization or X-Session-Token header.
-    return {"message": "Login successful", "token": token}
-
-
-# Endpoint that requires a logged-in user
-@app.get("/profile")
-async def get_profile(session: AuthenticatedSession):
-    """Requires a session with a user; 401 otherwise, anonymous sessions included."""
-    return {
-        "user_id": session.user.user_id,
-        "username": session.user.username,
-        "roles": session.user.roles,
-    }
-
-
-# Endpoint with optional authentication
-@app.get("/public")
-async def public_endpoint(session=Depends(get_optional_session)):
-    """Accessible with or without a session."""
-    if session and session.user:
-        return {"message": f"Hello, {session.user.username}!"}
-    return {"message": "Hello, guest!"}
-
-
-# Logout endpoint
-@app.post("/logout")
-async def logout(session=Depends(get_session)):
-    await session_manager.delete_session(session.session_id)
-    return {"message": "Logged out"}
+SessionManagerProxy.set(session_manager)
+app.add_middleware(FastAPICacheXSessionMiddleware)  # picked up from the proxy
 ```
 
 `get_session` (and its alias `require_session`) raises `401 Authentication required` with a
@@ -172,8 +92,9 @@ anonymous, so `session.user` is `None`.
 that anyone logged in. Any visitor who reaches a route that writes to `request.session` (a cart,
 a CSRF value) gets one. Guard routes that need a logged-in user with `require_user_session` (or
 its annotated form `AuthenticatedSession`), which also answers `401` when `session.user` is
-`None`, as `/profile` above does. `/logout` only deletes the session, so `get_session` is enough
-there.
+`None`, as `/profile` above does. `/logout` only deletes the session, so `SessionDep` (the
+annotated form of `get_session`) is enough there, and `/public` uses `OptionalSession`
+(`get_optional_session`), which gives `None` instead of answering `401`.
 
 `UserSessionDep` does not check for a user despite its name; it is an alias of `SessionDep`
 until 0.4.0, which is planned to make it require one.
@@ -190,164 +111,15 @@ such a session.
 
 ### 3. Full Example (Redis Backend)
 
+This is [`examples/session_redis.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_redis.py). Like
+[`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py), it reads the Redis
+settings from `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB` and `REDIS_PASSWORD`.
+
+<!-- fmt:off -->
 ```python
-from datetime import datetime, timezone
-
-from fastapi import Depends, FastAPI, HTTPException, Request
-from pydantic import BaseModel
-
-from fastapi_cachex.backends import AsyncRedisCacheBackend
-from fastapi_cachex.session import (
-    FastAPICacheXSessionMiddleware,
-    SessionConfig,
-    SessionManager,
-    SessionUser,
-    get_session,
-)
-from fastapi_cachex.session.dependencies import AuthenticatedSession, ClientIPDep
-
-app = FastAPI()
-
-# Redis backend
-backend = AsyncRedisCacheBackend(
-    host="localhost",
-    port=6379,
-    db=0,
-)
-
-# Session configuration with security options
-config = SessionConfig(
-    secret_key="your-very-secret-key-at-least-32-characters-long!!",
-    session_ttl=3600,
-    sliding_expiration=True,
-    sliding_threshold=0.5,
-    ip_binding=True,  # enable IP binding
-    user_agent_binding=False,  # UA binding (optional)
-)
-
-session_manager = SessionManager(backend, config)
-
-app.add_middleware(
-    FastAPICacheXSessionMiddleware,
-    session_manager=session_manager,
-    config=config,
-)
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-@app.post("/api/auth/login")
-async def login(credentials: LoginRequest, request: Request, client_ip: ClientIPDep):
-    # Authenticate the user (should query a database)
-    username = credentials.username
-    if not authenticate_user(username, credentials.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    # Create the session
-    user = SessionUser(
-        user_id=get_user_id(username),
-        username=username,
-        email=f"{username}@example.com",
-        roles=get_user_roles(username),
-    )
-
-    # Collect client information for the bindings. `client_ip` is the address
-    # the middleware checks later, including behind trusted proxies.
-    user_agent = request.headers.get("user-agent")
-
-    session, token = await session_manager.create_session(
-        user=user,
-        ip_address=client_ip,
-        user_agent=user_agent,
-    )
-
-    # Add a flash message
-    session.add_flash_message("Login successful!", "success")
-    await session_manager.update_session(session)
-
-    return {
-        "message": "Login successful",
-        "token": token,  # the client stores this token and sends it on later requests
-        "user": {
-            "username": user.username,
-            "roles": user.roles,
-        },
-    }
-
-
-@app.get("/api/user/profile")
-async def get_user_profile(session: AuthenticatedSession):
-    """Return the user's profile (requires a logged-in user)."""
-    return {
-        "user_id": session.user.user_id,
-        "username": session.user.username,
-        "email": session.user.email,
-        "roles": session.user.roles,
-        "session_created": session.created_at.isoformat(),
-        "last_accessed": session.last_accessed.isoformat(),
-    }
-
-
-@app.post("/api/user/update")
-async def update_user_profile(
-    email: str,
-    session: AuthenticatedSession,
-):
-    """Update the user's profile."""
-    session.user.email = email
-    session.data["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-    # Persist the updated session
-    await session_manager.update_session(session)
-
-    return {"message": "Profile updated"}
-
-
-@app.get("/api/messages")
-async def get_flash_messages(session=Depends(get_session)):
-    """Return and clear the flash messages."""
-    messages = session.get_flash_messages(clear=True)
-    # Clearing only changes the in-memory object; save it so the messages
-    # are not shown again on the next request.
-    await session_manager.update_session(session)
-    return {"messages": messages}
-
-
-@app.post("/api/auth/logout")
-async def logout(session=Depends(get_session)):
-    """Log out."""
-    await session_manager.delete_session(session.session_id)
-
-    # The client should discard its stored token
-    return {"message": "Logged out successfully"}
-
-
-@app.post("/api/auth/logout-all")
-async def logout_all_devices(session: AuthenticatedSession):
-    """Log out from all devices."""
-    user_id = session.user.user_id
-    count = await session_manager.delete_user_sessions(user_id)
-    return {"message": f"Logged out from {count} devices"}
-
-
-# Helper functions (illustrative only)
-def authenticate_user(username: str, password: str) -> bool:
-    # A real implementation queries the database and verifies the password hash
-    return True
-
-
-def get_user_id(username: str) -> str:
-    # A real implementation reads this from the database
-    return f"user_{username}"
-
-
-def get_user_roles(username: str) -> list[str]:
-    # A real implementation reads this from the database
-    return ["user"] if username != "admin" else ["admin", "user"]
+--8<-- "examples/session_redis.py"
 ```
+<!-- fmt:on -->
 
 Changes made to a `Session` object inside a handler (flash messages, `session.data`,
 `session.user`) are only persisted when you call `session_manager.update_session(session)`.

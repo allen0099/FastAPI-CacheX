@@ -177,77 +177,11 @@ If your application needs additional JWT claims, write your own serializer and p
 
 The base class below does what the built-in `JWTTokenSerializer` does and leaves two hooks for the extra claims. It keeps its own copy of the settings, read from the public `SessionConfig` fields, instead of reaching into `JWTTokenSerializer`'s private attributes, which may change in any release. Like the built-in serializer, it follows `token.expires_at` in `to_string()`, so `exp` keeps up with sliding expiration.
 
+<!-- fmt:off -->
 ```python
-from __future__ import annotations
-
-from datetime import datetime, timezone
-from typing import Any
-
-import jwt
-
-from fastapi_cachex.session import SessionConfig
-from fastapi_cachex.session.models import SessionToken
-
-
-class CustomClaimsJWTSerializer:
-    """JWT serializer with the built-in claims plus extra ones from subclasses."""
-
-    # Claims that from_string() requires besides sid, iat and exp.
-    required_claims: tuple[str, ...] = ()
-
-    def __init__(self, config: SessionConfig) -> None:
-        self.secret = config.secret_key.get_secret_value()
-        self.algorithm = config.jwt_algorithm  # must be HS256, HS384 or HS512
-        self.issuer = config.jwt_issuer
-        self.audience = config.jwt_audience
-        self.leeway = config.jwt_leeway
-        self.session_ttl = config.session_ttl
-
-    def extra_claims(self, token: SessionToken) -> dict[str, Any]:
-        """Return the claims to add to a new token."""
-        return {}
-
-    def check_claims(self, payload: dict[str, Any]) -> None:
-        """Raise ValueError if the extra claims of a verified token are wrong."""
-
-    def to_string(self, token: SessionToken) -> str:
-        """Encode a SessionToken as a signed JWT."""
-        iat = int(token.issued_at.timestamp())
-        if token.expires_at is not None:
-            exp = int(token.expires_at.timestamp())
-        else:
-            exp = iat + self.session_ttl
-
-        payload: dict[str, Any] = {"sid": token.session_id, "iat": iat, "exp": exp}
-        if self.issuer:
-            payload["iss"] = self.issuer
-        if self.audience:
-            payload["aud"] = self.audience
-        payload.update(self.extra_claims(token))
-        return jwt.encode(payload, self.secret, algorithm=self.algorithm)
-
-    def from_string(self, token_str: str) -> SessionToken:
-        """Verify a JWT and turn it back into a SessionToken."""
-        try:
-            payload = jwt.decode(
-                token_str,
-                self.secret,
-                algorithms=[self.algorithm],
-                issuer=self.issuer,
-                audience=self.audience,
-                leeway=self.leeway,
-                options={"require": ["sid", "iat", "exp", *self.required_claims]},
-            )
-        except jwt.InvalidTokenError as e:
-            msg = "Invalid JWT token"
-            raise ValueError(msg) from e
-
-        self.check_claims(payload)
-        issued_at = datetime.fromtimestamp(int(payload["iat"]), tz=timezone.utc)
-        return SessionToken(
-            session_id=str(payload["sid"]), signature="", issued_at=issued_at
-        )
+--8<-- "examples/session_jwt_claims.py:serializer"
 ```
+<!-- fmt:on -->
 
 PyJWT verifies the signature, `exp`, `iat` and (when present) `nbf` by default, and `iss`/`aud` when `issuer`/`audience` are given. Two checks of the built-in serializer are not repeated here: it rejects an asymmetric `jwt_algorithm` and warns about a `secret_key` shorter than the HMAC output. This class signs with `secret_key` too, so keep an `HS*` algorithm; for an asymmetric one, hold the private and public keys in the class and use them in `jwt.encode()` and `jwt.decode()`.
 
@@ -274,82 +208,25 @@ class ExtendedJWTSerializer(CustomClaimsJWTSerializer):
 
 ### Example 2: Adding Multi-Tenant Custom Claims
 
+<!-- fmt:off -->
 ```python
-from typing import Any
-
-from fastapi_cachex.session import SessionConfig
-from fastapi_cachex.session.models import SessionToken
-
-
-class MultiTenantJWTSerializer(CustomClaimsJWTSerializer):
-    """Adds tenant_id and api_version, and rejects tokens for other tenants."""
-
-    required_claims = ("tenant_id", "api_version")
-
-    def __init__(
-        self, config: SessionConfig, tenant_id: str, api_version: str = "v1"
-    ) -> None:
-        super().__init__(config)
-        self.tenant_id = tenant_id
-        self.api_version = api_version
-
-    def extra_claims(self, token: SessionToken) -> dict[str, Any]:
-        return {"tenant_id": self.tenant_id, "api_version": self.api_version}
-
-    def check_claims(self, payload: dict[str, Any]) -> None:
-        if payload["tenant_id"] != self.tenant_id:
-            msg = f"Invalid tenant_id: expected {self.tenant_id}, got {payload['tenant_id']}"
-            raise ValueError(msg)
-        if payload["api_version"] != self.api_version:
-            msg = f"Unsupported API version: {payload['api_version']}"
-            raise ValueError(msg)
+--8<-- "examples/session_jwt_claims.py:multi-tenant"
 ```
+<!-- fmt:on -->
 
 ### Using a Custom Serializer
 
 #### Option 1: Pass it to `SessionManager` (recommended)
 
+<!-- fmt:off -->
 ```python
-from fastapi import FastAPI
-
-from fastapi_cachex.backends import AsyncRedisCacheBackend
-from fastapi_cachex.session import (
-    FastAPICacheXSessionMiddleware,
-    SessionConfig,
-    SessionManager,
-)
-
-app = FastAPI()
-
-# Set up the backend and config
-backend = AsyncRedisCacheBackend(host="localhost", port=6379)
-config = SessionConfig(
-    secret_key="your-secret-key-at-least-32-characters",
-    token_format="jwt",
-    jwt_algorithm="HS256",
-    jwt_issuer="your-company",
-    jwt_audience="your-api",
-)
-
-# Create the custom serializer
-custom_serializer = MultiTenantJWTSerializer(
-    config=config,
-    tenant_id="acme-corp",
-    api_version="v2",
-)
-
-# Initialize the SessionManager
-manager = SessionManager(backend, config, token_serializer=custom_serializer)
-
-# Add the middleware
-app.add_middleware(
-    FastAPICacheXSessionMiddleware,
-    session_manager=manager,
-    config=config,
-)
+--8<-- "examples/session_jwt_claims.py:setup"
 ```
+<!-- fmt:on -->
 
 When `token_serializer` is given it overrides the built-in choice made from `token_format`. Keep `token_format="jwt"` anyway: with `"simple"`, `SessionManager` additionally performs its own HMAC signature check on the parsed token, which a JWT-based serializer does not provide.
+
+The example uses `MemoryBackend` so it runs without a server; any backend works, for example the Redis setup of [Backends](BACKENDS.md#closing-a-backend).
 
 #### Option 2: Subclass `SessionManager` (advanced)
 
@@ -381,89 +258,13 @@ Do not replace the serializer by assigning a private attribute after constructio
 
 ## Complete Application Example
 
+[`examples/session_jwt_claims.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt_claims.py) puts the pieces above together into a runnable app:
+
+<!-- fmt:off -->
 ```python
-from __future__ import annotations
-
-from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
-
-from fastapi_cachex.backends import AsyncRedisCacheBackend
-from fastapi_cachex.session import (
-    FastAPICacheXSessionMiddleware,
-    Session,
-    SessionConfig,
-    SessionManager,
-    SessionUser,
-    require_user_session,
-)
-
-# Uses the MultiTenantJWTSerializer defined above
-
-app = FastAPI()
-
-# Initialization
-backend = AsyncRedisCacheBackend(host="localhost", port=6379)
-config = SessionConfig(
-    secret_key="your-secret-key-min-32-chars-long!!",
-    token_format="jwt",
-    jwt_algorithm="HS256",
-    jwt_issuer="acme-corp",
-    jwt_audience="acme-api",
-)
-
-# Create the custom serializer
-serializer = MultiTenantJWTSerializer(
-    config=config,
-    tenant_id="acme-corp",
-    api_version="v2",
-)
-
-manager = SessionManager(backend, config, token_serializer=serializer)
-
-app.add_middleware(
-    FastAPICacheXSessionMiddleware,
-    session_manager=manager,
-    config=config,
-)
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-@app.post("/auth/login")
-async def login(credentials: LoginRequest) -> dict[str, str]:
-    """Login endpoint that returns a JWT containing tenant_id."""
-    # Authenticate the user (omitted)
-    if credentials.username != "admin":
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    user = SessionUser(user_id="123", username=credentials.username)
-    session, token = await manager.create_session(user=user)
-
-    # The token now contains the tenant_id and api_version claims
-    return {
-        "token": token,
-        "token_type": "bearer",
-        "tenant_id": "acme-corp",  # Could also be read from configuration
-    }
-
-
-@app.get("/api/profile")
-async def get_profile(
-    session: Session = Depends(require_user_session),
-) -> dict[str, str | None]:
-    """Protected endpoint; tenant_id is validated automatically."""
-    # tenant_id and api_version were already validated while decoding the JWT.
-    # A token for another tenant fails to decode, so the middleware loads no
-    # session and require_user_session responds with 401.
-    assert session.user is not None
-    return {
-        "user_id": session.user.user_id,
-        "username": session.user.username,
-    }
+--8<-- "examples/session_jwt_claims.py"
 ```
+<!-- fmt:on -->
 
 ## Security Considerations
 
