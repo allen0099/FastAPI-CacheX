@@ -5,6 +5,7 @@ from .dependencies import get_optional_session
 from .dependencies import get_session
 from .dependencies import get_session_client_ip
 from .dependencies import get_session_manager
+from .dependencies import login
 from .dependencies import require_session
 from .dependencies import require_user_session
 from .dependencies import rotate_session_id
@@ -29,6 +30,7 @@ __all__ = [
     "get_session",
     "get_session_client_ip",
     "get_session_manager",
+    "login",
     "require_session",
     "require_user_session",
     "rotate_session_id",

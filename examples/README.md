@@ -8,7 +8,7 @@ FastAPI-CacheX. They use only the public API and the in-memory backend (except
 |---------|---------------|-------|
 | [`http_cache.py`](http_cache.py) | `@cache` with a TTL, ETag and `304 Not Modified`, `no_cache` and `private` routes, `clear_path()` after an update, the monitoring routes behind an admin check | — |
 | [`app_cache.py`](app_cache.py) | `CacheManager.get_or_set()` for an expensive call, `add()` as an idempotency check, the `AppCache` dependency | — |
-| [`session_login.py`](session_login.py) | `FastAPICacheXSessionMiddleware` with cookies: an anonymous session, login with `rotate_session_id()`, `AuthenticatedSession`, logout with `request.session.clear()` | — |
+| [`session_login.py`](session_login.py) | `FastAPICacheXSessionMiddleware` with cookies: an anonymous session, login with `login()`, `AuthenticatedSession`, logout with `request.session.clear()` | — |
 | [`session_jwt.py`](session_jwt.py) | Sessions with `token_format="jwt"` for API clients (`Authorization: Bearer`), revoked on logout | `jwt` extra |
 | [`oauth_state.py`](oauth_state.py) | One-time OAuth `state` values with `StateManager`, bound to the browser that started the flow | — |
 | [`cache_lock.py`](cache_lock.py) | `CacheLock`, waiting (`async with`) and non-blocking (`acquire(blocking=False)`) | — |
