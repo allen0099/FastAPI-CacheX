@@ -64,7 +64,6 @@ config = RedisConfig(
     port=6379,
     password=None,  # SecretStr | None
     db=0,
-    encoding="utf-8",  # 保持 UTF-8；見下方說明
     socket_timeout=1.0,  # 秒；適用於讀取／寫入
     socket_connect_timeout=1.0,
     key_prefix="fastapi_cachex:",
@@ -74,7 +73,7 @@ backend = AsyncRedisCacheBackend.load_from_config(config)
 BackendProxy.set(backend)
 ```
 
-請保持 `encoding="utf-8"`。項目一律以 UTF-8 JSON 寫入，而用戶端會以 `encoding` 解碼回應，因此任何其他值都會在讀回時破壞非 ASCII 內容（使用 `"latin-1"` 時，儲存的 `b"\xe9"` 會讀回成 `b"\xc3\xa9"`）。編碼不是 UTF-8 時，後端會發出 `RuntimeWarning`，而這個參數將於 0.4.0 移除。
+請不要設定 `encoding`，`RedisConfig` 與 `AsyncRedisCacheBackend` 皆然：它已棄用並將於 0.4.0 移除，只要設定就會發出 `DeprecationWarning`。項目一律以 UTF-8 JSON 寫入，而用戶端會以 `encoding` 解碼回應，因此 UTF-8 以外的值還會在讀回時破壞非 ASCII 內容（使用 `"latin-1"` 時，儲存的 `b"\xe9"` 會讀回成 `b"\xc3\xa9"`），後端也會因此發出 `RuntimeWarning`。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#redis-encoding)。
 
 除非你需要 RESP3 的功能，*而且*你的 `hiredis` 建置支援它（RESP3 需要 hiredis >= 3.0），否則請保留 `protocol=2`。Redis 8.0 支援 RESP3，但較舊的 hiredis 會無法協商使用它。
 

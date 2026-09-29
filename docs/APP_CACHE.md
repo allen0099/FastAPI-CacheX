@@ -17,8 +17,9 @@ async def expensive_operation(cache: AppCache):
     return result
 
 
-# Or instantiate directly, e.g. outside of a request:
-manager = CacheManager(key_prefix="myapp:", default_ttl=60)
+# Or instantiate directly, e.g. outside of a request. Pass `lock` explicitly:
+# its default turns from False to True in 0.4.0 (see "Stampede protection").
+manager = CacheManager(key_prefix="myapp:", default_ttl=60, lock=False)
 await manager.set("user:42", {"name": "Alice"})
 user = await manager.get("user:42")  # {"name": "Alice"}
 await manager.delete("user:42")
@@ -120,6 +121,10 @@ manager = CacheManager(lock=True, lock_ttl=60)
 6. **Timeouts**: When an explicit `wait_timeout` elapses, `raise_on_timeout=False` logs a warning and falls back to direct factory computation (graceful degradation), while `raise_on_timeout=True` raises `LockTimeoutError`.
 
 Ensure `lock_ttl` exceeds the expected execution time of `factory`. If `factory` outlives `lock_ttl`, the lock expires mid-run and a waiting caller may start a second computation.
+
+### The default changes in 0.4.0
+
+Stampede protection is off by default in 0.3.x and **on by default from 0.4.0**. A `get_or_set()` call that passes no `lock=`, on a manager created without `lock=` (including the one `AppCache` creates for you), emits a `FutureWarning` once per manager. Pass `lock=False` to keep the current behaviour or `lock=True` to opt in now, either per call or to `CacheManager(...)`; for `AppCache`, register your own manager with `CacheManagerProxy.set(CacheManager(lock=...))`. See [Migrating to 0.4.0](MIGRATING_0_4.md#get-or-set-lock).
 
 ## JSON round-trip
 

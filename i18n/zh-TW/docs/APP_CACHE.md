@@ -15,8 +15,9 @@ async def expensive_operation(cache: AppCache):
     return result
 
 
-# 也可以直接建立實例，例如在請求之外使用：
-manager = CacheManager(key_prefix="myapp:", default_ttl=60)
+# 也可以直接建立實例，例如在請求之外使用。請明確傳入 `lock`：
+# 它的預設值會在 0.4.0 從 False 改為 True（見「Cache stampede 保護」）。
+manager = CacheManager(key_prefix="myapp:", default_ttl=60, lock=False)
 await manager.set("user:42", {"name": "Alice"})
 user = await manager.get("user:42")  # {"name": "Alice"}
 await manager.delete("user:42")
@@ -81,6 +82,10 @@ manager = CacheManager(lock=True, lock_ttl=60)
 6. **逾時**：當明確指定的 `wait_timeout` 到期時，`raise_on_timeout=False` 會記錄警告並回退為直接執行 factory 計算（優雅降級），而 `raise_on_timeout=True` 則拋出 `LockTimeoutError`。
 
 請確保 `lock_ttl` 超過 `factory` 的預期執行時間。若 `factory` 執行時間超過 `lock_ttl`，鎖會在執行途中過期，導致等待中的呼叫者發起第二次計算。
+
+### 0.4.0 的預設值變更 {#the-default-changes-in-040}
+
+Cache stampede 保護在 0.3.x 預設關閉，**0.4.0 起預設開啟**。若 `get_or_set()` 呼叫沒有傳入 `lock=`，而 manager 建立時也沒有傳入 `lock=`（包括 `AppCache` 自動建立的 manager），每個 manager 會發出一次 `FutureWarning`。傳入 `lock=False` 可保留目前的行為，傳入 `lock=True` 則現在就啟用，可以針對單次呼叫或傳給 `CacheManager(...)`；使用 `AppCache` 時，請以 `CacheManagerProxy.set(CacheManager(lock=...))` 註冊自己的 manager。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#get-or-set-lock)。
 
 ## JSON 往返 {#json-round-trip}
 

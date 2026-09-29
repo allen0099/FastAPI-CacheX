@@ -303,7 +303,11 @@ async def test_new_session_is_bound_like_the_middlewares(
 ) -> None:
     """A session login() creates gets the IP and User-Agent bindings."""
     config = SessionConfig(
-        secret_key="a" * 32, ip_binding=True, user_agent_binding=True
+        secret_key="a" * 32,
+        ip_binding=True,
+        user_agent_binding=True,
+        cookie_name="session",
+        cookie_https_only=False,
     )
     manager = SessionManager(backend, config)
     client = TestClient(_login_app(manager, config))

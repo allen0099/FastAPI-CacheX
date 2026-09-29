@@ -32,6 +32,7 @@ nav = [
     { "OAuth state" = "STATE.md" },
     { "分散式鎖" = "LOCK.md" },
   ] },
+  { "遷移至 0.4.0" = "MIGRATING_0_4.md" },
   { "API 參考（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/" },
   { "開發" = [
     { "開發指南（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/" },

@@ -110,7 +110,8 @@ def _warn_if_key_too_short(secret: str, algorithm: str) -> None:
             f"secret_key is {key_bytes} bytes, shorter than the {min_bytes} "
             f"bytes RFC 7518 section 3.2 requires for {algorithm}. Use a longer "
             f"secret_key (e.g. secrets.token_urlsafe({min_bytes})) or "
-            f'jwt_algorithm="HS256".',
+            f'jwt_algorithm="HS256". Version 0.4.0 will reject a shorter key '
+            f"(https://github.com/allen0099/FastAPI-CacheX/issues/129).",
             UserWarning,
             stacklevel=3,
         )

@@ -69,13 +69,13 @@ keeps the token it gets back and sends it on later requests.
 ```
 <!-- fmt:on -->
 
-Instead of passing the manager to the middleware, you can register it on the
-proxy. When `config` is omitted, the middleware uses `session_manager.config`:
+The example also registers the manager on `SessionManagerProxy`, where
+`get_session_manager` looks for it from 0.4.0 (see
+[Migrating to 0.4.0](MIGRATING_0_4.md#get-session-manager)). With the manager
+there, the middleware can pick it up instead of taking it as an argument. When
+`config` is omitted, the middleware uses `session_manager.config`:
 
 ```python
-from fastapi_cachex.session import SessionManagerProxy
-
-SessionManagerProxy.set(session_manager)
 app.add_middleware(FastAPICacheXSessionMiddleware)  # picked up from the proxy
 ```
 
@@ -247,17 +247,28 @@ SessionConfig(
     # Backend
     backend_key_prefix="session:",
     # Cookies (read only by FastAPICacheXSessionMiddleware)
-    cookie_name="session",
+    cookie_name="session",  # "__Host-session" from 0.4.0
     cookie_max_age=14
     * 24
     * 60
     * 60,  # None = no Max-Age (cookie ends with the browser session)
     cookie_path="/",
     cookie_same_site="lax",  # "lax" / "strict" / "none" ("none" needs cookie_https_only=True)
-    cookie_https_only=False,  # True adds the Secure flag
+    cookie_https_only=False,  # True adds the Secure flag; True from 0.4.0
     cookie_domain=None,  # None = no Domain attribute
 )
 ```
+
+#### Cookie defaults change in 0.4.0 {#cookie-defaults-change-in-040}
+
+0.4.0 names the session cookie `__Host-session` and sets the `Secure` flag by default. Browsers accept a `__Host-` cookie only when it is `Secure`, has `Path=/` and no `Domain`, and never from a subdomain, which removes the usual way to plant a session cookie (session fixation). The new name also means every browser holding a `session` cookie is logged out once after the upgrade.
+
+Until then, `FastAPICacheXSessionMiddleware` emits a `FutureWarning` when its config leaves `cookie_name` or `cookie_https_only` at the default. Set both to silence it:
+
+- `cookie_name="session", cookie_https_only=False` keeps the current cookie (and keeps working after the upgrade, e.g. for local development over plain HTTP);
+- `cookie_name="__Host-session", cookie_https_only=True` switches now, over HTTPS.
+
+A `__Host-` name with `cookie_https_only=False`, a `cookie_path` other than `/` or a `cookie_domain` (and a `__Secure-` name without `cookie_https_only=True`) emits a `UserWarning`, because browsers refuse such a cookie; 0.4.0 rejects the combination. See [Migrating to 0.4.0](MIGRATING_0_4.md#session-cookie).
 
 Sessions expire after `session_ttl` seconds. With `sliding_expiration`, each request that finds
 less than `session_ttl * sliding_threshold` seconds remaining extends the expiry to a full
@@ -357,6 +368,7 @@ Always transport tokens over HTTPS in production. For cookie clients, mark the c
 ```python
 config = SessionConfig(
     secret_key="...",
+    cookie_name="__Host-session",  # browsers refuse it without Secure, Path=/, no Domain
     cookie_https_only=True,  # adds the Secure flag to the session cookie
 )
 ```
@@ -591,7 +603,11 @@ from fastapi_cachex.session.dependencies import (
 
 `get_session_manager` returns the manager the middleware stored on `app.state` when it handled
 its first request; it responds with `500` if no session middleware has run yet. Using it avoids
-importing the manager into your route modules:
+importing the manager into your route modules. From 0.4.0 it resolves the manager through
+`SessionManagerProxy` instead, so register it there with `SessionManagerProxy.set(manager)`:
+until then, `get_session_manager` (and `SessionManagerDep`, `ClientIPDep` and
+`rotate_session_id()`, which use it) emits a `FutureWarning` once per app when the proxy holds no
+manager or a different one. See [Migrating to 0.4.0](MIGRATING_0_4.md#get-session-manager).
 
 ```python
 from fastapi_cachex.session import SessionUser

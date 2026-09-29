@@ -27,8 +27,9 @@ from fastapi_cachex.backends import MemoryBackend
 backend = MemoryBackend()
 BackendProxy.set(backend)
 # Optional: without this, AppCache creates a CacheManager with the defaults
-# (key prefix "cache:", no TTL) on first use.
-CacheManagerProxy.set(CacheManager(key_prefix="example:", default_ttl=300))
+# (key prefix "cache:", no TTL) on first use. lock=True runs the factory once for
+# concurrent misses of the same key; it becomes the default in 0.4.0.
+CacheManagerProxy.set(CacheManager(key_prefix="example:", default_ttl=300, lock=True))
 
 
 @asynccontextmanager

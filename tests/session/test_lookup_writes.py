@@ -41,7 +41,9 @@ class SpyBackend(MemoryBackend):
 
 def _manager(**overrides: object) -> tuple[SessionManager, SpyBackend]:
     backend = SpyBackend()
-    config = SessionConfig(secret_key="a" * 32, **overrides)
+    config = SessionConfig(
+        secret_key="a" * 32, cookie_name="session", cookie_https_only=False, **overrides
+    )
     return SessionManager(backend, config), backend
 
 

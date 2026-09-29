@@ -22,6 +22,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from fastapi_cachex import BackendProxy
+from fastapi_cachex import SessionManagerProxy
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.session import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session import SessionConfig
@@ -41,8 +42,15 @@ config = SessionConfig(
         "SESSION_SECRET_KEY", "dev-only-placeholder-change-me-before-deploying"
     ),
     session_ttl=3600,  # 1 hour
+    # Both cookie defaults change in 0.4.0, so set them explicitly. Over HTTPS
+    # use cookie_name="__Host-session", cookie_https_only=True.
+    cookie_name="session",
+    cookie_https_only=False,
 )
 session_manager = SessionManager(backend, config)
+# Register it on the proxy too: from 0.4.0, get_session_manager (and
+# SessionManagerDep, ClientIPDep) find the manager there only.
+SessionManagerProxy.set(session_manager)
 
 
 @asynccontextmanager
