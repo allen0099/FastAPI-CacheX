@@ -21,7 +21,7 @@ from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 
 def _key(path: str) -> str:
     """The key `default_key_builder` produces for a TestClient GET."""
-    return f"GET|||testserver|||{path}|||"
+    return f"http:v2|GET|testserver|{path}|"
 
 
 async def test_issue_repro_private_no_store_with_authorization():
@@ -226,7 +226,7 @@ async def test_cache_authorized_caches_per_user_entries():
 
     assert alice_hit.json() == {"for": "Bearer alice", "n": 1}
     assert bob.json() == {"for": "Bearer bob", "n": 2}
-    assert await BackendProxy.get().get("/dashboard|||Bearer alice") is not None
+    assert await BackendProxy.get().get("/dashboard|Bearer alice") is not None
 
 
 async def test_unshareable_render_leaves_an_existing_entry_alone():

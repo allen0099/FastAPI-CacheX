@@ -250,7 +250,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 0.4.0 會一次改變所有 HTTP 快取鍵的格式，讓升級只造成一次快取未命中（[#271](https://github.com/allen0099/FastAPI-CacheX/issues/271)、[#266](https://github.com/allen0099/FastAPI-CacheX/issues/266)、[#265](https://github.com/allen0099/FastAPI-CacheX/issues/265)、[#269](https://github.com/allen0099/FastAPI-CacheX/issues/269)、[#270](https://github.com/allen0099/FastAPI-CacheX/issues/270)、[#72](https://github.com/allen0099/FastAPI-CacheX/issues/72)）：
 
 - 分隔符號改為單一的 `|`（`CACHE_KEY_SEPARATOR`）。
-- 鍵以格式標籤開頭，例如 `http:v2|`，讓下一次格式變更可以用模式移除舊鍵。
+- 鍵以格式標籤 `http:v2|`（`CacheKey.FORMAT_TAG`）開頭，讓下一次格式變更可以用模式移除舊鍵：`clear_pattern("http:v2|*")` 會移除這個格式的所有鍵。
 - 主機名稱會正規化：轉為小寫，並去除該 scheme 的預設連接埠（`:80`、`:443`）。
 - 過長的查詢字串（約超過 200 位元組）會以 `sha256:` 加上十六進位摘要儲存；路徑仍保持可讀。
 - 查詢參數會依名稱排序：`sort_query`（0.3.9 起可選用）在 `@cache`、`build_cache_key()` 與 `invalidate()` 中預設為 `True`，因此 `?b=2&a=1` 與 `?a=1&b=2` 共用同一筆項目。
@@ -258,15 +258,15 @@ CacheManagerProxy.set(CacheManager(lock=True))
 
 ```text
 修改前：GET|||Example.com:80|||/users/1|||page=2
-修改後：http:v2|GET|example.com|/users/1|page=2   （確切的標籤尚未定案）
+修改後：http:v2|GET|example.com|/users/1|page=2
 ```
 
 需要修改的地方：
 
 - 直接寫出分隔符號的 `clear_pattern()` 模式（`"GET|||*|||/users/*"`）需要改寫。`clear_path()` 與 `invalidate()` 會自行組出鍵，不需要修改。
-- 呼叫 `build_cache_key()` 或以 `CACHE_KEY_SEPARATOR` 串接的自訂 `key_builder` 會自動跟上；直接寫死 `|||` 的則不會。
+- 呼叫 `build_cache_key()` 的自訂 `key_builder` 會自動跟上。自行組出鍵的（以 `CACHE_KEY_SEPARATOR` 串接或直接寫死 `|||`）仍可以快取，也仍能搭配 `invalidate()` 與 `clear_pattern()`，但其鍵沒有 `http:v2` 標籤，因此 `clear_path()` 不再找得到它們，監控路由也不再列出它們。改用 `build_cache_key(request, *components)` 即可兩者都保留。
 - 回應取決於用戶端送出的查詢字串順序的處理函式（例如從 `request.url` 複製的自身連結或分頁連結、對原始查詢字串計算的簽章），請設定 `@cache(sort_query=False)`。否則第一位呼叫者的順序會被快取，並提供給送出其他順序的呼叫者。`sort_query=False` 在 0.3.9 就能使用。
-- 0.4.0 不會讀取 0.3.x 寫入的項目。這些項目會在 TTL 到期後過期；在 Redis 與記憶體後端上，可以在升級後立即以 `await backend.clear_pattern("*|||*")` 移除。Memcached 無法列舉鍵，只能等它們過期。
+- 0.4.0 不會讀取 0.3.x 寫入的項目。這些項目會在 TTL 到期後過期；在 Redis 與記憶體後端上，可以在升級後立即以 `await backend.clear_pattern("*|||*")` 移除。這個模式會比對任何含有 `|||` 的鍵，因此請先確認你自己的鍵（例如 `CacheManager` 的鍵）都不含它。Memcached 無法列舉鍵，只能等它們過期。
 
 0.3.9 不會警告：0.3.x 無從判斷某個模式或 key builder 是否符合新格式，而執行期唯一的代價只是一次未命中。
 
@@ -323,7 +323,7 @@ RedisConfig(host="redis")
 await backend.clear_pattern("fastapi_cachex:GET|||*")
 
 # 修改後
-await backend.clear_pattern("GET|||*")  # 在 0.4.0 的鍵格式下為 "GET|*"
+await backend.clear_pattern("GET|||*")  # 在 0.4.0 的鍵格式下為 "http:v2|GET|*"
 ```
 
 ### delete() 的回傳值 {#backend-delete}

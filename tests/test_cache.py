@@ -697,7 +697,7 @@ async def test_without_a_ttl_an_entry_left_by_an_older_version_is_ignored():
         return Response(content=b"new", media_type="text/plain")
 
     legacy_client = TestClient(legacy_app)
-    key = "GET|||testserver|||/legacy|||"
+    key = "http:v2|GET|testserver|/legacy|"
     stale = CacheEntry(fingerprint='W/"old"', content=b"old", media_type="text/plain")
     await backend.set(key, stale)
 
@@ -752,7 +752,7 @@ def test_stale_client_etag_with_changed_cache():
     # Directly inject a different cache entry into the backend (simulates content change).
     # We bypass the async interface to avoid cross-event-loop issues in a sync test.
     # TestClient uses "testserver" as the default Host header.
-    cache_key = "GET|||testserver|||/etag-mismatch|||"
+    cache_key = "http:v2|GET|testserver|/etag-mismatch|"
     new_entry = CacheEntry(
         fingerprint='W/"newetag"', content=b"changed", media_type="text/plain"
     )

@@ -44,7 +44,7 @@ cache_module = importlib.import_module("fastapi_cachex.cache")
 
 TTL = 60
 START = 1_800_000_000.0
-KEY = "GET|||testserver|||/item|||"
+KEY = "http:v2|GET|testserver|/item|"
 
 
 class _Clock:

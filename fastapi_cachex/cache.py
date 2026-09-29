@@ -75,7 +75,7 @@ def build_cache_key(
 ) -> str:
     """Build the default cache key for ``request``, plus extra components.
 
-    With no ``components`` the key is ``method|||host|||path|||query_params``,
+    With no ``components`` the key is ``http:v2|method|host|path|query``,
     exactly what ``@cache`` uses by default. Each extra component is appended
     after another separator, so a custom ``key_builder`` can add a dimension
     (user ID, tenant, locale) without rebuilding the default key by hand::
@@ -88,7 +88,7 @@ def build_cache_key(
     contain the separator and make one request's key equal another's. The
     query string is already URL-encoded and never contains ``|``.
 
-    Keys built this way keep the path in the third component, so
+    Keys built this way keep the tag, method, host and path in front, so
     ``clear_path()`` still finds them and the monitoring routes still show
     their method, host, path and query. This is
     ``CacheKey.from_request(...).to_str()``; ``CacheKey.parse()`` decodes the
@@ -317,7 +317,7 @@ class _BypassWarner:
 def default_key_builder(request: Request) -> str:
     """Default cache key builder function: ``build_cache_key(request)``.
 
-    Generates cache key in format: method|||host|||path|||query_params
+    Generates cache key in format: http:v2|method|host|path|query
 
     Kept as the name ``@cache`` and ``invalidate()`` fall back to. To add
     components to the default key, call ``build_cache_key`` instead.

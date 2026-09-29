@@ -166,7 +166,7 @@ def test_failure_warning_does_not_log_the_cache_key(
         for r in caplog.records
         if r.levelno == logging.WARNING and message in r.getMessage()
     ]
-    for secret in ("s3cr3t-token", "alice", "tenant-secret", "|||"):
+    for secret in ("s3cr3t-token", "alice", "tenant-secret", "http:v2|"):
         assert secret not in warning
     assert "method=GET" in warning
     assert "path='/callback'" in warning

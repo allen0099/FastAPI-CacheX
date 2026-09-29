@@ -25,7 +25,7 @@ private, no positive ttl, or Authorization/session without public/cache_authoriz
 (cache_authorized with Authorization or a session: the backend is used below,
 but every answer still says private instead of public)
     ↓
-Build the cache key: key_builder (default method|||host|||path|||query_params),
+Build the cache key: key_builder (default http:v2|method|host|path|query_params),
 plus one name=value component per vary header
     ↓
 Read the backend entry (with fail_open, a backend error counts as a miss)
@@ -63,13 +63,15 @@ names to Vary on every GET response
 When a request arrives, the `@cache` decorator does the following:
 
 ```python
-from fastapi_cachex.types import CACHE_KEY_SEPARATOR  # "|||"
+from fastapi_cachex import CacheKey
 from fastapi_cachex.types import escape_key_component
 
-# Cache key format (build_cache_key in fastapi_cachex/cache.py)
-cache_key = CACHE_KEY_SEPARATOR.join(
+# Cache key format (CacheKey in fastapi_cachex/cache_key.py;
+# build_cache_key(request) is CacheKey.from_request(request).to_str())
+cache_key = "|".join(
     [
-        request.method,
+        CacheKey.FORMAT_TAG,  # "http:v2"
+        escape_key_component(request.method),
         escape_key_component(request.headers.get("host", "unknown")),
         escape_key_component(request.url.path),
         query,
@@ -77,19 +79,25 @@ cache_key = CACHE_KEY_SEPARATOR.join(
 )
 
 # For example:
-# GET|||example.com|||/api/users|||page=1&limit=10
-# GET|||api.example.com|||/api/users/123|||
+# http:v2|GET|example.com|/api/users|page=1&limit=10
+# http:v2|GET|api.example.com|/api/users/123|
 ```
 
-The separator is `|||` rather than a colon because the host itself may contain a
+Every key starts with the format tag `http:v2`. Keys written in another format
+(0.3.x wrote `GET|||host|||path|||query` with no tag) never collide with these,
+and `clear_pattern("http:v2|*")` removes every key of this one on Redis and
+memory. `CacheKey.parse()` only reads keys with this tag.
+
+The separator is `|` rather than a colon because the host itself may contain a
 port (`127.0.0.1:8000`); with a colon the key could not be split reliably, and
 `clear_path()` needs to recover the path from the key.
 
-The host and path are percent-encoded first: `|` becomes `%7C` and `%` becomes
-`%25` (`escape_key_component` in `fastapi_cachex/types.py`). Both come from the
-client, and a raw `|||` in either would shift the components so that one
-request's key could equal another's. The query string is URL-encoded already.
-The monitoring routes decode them again for display.
+The method, host and path are percent-encoded first: `|` becomes `%7C` and `%`
+becomes `%25` (`escape_key_component` in `fastapi_cachex/types.py`). The host
+and path come from the client, and a raw `|` in either would shift the
+components so that one request's key could equal another's. The query string is
+URL-encoded already, so it never contains `|`. The monitoring routes decode the
+components again for display.
 
 A custom `key_builder` can add components after the query string with
 `build_cache_key(request, *components)`; they are encoded the same way, and
@@ -330,7 +338,7 @@ intermediate cache would lose those fields after revalidation (RFC 9110
 ```python
 # dict[str, CacheItem]; CacheItem wraps the CacheEntry and records its expiry
 {
-    "GET|||example.com|||/api/users|||": CacheItem(
+    "http:v2|GET|example.com|/api/users|": CacheItem(
         value=CacheEntry(
             fingerprint='W/"abc123"',
             content=b"...",
@@ -385,7 +393,7 @@ and the standard library `json` otherwise:
 ### MemcachedBackend
 
 ```
-key:   "fastapi_cachex:GET|||example.com|||/api/users|||"
+key:   "fastapi_cachex:http:v2|GET|example.com|/api/users|"
 value: the JSON document above
 
 # Characteristics:
@@ -410,7 +418,7 @@ value: the JSON document above
 ### AsyncRedisCacheBackend
 
 ```
-key:   "fastapi_cachex:GET|||example.com|||/api/users|||"
+key:   "fastapi_cachex:http:v2|GET|example.com|/api/users|"
 value: the JSON document above
 
 # Characteristics:

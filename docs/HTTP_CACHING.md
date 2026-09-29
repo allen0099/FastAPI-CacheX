@@ -286,8 +286,12 @@ This only covers `@cache`. `invalidate()`, `CacheManager`, `StateManager`,
 Cache keys are generated in the following format to avoid collisions:
 
 ```
-{method}|||{host}|||{path}|||{query_params}
+http:v2|{method}|{host}|{path}|{query_params}
 ```
+
+`http:v2` is the format tag (`CacheKey.FORMAT_TAG`). A later key format gets
+another tag, so its keys never collide with these; on Redis and memory,
+`clear_pattern("http:v2|*")` removes every HTTP cache entry of this format.
 
 This ensures that:
 
@@ -328,7 +332,7 @@ Pass `sort_query=True` to `invalidate()` for such a route as well (see
 [Invalidating a single cached route](#invalidating-a-single-cached-route)).
 
 The host and path come from the client, so `|` and `%` in them are percent-encoded
-(`%7C` and `%25`). A `Host` header or path containing `|||` therefore cannot shift
+(`%7C` and `%25`). A `Host` header or path containing `|` therefore cannot shift
 the components and make one request's key equal another's. The query string is
 URL-encoded already. `clear_path()` takes the path as your application sees it
 (`request.url.path`) and encodes it the same way; `clear_pattern()` matches the
@@ -357,7 +361,7 @@ rebuilding the format by hand. With no components it returns exactly the
 default key; each component is appended after the query string:
 
 ```
-{method}|||{host}|||{path}|||{query_params}|||{component}|||...
+http:v2|{method}|{host}|{path}|{query_params}|{component}|...
 ```
 
 ```python
@@ -374,10 +378,10 @@ Components are `str` or `int` (an `int` is written in decimal, so `1` and `"1"`
 are the same component); anything else, `None` included, raises `TypeError`, so
 a missing ID cannot quietly put every such caller under one `"None"` key. Each
 component is percent-encoded like the host and path, so a value containing
-`|||` cannot shift the components. An empty string is still a component:
+`|` cannot shift the components. An empty string is still a component:
 `build_cache_key(request, "")` is not the default key.
 
-Because the path stays the third component, `clear_path()` still finds these
+Because the path stays in its place, `clear_path()` still finds these
 keys: without `include_params` it clears every entry for the path with an empty
 query string whatever its extra components, and with it every entry for the
 path. The monitoring routes show the extra components, decoded, in
@@ -387,7 +391,7 @@ path. The monitoring routes show the extra components, decoded, in
 *components)` builds it, `to_str()` gives the string `build_cache_key` returns,
 and `CacheKey.parse(key)` decodes a stored key into `method`, `host`, `path`,
 `query` and `extra`, or returns `None` for a key that is not an HTTP key
-(a `CacheManager` key, say):
+(a `CacheManager` key, say, or one without the `http:v2` tag):
 
 ```python
 from fastapi_cachex import CacheKey
@@ -402,8 +406,13 @@ The Redis and Memcached backends also put their own prefix (`fastapi_cachex:` by
 default) in front of every key, so other applications can share the server;
 `MemoryBackend` has no prefix. `CacheManager` (see
 [Application cache](APP_CACHE.md)) uses a separate, simpler `cache:`-prefixed key
-namespace instead of this `|||`-separated format, since its keys aren't tied to
+namespace instead of this `|`-separated format, since its keys aren't tied to
 HTTP requests.
+
+A `key_builder` that returns a key of its own making, not built by
+`build_cache_key()` (or `CacheKey`), still caches, invalidates with
+`invalidate()` and clears with `clear_pattern()`. But the key has no `http:v2`
+tag, so `clear_path()` does not find it and the monitoring routes skip it.
 
 ### Varying on request headers
 
@@ -423,7 +432,7 @@ lower-cased, the value trimmed (repeated header lines joined with `,`), and a
 missing header treated as an empty one. The components are escaped like the
 rest of the key and come after whatever the `key_builder` returns, so `vary`
 and a custom key builder compose:
-`GET|||example.com|||/greeting||||||tenant-1|||accept-language=de` for
+`http:v2|GET|example.com|/greeting||tenant-1|accept-language=de` for
 `key_builder` returning `build_cache_key(request, "tenant-1")`. Routes without
 `vary` keep their keys.
 
@@ -449,7 +458,7 @@ holds the full hex SHA-256 of the value (trimmed and joined as above) instead
 of the value:
 
 ```
-GET|||example.com|||/me||||||authorization=sha256:3f0a…(64 hex digits)
+http:v2|GET|example.com|/me||authorization=sha256:3f0a…(64 hex digits)
 ```
 
 The same token always gives the same digest, so it hits its own entry, and two
@@ -645,8 +654,8 @@ async def clear(cache: CacheBackend) -> None:
     # ...or every query-param variant too
     await cache.clear_path("/api/users", include_params=True)
 
-    # Clear by pattern: matched against the whole key method|||host|||path|||query
-    await cache.clear_pattern("GET|||*|||/api/users/*")
+    # Clear by pattern: matched against the whole key http:v2|method|host|path|query
+    await cache.clear_pattern("http:v2|GET|*|/api/users/*")
     # Keys you built yourself (e.g. CacheManager keys) match directly
     await cache.clear_pattern("cache:user:*")
 
@@ -738,8 +747,9 @@ add_routes(
   `content_type` is always `"bytes"` and is kept for compatibility; read
   `media_type` instead.
 
-Both routes list only route entries (keys in the `method|||host|||path|||query`
-format); `CacheManager`, session, state and lock keys are skipped.
+Both routes list only route entries (keys in the `http:v2|method|host|path|query`
+format); `CacheManager`, session, state and lock keys are skipped, and so are
+keys from a `key_builder` that does not use `build_cache_key()`.
 
 > [!WARNING]
 > **These routes have no authentication of their own.** `include_in_schema=False`

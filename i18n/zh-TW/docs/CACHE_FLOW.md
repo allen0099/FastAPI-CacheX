@@ -21,7 +21,7 @@ private、沒有正數的 ttl，或帶有 Authorization／Session 且未設定 p
 （設定 cache_authorized 且帶有 Authorization 或 Session：下方照常使用後端，
 但每個回應仍以 private 取代 public）
     ↓
-建立快取鍵：key_builder（預設為 method|||host|||path|||query_params），
+建立快取鍵：key_builder（預設為 http:v2|method|host|path|query_params），
 再為每個 vary 標頭附加一個 name=value 段
     ↓
 讀取後端項目（fail_open 時，後端錯誤視為未命中）
@@ -59,13 +59,15 @@ handler 自己送出的 private／no-store Cache-Control 永遠不會被取代�
 請求抵達時，`@cache` 裝飾器會執行以下步驟：
 
 ```python
-from fastapi_cachex.types import CACHE_KEY_SEPARATOR  # "|||"
+from fastapi_cachex import CacheKey
 from fastapi_cachex.types import escape_key_component
 
-# 快取鍵格式（fastapi_cachex/cache.py 中的 build_cache_key）
-cache_key = CACHE_KEY_SEPARATOR.join(
+# 快取鍵格式（fastapi_cachex/cache_key.py 中的 CacheKey；
+# build_cache_key(request) 即 CacheKey.from_request(request).to_str()）
+cache_key = "|".join(
     [
-        request.method,
+        CacheKey.FORMAT_TAG,  # "http:v2"
+        escape_key_component(request.method),
         escape_key_component(request.headers.get("host", "unknown")),
         escape_key_component(request.url.path),
         query,
@@ -73,13 +75,15 @@ cache_key = CACHE_KEY_SEPARATOR.join(
 )
 
 # 例如：
-# GET|||example.com|||/api/users|||page=1&limit=10
-# GET|||api.example.com|||/api/users/123|||
+# http:v2|GET|example.com|/api/users|page=1&limit=10
+# http:v2|GET|api.example.com|/api/users/123|
 ```
 
-分隔符號使用 `|||` 而不是冒號，是因為 host 本身可能包含連接埠（`127.0.0.1:8000`）；若使用冒號，快取鍵就無法可靠地拆分，而 `clear_path()` 需要從快取鍵中取回路徑。
+每個快取鍵都以格式標籤 `http:v2` 開頭。其他格式的鍵（0.3.x 寫入的是沒有標籤的 `GET|||host|||path|||query`）不會與這些鍵衝突，在 Redis 與記憶體後端上，`clear_pattern("http:v2|*")` 會移除這個格式的所有鍵。`CacheKey.parse()` 只會讀取帶有這個標籤的鍵。
 
-host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`（`fastapi_cachex/types.py` 中的 `escape_key_component`）。兩者都來自用戶端，其中若出現未編碼的 `|||`，各段就會錯位，使某個請求的快取鍵可能與另一個請求相同。查詢字串本來就經過 URL 編碼。監控路由顯示時會再解碼。
+分隔符號使用 `|` 而不是冒號，是因為 host 本身可能包含連接埠（`127.0.0.1:8000`）；若使用冒號，快取鍵就無法可靠地拆分，而 `clear_path()` 需要從快取鍵中取回路徑。
+
+方法、host 與路徑會先經過百分比編碼：`|` 變成 `%7C`，`%` 變成 `%25`（`fastapi_cachex/types.py` 中的 `escape_key_component`）。host 與路徑來自用戶端，其中若出現未編碼的 `|`，各段就會錯位，使某個請求的快取鍵可能與另一個請求相同。查詢字串本來就經過 URL 編碼，因此不會含有 `|`。監控路由顯示時會再解碼各段。
 
 自訂的 `key_builder` 可以用 `build_cache_key(request, *components)` 在查詢字串之後加入其他段；這些段以同樣方式編碼，`clear_path()` 也仍會比對路徑（見 [HTTP 快取](HTTP_CACHING.md#adding-components-to-the-key)中的「在鍵中加入其他段」）。`@cache(vary=[...])` 會在 key builder 回傳的鍵之後，為每個列出的請求標頭附加一個 `name=value` 段，並把這些名稱加入回應的 `Vary` 標頭（見 [HTTP 快取](HTTP_CACHING.md#varying-on-request-headers)中的「依請求標頭區分」）。對於憑證標頭 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`，非空的值會寫成 `sha256:<十六進位摘要>`，因此鍵中不會出現任何權杖。
 
@@ -242,7 +246,7 @@ If-None-Match: *                  → 只要資源存在就相符 → 304
 ```python
 # dict[str, CacheItem]；CacheItem 包裝 CacheEntry 並記錄其過期時間
 {
-    "GET|||example.com|||/api/users|||": CacheItem(
+    "http:v2|GET|example.com|/api/users|": CacheItem(
         value=CacheEntry(
             fingerprint='W/"abc123"',
             content=b"...",
@@ -289,7 +293,7 @@ Redis 與 Memcached 共用同一套 JSON 編解碼器；若已安裝 `orjson` �
 ### MemcachedBackend {#memcachedbackend}
 
 ```
-key:   "fastapi_cachex:GET|||example.com|||/api/users|||"
+key:   "fastapi_cachex:http:v2|GET|example.com|/api/users|"
 value: 上述的 JSON 文件
 
 # 特性：
@@ -314,7 +318,7 @@ value: 上述的 JSON 文件
 ### AsyncRedisCacheBackend {#asyncrediscachebackend}
 
 ```
-key:   "fastapi_cachex:GET|||example.com|||/api/users|||"
+key:   "fastapi_cachex:http:v2|GET|example.com|/api/users|"
 value: 上述的 JSON 文件
 
 # 特性：

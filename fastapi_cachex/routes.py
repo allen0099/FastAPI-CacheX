@@ -317,7 +317,7 @@ def add_routes(
         """Display currently cached records.
 
         Returns every route entry in the cache backend (keys in the
-        ``method|||host|||path|||query`` format; other keys are skipped) with
+        ``http:v2|method|host|path|query`` format; other keys are skipped) with
         its content information and expiry details.
 
         Returns:

@@ -29,7 +29,7 @@ _PRIVATE = "private, max-age=60"
 
 def _key(path: str) -> str:
     """The key `default_key_builder` produces for a TestClient GET."""
-    return f"GET|||testserver|||{path}|||"
+    return f"http:v2|GET|testserver|{path}|"
 
 
 def _app(
@@ -209,8 +209,8 @@ async def test_cache_authorized_caches_per_session_entries(
     client.get("/whoami", headers=alice)
 
     assert client.get("/whoami", headers=bob).json() == {"user": "bob"}
-    assert await BackendProxy.get().get("/whoami|||alice") is not None
-    assert await BackendProxy.get().get("/whoami|||bob") is not None
+    assert await BackendProxy.get().get("/whoami|alice") is not None
+    assert await BackendProxy.get().get("/whoami|bob") is not None
 
 
 def test_bypass_is_logged(

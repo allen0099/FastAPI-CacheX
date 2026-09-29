@@ -130,14 +130,14 @@ async def test_redis_non_utf8_key_under_the_prefix(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
     """A key that is not UTF-8 is not listed or matched by path, but clear() removes it."""
-    foreign = async_redis_backend.key_prefix.encode() + b"GET|||h|||/p|||\xff"
+    foreign = async_redis_backend.key_prefix.encode() + b"http:v2|GET|h|/p|\xff"
     entry = CacheEntry(fingerprint="f", content=b"v")
     await async_redis_backend.client.set(foreign, b"junk")
-    await async_redis_backend.set("GET|||h|||/p|||", entry)
+    await async_redis_backend.set("http:v2|GET|h|/p|", entry)
 
-    assert await async_redis_backend.get_all_keys() == ["GET|||h|||/p|||"]
+    assert await async_redis_backend.get_all_keys() == ["http:v2|GET|h|/p|"]
     assert await async_redis_backend.get_cache_data() == {
-        "GET|||h|||/p|||": (entry, None)
+        "http:v2|GET|h|/p|": (entry, None)
     }
     assert await async_redis_backend.clear_path("/p", include_params=True) == 1
     assert await async_redis_backend.client.exists(foreign) == 1
@@ -160,9 +160,9 @@ async def test_redis_accepts_a_pool_that_decodes_replies() -> None:
     )
     entry = CacheEntry(fingerprint="f", content="\u00e9t\u00e9".encode())
     try:
-        await backend.set("GET|||h|||/p|||", entry)
-        assert await backend.get("GET|||h|||/p|||") == entry
-        assert await backend.get_all_keys() == ["GET|||h|||/p|||"]
+        await backend.set("http:v2|GET|h|/p|", entry)
+        assert await backend.get("http:v2|GET|h|/p|") == entry
+        assert await backend.get_all_keys() == ["http:v2|GET|h|/p|"]
         assert await backend.clear_path("/p") == 1
         await backend.set("k", entry)
         assert await backend.delete_if_equals("k", entry) is True
@@ -368,21 +368,21 @@ class TestAsyncRedisCacheBackend:
     @requires_redis
     async def test_clear_path(self, async_redis_backend: AsyncRedisCacheBackend):
         value = CacheEntry(fingerprint="test-etag", content=b"test-content")
-        # Use proper cache key format: method|||host|||path|||query_params
+        # Use proper cache key format: http:v2|method|host|path|query
         # Keys without query params end with empty string after last separator
-        await async_redis_backend.set("GET|||localhost|||/users/1|||", value)
-        await async_redis_backend.set("POST|||localhost|||/users/1|||param=1", value)
-        await async_redis_backend.set("GET|||localhost|||/posts/1|||", value)
+        await async_redis_backend.set("http:v2|GET|localhost|/users/1|", value)
+        await async_redis_backend.set("http:v2|POST|localhost|/users/1|param=1", value)
+        await async_redis_backend.set("http:v2|GET|localhost|/posts/1|", value)
 
         # Clear all /users/1 entries regardless of method/params
         cleared = await async_redis_backend.clear_path("/users/1", include_params=True)
         assert cleared == 2
-        assert await async_redis_backend.get("GET|||localhost|||/users/1|||") is None
+        assert await async_redis_backend.get("http:v2|GET|localhost|/users/1|") is None
         assert (
-            await async_redis_backend.get("POST|||localhost|||/users/1|||param=1")
+            await async_redis_backend.get("http:v2|POST|localhost|/users/1|param=1")
             is None
         )
-        assert await async_redis_backend.get("GET|||localhost|||/posts/1|||") == value
+        assert await async_redis_backend.get("http:v2|GET|localhost|/posts/1|") == value
 
     @requires_redis
     async def test_clear_pattern(self, async_redis_backend: AsyncRedisCacheBackend):
@@ -446,13 +446,13 @@ async def test_redis_clear_path_no_matches(async_redis_backend: AsyncRedisCacheB
 async def test_redis_clear_path_direct_key(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:
-    """clear_path should also delete direct keys stored without ||| separators.
+    """clear_path should also delete direct keys that are not HTTP keys.
 
     Users may store keys like 'gitlab:template' directly via backend.set(),
     bypassing the default_key_builder format.
     """
     value = CacheEntry(fingerprint="test-etag", content=b"test-content")
-    # Store direct keys (no method|||host|||path||| format)
+    # Store direct keys (no http:v2|method|host|path|query format)
     await async_redis_backend.set("gitlab:template", value)
     await async_redis_backend.set("gitlab:template:projects", value)
     await async_redis_backend.set("gitlab:template:by_tag", value)
@@ -483,12 +483,12 @@ async def test_redis_clear_path_direct_key_and_separator_key(
     value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     # Store a direct key and a separator-format key for the same path
     await async_redis_backend.set("my:path", value)
-    await async_redis_backend.set("GET|||localhost|||my:path|||", value)
+    await async_redis_backend.set("http:v2|GET|localhost|my:path|", value)
 
     cleared = await async_redis_backend.clear_path("my:path", include_params=False)
     assert cleared == 2
     assert await async_redis_backend.get("my:path") is None
-    assert await async_redis_backend.get("GET|||localhost|||my:path|||") is None
+    assert await async_redis_backend.get("http:v2|GET|localhost|my:path|") is None
 
 
 @requires_redis
@@ -569,14 +569,16 @@ async def test_redis_clear_path_exact_without_params(
     """Cover include_params=False branch: only exact path without params gets removed."""
     value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     # Proper key format always has trailing separator (empty query params)
-    await async_redis_backend.set("GET|||localhost|||/users/42|||", value)
-    await async_redis_backend.set("GET|||localhost|||/users/42|||id=42", value)
+    await async_redis_backend.set("http:v2|GET|localhost|/users/42|", value)
+    await async_redis_backend.set("http:v2|GET|localhost|/users/42|id=42", value)
 
     cleared = await async_redis_backend.clear_path("/users/42", include_params=False)
     assert cleared == 1
-    assert await async_redis_backend.get("GET|||localhost|||/users/42|||") is None
+    assert await async_redis_backend.get("http:v2|GET|localhost|/users/42|") is None
     # Param variant should remain
-    assert await async_redis_backend.get("GET|||localhost|||/users/42|||id=42") == value
+    assert (
+        await async_redis_backend.get("http:v2|GET|localhost|/users/42|id=42") == value
+    )
 
 
 @requires_redis
@@ -590,12 +592,12 @@ async def test_redis_clear_path_with_colon_in_path(
     """
     value = CacheEntry(fingerprint="test-etag", content=b"test-content")
     # Simulate keys created by default_key_builder for colon-containing paths
-    await async_redis_backend.set("GET|||localhost:8000|||/gitlab:template|||", value)
+    await async_redis_backend.set("http:v2|GET|localhost:8000|/gitlab:template|", value)
     await async_redis_backend.set(
-        "GET|||localhost:8000|||/gitlab:template:projects|||", value
+        "http:v2|GET|localhost:8000|/gitlab:template:projects|", value
     )
     await async_redis_backend.set(
-        "GET|||localhost:8000|||/gitlab:template|||tag=v1", value
+        "http:v2|GET|localhost:8000|/gitlab:template|tag=v1", value
     )
 
     # include_params=False should only clear the exact path (empty query params)
@@ -604,19 +606,19 @@ async def test_redis_clear_path_with_colon_in_path(
     )
     assert cleared == 1
     assert (
-        await async_redis_backend.get("GET|||localhost:8000|||/gitlab:template|||")
+        await async_redis_backend.get("http:v2|GET|localhost:8000|/gitlab:template|")
         is None
     )
     # Sub-path and param variant should remain
     assert (
         await async_redis_backend.get(
-            "GET|||localhost:8000|||/gitlab:template:projects|||"
+            "http:v2|GET|localhost:8000|/gitlab:template:projects|"
         )
         == value
     )
     assert (
         await async_redis_backend.get(
-            "GET|||localhost:8000|||/gitlab:template|||tag=v1"
+            "http:v2|GET|localhost:8000|/gitlab:template|tag=v1"
         )
         == value
     )
@@ -628,14 +630,14 @@ async def test_redis_clear_path_with_colon_in_path(
     assert cleared == 1  # only the param variant is left
     assert (
         await async_redis_backend.get(
-            "GET|||localhost:8000|||/gitlab:template|||tag=v1"
+            "http:v2|GET|localhost:8000|/gitlab:template|tag=v1"
         )
         is None
     )
     # Sub-path should still remain (it's a different path)
     assert (
         await async_redis_backend.get(
-            "GET|||localhost:8000|||/gitlab:template:projects|||"
+            "http:v2|GET|localhost:8000|/gitlab:template:projects|"
         )
         == value
     )
@@ -687,9 +689,9 @@ async def test_redis_get_all_keys_with_entries(
     # Clear all keys first
     await async_redis_backend.clear()
 
-    key1 = "GET|||localhost|||/users"
-    key2 = "POST|||localhost|||/users"
-    key3 = "GET|||localhost|||/posts"
+    key1 = "http:v2|GET|localhost|/users"
+    key2 = "http:v2|POST|localhost|/users"
+    key3 = "http:v2|GET|localhost|/posts"
 
     value = CacheEntry(fingerprint="test_etag", content=b"test_value")
 
@@ -728,8 +730,8 @@ async def test_redis_get_cache_data_with_entries(
     # Clear all keys first
     await async_redis_backend.clear()
 
-    key1 = "GET|||localhost|||/users"
-    key2 = "POST|||localhost|||/users"
+    key1 = "http:v2|GET|localhost|/users"
+    key2 = "http:v2|POST|localhost|/users"
     value1 = CacheEntry(fingerprint="etag1", content=b"value1")
     value2 = CacheEntry(fingerprint="etag2", content=b"value2")
 
@@ -899,12 +901,12 @@ async def test_redis_scan_walks_every_page(
     total = _BATCH_SIZE * 3
     for index in range(total):
         await async_redis_backend.set(
-            f"page|||localhost|||/item/{index}|||",
+            f"page|localhost|/item/{index}|",
             CacheEntry(fingerprint="e", content=b"v"),
         )
 
     assert len(await async_redis_backend.get_all_keys()) == total
-    assert await async_redis_backend.clear_pattern("page|||*") == total
+    assert await async_redis_backend.clear_pattern("page|*") == total
     assert await async_redis_backend.get_all_keys() == []
 
 
@@ -921,7 +923,7 @@ async def test_redis_scan_results_are_deduplicated(
     total = _BATCH_SIZE * 3
     for index in range(total):
         await async_redis_backend.set(
-            f"dup|||localhost|||/item/{index}|||",
+            f"dup|localhost|/item/{index}|",
             CacheEntry(fingerprint="e", content=b"v"),
         )
 
@@ -963,7 +965,7 @@ async def _fill_pages(backend: AsyncRedisCacheBackend) -> int:
     total = _BATCH_SIZE * 3
     for index in range(total):
         await backend.set(
-            f"GET|||localhost|||/item|||page={index}",
+            f"http:v2|GET|localhost|/item|page={index}",
             CacheEntry(fingerprint="e", content=b"v"),
         )
     return total
@@ -974,7 +976,7 @@ async def _fill_pages(backend: AsyncRedisCacheBackend) -> int:
     "clear",
     [
         lambda backend: backend.clear(),
-        lambda backend: backend.clear_pattern("GET|||*"),
+        lambda backend: backend.clear_pattern("http:v2|GET|*"),
         lambda backend: backend.clear_path("/item", include_params=True),
     ],
     ids=["clear", "clear_pattern", "clear_path"],
@@ -1029,7 +1031,7 @@ async def test_redis_clear_counts_a_key_scan_repeats_once(
 
     monkeypatch.setattr(async_redis_backend.client, "scan", scan_with_repeats)
 
-    assert await async_redis_backend.clear_pattern("GET|||*") == total
+    assert await async_redis_backend.clear_pattern("http:v2|GET|*") == total
     assert len(returned) > total  # the repeat was actually injected
 
 
@@ -1318,17 +1320,17 @@ async def test_redis_clear_path_matches_glob_characters_literally(
     """A path with glob metacharacters clears its HTTP entries, and only those."""
     entry = CacheEntry(fingerprint="etag", content=b"x")
     path = "/files/[draft]*?\\"
-    await async_redis_backend.set(f"GET|||host|||{path}|||", entry)
-    await async_redis_backend.set(f"GET|||host|||{path}|||v=1", entry)
+    await async_redis_backend.set(f"http:v2|GET|host|{path}|", entry)
+    await async_redis_backend.set(f"http:v2|GET|host|{path}|v=1", entry)
     # Keys the unescaped pattern would have caught.
-    await async_redis_backend.set("GET|||host|||/files/d|||", entry)
-    await async_redis_backend.set("GET|||host|||/files/[draft]xy\\|||", entry)
+    await async_redis_backend.set("http:v2|GET|host|/files/d|", entry)
+    await async_redis_backend.set("http:v2|GET|host|/files/[draft]xy\\|", entry)
 
     assert await async_redis_backend.clear_path(path) == 1
     assert await async_redis_backend.clear_path(path, include_params=True) == 1
     assert sorted(await async_redis_backend.get_all_keys()) == [
-        "GET|||host|||/files/[draft]xy\\|||",
-        "GET|||host|||/files/d|||",
+        "http:v2|GET|host|/files/[draft]xy\\|",
+        "http:v2|GET|host|/files/d|",
     ]
 
 

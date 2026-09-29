@@ -251,7 +251,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 0.4.0 changes the format of every HTTP cache key, in one step so that the upgrade costs a single cache miss ([#271](https://github.com/allen0099/FastAPI-CacheX/issues/271), [#266](https://github.com/allen0099/FastAPI-CacheX/issues/266), [#265](https://github.com/allen0099/FastAPI-CacheX/issues/265), [#269](https://github.com/allen0099/FastAPI-CacheX/issues/269), [#270](https://github.com/allen0099/FastAPI-CacheX/issues/270), [#72](https://github.com/allen0099/FastAPI-CacheX/issues/72)):
 
 - The separator becomes a single `|` (`CACHE_KEY_SEPARATOR`).
-- Keys start with a format tag, such as `http:v2|`, so the next format change can remove old keys by pattern.
+- Keys start with the format tag `http:v2|` (`CacheKey.FORMAT_TAG`), so the next format change can remove old keys by pattern: `clear_pattern("http:v2|*")` removes every key of this format.
 - The host is normalised: lower-cased, and the scheme's default port (`:80`, `:443`) dropped.
 - A long query string (over about 200 bytes) is stored as `sha256:` and its hex digest; the path stays readable.
 - Query parameters are sorted by name: `sort_query` (opt-in since 0.3.9) defaults to `True` in `@cache`, `build_cache_key()` and `invalidate()`, so `?b=2&a=1` and `?a=1&b=2` share one entry.
@@ -259,15 +259,15 @@ CacheManagerProxy.set(CacheManager(lock=True))
 
 ```text
 Before: GET|||Example.com:80|||/users/1|||page=2
-After:  http:v2|GET|example.com|/users/1|page=2   (exact tag not final)
+After:  http:v2|GET|example.com|/users/1|page=2
 ```
 
 What to change:
 
 - `clear_pattern()` patterns that spell out the separator (`"GET|||*|||/users/*"`) need rewriting. `clear_path()` and `invalidate()` build the key themselves and need nothing.
-- A custom `key_builder` that calls `build_cache_key()` or joins with `CACHE_KEY_SEPARATOR` follows automatically; one that hard-codes `|||` does not.
+- A custom `key_builder` that calls `build_cache_key()` follows automatically. One that builds the key itself (joining with `CACHE_KEY_SEPARATOR` or hard-coding `|||`) still caches and still works with `invalidate()` and `clear_pattern()`, but its keys lack the `http:v2` tag, so `clear_path()` no longer finds them and the monitoring routes no longer list them. Switch it to `build_cache_key(request, *components)` to keep both.
 - A handler whose response depends on the order of the query string as sent, such as a self or pagination link copied from `request.url` or a signature over the raw query, should set `@cache(sort_query=False)`. Otherwise the first caller's order is cached and served to callers who sent another. `sort_query=False` works on 0.3.9 already.
-- Entries written by 0.3.x are not read by 0.4.0. They expire on their TTL; on Redis and memory you can remove them right after the upgrade with `await backend.clear_pattern("*|||*")`. Memcached cannot enumerate keys, so there they just expire.
+- Entries written by 0.3.x are not read by 0.4.0. They expire on their TTL; on Redis and memory you can remove them right after the upgrade with `await backend.clear_pattern("*|||*")`. That pattern matches any key containing `|||`, so check first that none of your own keys (a `CacheManager` key, say) does. Memcached cannot enumerate keys, so there they just expire.
 
 0.3.9 does not warn: nothing in 0.3.x can tell whether a pattern or key builder will match the new format, and the only runtime cost is the one-off miss.
 
@@ -324,7 +324,7 @@ Before 0.3.8, a Redis `clear_pattern()` pattern that started with the backend's 
 await backend.clear_pattern("fastapi_cachex:GET|||*")
 
 # After
-await backend.clear_pattern("GET|||*")  # "GET|*" with 0.4.0's key format
+await backend.clear_pattern("GET|||*")  # "http:v2|GET|*" with 0.4.0's key format
 ```
 
 ### delete() return value {#backend-delete}

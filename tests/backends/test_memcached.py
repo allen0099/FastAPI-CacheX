@@ -661,18 +661,18 @@ def test_legal_keys_are_left_alone() -> None:
     """Entries written by earlier versions must stay readable."""
     backend = stubbed_backend()
 
-    assert backend._make_key("GET|||localhost|||/users/1|||") == (
-        "fastapi_cachex:GET|||localhost|||/users/1|||"
+    assert backend._make_key("http:v2|GET|localhost|/users/1|") == (
+        "fastapi_cachex:http:v2|GET|localhost|/users/1|"
     )
 
 
 @pytest.mark.parametrize(
     "key",
     [
-        "GET|||localhost|||/foo bar|||",  # ASGI percent-decodes the path
-        "GET|||localhost|||/café|||",  # non-ASCII path
-        "GET|||localhost|||/x|||\n",  # control character
-        "GET|||localhost|||/search|||q=" + "a" * 400,  # over 250 bytes
+        "http:v2|GET|localhost|/foo bar|",  # ASGI percent-decodes the path
+        "http:v2|GET|localhost|/café|",  # non-ASCII path
+        "http:v2|GET|localhost|/x|\n",  # control character
+        "http:v2|GET|localhost|/search|q=" + "a" * 400,  # over 250 bytes
     ],
 )
 def test_keys_memcached_would_refuse_are_hashed(key: str) -> None:
@@ -692,9 +692,9 @@ def test_keys_memcached_would_refuse_are_hashed(key: str) -> None:
 @pytest.mark.parametrize(
     "key",
     [
-        "GET|||localhost|||/foo bar|||",
-        "GET|||localhost|||/café|||",
-        "GET|||localhost|||/search|||q=" + "a" * 1024,
+        "http:v2|GET|localhost|/foo bar|",
+        "http:v2|GET|localhost|/café|",
+        "http:v2|GET|localhost|/search|q=" + "a" * 1024,
     ],
 )
 async def test_illegal_keys_round_trip_through_the_server(

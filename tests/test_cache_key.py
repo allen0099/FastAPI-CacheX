@@ -108,7 +108,7 @@ class TestCacheKeyGeneration:
     def test_cache_key_with_ipv6_address(self):
         """Test cache key parsing with IPv6 address containing colons."""
         # IPv6 addresses contain multiple colons, test that our separator doesn't break this
-        cache_key = f"GET{CACHE_KEY_SEPARATOR}[::1]:8000{CACHE_KEY_SEPARATOR}/api/data{CACHE_KEY_SEPARATOR}"
+        cache_key = f"http:v2{CACHE_KEY_SEPARATOR}GET{CACHE_KEY_SEPARATOR}[::1]:8000{CACHE_KEY_SEPARATOR}/api/data{CACHE_KEY_SEPARATOR}"
         method, host, path, query_params = _key_parts(cache_key)
 
         assert method == "GET"
@@ -122,7 +122,7 @@ class TestCacheKeyParsing:
 
     def test_parse_valid_cache_key(self):
         """Test parsing a valid cache key."""
-        cache_key = f"GET{CACHE_KEY_SEPARATOR}localhost:8000{CACHE_KEY_SEPARATOR}/api/test{CACHE_KEY_SEPARATOR}id=123"
+        cache_key = f"http:v2{CACHE_KEY_SEPARATOR}GET{CACHE_KEY_SEPARATOR}localhost:8000{CACHE_KEY_SEPARATOR}/api/test{CACHE_KEY_SEPARATOR}id=123"
         method, host, path, query_params = _key_parts(cache_key)
 
         assert method == "GET"
@@ -132,7 +132,7 @@ class TestCacheKeyParsing:
 
     def test_parse_cache_key_without_query_params(self):
         """Test parsing cache key without query parameters."""
-        cache_key = f"POST{CACHE_KEY_SEPARATOR}127.0.0.1:3000{CACHE_KEY_SEPARATOR}/api/create{CACHE_KEY_SEPARATOR}"
+        cache_key = f"http:v2{CACHE_KEY_SEPARATOR}POST{CACHE_KEY_SEPARATOR}127.0.0.1:3000{CACHE_KEY_SEPARATOR}/api/create{CACHE_KEY_SEPARATOR}"
         method, host, path, query_params = _key_parts(cache_key)
 
         assert method == "POST"
@@ -142,7 +142,7 @@ class TestCacheKeyParsing:
 
     def test_parse_cache_key_with_complex_host(self):
         """Test parsing cache key with complex host (subdomain + port)."""
-        cache_key = f"GET{CACHE_KEY_SEPARATOR}api.example.com:443{CACHE_KEY_SEPARATOR}/v1/users{CACHE_KEY_SEPARATOR}limit=10"
+        cache_key = f"http:v2{CACHE_KEY_SEPARATOR}GET{CACHE_KEY_SEPARATOR}api.example.com:443{CACHE_KEY_SEPARATOR}/v1/users{CACHE_KEY_SEPARATOR}limit=10"
         method, host, path, query_params = _key_parts(cache_key)
 
         assert method == "GET"
@@ -160,7 +160,7 @@ class TestCacheKeyParsing:
 
     def test_cache_key_separator_constant(self):
         """Test that CACHE_KEY_SEPARATOR constant is correctly defined."""
-        assert CACHE_KEY_SEPARATOR == "|||"
+        assert CACHE_KEY_SEPARATOR == "|"
         # Verify it doesn't conflict with common URL characters
         assert ":" not in CACHE_KEY_SEPARATOR
         assert "/" not in CACHE_KEY_SEPARATOR
@@ -237,10 +237,10 @@ class TestCacheKeyDifferentiation:
 
 
 class TestCacheKeySeparatorInComponents:
-    """A ``|||`` in the Host header or path must not shift the key components."""
+    """A ``|`` in the Host header or path must not shift the key components."""
 
     def test_host_header_cannot_poison_another_path(self) -> None:
-        """Host ``h|||/p`` + path ``/x`` used to share a key with path ``/p|||/x``."""
+        """Host ``h|/p`` + path ``/x`` would share a key with path ``/p|/x`` unescaped."""
         app = FastAPI()
         backend = MemoryBackend()
         BackendProxy.set(backend)
@@ -251,11 +251,11 @@ class TestCacheKeySeparatorInComponents:
             return {"p": p}
 
         client = TestClient(app)
-        poisoned = client.get("/x", headers={"host": "testserver|||/p"})
+        poisoned = client.get("/x", headers={"host": "testserver|/p"})
         assert poisoned.json() == {"p": "x"}
 
-        victim = client.get("/p%7C%7C%7C/x")
-        assert victim.json() == {"p": "p|||/x"}
+        victim = client.get("/p%7C/x")
+        assert victim.json() == {"p": "p|/x"}
         assert len(backend.cache) == 2
 
     def test_percent_is_encoded_so_the_encoding_is_unambiguous(self) -> None:
@@ -275,8 +275,8 @@ class TestCacheKeySeparatorInComponents:
             }
             return default_key_builder(Request(scope))
 
-        assert key_for("/a|") == "GET|||h|||/a%7C|||"
-        assert key_for("/a%7C") == "GET|||h|||/a%257C|||"
+        assert key_for("/a|") == "http:v2|GET|h|/a%7C|"
+        assert key_for("/a%7C") == "http:v2|GET|h|/a%257C|"
 
     def test_ordinary_keys_are_unchanged(self) -> None:
         """Only components with ``|`` or ``%`` change, so existing entries still hit."""
@@ -292,7 +292,7 @@ class TestCacheKeySeparatorInComponents:
         client = TestClient(app, base_url="http://127.0.0.1:8000")
         client.get("/api/items", params={"q": "a|b%c"})
         assert list(backend.cache) == [
-            "GET|||127.0.0.1:8000|||/api/items|||q=a%7Cb%25c"
+            "http:v2|GET|127.0.0.1:8000|/api/items|q=a%7Cb%25c"
         ]
 
     def test_escape_round_trips_and_never_contains_the_separator(self) -> None:
@@ -308,6 +308,7 @@ class TestCacheKeySeparatorInComponents:
         """The monitoring routes show the host and path as the client sent them."""
         key = CACHE_KEY_SEPARATOR.join(
             [
+                "http:v2",
                 "GET",
                 escape_key_component("evil|||host"),
                 escape_key_component("/p|||/100%"),

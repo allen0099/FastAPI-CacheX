@@ -26,7 +26,7 @@ from tests.live_servers import requires_redis
 
 def _key(path: str) -> str:
     """The key `default_key_builder` produces for a TestClient GET."""
-    return f"GET|||testserver|||{path}|||"
+    return f"http:v2|GET|testserver|{path}|"
 
 
 def test_returned_error_is_not_cached_and_keeps_its_status():

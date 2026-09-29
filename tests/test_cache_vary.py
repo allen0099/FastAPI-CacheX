@@ -19,7 +19,7 @@ from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
 
-BASE_KEY = "GET|||testserver|||/greet|||"
+BASE_KEY = "http:v2|GET|testserver|/greet|"
 
 
 def _app(**cache_kwargs: Any) -> tuple[TestClient, dict[str, int]]:
@@ -47,8 +47,8 @@ async def test_each_header_value_gets_its_own_entry() -> None:
     assert de_again.json() == {"lang": "de", "n": 1}
     assert calls["n"] == 2
     assert sorted(await BackendProxy.get().get_all_keys()) == [
-        f"{BASE_KEY}|||accept-language=de",
-        f"{BASE_KEY}|||accept-language=en",
+        f"{BASE_KEY}|accept-language=de",
+        f"{BASE_KEY}|accept-language=en",
     ]
 
 
@@ -75,8 +75,8 @@ async def test_values_are_trimmed_joined_and_escaped() -> None:
     )
 
     assert sorted(await BackendProxy.get().get_all_keys()) == [
-        f"{BASE_KEY}|||accept-language=de|||x-variant=",
-        f"{BASE_KEY}|||accept-language=fr,en|||x-variant=a%7C%7C%7Cb",
+        f"{BASE_KEY}|accept-language=de|x-variant=",
+        f"{BASE_KEY}|accept-language=fr,en|x-variant=a%7C%7C%7Cb",
     ]
 
 
@@ -87,7 +87,7 @@ async def test_missing_and_empty_headers_share_an_entry() -> None:
     client.get("/greet", headers={"Accept-Language": ""})
 
     assert calls["n"] == 1
-    assert await BackendProxy.get().get_all_keys() == [f"{BASE_KEY}|||accept-language="]
+    assert await BackendProxy.get().get_all_keys() == [f"{BASE_KEY}|accept-language="]
 
 
 async def test_vary_components_follow_a_custom_key_builder() -> None:
@@ -98,7 +98,7 @@ async def test_vary_components_follow_a_custom_key_builder() -> None:
     client.get("/greet", headers={"Accept-Language": "de"})
 
     assert await BackendProxy.get().get_all_keys() == [
-        f"{BASE_KEY}|||tenant-1|||accept-language=de"
+        f"{BASE_KEY}|tenant-1|accept-language=de"
     ]
 
 
@@ -136,9 +136,7 @@ async def test_invalidate_deletes_the_requested_variant() -> None:
     result = client.post("/greet", headers={"Accept-Language": "de"}).json()
 
     assert result == {"without_vary": False, "with_vary": True}
-    assert await BackendProxy.get().get_all_keys() == [
-        f"{BASE_KEY}|||accept-language=en"
-    ]
+    assert await BackendProxy.get().get_all_keys() == [f"{BASE_KEY}|accept-language=en"]
 
 
 def test_vary_header_on_miss_hit_and_304() -> None:
@@ -282,7 +280,7 @@ async def test_invalid_vary_is_rejected_by_invalidate() -> None:
 
 TOKEN_A = "Bearer secret-token-a"
 TOKEN_B = "Bearer secret-token-b"
-ME_KEY = "GET|||testserver|||/me|||"
+ME_KEY = "http:v2|GET|testserver|/me|"
 
 
 def _digest(value: str) -> str:
@@ -323,8 +321,8 @@ async def test_authorization_value_is_hashed_everywhere_the_key_shows() -> None:
     keys = await BackendProxy.get().get_all_keys()
     assert sorted(keys) == sorted(
         [
-            f"{ME_KEY}|||authorization={_digest(TOKEN_A)}",
-            f"{ME_KEY}|||authorization={_digest(TOKEN_B)}",
+            f"{ME_KEY}|authorization={_digest(TOKEN_A)}",
+            f"{ME_KEY}|authorization={_digest(TOKEN_B)}",
         ]
     )
     records = client.get("/cache/cached-records").text
@@ -351,7 +349,7 @@ async def test_credential_headers_are_hashed_in_any_case(
     client.get("/me", headers={header.upper(): "  s3cret  "})
 
     assert await BackendProxy.get().get_all_keys() == [
-        f"{ME_KEY}|||{header}={_digest('s3cret')}"
+        f"{ME_KEY}|{header}={_digest('s3cret')}"
     ]
 
 
@@ -368,7 +366,7 @@ async def test_cookie_is_hashed_with_repeated_lines_joined() -> None:
     client.get("/me", headers=[("Cookie", "sid=abc"), ("Cookie", " theme=dark ")])
 
     assert await BackendProxy.get().get_all_keys() == [
-        f"{ME_KEY}|||cookie={_digest('sid=abc,theme=dark')}"
+        f"{ME_KEY}|cookie={_digest('sid=abc,theme=dark')}"
     ]
 
 
@@ -379,7 +377,7 @@ async def test_missing_or_empty_credential_header_gives_the_empty_component() ->
     client.get("/me", headers={"Authorization": "   "})
 
     assert calls["n"] == 1
-    assert await BackendProxy.get().get_all_keys() == [f"{ME_KEY}|||authorization="]
+    assert await BackendProxy.get().get_all_keys() == [f"{ME_KEY}|authorization="]
 
 
 async def test_authorization_in_vary_still_bypasses_without_opt_in() -> None:
@@ -390,7 +388,7 @@ async def test_authorization_in_vary_still_bypasses_without_opt_in() -> None:
     client.get("/me")
 
     assert calls["n"] == 3
-    assert await BackendProxy.get().get_all_keys() == [f"{ME_KEY}|||authorization="]
+    assert await BackendProxy.get().get_all_keys() == [f"{ME_KEY}|authorization="]
 
 
 async def test_non_credential_headers_stay_readable() -> None:
@@ -399,7 +397,7 @@ async def test_non_credential_headers_stay_readable() -> None:
     client.get("/me", headers={"X-Tenant": "acme", "Authorization": TOKEN_A})
 
     assert await BackendProxy.get().get_all_keys() == [
-        f"{ME_KEY}|||x-tenant=acme|||authorization={_digest(TOKEN_A)}"
+        f"{ME_KEY}|x-tenant=acme|authorization={_digest(TOKEN_A)}"
     ]
 
 
@@ -414,7 +412,7 @@ async def test_invalidate_deletes_the_hashed_variant() -> None:
     assert deleted == {"deleted": True}
     assert again == {"deleted": False}
     assert await BackendProxy.get().get_all_keys() == [
-        f"{ME_KEY}|||authorization={_digest(TOKEN_B)}"
+        f"{ME_KEY}|authorization={_digest(TOKEN_B)}"
     ]
 
 
