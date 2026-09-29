@@ -13,6 +13,7 @@ from fastapi.security import HTTPBearer
 
 from fastapi_cachex.exceptions import ProxyNotSetError
 
+from .middleware import _SESSION_READ_KEY
 from .middleware import _log_in
 from .middleware import _RequestSession
 from .middleware import get_client_ip
@@ -53,6 +54,17 @@ def get_optional_session(
     Returns:
         Session object or None if not authenticated
     """
+    return _read_session(request)
+
+
+def _read_session(request: Request) -> Session | None:
+    """The session the middleware loaded for ``request``, or None.
+
+    Records the read, so the session middleware adds ``Vary`` for the headers
+    the token may come from: the response depends on them even when the
+    handler never touches ``request.session`` (#372).
+    """
+    setattr(request.state, _SESSION_READ_KEY, True)
     return getattr(request.state, "__fastapi_cachex_session", None)
 
 
@@ -77,7 +89,7 @@ def get_session(
     Raises:
         HTTPException: 401 if session not found
     """
-    session: Session | None = getattr(request.state, "__fastapi_cachex_session", None)
+    session = _read_session(request)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -149,6 +149,16 @@ def _read_header_token(
     return None, consulted
 
 
+# Set on the request state when a session dependency reads the loaded session,
+# so the middleware knows the response depends on the token sources (#372).
+_SESSION_READ_KEY = "__fastapi_cachex_session_read"
+
+
+def _session_was_read(connection: HTTPConnection) -> bool:
+    """Whether a session dependency read the session for this request."""
+    return bool(connection.scope.get("state", {}).get(_SESSION_READ_KEY))
+
+
 def _forbid_storing(headers: MutableHeaders) -> None:
     """Keep a response that carries a session token out of every cache.
 
@@ -316,9 +326,10 @@ class SessionMiddleware(BaseHTTPMiddleware):
             # Propagate renewed token to client so its JWT exp stays in sync
             response_token = renewed_token
 
+        if response_token is not None or _session_was_read(request):
+            add_vary(response.headers, _read_header_token(request, self.config)[1])
         if response_token is not None:
             response.headers[self.config.header_name] = response_token
-            add_vary(response.headers, _read_header_token(request, self.config)[1])
             _forbid_storing(response.headers)
 
         return response
@@ -503,7 +514,7 @@ class FastAPICacheXSessionMiddleware:
                     from_header=from_header,
                 )
 
-                if session.accessed or sent_token:
+                if session.accessed or sent_token or _session_was_read(connection):
                     add_vary(headers, vary_on)
                 if sent_token:
                     _forbid_storing(headers)

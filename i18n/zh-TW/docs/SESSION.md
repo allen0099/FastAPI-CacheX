@@ -120,9 +120,9 @@ async def me(session=Depends(require_user_session)):
 - 在已載入的 Session 上清除它（`request.session.clear()`）即為登出：即使資料原本就是空的，也會刪除後端的 Session；Cookie 用戶端還會收到一個使 Cookie 過期的 `Set-Cookie`。同一個請求中在 `clear()` 之後寫入的鍵，會存進一個使用新 ID 的新匿名 Session。
 - 以 `del` 或 `pop()` 移除最後一個鍵並不是登出。帶有使用者的 Session 會以空資料儲存；匿名 Session 已無任何內容，會和 `clear()` 一樣被刪除。
 - 以寫入 `request.session` 的方式登入時，會沿用請求帶來的 Session ID。Starlette 的中介軟體中 Cookie *就是* Session，因此登入回應會取代任何被植入的 Cookie；這裡的 Cookie 只是指向伺服器端紀錄的名稱，被植入的 Cookie 會跟著受害者一起登入。請以 `await login(request, user)` 登入，它會為 Session 換一個新 ID 並附加使用者（見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)）。
-- 只要存取 `request.session`，就會為了尋找權杖而讀取過的每個請求標頭加入 `Vary`：依 `token_source_priority` 順序檢查的標頭（`header_name`，以及啟用 Bearer 權杖時的 `Authorization`），直到攜帶權杖的那一個為止。只有在沒有任何標頭攜帶權杖時才會讀取 Cookie，因此也只有這時才會加入 `Cookie`。
+- 只要存取 `request.session`，或透過 Session 依賴項（`get_session`、`get_optional_session`，以及建立在它們之上的依賴項，例如 `AuthenticatedSession`）讀取 Session，就會為了尋找權杖而讀取過的每個請求標頭加入 `Vary`：依 `token_source_priority` 順序檢查的標頭（`header_name`，以及啟用 Bearer 權杖時的 `Authorization`），直到攜帶權杖的那一個為止。只有在沒有任何標頭攜帶權杖時才會讀取 Cookie，因此也只有這時才會加入 `Cookie`。
 - 帶有 Session 權杖的回應（新建立的 Session、滑動續期、重新產生的 ID），或帶有讓 Session Cookie 失效之 `Set-Cookie` 的回應，一律不可快取。中介軟體會設定 `Cache-Control: private, no-store`，取代路由原本設定的值（包括 `@cache(public=True)` 的路由），並且即使處理函式沒有碰過 `request.session`，也會加入與上一項相同的 `Vary` 名稱。否則 CDN 或反向 proxy 可能存下權杖，再交給下一位訪客。不帶權杖的回應則維持原本的標頭。已棄用的 `SessionMiddleware` 在回應標頭送出權杖時也會這麼做。
-- 對帶有 Session 的請求（中介軟體從任何來源載入的 Session，有沒有使用者都算，或不是空的 `request.session`），`@cache` 不會讀寫後端，並像 `Authorization` 一樣以 `private` 回應。`public=True` 讓路由在各 Session 間共用；`cache_authorized=True` 搭配包含 Session 使用者的 `key_builder` 則依使用者快取。見[需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
+- 對帶有 Session 的請求（中介軟體從任何來源載入的 Session，有沒有使用者都算，或不是空的 `request.session`），`@cache` 不會讀寫後端，並像 `Authorization` 一樣以 `private` 回應。`public=True` 讓路由在各 Session 間共用；`cache_authorized=True` 搭配包含 Session 使用者的 `key_builder` 則依使用者快取，回應仍帶有 `private`。見[需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
 
 Cookie 一律為 `HttpOnly`；`Secure`、`SameSite`、`Domain`、`Path` 與 `Max-Age` 則依 `cookie_*` 設定（`cookie_max_age=None` 或 `0` 時不設 `Max-Age`）。
 

@@ -73,11 +73,11 @@ def test_request_without_credentials_is_unchanged() -> None:
     ("cache_kwargs", "expected"),
     [
         ({"ttl": 0, "public": True}, "public, max-age=0"),
-        ({"ttl": 0, "cache_authorized": True}, "max-age=0"),
+        ({"ttl": 0, "cache_authorized": True}, "private, max-age=0"),
         ({"ttl": 0, "private": True}, "private, max-age=0"),
     ],
 )
-def test_public_opted_in_and_private_routes_are_unchanged(
+def test_public_opted_in_and_private_routes(
     cache_kwargs: dict[str, object], expected: str
 ) -> None:
     response = _client(**cache_kwargs).get("/me", headers=_AUTH)

@@ -87,7 +87,7 @@ GET /items  → 200, Cache-Control: max-age=60, Age: 42（儲存後 42 秒送出
 
 屬於單一呼叫者的回應同樣不會被儲存（#296）：
 
-- **請求帶有 `Authorization` 或 Session。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限，設定 `cache_authorized=True` 的路由也一樣；後者是給包含呼叫者身分的 key builder 使用的明確選項（見[需驗證身分的端點](#authenticated-endpoints)）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。沒有正數 `ttl` 的路由本來就不經過後端，但它對這類請求的回應仍會加上 `private`（0.3.9 以前不會加，#362）；`private=True` 的路由本來就會送出 `private`。請求「帶有 Session」是指 `FastAPICacheXSessionMiddleware`（或已棄用的 `SessionMiddleware`）為它載入了 Session（權杖來自標頭、Bearer 權杖或 Session Cookie 皆可，有沒有使用者都算），或在任何 Session 中介軟體（包括 Starlette 的）下 `request.session` 不是空的。解析不出 Session 的權杖（偽造、過期）不算，因此無法用來略過快取。0.3.9 以前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。會讀取後端的路由第一次繞過時，會以 `WARNING` 等級記錄（見[帶有憑證的請求](#requests-with-credentials)）。
+- **請求帶有 `Authorization` 或 Session。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限。設定 `cache_authorized=True`（給包含呼叫者身分的 key builder 使用的明確選項，見[需驗證身分的端點](#authenticated-endpoints)）的路由會為這類請求讀寫後端，但回應仍帶有 `private`：項目只在後端依呼叫者區分，CDN 則只以 URL 為鍵（0.3.9 以前會原樣送出裝飾器的標頭，#372）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。沒有正數 `ttl` 的路由本來就不經過後端，但它對這類請求的回應仍會加上 `private`（0.3.9 以前不會加，#362）；`private=True` 的路由本來就會送出 `private`。請求「帶有 Session」是指 `FastAPICacheXSessionMiddleware`（或已棄用的 `SessionMiddleware`）為它載入了 Session（權杖來自標頭、Bearer 權杖或 Session Cookie 皆可，有沒有使用者都算），或在任何 Session 中介軟體（包括 Starlette 的）下 `request.session` 不是空的。解析不出 Session 的權杖（偽造、過期）不算，因此無法用來略過快取。0.3.9 以前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。會讀取後端的路由第一次繞過時，會以 `WARNING` 等級記錄（見[帶有憑證的請求](#requests-with-credentials)）。
 - **handler 自己的 `Cache-Control` 含有 `private` 或 `no-store`**（完整指令，不分大小寫）。回應照常送出但不儲存，而且 handler 的標頭會原樣送出，不會被裝飾器的標頭取代。
 - **回應設定了 cookie。** 回應照常送出（包含 `Set-Cookie`），但不儲存；它（以及 304）會以 `private` 取代 `public` 送出並保留其他指令，讓下游的共用快取也不會儲存它。
 
@@ -100,7 +100,7 @@ handler 回傳一般資料而非 `Response` 時，得到的處理與沒有 `@cac
 每個請求都送出 `Authorization` 的單頁應用程式，或每位訪客都有 Session 的網站，在只加上 `@cache` 的路由上完全不會命中快取：每個請求都會繞過後端（見上文）。請依 handler 回傳的內容選擇：
 
 - **每位使用者得到相同的回應**（商品列表、公開文章）：設定 `public=True`。帶有 `Authorization` 或 Session 的請求就會像其他請求一樣讀寫後端。注意 `public=True` 也會把送往下游的標頭改為 `Cache-Control: public, ...`，告訴 CDN 或反向 proxy 即使請求帶有憑證也可以儲存這個回應。只有在這確實成立時才使用它。
-- **回應依使用者而不同**（個人資料、購物車、儀表板）：設定 `cache_authorized=True`，並搭配把已驗證的呼叫者身分放進鍵的 `key_builder`，讓每位使用者擁有自己的項目（見[需驗證身分的端點](#authenticated-endpoints)）。鍵中沒有身分時，一位使用者的回應會提供給下一位。若不需要伺服器端快取，兩個選項都不要設定（或使用 `private=True`），只讓瀏覽器快取它。
+- **回應依使用者而不同**（個人資料、購物車、儀表板）：設定 `cache_authorized=True`，並搭配把已驗證的呼叫者身分放進鍵的 `key_builder`，讓每位使用者擁有自己的項目（見[需驗證身分的端點](#authenticated-endpoints)）。鍵中沒有身分時，一位使用者的回應會提供給下一位。回應仍以 `private` 送出，因此下游只有使用者自己的瀏覽器會保留一份。若不需要伺服器端快取，兩個選項都不要設定（或使用 `private=True`），只讓瀏覽器快取它。
 
 為了不讓 0% 的命中率無人察覺，路由第一次因憑證而繞過後端時，會在 `fastapi_cachex.cache` logger 上以 `WARNING` 等級記錄一次，內容包含路由樣板（例如 `'/items/{item_id}'`）、造成繞過的憑證（`Authorization` 標頭、Session 權杖，或不是空的 `request.session` 資料），以及上述兩個選項：
 
@@ -303,7 +303,7 @@ warnings.filterwarnings("ignore", message="cache vary on Cookie")
 > 若呼叫者以你自己的 Cookie（而非本函式庫的 Session）驗證身分，沒有任何條件會觸發繞過：只加上 `@cache` 會把第一位呼叫者的回應提供給所有人，請改用上面兩種做法之一。
 
 ```python
-from fastapi import Request, Response
+from fastapi import Request
 
 from fastapi_cachex import build_cache_key
 from fastapi_cachex import cache
@@ -327,15 +327,14 @@ def per_user_key(request: Request) -> str:
 
 @app.get("/me/dashboard")
 @cache(ttl=60, key_builder=per_user_key, cache_authorized=True)
-async def my_dashboard(user: CurrentUser, response: Response):
-    # 沒有 `private` 時，回應會帶著 `Cache-Control: max-age=60` 送出，
-    # 共用快取（CDN、反向代理）可能會儲存它。對承載身分的標頭設定 Vary，
-    # 讓這類快取為每位使用者各保留一份。
-    response.headers["Vary"] = "Authorization"
+async def my_dashboard(user: CurrentUser):
+    # 對帶有 `Authorization` 或 Session 的請求，以
+    # `Cache-Control: private, max-age=60` 送出：只有這個後端與
+    # 使用者的瀏覽器會保留一份。
     return build_dashboard(user)
 ```
 
-依使用者區分的項目要不被應用程式前方的共用快取交給其他使用者，前提是這些快取會遵守該標頭的 `Vary`。若它們不遵守，或身分來自共用快取看不到的地方，請改用做法 1。
+依使用者區分的項目只存在於你的後端。應用程式前方的共用快取（CDN、反向代理）只看得到 URL，因此即使設定了 `cache_authorized`，對帶有 `Authorization` 或 Session 的請求的每個回應仍帶有 `private`。若身分改由你自己的 Cookie 提供，沒有任何條件會把請求標記為帶有憑證，裝飾器的標頭會原樣送出：請設定 `private=True`（做法 1），或在共用快取可能儲存它時自行送出 `Vary: Cookie`。
 
 > [!CAUTION]
 > key builder 決定了誰能看到誰的資料，因此它讀取的身分必須來自已經驗證過的來源：已檢查權杖中的 claim、你的依賴項解析出的使用者，或驗證中介軟體寫入 `request.state` 的值。
