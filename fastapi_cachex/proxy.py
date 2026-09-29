@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import warnings
 from logging import getLogger
 from typing import TYPE_CHECKING
 from typing import ClassVar
@@ -109,42 +108,6 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
     """FastAPI CacheX Proxy for backend management."""
 
     _not_set_error = BackendNotFoundError
-
-    @staticmethod
-    def get_backend() -> BaseCacheBackend:
-        """Get the current backend instance.
-
-        .. deprecated:: 0.3.0
-            Use :meth:`get` instead. Will be removed in version 0.4.0.
-
-        Returns:
-            The current backend instance
-        """
-        warnings.warn(
-            "get_backend() is deprecated, use get() instead. "
-            "Will be removed in version 0.4.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return BackendProxy.get()
-
-    @staticmethod
-    def set_backend(backend: BaseCacheBackend | None) -> None:
-        """Set the backend instance.
-
-        .. deprecated:: 0.3.0
-            Use :meth:`set` instead. Will be removed in version 0.4.0.
-
-        Args:
-            backend: The backend instance to set, or None to clear
-        """
-        warnings.warn(
-            "set_backend() is deprecated, use set() instead. "
-            "Will be removed in version 0.4.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        BackendProxy.set(backend)
 
 
 def get_backend_or_fallback() -> BaseCacheBackend:
