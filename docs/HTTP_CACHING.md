@@ -111,6 +111,29 @@ When a cached entry is valid (within TTL):
 - **Without `ttl`** (`ttl=None`): Nothing is read from or written to the backend, as with `private=True`. The handler runs on every request, and `If-None-Match` gets a 304 only when it matches the freshly rendered response, so an old ETag never gets a 304 once the content has changed
 - **With `ttl=0`**: Sends `max-age=0` and otherwise behaves like `ttl=None`. A negative `ttl`, a non-`int` one (such as `1.5` or `True`) and one above `MAX_TTL` (see [TTL values](BACKENDS.md#ttl-values)) are rejected with `CacheXError` when the decorator is applied
 
+### The `Age` header
+
+A response served from a stored entry carries an `Age` header: the whole
+number of seconds since `@cache` stored it (RFC 9111 §5.1). That covers a
+cache hit and a 304 answered from the stored entry's ETag. `Cache-Control`
+still says `max-age=<ttl>`, and a browser or CDN subtracts `Age` from it
+(RFC 9111 §4.2.3), so a response stored 50 seconds into a 60-second ttl is
+reused downstream for at most 10 more seconds. Without `Age`, a hit just
+before the entry expired restarted the downstream clock, and the content could
+be reused for up to twice the ttl.
+
+```
+GET /items  → 200, Cache-Control: max-age=60, no Age (the handler ran)
+GET /items  → 200, Cache-Control: max-age=60, Age: 42 (served 42 s after it was stored)
+```
+
+The time an entry was stored comes from the wall clock of the process that
+stored it and is read by whichever process serves it, so `Age` is clamped to
+`0`–`ttl` in case two hosts' clocks disagree. No `Age` is sent when the handler
+runs (a miss, `no_cache=True`, a bypassed request) or for an entry stored by
+a release before 0.3.9, which does not record the time. An `Age` header the
+handler sets itself is not stored.
+
 Only successful responses are stored. A response the handler *returns* with a
 non-2xx status (for example `Response(..., status_code=404)`) is passed straight
 through and never cached, so a transient error cannot replace or poison the last

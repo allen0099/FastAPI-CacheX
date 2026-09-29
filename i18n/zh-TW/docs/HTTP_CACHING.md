@@ -89,6 +89,17 @@ async def items(): ...
 - **未設定 `ttl`**（`ttl=None`）：與 `private=True` 相同，不從後端讀取，也不寫入。每個請求都會執行 handler，只有當 `If-None-Match` 與新產生的回應相符時才回 304，因此內容變更後，舊的 ETag 永遠不會得到 304
 - **使用 `ttl=0`**：送出 `max-age=0`，其餘行為與 `ttl=None` 相同。負數、非 `int`（例如 `1.5` 或 `True`）或超過 `MAX_TTL`（見 [TTL 值](BACKENDS.md#ttl-values)）的 `ttl`，都會在套用裝飾器時以 `CacheXError` 拒絕
 
+### `Age` 標頭 {#the-age-header}
+
+由已儲存項目回應的回應會帶有 `Age` 標頭：從 `@cache` 儲存它起經過的整數秒數（RFC 9111 §5.1）。這包括快取命中，以及依已儲存項目的 ETag 回應的 304。`Cache-Control` 仍然是 `max-age=<ttl>`，瀏覽器或 CDN 會從中扣掉 `Age`（RFC 9111 §4.2.3），因此在 60 秒 ttl 的第 50 秒時送出的回應，下游最多只會再重複使用 10 秒。沒有 `Age` 時，在項目即將過期前的命中會讓下游重新計時，內容最多可能被重複使用到 ttl 的兩倍。
+
+```
+GET /items  → 200, Cache-Control: max-age=60，沒有 Age（handler 有執行）
+GET /items  → 200, Cache-Control: max-age=60, Age: 42（儲存後 42 秒送出）
+```
+
+項目的儲存時間取自儲存它的行程的系統時鐘，而由送出它的行程讀取，因此 `Age` 會限制在 `0`–`ttl` 之間，以防兩台主機的時鐘不一致。handler 有執行時（未命中、`no_cache=True`、繞過後端的請求）不會送出 `Age`；0.3.9 以前的版本儲存的項目沒有記錄時間，也不會送出。handler 自己設定的 `Age` 標頭不會被儲存。
+
 只有成功的回應會被儲存。handler *回傳* 非 2xx 狀態的回應（例如 `Response(..., status_code=404)`）會原樣傳出、永不快取，因此暫時性的錯誤不會取代或污染上一筆正常的項目。`206 Partial Content` 同樣排除在外，因為它的本文只對產生它的那個 `Range` 請求有意義。
 
 屬於單一呼叫者的回應同樣不會被儲存（#296）：

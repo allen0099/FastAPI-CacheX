@@ -28,12 +28,12 @@ Read the backend entry
     ↓
 Request carries If-None-Match?
     ├─ and no-cache → run the handler first to compute the current ETag; match → 304
-    ├─ otherwise    → compare with the cached entry's ETag; match → 304
+    ├─ otherwise    → compare with the cached entry's ETag; match → 304 with Age
     └─ no match / no header → continue
     ↓
 Cached entry exists, ttl is set, and no-cache is off?
     ├─ yes → respond with the cached content (including the stored status code
-    │        and headers; the handler does **not** run)
+    │        and headers, plus Age; the handler does **not** run)
     └─ no  → run the handler
               ├─ non-2xx (or 206) → return as-is and **do not write**
               │                     (an existing good entry is not overwritten)
@@ -185,12 +185,15 @@ entry = CacheEntry(
     media_type="application/json",
     status_code=200,  # replayed with the original status code
     headers={"Vary": "Accept-Encoding"},  # headers sent back on replay
+    stored_at=1702650540.5,  # epoch seconds when @cache stored it; drives Age
 )
 ```
 
 The TTL is not stored in `CacheEntry`: expiry is the backend's responsibility
 (`MemoryBackend` keeps it in `CacheItem.expiry`, Redis uses `SET ... EX`,
-Memcached uses the exptime).
+Memcached uses the exptime). `stored_at` is wall-clock time (`time.time()`),
+since the process that serves an entry may not be the one that stored it; it
+is `None` for entries written by releases before 0.3.9.
 
 If no backend has been configured with `BackendProxy.set()`, the decorator
 creates a `MemoryBackend` on the first request, registers it and logs a
@@ -217,14 +220,15 @@ if client_etag and no_cache:
     if etag_matches(client_etag, fresh.etag):
         return not_modified(...)             # 304
 elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
-    return not_modified(...)                 # 304, handler does not run
+    return not_modified(..., age_headers(entry, ttl))  # 304, handler does not run
 
 if entry and not no_cache:
     return Response(                         # 200, handler does not run
         content=entry.content,
         status_code=entry.status_code,
         media_type=entry.media_type,
-        headers={**(entry.headers or {}), "ETag": entry.fingerprint, ...},
+        headers={**(entry.headers or {}), "ETag": entry.fingerprint, ...,
+                 **age_headers(entry, ttl)},  # Age: now - stored_at, clamped to 0..ttl
     )
 
 response, body, etag = await render()        # miss (reused if no-cache already rendered)
@@ -235,9 +239,17 @@ if etag is None:
 if marked_private_or_no_store(response) or "set-cookie" in response.headers:
     return response                          # one caller's response: not written
 if not entry or entry.fingerprint != etag:
-    await backend.set(cache_key, CacheEntry(...), ttl=ttl)
+    await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
 return response
 ```
+
+> [!NOTE]
+> **`Age` on responses served from the backend.** A hit and a 304 answered from
+> the stored ETag carry `Age: <seconds since stored_at>`, clamped to `0`–`ttl`
+> against clock skew between hosts; `Cache-Control` keeps `max-age=<ttl>`, and
+> a downstream cache subtracts `Age` from it (RFC 9111 §4.2.3). Responses the
+> handler just rendered, including every `no_cache` response and every bypass,
+> carry no `Age`, and neither do entries without `stored_at`.
 
 > [!NOTE]
 > "Non-2xx is not written" is deliberate: a transient error must not wipe out
@@ -307,6 +319,7 @@ intermediate cache would lose those fields after revalidation (RFC 9110
             media_type="application/json",
             status_code=200,
             headers=None,
+            stored_at=1702650540.5,
         ),
         expiry=1702650600.5,  # epoch seconds; None means never expires
     ),
@@ -334,7 +347,8 @@ and the standard library `json` otherwise:
   "content": "<response bytes decoded as latin-1>",
   "media_type": "application/json",
   "status_code": 200,
-  "headers": {"Vary": "Accept-Encoding"}
+  "headers": {"Vary": "Accept-Encoding"},
+  "stored_at": 1702650540.5
 }
 ```
 
@@ -342,7 +356,9 @@ and the standard library `json` otherwise:
   onto bytes, so any byte sequence can be placed in JSON text and recovered
   unchanged.
 - Entries written by older releases, without the `status_code`/`headers`
-  fields, remain readable and decode to `200` with no extra headers.
+  fields, remain readable and decode to `200` with no extra headers. Those
+  without `stored_at` (before 0.3.9) decode with `stored_at=None` and are
+  served without an `Age` header.
 - Any decode failure (broken JSON, missing fields, wrong types) is treated as a
   **cache miss** and returns `None` instead of raising.
 - `increment()` leaves a **bare integer** behind (written by the Redis/Memcached
