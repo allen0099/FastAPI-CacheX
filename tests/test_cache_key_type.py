@@ -1,6 +1,7 @@
 """``CacheKey`` is the one encoder and decoder of HTTP cache keys (#270)."""
 
 import dataclasses
+import fnmatch
 
 import pytest
 from fastapi import Request
@@ -63,7 +64,7 @@ def test_build_cache_key_format_is_pinned() -> None:
     request = _request("/p|q", b"b=2&a=1", "Host|||x")
 
     assert build_cache_key(request, "a|b", 100, sort_query=True) == (
-        "GET|||Host%7C%7C%7Cx|||/p%7Cq|||a=1&b=2|||a%7Cb|||100"
+        "http:v2|GET|Host%7C%7C%7Cx|/p%7Cq|a=1&b=2|a%7Cb|100"
     )
 
 
@@ -72,6 +73,7 @@ def test_to_str_escapes_every_component_but_the_query() -> None:
 
     assert key.to_str() == SEP.join(
         [
+            "http:v2",
             "G%7CT%25",
             "evil%7C%7C%7Chost",
             "/p%7C%7C%7C/100%25",
@@ -94,19 +96,16 @@ def test_parse_reverses_to_str(key: CacheKey) -> None:
     assert CacheKey.parse(key.to_str()) == key
 
 
-def test_parse_reads_a_key_that_ends_at_the_path() -> None:
-    assert CacheKey.parse(f"GET{SEP}example.com{SEP}/items") == CacheKey(
-        "GET", "example.com", "/items", ""
-    )
-
-
 @pytest.mark.parametrize(
     "key",
     [
-        "cache:user:1",
-        "oauth_state:abc",
-        f"GET{SEP}example.com",
-        f"{SEP}example.com{SEP}/items{SEP}",
+        pytest.param("cache:user:1", id="cache-manager"),
+        pytest.param("oauth_state:abc", id="state-manager"),
+        pytest.param("GET|||example.com|||/items|||", id="0.3.x"),
+        pytest.param("http:v1|GET|example.com|/items|", id="other-tag"),
+        pytest.param("GET|example.com|/items|", id="no-tag"),
+        pytest.param("http:v2|GET|example.com|/items", id="no-query"),
+        pytest.param("http:v2||example.com|/items|", id="no-method"),
     ],
 )
 def test_parse_returns_none_for_keys_that_are_not_http_keys(key: str) -> None:
@@ -132,7 +131,7 @@ def test_a_method_with_the_separator_is_escaped_not_rejected() -> None:
 
     key = build_cache_key(request)
 
-    assert key == SEP.join(["A%7C%7C%7CB", "h", "/p", ""])
+    assert key == SEP.join(["http:v2", "A%7C%7C%7CB", "h", "/p", ""])
     assert CacheKey.parse(key) == CacheKey("A|||B", "h", "/p")
 
 
@@ -145,5 +144,19 @@ def test_cache_key_is_frozen() -> None:
 
 def test_path_glob_matches_the_escaped_path_literally() -> None:
     assert CacheKey.path_glob("/files/[draft]*?\\|x%") == (
-        f"*{SEP}/files/\\[draft\\]\\*\\?\\\\%7Cx%25{SEP}*"
+        "http:v2|*|/files/\\[draft\\]\\*\\?\\\\%7Cx%25|*"
     )
+
+
+def test_format_tag_is_the_first_component() -> None:
+    assert CacheKey.FORMAT_TAG == "http:v2"
+    assert CacheKey("GET", "h", "/").to_str() == "http:v2|GET|h|/|"
+
+
+def test_path_glob_matches_only_tagged_keys_for_the_path() -> None:
+    glob = CacheKey.path_glob("/me")
+
+    assert fnmatch.fnmatchcase("http:v2|GET|h|/me|", glob)
+    assert fnmatch.fnmatchcase("http:v2|GET|h|/me|q=1|user", glob)
+    assert not fnmatch.fnmatchcase("GET|||h|||/me|||", glob)
+    assert not fnmatch.fnmatchcase("http:v1|GET|h|/me|", glob)

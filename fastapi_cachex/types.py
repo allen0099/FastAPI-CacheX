@@ -9,8 +9,14 @@ from fastapi import Request
 
 from fastapi_cachex.exceptions import CacheXError
 
-# Cache key separator - using ||| to avoid conflicts with port numbers in host (e.g., 127.0.0.1:8000)
-CACHE_KEY_SEPARATOR = "|||"
+# Separates the components of an HTTP cache key. Every client-controlled
+# component is percent-encoded first (see ``escape_key_component``), so a
+# single ``|`` is enough; the query string is URL-encoded and never has one.
+CACHE_KEY_SEPARATOR = "|"
+
+# First component of every HTTP cache key (see ``CacheKey``). 0.3.x keys had no
+# tag and used ``|||``; the next format change bumps it.
+HTTP_KEY_FORMAT_TAG = "http:v2"
 
 # Type for custom cache key builder function
 CacheKeyBuilder = Callable[[Request], str]
@@ -24,7 +30,7 @@ def escape_key_component(value: str) -> str:
     """Percent-encode ``|`` and ``%`` so ``value`` cannot contain the separator.
 
     The host header and the decoded URL path are client-controlled and may
-    contain ``|||``; left as is, one request's components could line up into
+    contain ``|``; left as is, one request's components could line up into
     another request's key. Encoding ``%`` as well keeps the mapping reversible,
     so two different values never share an encoding.
     """

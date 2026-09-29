@@ -39,9 +39,12 @@ def _request(
 
 
 def _key_before_264(request: Request) -> str:
-    """``default_key_builder`` as it was written before ``build_cache_key``."""
+    """``default_key_builder`` as it was written before ``build_cache_key``.
+
+    Only the format tag (#266) is added.
+    """
     return (
-        f"{request.method}{CACHE_KEY_SEPARATOR}"
+        f"http:v2{CACHE_KEY_SEPARATOR}{request.method}{CACHE_KEY_SEPARATOR}"
         f"{escape_key_component(request.headers.get('host', 'unknown'))}"
         f"{CACHE_KEY_SEPARATOR}"
         f"{escape_key_component(request.url.path)}{CACHE_KEY_SEPARATOR}"
@@ -69,14 +72,14 @@ def test_without_components_the_key_is_unchanged(kwargs: dict[str, object]) -> N
 def test_default_key_is_pinned() -> None:
     request = _request(path="/a|b", query=b"x=1", host="h:1")
 
-    assert build_cache_key(request) == "GET|||h:1|||/a%7Cb|||x=1"
+    assert build_cache_key(request) == "http:v2|GET|h:1|/a%7Cb|x=1"
 
 
 def test_components_are_appended_after_the_query() -> None:
     request = _request(query=b"x=1")
 
     assert build_cache_key(request, "user-1", 42) == (
-        "GET|||example.com|||/items|||x=1|||user-1|||42"
+        "http:v2|GET|example.com|/items|x=1|user-1|42"
     )
 
 
@@ -89,7 +92,7 @@ def test_int_and_str_components_are_the_same() -> None:
 def test_empty_component_is_a_component() -> None:
     request = _request()
 
-    assert build_cache_key(request, "") == build_cache_key(request) + "|||"
+    assert build_cache_key(request, "") == build_cache_key(request) + "|"
     assert build_cache_key(request, "") != build_cache_key(request)
 
 
@@ -98,7 +101,7 @@ def test_components_cannot_inject_the_separator() -> None:
     request = _request()
 
     injected = build_cache_key(request, "a|||b")
-    assert injected == build_cache_key(request) + "|||a%7C%7C%7Cb"
+    assert injected == build_cache_key(request) + "|a%7C%7C%7Cb"
     assert injected != build_cache_key(request, "a", "b")
     assert build_cache_key(request, "100%7C") != build_cache_key(request, "100|")
 

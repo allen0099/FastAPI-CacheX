@@ -177,8 +177,8 @@ def test_default_key_builder_function() -> None:
     # Generate cache key
     cache_key = default_key_builder(mock_request)
 
-    # Verify format: method|||host|||path|||query_params
-    expected = "GET|||example.com|||/api/items|||page=1&limit=10"
+    # Verify format: http:v2|method|host|path|query
+    expected = "http:v2|GET|example.com|/api/items|page=1&limit=10"
     assert cache_key == expected
 
 
@@ -197,5 +197,5 @@ def test_default_key_builder_without_host() -> None:
     cache_key = default_key_builder(mock_request)
 
     # Should use 'unknown' as fallback for host
-    expected = "GET|||unknown|||/api/items|||"
+    expected = "http:v2|GET|unknown|/api/items|"
     assert cache_key == expected

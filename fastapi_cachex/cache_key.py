@@ -7,17 +7,18 @@ and nowhere else.
 
 from dataclasses import dataclass
 from operator import itemgetter
+from typing import ClassVar
 from urllib.parse import urlencode
 
 from fastapi import Request
 
 from .types import CACHE_KEY_SEPARATOR
+from .types import HTTP_KEY_FORMAT_TAG
 from .types import escape_key_component
 from .types import unescape_key_component
 
-# A key has at least method, host and path; the query string is optional only
-# when parsing keys that were written without it.
-_MIN_PARTS = 3
+# Format tag, method, host, path and query: a key never has fewer components.
+_MIN_PARTS = 5
 
 # Characters that are live in a Redis glob pattern.
 _GLOB_SPECIAL = frozenset("*?[]\\")
@@ -62,8 +63,11 @@ def _component_text(component: str | int) -> str:
 class CacheKey:
     """An HTTP cache key, decoded into its components.
 
-    The string form is ``method|||host|||path|||query``, followed by one
-    component per ``extra`` item. ``method``, ``host``, ``path`` and every
+    The string form is ``http:v2|method|host|path|query``, followed by one
+    component per ``extra`` item. The leading ``FORMAT_TAG`` names the key
+    format; a later format gets another tag, so its keys never collide with
+    these and ``clear_pattern(f"{CacheKey.FORMAT_TAG}|*")`` removes every key
+    of this one. ``method``, ``host``, ``path`` and every
     ``extra`` item hold the plain text and are percent-encoded by ``to_str()``
     (see ``escape_key_component``), so a client-controlled value cannot
     contain the separator; a method token may contain ``|``. ``query`` is
@@ -90,6 +94,8 @@ class CacheKey:
     path: str
     query: str = ""
     extra: tuple[str, ...] = ()
+
+    FORMAT_TAG: ClassVar[str] = HTTP_KEY_FORMAT_TAG
 
     def __post_init__(self) -> None:
         """Reject a ``query`` the string form could not keep apart."""
@@ -121,6 +127,7 @@ class CacheKey:
         """The key as stored in the backend."""
         return CACHE_KEY_SEPARATOR.join(
             [
+                self.FORMAT_TAG,
                 escape_key_component(self.method),
                 escape_key_component(self.host),
                 escape_key_component(self.path),
@@ -133,21 +140,21 @@ class CacheKey:
     def parse(cls, key: str) -> "CacheKey | None":
         """Decode a stored HTTP key, or return ``None`` for any other key.
 
-        ``key`` is the logical key, without a backend's ``key_prefix``. A key
-        with fewer than three components or an empty method (a ``CacheManager``
-        or ``StateManager`` key, or one from a key builder that does not use
-        ``build_cache_key``) is not an HTTP key. A key that ends at the path
-        parses with an empty query.
+        ``key`` is the logical key, without a backend's ``key_prefix``. Only
+        a key that starts with ``FORMAT_TAG`` and has at least a method, host,
+        path and query is an HTTP key. ``CacheManager`` and ``StateManager``
+        keys, keys written by 0.3.x (``method|||host|||path|||query``) and keys
+        from a key builder that does not use ``build_cache_key`` are not.
         """
         parts = key.split(CACHE_KEY_SEPARATOR)
-        if len(parts) < _MIN_PARTS or not parts[0]:
+        if len(parts) < _MIN_PARTS or parts[0] != cls.FORMAT_TAG or not parts[1]:
             return None
         return cls(
-            method=unescape_key_component(parts[0]),
-            host=unescape_key_component(parts[1]),
-            path=unescape_key_component(parts[2]),
-            query=parts[3] if len(parts) > _MIN_PARTS else "",
-            extra=tuple(unescape_key_component(part) for part in parts[4:]),
+            method=unescape_key_component(parts[1]),
+            host=unescape_key_component(parts[2]),
+            path=unescape_key_component(parts[3]),
+            query=parts[4],
+            extra=tuple(unescape_key_component(part) for part in parts[5:]),
         )
 
     @staticmethod
@@ -161,4 +168,5 @@ class CacheKey:
         ``key_prefix`` in front.
         """
         escaped = escape_glob(escape_key_component(path))
-        return f"*{CACHE_KEY_SEPARATOR}{escaped}{CACHE_KEY_SEPARATOR}*"
+        sep = CACHE_KEY_SEPARATOR
+        return f"{escape_glob(CacheKey.FORMAT_TAG)}{sep}*{sep}{escaped}{sep}*"

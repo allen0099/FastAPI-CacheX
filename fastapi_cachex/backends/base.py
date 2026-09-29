@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from typing import Any
 
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+from fastapi_cachex.types import HTTP_KEY_FORMAT_TAG
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
@@ -30,13 +31,14 @@ def warn_if_path_shaped(pattern: str, cleared: int) -> None:
     paths (stored directly through ``set``) stay silent when they work.
     """
     if cleared == 0 and pattern.startswith("/") and CACHE_KEY_SEPARATOR not in pattern:
+        sep = CACHE_KEY_SEPARATOR
         warnings.warn(
             f"clear_pattern({pattern!r}) cleared nothing. Patterns match whole "
-            f"cache keys, which look like 'method{CACHE_KEY_SEPARATOR}host"
-            f"{CACHE_KEY_SEPARATOR}path{CACHE_KEY_SEPARATOR}query', so a bare "
-            "path matches no HTTP cache entry. Use clear_path(path, "
-            "include_params=True) to clear by path, or write the whole key out "
-            f"as 'GET{CACHE_KEY_SEPARATOR}*{CACHE_KEY_SEPARATOR}{pattern}'.",
+            f"cache keys, which look like '{HTTP_KEY_FORMAT_TAG}{sep}method{sep}"
+            f"host{sep}path{sep}query', so a bare path matches no HTTP cache "
+            "entry. Use clear_path(path, include_params=True) to clear by "
+            "path, or write the whole key out as "
+            f"'{HTTP_KEY_FORMAT_TAG}{sep}GET{sep}*{sep}{pattern}{sep}*'.",
             RuntimeWarning,
             stacklevel=3,
         )
@@ -311,10 +313,11 @@ class BaseCacheBackend(ABC):
 
         The pattern is matched against the whole logical key — the key as the
         caller sees it, without whatever prefix the backend adds internally.
-        HTTP cache keys are ``method|||host|||path|||query``, so matching a
-        path means writing the other components out::
+        HTTP cache keys are ``http:v2|method|host|path|query`` (see
+        ``CacheKey``), so matching a path means writing the other components
+        out::
 
-            await backend.clear_pattern("GET|||*|||/users/*")
+            await backend.clear_pattern("http:v2|GET|*|/users/*")
             await backend.clear_pattern("cache:user:*")  # a CacheManager key
 
         To clear by path, prefer ``clear_path(path, include_params=...)``: it

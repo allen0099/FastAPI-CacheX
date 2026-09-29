@@ -161,8 +161,10 @@ async def report():
 快取鍵以下列格式產生，以避免衝突：
 
 ```
-{method}|||{host}|||{path}|||{query_params}
+http:v2|{method}|{host}|{path}|{query_params}
 ```
+
+`http:v2` 是格式標籤（`CacheKey.FORMAT_TAG`）。之後的鍵格式會使用另一個標籤，因此其鍵不會與這些鍵衝突；在 Redis 與記憶體後端上，`clear_pattern("http:v2|*")` 會移除這個格式的所有 HTTP 快取項目。
 
 這可確保：
 
@@ -184,7 +186,7 @@ async def search(q: str, limit: int = 10):
 
 `sort_query` 只套用於預設的 key builder。與自訂的 `key_builder` 一起使用時，套用裝飾器就會拋出 `CacheXError`；請改在 builder 中呼叫 `build_cache_key(request, ..., sort_query=True)`。對這樣的路由呼叫 `invalidate()` 時也要傳入 `sort_query=True`（見[使單一快取路由失效](#invalidating-a-single-cached-route)）。
 
-host 與路徑來自用戶端，因此其中的 `|` 與 `%` 會以百分比編碼寫入（`%7C` 與 `%25`）。含有 `|||` 的 `Host` 標頭或路徑因此無法讓各段錯位，使某個請求的快取鍵與另一個請求相同。查詢字串本來就經過 URL 編碼。`clear_path()` 接受應用程式看到的路徑（`request.url.path`），並以同樣方式編碼；`clear_pattern()` 比對的是儲存的快取鍵，所以在模式中要把 `|` 寫成 `%7C`。0.3.8 之前兩者都照原樣儲存，因此升級後，host 或路徑含有 `|` 或 `%` 的項目會重新快取一次。
+host 與路徑來自用戶端，因此其中的 `|` 與 `%` 會以百分比編碼寫入（`%7C` 與 `%25`）。含有 `|` 的 `Host` 標頭或路徑因此無法讓各段錯位，使某個請求的快取鍵與另一個請求相同。查詢字串本來就經過 URL 編碼。`clear_path()` 接受應用程式看到的路徑（`request.url.path`），並以同樣方式編碼；`clear_pattern()` 比對的是儲存的快取鍵，所以在模式中要把 `|` 寫成 `%7C`。0.3.8 之前兩者都照原樣儲存，因此升級後，host 或路徑含有 `|` 或 `%` 的項目會重新快取一次。
 
 host 仍是用戶端送來的任何值。除非應用程式前方的反向代理或負載平衡器已會拒絕未知的 host，否則請加上 Starlette 的 `TrustedHostMiddleware`，讓偽造的 `Host` 得到 `400`，而不是在快取中塞滿沒有其他人會請求的項目：
 
@@ -201,7 +203,7 @@ app.add_middleware(
 需要多一個維度（使用者 ID、租戶、語系）的自訂 `key_builder`，應呼叫 `build_cache_key(request, *components)`，而不是自行重組格式。不傳入任何段時，它回傳的正是預設的鍵；每個段會附加在查詢字串之後：
 
 ```
-{method}|||{host}|||{path}|||{query_params}|||{component}|||...
+http:v2|{method}|{host}|{path}|{query_params}|{component}|...
 ```
 
 ```python
@@ -214,11 +216,11 @@ def per_tenant_key(request: Request) -> str:
     return build_cache_key(request, request.state.tenant_id)
 ```
 
-段必須是 `str` 或 `int`（`int` 以十進位寫入，因此 `1` 與 `"1"` 是同一個段）；其他型別，包括 `None`，都會引發 `TypeError`，避免缺少的 ID 悄悄讓所有這類呼叫者共用同一個 `"None"` 鍵。每個段都與 host 和路徑一樣以百分比編碼，因此含有 `|||` 的值無法讓各段錯位。空字串仍是一個段：`build_cache_key(request, "")` 不等於預設的鍵。
+段必須是 `str` 或 `int`（`int` 以十進位寫入，因此 `1` 與 `"1"` 是同一個段）；其他型別，包括 `None`，都會引發 `TypeError`，避免缺少的 ID 悄悄讓所有這類呼叫者共用同一個 `"None"` 鍵。每個段都與 host 和路徑一樣以百分比編碼，因此含有 `|` 的值無法讓各段錯位。空字串仍是一個段：`build_cache_key(request, "")` 不等於預設的鍵。
 
-由於路徑仍是第三段，`clear_path()` 依然找得到這些鍵：不帶 `include_params` 時，會清除該路徑下查詢字串為空的所有項目，不論其他段為何；帶上它則清除該路徑的所有項目。監控路由會把其他段解碼後列在 `extra_components` 中。`default_key_builder(request)` 就是 `build_cache_key(request)`。
+由於路徑仍在原本的位置，`clear_path()` 依然找得到這些鍵：不帶 `include_params` 時，會清除該路徑下查詢字串為空的所有項目，不論其他段為何；帶上它則清除該路徑的所有項目。監控路由會把其他段解碼後列在 `extra_components` 中。`default_key_builder(request)` 就是 `build_cache_key(request)`。
 
-`CacheKey` 則是以值的形式表示同一個鍵。`CacheKey.from_request(request, *components)` 建立它，`to_str()` 得到與 `build_cache_key` 相同的字串，`CacheKey.parse(key)` 則把已儲存的鍵解碼為 `method`、`host`、`path`、`query` 與 `extra`；若不是 HTTP 鍵（例如 `CacheManager` 的鍵），則回傳 `None`：
+`CacheKey` 則是以值的形式表示同一個鍵。`CacheKey.from_request(request, *components)` 建立它，`to_str()` 得到與 `build_cache_key` 相同的字串，`CacheKey.parse(key)` 則把已儲存的鍵解碼為 `method`、`host`、`path`、`query` 與 `extra`；若不是 HTTP 鍵（例如 `CacheManager` 的鍵，或沒有 `http:v2` 標籤的鍵），則回傳 `None`：
 
 ```python
 from fastapi_cachex import CacheKey
@@ -229,7 +231,9 @@ for key in await backend.get_all_keys():
         print(parsed.host, parsed.query, parsed.extra)
 ```
 
-Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設為 `fastapi_cachex:`），讓其他應用程式可以共用同一台伺服器；`MemoryBackend` 沒有前綴。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|||` 分隔的格式，因為它的鍵與 HTTP 請求無關。
+Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設為 `fastapi_cachex:`），讓其他應用程式可以共用同一台伺服器；`MemoryBackend` 沒有前綴。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|` 分隔的格式，因為它的鍵與 HTTP 請求無關。
+
+回傳自行組成、而非由 `build_cache_key()`（或 `CacheKey`）建立之鍵的 `key_builder`，仍可以快取、以 `invalidate()` 使項目失效，也能以 `clear_pattern()` 清除。但這種鍵沒有 `http:v2` 標籤，因此 `clear_path()` 找不到它，監控路由也會略過它。
 
 ### 依請求標頭區分 {#varying-on-request-headers}
 
@@ -242,7 +246,7 @@ async def greeting(request: Request):
     return {"text": translate("hello", request.headers.get("accept-language"))}
 ```
 
-每個列出的標頭都會在鍵中加入一個 `name=value` 段：名稱轉為小寫，值去除前後空白（重複的標頭行以 `,` 串接），缺少的標頭視同空值。這些段與鍵的其他部分一樣經過編碼，並接在 `key_builder` 回傳的鍵之後，因此 `vary` 可以與自訂的 key builder 一起使用：`key_builder` 回傳 `build_cache_key(request, "tenant-1")` 時，鍵為 `GET|||example.com|||/greeting||||||tenant-1|||accept-language=de`。沒有設定 `vary` 的路由，鍵維持不變。
+每個列出的標頭都會在鍵中加入一個 `name=value` 段：名稱轉為小寫，值去除前後空白（重複的標頭行以 `,` 串接），缺少的標頭視同空值。這些段與鍵的其他部分一樣經過編碼，並接在 `key_builder` 回傳的鍵之後，因此 `vary` 可以與自訂的 key builder 一起使用：`key_builder` 回傳 `build_cache_key(request, "tenant-1")` 時，鍵為 `http:v2|GET|example.com|/greeting||tenant-1|accept-language=de`。沒有設定 `vary` 的路由，鍵維持不變。
 
 這些名稱也會加入該路由對 GET 請求的每個回應的 `Vary` 標頭，不論是 200 或 304，也不論是否由後端提供（`private`、`no_store`、繞過後端的 `Authorization` 請求，或未儲存的回應），讓應用程式前方的共用快取也依它們區分。回應已列出的名稱（不分大小寫）不會重複加入，帶有 `Vary: *` 的回應則維持原樣。
 
@@ -253,7 +257,7 @@ async def greeting(request: Request):
 快取鍵並非機密：`get_all_keys()` 會列出它、`/cached-records` 與 `/cached-hits` 監控路由會顯示它，Redis 或 Memcached 的鍵空間也會原樣儲存它。因此對於攜帶憑證的標頭，也就是 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`（Session 子系統預設的 `header_name`），不分大小寫，該段存放的是值（依上述方式去除空白並串接）的完整十六進位 SHA-256，而不是值本身：
 
 ```
-GET|||example.com|||/me||||||authorization=sha256:3f0a…（64 個十六進位字元）
+http:v2|GET|example.com|/me||authorization=sha256:3f0a…（64 個十六進位字元）
 ```
 
 同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。其他標頭（包括以其他名稱設定的 Session 標頭）都維持可讀；若你的標頭帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
@@ -378,8 +382,8 @@ async def clear(cache: CacheBackend) -> None:
     # ……或連同所有查詢參數的變體一起清除
     await cache.clear_path("/api/users", include_params=True)
 
-    # 依模式清除：比對整個鍵 method|||host|||path|||query
-    await cache.clear_pattern("GET|||*|||/api/users/*")
+    # 依模式清除：比對整個鍵 http:v2|method|host|path|query
+    await cache.clear_pattern("http:v2|GET|*|/api/users/*")
     # 你自己組成的鍵（例如 CacheManager 的鍵）可以直接比對
     await cache.clear_pattern("cache:user:*")
 
@@ -445,7 +449,7 @@ add_routes(
 - `GET {prefix}/cached-hits`：列出每筆快取項目，拆分為方法、主機、路徑與查詢，附上 ETag 與到期時間，另外統計有效與已過期的項目數，以及不重複的快取路徑。它不會計算命中次數。
 - `GET {prefix}/cached-records`：列出每筆快取紀錄的大小、到期時間、`media_type`（儲存的回應的媒體類型，沒有時為 `null`），以及快取內容前 100 個位元組的預覽。設定 `include_content_preview=False` 時，`content_preview` 為 `null`，不會有任何回應本文離開伺服器；鍵、大小與到期時間仍會回報。`content_type` 一律是 `"bytes"`，只為相容而保留；請改讀 `media_type`。
 
-兩個路由都只列出路由項目（格式為 `method|||host|||path|||query` 的鍵）；`CacheManager`、Session、state 與鎖的鍵都會略過。
+兩個路由都只列出路由項目（格式為 `http:v2|method|host|path|query` 的鍵）；`CacheManager`、Session、state 與鎖的鍵都會略過，未使用 `build_cache_key()` 的 `key_builder` 產生的鍵也一樣。
 
 > [!WARNING]
 > **這些路由本身沒有任何身分驗證。** `include_in_schema=False` 只是讓它們不出現在 OpenAPI 文件中；任何猜到路徑的人都能讀取。`/cached-records` 含有快取內容的預覽（除非設定 `include_content_preview=False`），並會暴露整個路由結構。正式環境中請務必傳入 `dependencies=[Depends(your_auth)]`，或將它們掛載在僅供內部使用的應用程式上。

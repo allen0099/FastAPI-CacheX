@@ -22,10 +22,10 @@ from tests.live_servers import REDIS_PORT
 from tests.live_servers import redis_skip_reason
 
 KEYS = (
-    "GET|||localhost|||/users/1|||",
-    "GET|||localhost|||/users/2|||",
-    "POST|||localhost|||/users/1|||",
-    "GET|||localhost|||/posts/1|||",
+    "http:v2|GET|localhost|/users/1|",
+    "http:v2|GET|localhost|/users/2|",
+    "http:v2|POST|localhost|/users/1|",
+    "http:v2|GET|localhost|/posts/1|",
     "cache:user:1",
     "cache:post:1",
 )
@@ -75,13 +75,13 @@ async def _populate(backend: BaseCacheBackend) -> None:
 @pytest.mark.parametrize(
     ("pattern", "expected_removed"),
     [
-        ("GET|||*|||/users/*", 2),
-        ("*|||localhost|||/users/*", 3),
+        ("http:v2|GET|*|/users/*", 2),
+        ("*|localhost|/users/*", 3),
         ("cache:*", 2),
         ("cache:user:*", 1),
         # `*` is an unrestricted glob on both backends: it spans the separator,
         # so this reaches the host component too.
-        ("*|||/users/*", 3),
+        ("*|/users/*", 3),
     ],
 )
 async def test_clear_pattern_globs_the_whole_key(
@@ -110,8 +110,40 @@ async def test_a_bare_path_pattern_warns_instead_of_clearing_nothing(
 
 
 @pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
+@pytest.mark.parametrize("path", ["/users/*", "/users/1"])
+async def test_the_pattern_the_warning_suggests_clears_the_path(
+    backend: BaseCacheBackend, path: str
+) -> None:
+    """The whole-key pattern in the warning matches the GET entries it names."""
+    await _populate(backend)
+    await backend.set("http:v2|GET|localhost|/users/1|page=2", CacheEntry("e", b"v"))
+
+    with pytest.warns(RuntimeWarning) as record:
+        await backend.clear_pattern(path)
+    suggested = str(record[0].message).rsplit("'", 2)[-2]
+
+    removed = await backend.clear_pattern(suggested)
+
+    assert removed == (3 if path == "/users/*" else 2)
+    assert "http:v2|POST|localhost|/users/1|" in await backend.get_all_keys()
+
+
+@pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
+async def test_the_0_3_cleanup_pattern_leaves_current_keys(
+    backend: BaseCacheBackend,
+) -> None:
+    """``clear_pattern("*|||*")`` from the migration guide removes 0.3.x keys only."""
+    await _populate(backend)
+    await backend.set("GET|||localhost|||/users/1|||", CacheEntry("e", b"v"))
+    await backend.set("GET|||localhost|||/users/1|||page=2", CacheEntry("e", b"v"))
+
+    assert await backend.clear_pattern("*|||*") == 2
+    assert sorted(await backend.get_all_keys()) == sorted(KEYS)
+
+
+@pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
 @pytest.mark.parametrize(
-    "pattern", ["GET|||*|||/users/*", "cache:user:*", "*", "user:*", "/users/*"]
+    "pattern", ["http:v2|GET|*|/users/*", "cache:user:*", "*", "user:*", "/users/*"]
 )
 async def test_patterns_that_clear_something_do_not_warn(
     backend: BaseCacheBackend, pattern: str
@@ -151,13 +183,13 @@ async def test_clear_path_finds_paths_with_encoded_characters(
     """``clear_path`` takes the decoded path and matches the encoded key."""
     entry = CacheEntry(fingerprint="etag", content=b"x")
     # Keys as default_key_builder writes them for "/a|b/100%" and a neighbour.
-    await backend.set("GET|||h|||/a%7Cb/100%25|||", entry)
-    await backend.set("GET|||h|||/a%7Cb/100%25|||v=1", entry)
-    await backend.set("GET|||h|||/a|||b/100%25|||", entry)
+    await backend.set("http:v2|GET|h|/a%7Cb/100%25|", entry)
+    await backend.set("http:v2|GET|h|/a%7Cb/100%25|v=1", entry)
+    await backend.set("http:v2|GET|h|/a|b/100%25|", entry)
 
     assert await backend.clear_path("/a|b/100%") == 1
     assert await backend.clear_path("/a|b/100%", include_params=True) == 1
-    assert await backend.get_all_keys() == ["GET|||h|||/a|||b/100%25|||"]
+    assert await backend.get_all_keys() == ["http:v2|GET|h|/a|b/100%25|"]
 
 
 @pytest.mark.parametrize("backend", ["memory", "redis"], indirect=True)
@@ -166,17 +198,17 @@ async def test_clear_path_finds_keys_with_extra_components(
 ) -> None:
     """Keys from ``build_cache_key(request, ...)`` are cleared by their path (#264)."""
     entry = CacheEntry(fingerprint="etag", content=b"x")
-    await backend.set("GET|||h|||/me|||", entry)
-    await backend.set("GET|||h|||/me|||||||user-1", entry)
-    await backend.set("GET|||h|||/me|||||||user-1|||de", entry)
-    await backend.set("GET|||h|||/me|||page=2|||user-1", entry)
+    await backend.set("http:v2|GET|h|/me|", entry)
+    await backend.set("http:v2|GET|h|/me||user-1", entry)
+    await backend.set("http:v2|GET|h|/me||user-1|de", entry)
+    await backend.set("http:v2|GET|h|/me|page=2|user-1", entry)
     # The path appears elsewhere in these keys, but not as the path.
-    await backend.set("GET|||h|||/other|||||||/me|||", entry)
-    await backend.set("GET|||/me|||/other|||", entry)
+    await backend.set("http:v2|GET|h|/other||/me|", entry)
+    await backend.set("http:v2|GET|/me|/other|", entry)
 
     assert await backend.clear_path("/me") == 3
     assert await backend.clear_path("/me", include_params=True) == 1
     assert sorted(await backend.get_all_keys()) == [
-        "GET|||/me|||/other|||",
-        "GET|||h|||/other|||||||/me|||",
+        "http:v2|GET|/me|/other|",
+        "http:v2|GET|h|/other||/me|",
     ]
