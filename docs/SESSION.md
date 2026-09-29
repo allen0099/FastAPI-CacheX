@@ -8,8 +8,8 @@ the cache backend; the client only holds a single signed token.
 
 | Middleware | Token source | Response side | Status |
 |------------|--------------|---------------|--------|
-| `FastAPICacheXSessionMiddleware` | Custom header (default `X-Session-Token`) / `Authorization: Bearer` / **cookie** (default name `session`) | Routed by source: a token that arrived in a header is returned in the response header; a token that arrived in a cookie (or a brand-new session) gets `Set-Cookie` | **Recommended** |
-| `SessionMiddleware` | Custom header / `Authorization: Bearer`; **no cookie support** | A renewed token is sent back in the response header | Deprecated, **removed in 0.4.0** |
+| `FastAPICacheXSessionMiddleware` | Custom header (default `X-Session-Token`) / `Authorization: Bearer` / **cookie** (default name `session`) | Routed by source: a request that sent a header or bearer token (even one that no longer resolves) gets its token in the response header; otherwise (a cookie, or no token at all) it gets `Set-Cookie` | **Recommended** |
+| `SessionMiddleware` | Custom header / `Authorization: Bearer`; **no cookie support** | A renewed token, or one for a regenerated ID, is sent back in the response header | Deprecated, **removed in 0.4.0** |
 
 **Use `FastAPICacheXSessionMiddleware` for all new projects.** It covers every transport of
 `SessionMiddleware` (it reads `X-Session-Token` and `Authorization: Bearer` in the same way) and
@@ -150,9 +150,10 @@ constructed) and will be removed in 0.4.0. Use `FastAPICacheXSessionMiddleware` 
   second": it reads the custom header (default `X-Session-Token`) and/or `Authorization: Bearer`
   first and only falls back to the cookie when neither is present, so clients that used
   `X-Session-Token` with `SessionMiddleware` keep working unchanged. The response side is routed
-  by source too: for a token that arrived in a header, a renewed token is sent back in the same
-  response header and no `Set-Cookie` is emitted; a token that arrived in a cookie (or a brand-new
-  anonymous session) uses `Set-Cookie`.
+  by source too: when the request sent a header or bearer token (even one that no longer
+  resolves), a new or renewed token is sent back in the `header_name` response header and no
+  `Set-Cookie` is emitted; a token that arrived in a cookie (or a brand-new anonymous session for a
+  request without a token) uses `Set-Cookie`.
 
 Both middlewares put the loaded `Session` object into `request.state`, so the existing session
 dependencies `get_session`, `get_optional_session`, `require_session` and `require_user_session`
@@ -212,7 +213,7 @@ async def me(session=Depends(require_user_session)):
   [Authenticated endpoints](HTTP_CACHING.md#authenticated-endpoints).
 
 The cookie is always `HttpOnly`; `Secure`, `SameSite`, `Domain`, `Path` and `Max-Age` follow the
-`cookie_*` settings.
+`cookie_*` settings (`cookie_max_age=None`, or `0`, omits `Max-Age`).
 
 ## Configuration
 
@@ -263,7 +264,7 @@ SessionConfig(
 
 0.4.0 names the session cookie `__Host-session` and sets the `Secure` flag by default. Browsers accept a `__Host-` cookie only when it is `Secure`, has `Path=/` and no `Domain`, and never from a subdomain, which removes the usual way to plant a session cookie (session fixation). The new name also means every browser holding a `session` cookie is logged out once after the upgrade.
 
-Until then, `FastAPICacheXSessionMiddleware` emits a `FutureWarning` when its config leaves `cookie_name` or `cookie_https_only` at the default. Set both to silence it:
+Until then, `FastAPICacheXSessionMiddleware` emits a `FutureWarning` when it is constructed (when the app builds its middleware stack, at startup or on the first request) and its config leaves `cookie_name` or `cookie_https_only` at the default. Set both to silence it:
 
 - `cookie_name="session", cookie_https_only=False` keeps the current cookie (and keeps working after the upgrade, e.g. for local development over plain HTTP);
 - `cookie_name="__Host-session", cookie_https_only=True` switches now, over HTTPS.
@@ -327,8 +328,8 @@ only supports `HS256`, `HS384` and `HS512`: with an asymmetric algorithm, `Sessi
 An HMAC key must be at least as long as the hash output (RFC 7518 §3.2): 32 bytes for `HS256`,
 48 for `HS384` and 64 for `HS512`, counted after UTF-8 encoding. `secret_key` only has to be 32
 characters, so with `HS384` or `HS512` a shorter key makes the serializer emit a `UserWarning`
-once when it is built (PyJWT itself also warns with `InsecureKeyLengthWarning` whenever it signs
-or verifies a token). Use a longer key, for example `secrets.token_urlsafe(64)`.
+once when it is built (PyJWT 2.11 and later also warn with `InsecureKeyLengthWarning` whenever they
+sign or verify a token). Use a longer key, for example `secrets.token_urlsafe(64)`.
 
 Security notes:
 
@@ -470,9 +471,9 @@ from fastapi import Request
 from fastapi_cachex.session import SessionUser, login
 
 
-# LoginRequest is the body model from Basic Usage
+# Credentials is the body model from Basic Usage
 @app.post("/login")
-async def log_in(credentials: LoginRequest, request: Request):
+async def log_in(credentials: Credentials, request: Request):
     ...  # verify credentials.password
     await login(request, SessionUser(user_id=credentials.username))
     return {"ok": True}
@@ -561,7 +562,8 @@ lifecycle: `create_session()` / `create_anonymous_session()` return
 `(session, token)`; `get_session()` returns `(session, renewed_token)`, where
 `renewed_token` is set only when sliding expiration renewed the token and should
 be sent back to the client. `get_session()` raises a `SessionError` subclass on
-failure: `SessionTokenError` (malformed token), `SessionSecurityError` (bad
+failure: `SessionTokenError` (malformed token; for a JWT also a bad signature,
+an expired `exp` or a wrong `iss`/`aud`), `SessionSecurityError` (bad `simple`
 signature or binding mismatch), `SessionNotFoundError`, `SessionInvalidError`
 (session not active) or `SessionExpiredError` (TTL or absolute timeout exceeded).
 Since 0.3.8, `SessionError` derives from `CacheXError`, so `except CacheXError`
@@ -614,9 +616,9 @@ from fastapi_cachex.session import SessionUser
 from fastapi_cachex.session.dependencies import SessionManagerDep
 
 
-# LoginRequest is the body model from Basic Usage
+# Credentials is the body model from Basic Usage
 @app.post("/login")
-async def login(credentials: LoginRequest, manager: SessionManagerDep):
+async def login(credentials: Credentials, manager: SessionManagerDep):
     ...  # verify credentials.password
     user = SessionUser(user_id=credentials.username)
     session, token = await manager.create_session(user=user)

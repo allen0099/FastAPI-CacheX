@@ -43,7 +43,11 @@ class TokenSerializer(Protocol):
     def from_string(
         self, token_str: str
     ) -> SessionToken:  # pragma: no cover - Protocol body
-        """Parse a string into a `SessionToken` (with necessary verification)."""
+        """Parse a string into a `SessionToken` (with necessary verification).
+
+        Raise ``ValueError`` for an invalid token; ``SessionManager`` turns it
+        into ``SessionTokenError``.
+        """
 
 
 class SimpleTokenSerializer:
@@ -99,9 +103,9 @@ def _warn_if_key_too_short(secret: str, algorithm: str) -> None:
     """Warn once when ``secret`` is shorter than ``algorithm``'s hash output.
 
     ``SessionConfig`` only requires 32 characters, enough for HS256 but not
-    for HS384 (48 bytes) or HS512 (64 bytes). PyJWT warns about a short key on
-    every token it signs or verifies; this names the setting to fix, once,
-    when the serializer is built.
+    for HS384 (48 bytes) or HS512 (64 bytes). PyJWT 2.11 and later warn about a
+    short key on every token they sign or verify; this names the setting to
+    fix, once, when the serializer is built.
     """
     min_bytes = _HMAC_MIN_KEY_BYTES[algorithm]
     key_bytes = len(secret.encode("utf-8"))
@@ -123,7 +127,9 @@ class JWTTokenSerializer:
     Encodes the session reference into a signed JWT with claims:
     - sid: session id (custom claim)
     - iat: issued at (epoch seconds)
-    - exp: expiry (epoch seconds), derived from config.session_ttl
+    - exp: expiry (epoch seconds), the session's ``expires_at`` (so it follows
+      sliding renewal and the ``absolute_timeout`` cap), or iat +
+      config.session_ttl when the session has none
     Optionally:
     - iss: issuer (if configured)
     - aud: audience (if configured)
@@ -143,6 +149,12 @@ class JWTTokenSerializer:
                 which only the HMAC algorithms can use; an asymmetric
                 algorithm needs a custom ``token_serializer`` that holds the
                 key pair.
+            ImportError: If no ``jwt_module`` is given and PyJWT (the ``jwt``
+                extra) is not installed.
+
+        Warns:
+            UserWarning: If ``secret_key`` is shorter in UTF-8 bytes than the
+                HMAC hash output (48 for HS384, 64 for HS512).
         """
         if config.jwt_algorithm not in JWT_HMAC_ALGORITHMS:
             supported = ", ".join(sorted(JWT_HMAC_ALGORITHMS))
@@ -205,6 +217,10 @@ class JWTTokenSerializer:
         """Decode and verify a JWT string into a `SessionToken`.
 
         Verifies signature, `exp`, and `iat`, and optional `iss`/`aud`.
+
+        Raises:
+            ValueError: If the token fails decoding or verification, or its
+                payload is malformed.
         """
         options = {
             "require": ["sid", "iat", "exp"],

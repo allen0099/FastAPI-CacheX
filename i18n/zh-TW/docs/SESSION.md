@@ -6,8 +6,8 @@ FastAPI-CacheX 的 Session 管理提供完整的使用者 Session 處理，包�
 
 | 中介軟體 | 權杖來源 | 回應端 | 狀態 |
 |------------|--------------|---------------|--------|
-| `FastAPICacheXSessionMiddleware` | 自訂標頭（預設 `X-Session-Token`）／`Authorization: Bearer`／**Cookie**（預設名稱 `session`） | 依來源決定：從標頭傳入的權杖會在回應標頭中傳回；從 Cookie 傳入的權杖（或全新的 Session）則使用 `Set-Cookie` | **建議使用** |
-| `SessionMiddleware` | 自訂標頭／`Authorization: Bearer`；**不支援 Cookie** | 更新後的權杖會在回應標頭中傳回 | 已棄用，**將於 0.4.0 移除** |
+| `FastAPICacheXSessionMiddleware` | 自訂標頭（預設 `X-Session-Token`）／`Authorization: Bearer`／**Cookie**（預設名稱 `session`） | 依來源決定：送出標頭或 Bearer 權杖的請求（即使該權杖已無法解析）會在回應標頭中收到權杖；其他情況（Cookie，或完全沒有權杖）則使用 `Set-Cookie` | **建議使用** |
+| `SessionMiddleware` | 自訂標頭／`Authorization: Bearer`；**不支援 Cookie** | 更新後的權杖，或重新產生 ID 後的權杖，會在回應標頭中傳回 | 已棄用，**將於 0.4.0 移除** |
 
 **所有新專案請使用 `FastAPICacheXSessionMiddleware`。** 它涵蓋 `SessionMiddleware` 的所有傳輸方式（以相同方式讀取 `X-Session-Token` 與 `Authorization: Bearer`），並加入 Cookie 支援。自 0.3.1 起，`SessionMiddleware` 在建構時會發出 `DeprecationWarning`，並將於 **0.4.0 移除**。兩個中介軟體提供給相同的 Session 依賴項（`get_session`、`get_optional_session`、`require_session`），因此遷移通常只需要修改 `add_middleware` 那一行；以標頭傳送權杖的既有用戶端不需要任何修改。
 
@@ -93,7 +93,7 @@ app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
 `SessionMiddleware` 自 0.3.1 起已棄用（建構時會發出 `DeprecationWarning`），並將於 0.4.0 移除。請改用 `FastAPICacheXSessionMiddleware`：
 
 - **`SessionMiddleware`**（一個 `BaseHTTPMiddleware`）：以自訂標頭（預設 `X-Session-Token`）和／或 `Authorization: Bearer` 傳遞權杖，適合由用戶端管理權杖的 API 優先架構。不支援以 Cookie 傳輸。
-- **`FastAPICacheXSessionMiddleware`**（一個純 ASGI 中介軟體）：與 Starlette 內建的 `SessionMiddleware` 相容，提供相同的類 dict `request.session`。它以 Cookie（預設 Cookie 名稱 `session`）傳遞簽署過的 Session 權杖，而 Session 內容則存放在後端（`SessionManager` 的快取後端），而不是像 Starlette 自己的實作那樣編碼進 Cookie 本身。權杖解析採「標頭優先、Cookie 其次」：它會先讀取自訂標頭（預設 `X-Session-Token`）和／或 `Authorization: Bearer`，只有兩者都不存在時才退回使用 Cookie，因此原本搭配 `SessionMiddleware` 使用 `X-Session-Token` 的用戶端不需修改即可繼續運作。回應端同樣依來源決定：從標頭傳入的權杖，更新後的權杖會在同一個回應標頭中傳回，且不會發出 `Set-Cookie`；從 Cookie 傳入的權杖（或全新的匿名 Session）則使用 `Set-Cookie`。
+- **`FastAPICacheXSessionMiddleware`**（一個純 ASGI 中介軟體）：與 Starlette 內建的 `SessionMiddleware` 相容，提供相同的類 dict `request.session`。它以 Cookie（預設 Cookie 名稱 `session`）傳遞簽署過的 Session 權杖，而 Session 內容則存放在後端（`SessionManager` 的快取後端），而不是像 Starlette 自己的實作那樣編碼進 Cookie 本身。權杖解析採「標頭優先、Cookie 其次」：它會先讀取自訂標頭（預設 `X-Session-Token`）和／或 `Authorization: Bearer`，只有兩者都不存在時才退回使用 Cookie，因此原本搭配 `SessionMiddleware` 使用 `X-Session-Token` 的用戶端不需修改即可繼續運作。回應端同樣依來源決定：請求送出標頭或 Bearer 權杖時（即使該權杖已無法解析），新的或更新後的權杖會在 `header_name` 回應標頭中傳回，且不會發出 `Set-Cookie`；從 Cookie 傳入的權杖（或沒有權杖的請求所建立的全新匿名 Session）則使用 `Set-Cookie`。
 
 兩個中介軟體都會將載入的 `Session` 物件放進 `request.state`，因此既有的 Session 依賴項 `get_session`、`get_optional_session`、`require_session` 與 `require_user_session` 在任一個中介軟體下都能直接運作，不需任何修改：
 
@@ -124,7 +124,7 @@ async def me(session=Depends(require_user_session)):
 - 帶有 Session 權杖的回應（新建立的 Session、滑動續期、重新產生的 ID），或帶有讓 Session Cookie 失效之 `Set-Cookie` 的回應，一律不可快取。中介軟體會設定 `Cache-Control: private, no-store`，取代路由原本設定的值（包括 `@cache(public=True)` 的路由），並且即使處理函式沒有碰過 `request.session`，也會加入與上一項相同的 `Vary` 名稱。否則 CDN 或反向 proxy 可能存下權杖，再交給下一位訪客。不帶權杖的回應則維持原本的標頭。已棄用的 `SessionMiddleware` 在回應標頭送出權杖時也會這麼做。
 - 對帶有 Session 的請求（中介軟體從任何來源載入的 Session，有沒有使用者都算，或不是空的 `request.session`），`@cache` 不會讀寫後端，並像 `Authorization` 一樣以 `private` 回應。`public=True` 讓路由在各 Session 間共用；`cache_authorized=True` 搭配包含 Session 使用者的 `key_builder` 則依使用者快取。見[需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
 
-Cookie 一律為 `HttpOnly`；`Secure`、`SameSite`、`Domain`、`Path` 與 `Max-Age` 則依 `cookie_*` 設定。
+Cookie 一律為 `HttpOnly`；`Secure`、`SameSite`、`Domain`、`Path` 與 `Max-Age` 則依 `cookie_*` 設定（`cookie_max_age=None` 或 `0` 時不設 `Max-Age`）。
 
 ## 設定 {#configuration}
 
@@ -173,7 +173,7 @@ SessionConfig(
 
 0.4.0 會將 Session Cookie 命名為 `__Host-session`，並預設加上 `Secure` 旗標。瀏覽器只接受帶 `Secure`、`Path=/` 且沒有 `Domain` 的 `__Host-` Cookie，也不接受子網域設定的這種 Cookie，因此移除了植入 Session Cookie 最常見的途徑（Session 固定攻擊（session fixation））。新名稱也代表升級後，所有持有 `session` Cookie 的瀏覽器都會被登出一次。
 
-在那之前，若 `FastAPICacheXSessionMiddleware` 的設定讓 `cookie_name` 或 `cookie_https_only` 維持預設值，會發出 `FutureWarning`。明確設定兩者即可消除警告：
+在那之前，`FastAPICacheXSessionMiddleware` 在建構時（應用程式建立中介軟體堆疊時，也就是啟動時或第一個請求時），若設定讓 `cookie_name` 或 `cookie_https_only` 維持預設值，會發出 `FutureWarning`。明確設定兩者即可消除警告：
 
 - `cookie_name="session", cookie_https_only=False` 保留目前的 Cookie（升級後也能繼續運作，例如透過純 HTTP 進行本機開發）；
 - `cookie_name="__Host-session", cookie_https_only=True` 現在就切換，需透過 HTTPS。
@@ -211,7 +211,7 @@ config = SessionConfig(
 
 `jwt_algorithm` 必須是 `HS256`、`HS384`、`HS512`、`RS256`、`RS384`、`RS512`、`ES256`、`ES384`、`ES512`、`PS256`、`PS384`、`PS512` 或 `EdDSA` 其中之一；其他任何值（包括 `none`）都會拋出 `ValidationError`。內建的序列化器以同一把 `secret_key` 簽署與驗證，因此只支援 `HS256`、`HS384` 與 `HS512`：使用非對稱演算法時，除非你傳入持有金鑰對的自訂 `token_serializer`，否則 `SessionManager` 會拋出 `ValueError`。
 
-HMAC 金鑰的長度至少須等於雜湊輸出（RFC 7518 §3.2）：`HS256` 為 32 位元組、`HS384` 為 48、`HS512` 為 64，以 UTF-8 編碼後計算。`secret_key` 只要求 32 個字元，因此搭配 `HS384` 或 `HS512` 時，較短的金鑰會讓序列化器在建立時發出一次 `UserWarning`（PyJWT 本身每次簽署或驗證權杖時也會發出 `InsecureKeyLengthWarning`）。請使用更長的金鑰，例如 `secrets.token_urlsafe(64)`。
+HMAC 金鑰的長度至少須等於雜湊輸出（RFC 7518 §3.2）：`HS256` 為 32 位元組、`HS384` 為 48、`HS512` 為 64，以 UTF-8 編碼後計算。`secret_key` 只要求 32 個字元，因此搭配 `HS384` 或 `HS512` 時，較短的金鑰會讓序列化器在建立時發出一次 `UserWarning`（PyJWT 2.11 以上版本每次簽署或驗證權杖時也會發出 `InsecureKeyLengthWarning`）。請使用更長的金鑰，例如 `secrets.token_urlsafe(64)`。
 
 安全性注意事項：
 
@@ -323,9 +323,9 @@ from fastapi import Request
 from fastapi_cachex.session import SessionUser, login
 
 
-# LoginRequest 是基本用法中的請求本文模型
+# Credentials 是基本用法中的請求本文模型
 @app.post("/login")
-async def log_in(credentials: LoginRequest, request: Request):
+async def log_in(credentials: Credentials, request: Request):
     ...  # 驗證 credentials.password
     await login(request, SessionUser(user_id=credentials.username))
     return {"ok": True}
@@ -376,7 +376,7 @@ session, new_token = await manager.regenerate_session_id(session)
 
 ## SessionManager 概覽 {#sessionmanager-at-a-glance}
 
-`SessionManager(backend, config, token_serializer=None)` 處理整個生命週期：`create_session()`／`create_anonymous_session()` 回傳 `(session, token)`；`get_session()` 回傳 `(session, renewed_token)`，其中 `renewed_token` 只有在滑動過期更新了權杖時才會有值，並應傳回給用戶端。`get_session()` 失敗時會拋出 `SessionError` 的子類別：`SessionTokenError`（權杖格式錯誤）、`SessionSecurityError`（簽章錯誤或綁定不符）、`SessionNotFoundError`、`SessionInvalidError`（Session 不是啟用狀態）或 `SessionExpiredError`（超過 TTL 或絕對逾時）。從 0.3.8 起，`SessionError` 繼承自 `CacheXError`，因此 `except CacheXError` 也會捕捉 Session 錯誤。
+`SessionManager(backend, config, token_serializer=None)` 處理整個生命週期：`create_session()`／`create_anonymous_session()` 回傳 `(session, token)`；`get_session()` 回傳 `(session, renewed_token)`，其中 `renewed_token` 只有在滑動過期更新了權杖時才會有值，並應傳回給用戶端。`get_session()` 失敗時會拋出 `SessionError` 的子類別：`SessionTokenError`（權杖格式錯誤；JWT 還包括簽章錯誤、`exp` 已過期或 `iss`／`aud` 不符）、`SessionSecurityError`（`simple` 權杖簽章錯誤或綁定不符）、`SessionNotFoundError`、`SessionInvalidError`（Session 不是啟用狀態）或 `SessionExpiredError`（超過 TTL 或絕對逾時）。從 0.3.8 起，`SessionError` 繼承自 `CacheXError`，因此 `except CacheXError` 也會捕捉 Session 錯誤。
 
 `get_session()` 只有在滑動過期更新了 Session 時才寫入後端，因此只讀取 Session 的請求只需一次後端讀取。回傳的 Session 中 `last_accessed` 是目前時間，但儲存的值只會在 Session 下一次被寫入（建立、修改、更新或重新產生）時更新。傳入 `touch=True` 可在每次查詢時都儲存它。0.3.8 之前，每次查詢都會儲存 Session。
 
@@ -413,9 +413,9 @@ from fastapi_cachex.session import SessionUser
 from fastapi_cachex.session.dependencies import SessionManagerDep
 
 
-# LoginRequest 是基本用法中的請求本文模型
+# Credentials 是基本用法中的請求本文模型
 @app.post("/login")
-async def login(credentials: LoginRequest, manager: SessionManagerDep):
+async def login(credentials: Credentials, manager: SessionManagerDep):
     ...  # 驗證 credentials.password
     user = SessionUser(user_id=credentials.username)
     session, token = await manager.create_session(user=user)

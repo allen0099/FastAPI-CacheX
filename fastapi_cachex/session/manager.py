@@ -51,6 +51,12 @@ class SessionManager:
             config: Session configuration
             token_serializer: Optional custom token serializer. If provided,
                 overrides the built-in selection (simple/jwt).
+
+        Raises:
+            ValueError: If ``config.token_format`` is ``"jwt"`` with an
+                asymmetric ``jwt_algorithm`` and no ``token_serializer``.
+            ImportError: If ``config.token_format`` is ``"jwt"``, no
+                ``token_serializer`` is given and PyJWT is not installed.
         """
         self.backend = backend
         self.config = config
@@ -123,7 +129,16 @@ class SessionManager:
         user_agent: str | None = None,
         **extra_data: object,
     ) -> tuple[Session, str]:
-        """Create a new session without user information."""
+        """Create a new session without user information.
+
+        Args:
+            ip_address: Client IP address (if IP binding enabled)
+            user_agent: Client User-Agent (if UA binding enabled)
+            **extra_data: Additional session data
+
+        Returns:
+            Tuple of (Session, token_string)
+        """
         return await self._create_session(
             user=None,
             ip_address=ip_address,
@@ -209,11 +224,14 @@ class SessionManager:
             propagate it to the client (e.g. via a response header).
 
         Raises:
-            SessionTokenError: If token is invalid
+            SessionTokenError: If the token cannot be parsed (for a JWT, also
+                a bad signature, an expired ``exp`` or a wrong ``iss``/``aud``)
             SessionNotFoundError: If session not found
-            SessionExpiredError: If session has expired
+            SessionExpiredError: If the session is past its ``expires_at`` or
+                ``absolute_timeout``; it is saved as ``EXPIRED`` first
             SessionInvalidError: If session is not active
-            SessionSecurityError: If security checks fail
+            SessionSecurityError: If a ``simple`` token's signature is wrong,
+                or an IP / User-Agent binding does not match
         """
         # Parse and verify token
         try:

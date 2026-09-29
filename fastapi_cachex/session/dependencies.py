@@ -148,8 +148,9 @@ def get_session_manager(request: Request) -> "SessionManager":
 
     Warns:
         FutureWarning: Once per app, if the manager the middleware registered
-            is not the one set with ``SessionManagerProxy.set()``. 0.4.0
-            resolves this dependency through ``SessionManagerProxy`` only.
+            is not the one set with ``SessionManagerProxy.set()`` (or none is
+            set there). 0.4.0 resolves this dependency through
+            ``SessionManagerProxy`` only.
     """
     state = request.app.state
     manager: SessionManager | None = getattr(

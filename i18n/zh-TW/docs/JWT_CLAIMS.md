@@ -104,7 +104,7 @@ FastAPI-CacheX 採用**有狀態 Session** 模型，與純粹無狀態的 JWT �
     - 降低 JWT 外洩的影響
 
 3. **彈性的 Session 管理**
-    - 支援滑動過期：Session 續期時，帶有更新後 `exp` 的新權杖會放在由 `header_name` 指定的回應標頭中回傳（預設為 `X-Session-Token`）
+    - 支援滑動過期：Session 續期時，中介軟體會透過請求使用的傳輸方式送出帶有更新後 `exp` 的新權杖：由 `header_name` 指定的回應標頭（預設為 `X-Session-Token`），或對 Cookie 使用 `Set-Cookie`
     - 支援即時更新 Session 資料
     - 支援 flash 訊息等功能
 
