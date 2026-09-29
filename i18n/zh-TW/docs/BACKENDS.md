@@ -80,6 +80,37 @@ BackendProxy.set(backend)
 
 完整可執行範例（英文）：[`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py)。
 
+### Redis 停止運作時快速失敗 {#failing-fast-when-redis-is-down}
+
+`@cache` 會 [fail open](HTTP_CACHING.md#when-the-backend-fails)，但要等後端放棄之後才會。redis-py 8 預設會將因連線錯誤或逾時而失敗的指令重試 10 次，並採用指數退避，每次嘗試之間最多等待 1 秒。在 Redis 拒絕連線時，每次 `get` 或 `set` 因此要約 3 到 4 秒才會失敗，而先讀取再寫入的快取請求約需 7 秒。若主機完全沒有回應，11 次嘗試中的每一次還要等待 `socket_connect_timeout`（預設 1 秒），每個指令約 15 秒，每個請求約 30 秒。
+
+後端本身沒有具名的關鍵字引數都會傳給 redis-py 用戶端，因此可以在這裡設定重試策略與逾時：
+
+```python
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
+
+from fastapi_cachex import BackendProxy
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+backend = AsyncRedisCacheBackend(
+    host="127.0.0.1",
+    port=6379,
+    retry=Retry(NoBackoff(), 0),  # 不重試：第一次錯誤就是最終結果
+    socket_connect_timeout=0.25,  # 建立連線的秒數上限
+    socket_timeout=0.5,  # 等待回覆的秒數上限
+)
+BackendProxy.set(backend)
+```
+
+使用這些設定時，被拒絕的連線會立即失敗，無法連線的主機則約在 0.25 秒後失敗。代價如下：
+
+- 不重試時，單一暫時性錯誤（例如指令執行到一半時連線被重設）會讓該指令失敗。`Retry(NoBackoff(), 1)` 會立即重試一次。
+- `socket_timeout` 也會限制較慢的回覆。兩個逾時都應設定得比你平常的 Redis 延遲高，包括快取最大項目時的延遲。
+- 這些設定適用於後端送出的所有指令，而不只是 `@cache`。`CacheManager`、`StateManager`、`CacheLock` 與 Session 不會 fail open，而是拋出後端錯誤，它們也會更早收到這些錯誤。
+
+`RedisConfig` 沒有 `retry` 欄位，因此請將它傳給建構函式。
+
 ## Memcached {#memcached}
 
 以 `uv add "fastapi-cachex[memcached]"` 安裝此 extra。0.3.8 以前這個 extra 名為 `memcache`；舊名稱仍可使用但已棄用，將於 0.4.0 移除。安裝時遇到不存在的 extra 只會顯示警告，因此 0.4.0 之後 `fastapi-cachex[memcache]` 會裝好套件但不含 `pymemcache`。
