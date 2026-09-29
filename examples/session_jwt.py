@@ -52,7 +52,8 @@ config = SessionConfig(
     cookie_https_only=False,
 )
 session_manager = SessionManager(backend, config)
-# ClientIPDep finds the manager through the proxy (only through it from 0.4.0).
+# From 0.4.0 ClientIPDep finds the manager only through the proxy; 0.3.9 reads
+# the middleware's and warns (FutureWarning) when the proxy holds another one.
 SessionManagerProxy.set(session_manager)
 
 

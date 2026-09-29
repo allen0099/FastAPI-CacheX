@@ -58,8 +58,8 @@ so do not point these at anything you care about. When a port is set but nothing
 is listening, the suites skip and say so.
 
 A run with nothing opted in still clears the coverage gate (`fail_under = 90`)
-at about 92.2%, but only because the rest of the suite carries it — `redis.py`
-alone drops to roughly 27%. The margin is thin, so the first place an untested
+at about 94.5%, but only because the rest of the suite carries it — `redis.py`
+alone drops to roughly 42%. The margin is thin, so the first place an untested
 line shows up as a failure is a local opted-out run, not CI, which sets both
 variables against its own service containers and sees 99.95%.
 
@@ -119,8 +119,8 @@ The way to find those is to break the thing on purpose and see if the suite
 notices:
 
 ```bash
-# neuter one mechanism, then run the whole suite
-git stash -- fastapi_cachex/         # or edit the function to return early
+# neuter one mechanism (edit a function in fastapi_cachex/ to return early),
+# then run the whole suite and restore the source
 uv run pytest -q -p no:randomly
 git checkout fastapi_cachex/
 ```
@@ -332,14 +332,16 @@ The workflow runs in this order:
    [Changelog fragments](#changelog-fragments)), renames it
    to `## [X.Y.Z] - YYYY-MM-DD`, opens a fresh empty `## [Unreleased]` above
    it, rewrites the compare links at the bottom, and writes the release body:
-   each entry's bold summary and issue links, and a link to the full entries
-   on the documentation site.
+   the notice, if any, each entry's bold summary and issue links, and a link
+   to the full entries on the documentation site. The workflow then appends an
+   installation snippet and, when there is a previous tag, a compare link.
 4. **The build.** `uv build`. The bumped files, the release notes and
    `dist/` are uploaded as one artifact, which the next two jobs download
    instead of building anything again.
 5. **The permanent part**, kept together at the end: commit the version bump,
    the promoted changelog and the removal of the merged fragments, push it to master, tag, push the tag by refspec,
-   create the GitHub release from the promoted section, publish to PyPI.
+   create the GitHub release from the release notes written in step 3,
+   publish to PyPI.
 
 Steps 1–4 are the `build` job, which installs every dev dependency and so gets
 read access to the repository and nothing else: no git credentials, no PyPI
@@ -399,8 +401,9 @@ opens with a bold summary, and the release body is just those summaries:
 
 becomes ``- Add `CacheManager.add()` for store-if-absent writes. ([#65](...))``
 under the same `### Added` heading. The issue links are carried over from
-anywhere in the entry, and the body ends with a link to the version's section
-on the documentation site's changelog page. Write the summary for someone
+anywhere in the entry, and the script ends the body with a link to the
+version's section on the documentation site's changelog page (the workflow
+then appends the installation snippet and the compare link). Write the summary for someone
 deciding whether this release matters to them: what changed, in the imperative
 or as a plain statement, not how. An entry without one fails the run and is
 named in the error, and so does a line in the section that is neither a `###`

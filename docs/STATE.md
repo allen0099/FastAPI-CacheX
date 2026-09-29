@@ -144,7 +144,7 @@ if no backend has been set, the request fails with `BackendNotFoundError`.
 ```
 CacheXError
 └── StateError
-    ├── InvalidStateError   # missing or already consumed
+    ├── InvalidStateError   # missing, already consumed, or binding mismatch
     ├── StateExpiredError   # expired
     └── StateDataError      # malformed content
 ```
@@ -166,5 +166,7 @@ CacheXError
   cache backend.
 - **Logs never contain the state itself.** Log lines from `fastapi_cachex.state.manager`
   identify a state by `state_ref`, the first 12 hex characters of its SHA-256, which you can
-  compute from a known state to match it. An unknown or expired state is logged at INFO,
-  since it is routine client input; malformed stored data is logged once at WARNING.
+  compute from a known state to match it. An unknown, expired or differently bound state
+  rejected by `consume_state()` is logged at INFO, since it is routine client input
+  (`validate_state()` and `get_state_metadata()` log a missing or expired state at DEBUG);
+  malformed stored data is logged once at WARNING.

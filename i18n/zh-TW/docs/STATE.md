@@ -105,7 +105,7 @@ StateManagerProxy.set(StateManager(key_prefix="csrf:", default_ttl=300))
 ```
 CacheXError
 └── StateError
-    ├── InvalidStateError   # 不存在或已被消耗
+    ├── InvalidStateError   # 不存在、已被消耗或綁定不符
     ├── StateExpiredError   # 已過期
     └── StateDataError      # 內容格式錯誤
 ```
@@ -115,4 +115,4 @@ CacheXError
 - **後端必須在多個行程之間共用。** 多 worker 部署請使用 Redis 或 Memcached。使用 `MemoryBackend` 時，state 只存在於建立它的行程中，因此落到其他 worker 的授權回呼會失敗。
 - **一次性保證來自後端的原子操作。** `get_and_delete()` 在 Redis 上是 `GETDEL`（需要 Redis 伺服器 6.2 或更新版本）；在 Memcached 上是 `gets` 後接 `cas(..., exptime=-1)`（若中間有其他寫入者替換了值則會重試；連續 16 次都被替換時會拋出 `CacheXError`，而不是當成 state 不存在）；在記憶體後端上則是在鎖內 `pop`。只實作抽象方法的自訂後端會退回使用 `BaseCacheBackend` 的非原子性版本，因此並行的重送可能兩邊都成功。這種情況請覆寫 `get_and_delete()`。
 - 不要在 state 中存放敏感資料。`metadata` 會以明文 JSON 存放在快取後端中。
-- **日誌中絕不會出現 state 本身。** 來自 `fastapi_cachex.state.manager` 的日誌以 `state_ref` 識別 state，也就是其 SHA-256 的前 12 個十六進位字元；你可以從已知的 state 計算出它來比對。未知或已過期的 state 以 INFO 等級記錄，因為那是常見的用戶端輸入；格式錯誤的儲存資料則以 WARNING 等級記錄一次。
+- **日誌中絕不會出現 state 本身。** 來自 `fastapi_cachex.state.manager` 的日誌以 `state_ref` 識別 state，也就是其 SHA-256 的前 12 個十六進位字元；你可以從已知的 state 計算出它來比對。被 `consume_state()` 拒絕的未知、已過期或綁定不符的 state 以 INFO 等級記錄，因為那是常見的用戶端輸入（`validate_state()` 與 `get_state_metadata()` 對不存在或已過期的 state 則以 DEBUG 等級記錄）；格式錯誤的儲存資料則以 WARNING 等級記錄一次。

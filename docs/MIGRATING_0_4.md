@@ -32,7 +32,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | `get_or_set()` locks by default | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set lock](#get-or-set-lock) |
 | `get_session_manager` resolves through `SessionManagerProxy` | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
 | `add_routes()` requires `dependencies`, no content preview by default | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning` | [Monitoring routes](#add-routes) |
-| Redis `encoding` option removed | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning` | [Redis encoding](#redis-encoding) |
+| Redis `encoding` option removed | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning` (`RuntimeWarning` for a value other than UTF-8) | [Redis encoding](#redis-encoding) |
 | JWT HMAC secrets shorter than the hash output are rejected | [#129](https://github.com/allen0099/FastAPI-CacheX/issues/129) | `UserWarning` | [JWT secret length](#jwt-secret) |
 | `SessionMiddleware` removed | [#69](https://github.com/allen0099/FastAPI-CacheX/issues/69) | `DeprecationWarning` | [SessionMiddleware](#session-middleware) |
 | `BackendProxy.get_backend()` / `set_backend()` removed | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
@@ -258,7 +258,7 @@ entry.headers["link"]
 
 ### Monitoring routes {#add-routes}
 
-`add_routes()` requires `dependencies` in 0.4.0, and `include_content_preview` defaults to `False` ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)). 0.3.x emits a `UserWarning` when `dependencies` is left out.
+`add_routes()` requires `dependencies` in 0.4.0, and `include_content_preview` defaults to `False` ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)). 0.3.9 emits a `UserWarning` when `dependencies` is left out.
 
 ```python
 # Before
@@ -274,7 +274,7 @@ add_routes(app, dependencies=[], include_content_preview=True)
 
 ### Redis encoding {#redis-encoding}
 
-The Redis client reads raw bytes in 0.4.0, and the `encoding` option is removed from `AsyncRedisCacheBackend` and `RedisConfig` ([#126](https://github.com/allen0099/FastAPI-CacheX/issues/126)). Entries were always written as UTF-8, so leaving it out changes nothing. In 0.3.9, passing `encoding` at all emits a `DeprecationWarning` (and a value other than UTF-8 keeps its `RuntimeWarning`).
+The Redis client reads raw bytes in 0.4.0, and the `encoding` option is removed from `AsyncRedisCacheBackend` and `RedisConfig` ([#126](https://github.com/allen0099/FastAPI-CacheX/issues/126)). Entries were always written as UTF-8, so leaving it out changes nothing. In 0.3.9, a UTF-8 `encoding` passed to `AsyncRedisCacheBackend` emits a `DeprecationWarning`, and any other value emits only its `RuntimeWarning`, which also announces the removal. A `RedisConfig` that sets `encoding` emits the `DeprecationWarning` when it is passed to `load_from_config()`, plus the `RuntimeWarning` for a value other than UTF-8.
 
 ```python
 # Before
