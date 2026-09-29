@@ -176,6 +176,38 @@ def _stash_session_manager(app: Any, manager: SessionManager) -> None:
         setattr(app.state, "__fastapi_cachex_session_manager", manager)
 
 
+def _warn_if_default_cookie(config: SessionConfig) -> None:
+    """Warn that 0.4.0 changes the session cookie defaults this config relies on.
+
+    0.4.0 names the cookie ``__Host-session`` and sets the Secure flag by
+    default (#256). The new name logs every cookie session out once, and the
+    Secure flag stops the cookie working over plain HTTP, so both have to be
+    chosen explicitly to be unaffected.
+
+    Args:
+        config: The configuration the middleware uses
+    """
+    defaults = [
+        name
+        for name in ("cookie_name", "cookie_https_only")
+        if name not in config.model_fields_set
+    ]
+    if not defaults:
+        return
+    warnings.warn(
+        f"FastAPICacheXSessionMiddleware is using the default {' and '.join(defaults)} "
+        "of SessionConfig. Version 0.4.0 changes the session cookie defaults to "
+        "cookie_name='__Host-session' with the Secure flag (cookie_https_only=True): "
+        "the new name logs every cookie session out once on upgrade, and a Secure "
+        "cookie is not sent over plain HTTP. Set both explicitly: "
+        "cookie_name='session', cookie_https_only=False keeps the current cookie; "
+        "cookie_name='__Host-session', cookie_https_only=True switches now "
+        "(https://github.com/allen0099/FastAPI-CacheX/issues/256).",
+        FutureWarning,
+        stacklevel=3,
+    )
+
+
 class SessionMiddleware(BaseHTTPMiddleware):
     """Middleware to handle session loading and token extraction.
 
@@ -348,10 +380,16 @@ class FastAPICacheXSessionMiddleware:
             app: ASGI application
             session_manager: Session manager instance
             config: Session configuration
+
+        Warns:
+            FutureWarning: If the configuration leaves ``cookie_name`` or
+                ``cookie_https_only`` at its default, both of which change in
+                0.4.0.
         """
         self.app = app
         self.session_manager = session_manager or SessionManagerProxy.get()
         self.config = config or self.session_manager.config
+        _warn_if_default_cookie(self.config)
 
         security_flags = f"httponly; samesite={self.config.cookie_same_site}"
         if self.config.cookie_https_only:

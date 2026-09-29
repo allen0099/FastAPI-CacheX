@@ -43,7 +43,11 @@ config = SessionConfig(
         "SESSION_SECRET_KEY", "dev-only-placeholder-change-me-before-deploying"
     ),
     session_ttl=3600,
-    # Keep False only for local HTTP development.
+    # 0.4.0 changes both cookie defaults (to "__Host-session" with the Secure
+    # flag), so set them explicitly. In production over HTTPS use
+    # cookie_name="__Host-session" and cookie_https_only=True; keep False only
+    # for local HTTP development.
+    cookie_name="session",
     cookie_https_only=False,
 )
 session_manager = SessionManager(backend, config)

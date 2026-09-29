@@ -15,8 +15,14 @@ def backend() -> MemoryBackend:
 
 @pytest.fixture
 def config() -> SessionConfig:
-    """Create session config for testing."""
-    return SessionConfig(secret_key="a" * 32)
+    """Create session config for testing.
+
+    The cookie settings are explicit so FastAPICacheXSessionMiddleware does not
+    warn about the 0.4.0 cookie defaults (#256).
+    """
+    return SessionConfig(
+        secret_key="a" * 32, cookie_name="session", cookie_https_only=False
+    )
 
 
 @pytest.fixture

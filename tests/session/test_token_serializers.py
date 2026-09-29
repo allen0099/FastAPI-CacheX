@@ -339,6 +339,7 @@ def test_jwt_serializer_warns_once_about_a_short_hmac_key(
     if warns:
         assert len(messages) == 1
         assert f"requires for {algorithm}" in messages[0]
+        assert "Version 0.4.0 will reject" in messages[0]
         assert caught[0].filename == __file__
     else:
         assert messages == []

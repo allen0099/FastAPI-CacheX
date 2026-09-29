@@ -53,12 +53,28 @@ def test_redis_load_from_config_initializes_client_and_prefix() -> None:
 
 
 @requires_redis_package
-@pytest.mark.parametrize("encoding", ["utf-8", "UTF8", "utf_8"])
-def test_redis_utf8_encoding_does_not_warn(encoding: str) -> None:
-    """UTF-8 under any of its aliases is accepted silently (#122)."""
+def test_redis_without_encoding_does_not_warn() -> None:
+    """Leaving ``encoding`` out is the forward-compatible form (#126)."""
     with warnings.catch_warnings():
         warnings.simplefilter("error")
+        backend = AsyncRedisCacheBackend(port=UNCONNECTED_PORT)
+
+    kwargs = getattr(backend.client.connection_pool, "connection_kwargs", {})
+    assert kwargs.get("encoding", "utf-8") == "utf-8"
+
+
+@requires_redis_package
+@pytest.mark.parametrize("encoding", ["utf-8", "UTF8", "utf_8"])
+def test_redis_explicit_utf8_encoding_is_deprecated(encoding: str) -> None:
+    """UTF-8 under any alias is only deprecated, not a corruption risk (#122, #126)."""
+    with pytest.warns(
+        DeprecationWarning, match=r"Version 0\.4\.0 removes it"
+    ) as record:
         AsyncRedisCacheBackend(port=UNCONNECTED_PORT, encoding=encoding)
+
+    assert len(record) == 1
+    assert record[0].filename == __file__
+    assert "issues/126" in str(record[0].message)
 
 
 @requires_redis_package
@@ -73,9 +89,10 @@ def test_redis_non_utf8_encoding_warns(encoding: str) -> None:
 
 @requires_redis_package
 def test_redis_unknown_encoding_is_left_to_the_client() -> None:
-    """An unknown codec is rejected by redis-py, not warned about (#122)."""
+    """An unknown codec is rejected by redis-py, not reported as corrupting (#122)."""
     with warnings.catch_warnings():
         warnings.simplefilter("error")
+        warnings.filterwarnings("ignore", category=DeprecationWarning)
         with pytest.raises(LookupError):
             AsyncRedisCacheBackend(port=UNCONNECTED_PORT, encoding="no-such-codec")
 
@@ -85,8 +102,36 @@ def test_redis_load_from_config_warns_on_non_utf8_encoding() -> None:
     """RedisConfig goes through the same check (#122)."""
     from fastapi_cachex.backends.config import RedisConfig
 
-    with pytest.warns(RuntimeWarning, match="encoding='latin-1'"):
-        AsyncRedisCacheBackend.load_from_config(RedisConfig(encoding="latin-1"))
+    config = RedisConfig(encoding="latin-1")
+    with (
+        pytest.warns(DeprecationWarning, match="RedisConfig"),
+        pytest.warns(RuntimeWarning, match="encoding='latin-1'"),
+    ):
+        AsyncRedisCacheBackend.load_from_config(config)
+
+
+@requires_redis_package
+def test_redis_load_from_config_deprecates_an_explicit_encoding() -> None:
+    """Setting RedisConfig.encoding at all is deprecated (#126)."""
+    from fastapi_cachex.backends.config import RedisConfig
+
+    config = RedisConfig(encoding="utf-8", port=UNCONNECTED_PORT)
+    with pytest.warns(
+        DeprecationWarning, match=r"RedisConfig\(encoding='utf-8'\)"
+    ) as record:
+        AsyncRedisCacheBackend.load_from_config(config)
+
+    assert len(record) == 1
+    assert record[0].filename == __file__
+
+
+@requires_redis_package
+def test_redis_load_from_config_without_encoding_does_not_warn() -> None:
+    from fastapi_cachex.backends.config import RedisConfig
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        AsyncRedisCacheBackend.load_from_config(RedisConfig(port=UNCONNECTED_PORT))
 
 
 async def test_redis_latin1_encoding_corrupts_non_ascii_content() -> None:
@@ -120,7 +165,6 @@ def test_redis_load_from_config_passes_all_fields() -> None:
         port=6380,
         password=SecretStr("s3cr3t"),
         db=3,
-        encoding="utf-8",
         socket_timeout=2.5,
         socket_connect_timeout=1.5,
         key_prefix="myapp:",

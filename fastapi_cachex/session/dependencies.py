@@ -1,5 +1,6 @@
 """FastAPI dependency injection utilities for session management."""
 
+import warnings
 from typing import TYPE_CHECKING
 from typing import Annotated
 
@@ -10,15 +11,21 @@ from fastapi import status
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.security import HTTPBearer
 
+from fastapi_cachex.exceptions import ProxyNotSetError
+
 from .middleware import _log_in
 from .middleware import _RequestSession
 from .middleware import get_client_ip
 from .models import Session
+from .proxy import SessionManagerProxy
 
 if TYPE_CHECKING:
     from .manager import SessionManager
     from .models import SessionUser
 
+
+# ``app.state`` flag: get_session_manager() already warned about #131 there.
+_PROXY_WARNED = "__fastapi_cachex_session_manager_proxy_warned"
 
 # HTTPBearer security scheme for OpenAPI UI
 _http_bearer = HTTPBearer(
@@ -138,9 +145,15 @@ def get_session_manager(request: Request) -> "SessionManager":
     Raises:
         HTTPException: 500 if no session middleware has registered a
             SessionManager yet
+
+    Warns:
+        FutureWarning: Once per app, if the manager the middleware registered
+            is not the one set with ``SessionManagerProxy.set()``. 0.4.0
+            resolves this dependency through ``SessionManagerProxy`` only.
     """
+    state = request.app.state
     manager: SessionManager | None = getattr(
-        request.app.state, "__fastapi_cachex_session_manager", None
+        state, "__fastapi_cachex_session_manager", None
     )
     if manager is None:
         raise HTTPException(
@@ -150,7 +163,28 @@ def get_session_manager(request: Request) -> "SessionManager":
                 "FastAPICacheXSessionMiddleware is added to the app."
             ),
         )
+    if not getattr(state, _PROXY_WARNED, False) and manager is not _proxy_manager():
+        setattr(state, _PROXY_WARNED, True)
+        warnings.warn(
+            "get_session_manager() returned the SessionManager the session "
+            "middleware registered, which is not the one set in "
+            "SessionManagerProxy. Version 0.4.0 resolves get_session_manager() "
+            "(and SessionManagerDep, ClientIPDep and rotate_session_id(), which use "
+            "it) through SessionManagerProxy "
+            "only. Call SessionManagerProxy.set(session_manager) at startup "
+            "(https://github.com/allen0099/FastAPI-CacheX/issues/131).",
+            FutureWarning,
+            stacklevel=2,
+        )
     return manager
+
+
+def _proxy_manager() -> "SessionManager | None":
+    """Return the manager set in ``SessionManagerProxy``, or None."""
+    try:
+        return SessionManagerProxy.get()
+    except ProxyNotSetError:
+        return None
 
 
 async def rotate_session_id(request: Request) -> bool:

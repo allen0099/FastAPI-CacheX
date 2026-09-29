@@ -56,12 +56,9 @@ uv add "fastapi-cachex[jwt]"
 ```
 <!-- fmt:on -->
 
-也可以不把管理器傳給中介軟體，而是將它註冊到 proxy。省略 `config` 時，中介軟體會使用 `session_manager.config`：
+範例也把管理器註冊到 `SessionManagerProxy`，0.4.0 起 `get_session_manager` 只會從那裡取得它（見[遷移至 0.4.0](MIGRATING_0_4.md#get-session-manager)）。管理器註冊在那裡之後，中介軟體也可以從 proxy 取得，而不必以參數傳入。省略 `config` 時，中介軟體會使用 `session_manager.config`：
 
 ```python
-from fastapi_cachex.session import SessionManagerProxy
-
-SessionManagerProxy.set(session_manager)
 app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
 ```
 
@@ -160,17 +157,28 @@ SessionConfig(
     # 後端
     backend_key_prefix="session:",
     # Cookie（只有 FastAPICacheXSessionMiddleware 會讀取）
-    cookie_name="session",
+    cookie_name="session",  # 0.4.0 起為 "__Host-session"
     cookie_max_age=14
     * 24
     * 60
     * 60,  # None = 不設 Max-Age（Cookie 隨瀏覽器工作階段結束）
     cookie_path="/",
     cookie_same_site="lax",  # "lax" / "strict" / "none"（"none" 需要 cookie_https_only=True）
-    cookie_https_only=False,  # True 會加上 Secure 旗標
+    cookie_https_only=False,  # True 會加上 Secure 旗標；0.4.0 起為 True
     cookie_domain=None,  # None = 不設 Domain 屬性
 )
 ```
+
+#### 0.4.0 的 Cookie 預設值變更 {#cookie-defaults-change-in-040}
+
+0.4.0 會將 Session Cookie 命名為 `__Host-session`，並預設加上 `Secure` 旗標。瀏覽器只接受帶 `Secure`、`Path=/` 且沒有 `Domain` 的 `__Host-` Cookie，也不接受子網域設定的這種 Cookie，因此移除了植入 Session Cookie 最常見的途徑（Session 固定攻擊（session fixation））。新名稱也代表升級後，所有持有 `session` Cookie 的瀏覽器都會被登出一次。
+
+在那之前，若 `FastAPICacheXSessionMiddleware` 的設定讓 `cookie_name` 或 `cookie_https_only` 維持預設值，會發出 `FutureWarning`。明確設定兩者即可消除警告：
+
+- `cookie_name="session", cookie_https_only=False` 保留目前的 Cookie（升級後也能繼續運作，例如透過純 HTTP 進行本機開發）；
+- `cookie_name="__Host-session", cookie_https_only=True` 現在就切換，需透過 HTTPS。
+
+`__Host-` 名稱搭配 `cookie_https_only=False`、`/` 以外的 `cookie_path` 或 `cookie_domain`（以及 `__Secure-` 名稱未搭配 `cookie_https_only=True`）會發出 `UserWarning`，因為瀏覽器會拒絕這樣的 Cookie；0.4.0 會拒絕這種組合。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#session-cookie)。
 
 Session 會在 `session_ttl` 秒後過期。啟用 `sliding_expiration` 時，每個發現剩餘時間少於 `session_ttl * sliding_threshold` 秒的請求，都會將過期時間重新延長為完整的 `session_ttl`，並發行一個更新後的權杖，由中介軟體傳回給用戶端（回應標頭或 `Set-Cookie`，見上表）。標頭／Bearer 用戶端在回應帶有 `header_name` 標頭時，應以它取代已保存的權杖。`absolute_timeout` 會在 Session 建立後經過該秒數時結束 Session，不論是否有滑動更新：過期時間、後端 TTL 與 JWT 的 `exp` 都不會超過 `created_at + absolute_timeout`，過期時間到達這個上限後也不再發行更新後的權杖。
 
@@ -235,6 +243,7 @@ config = SessionConfig(secret_key=secret_key)
 ```python
 config = SessionConfig(
     secret_key="...",
+    cookie_name="__Host-session",  # 瀏覽器只接受帶 Secure、Path=/ 且沒有 Domain 的這種 Cookie
     cookie_https_only=True,  # 為 Session Cookie 加上 Secure 旗標
 )
 ```
@@ -397,7 +406,7 @@ from fastapi_cachex.session.dependencies import (
 )
 ```
 
-`get_session_manager` 回傳中介軟體在處理第一個請求時存放在 `app.state` 上的管理器；若尚未有任何 Session 中介軟體執行過，它會回應 `500`。使用它可以避免在路由模組中匯入管理器：
+`get_session_manager` 回傳中介軟體在處理第一個請求時存放在 `app.state` 上的管理器；若尚未有任何 Session 中介軟體執行過，它會回應 `500`。使用它可以避免在路由模組中匯入管理器。0.4.0 起它改為透過 `SessionManagerProxy` 取得管理器，因此請以 `SessionManagerProxy.set(manager)` 註冊：在那之前，當 proxy 沒有管理器或持有不同的管理器時，`get_session_manager`（以及使用它的 `SessionManagerDep`、`ClientIPDep` 與 `rotate_session_id()`）每個應用程式會發出一次 `FutureWarning`。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#get-session-manager)。
 
 ```python
 from fastapi_cachex.session import SessionUser

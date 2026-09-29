@@ -22,6 +22,7 @@ def test_get_session_manager_dependency(
 ) -> None:
     """Test get_session_manager dependency retrieves manager from app state."""
     app = FastAPI()
+    SessionManagerProxy.set(manager)
 
     # Add middleware which stores manager in app.state
     app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
@@ -46,6 +47,7 @@ async def test_get_session_manager_allows_create_session(
 ) -> None:
     """Test using get_session_manager to create sessions."""
     app = FastAPI()
+    SessionManagerProxy.set(manager)
 
     # Add middleware
     app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
@@ -96,6 +98,7 @@ async def test_get_session_manager_full_workflow(
 ) -> None:
     """Test complete workflow: create, get, delete session using dependency."""
     app = FastAPI()
+    SessionManagerProxy.set(manager)
     app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
 
     @app.post("/login")
@@ -139,6 +142,7 @@ def test_session_manager_type_annotation(
     from fastapi_cachex.session.dependencies import SessionManagerDep
 
     app = FastAPI()
+    SessionManagerProxy.set(manager)
     app.add_middleware(SessionMiddleware, session_manager=manager, config=config)
 
     @app.get("/test")

@@ -17,7 +17,12 @@ from fastapi_cachex.session.security import SecurityManager
 @pytest.fixture
 def config() -> SessionConfig:
     """Session config with IP binding on, trusting nothing by default."""
-    return SessionConfig(secret_key="a" * 32, ip_binding=True)
+    return SessionConfig(
+        secret_key="a" * 32,
+        ip_binding=True,
+        cookie_name="session",
+        cookie_https_only=False,
+    )
 
 
 def test_non_ascii_signature_is_rejected_not_raised():
@@ -128,7 +133,11 @@ async def test_prepended_forwarded_entry_cannot_satisfy_ip_binding(
     # The proxy in this test is TestClient itself, which presents as
     # "testclient"; trusting it puts us in the deployment the setting exists for.
     config = SessionConfig(
-        secret_key="a" * 32, ip_binding=True, trusted_proxies=["testclient"]
+        secret_key="a" * 32,
+        ip_binding=True,
+        trusted_proxies=["testclient"],
+        cookie_name="session",
+        cookie_https_only=False,
     )
     manager = SessionManager(MemoryBackend(), config)
 

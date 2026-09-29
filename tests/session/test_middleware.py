@@ -239,6 +239,7 @@ async def test_user_agent_binding_checks_the_request_user_agent(
 async def test_a_rotated_session_id_is_sent_back_as_a_new_token(
     manager: SessionManager, config: SessionConfig
 ) -> None:
+    SessionManagerProxy.set(manager)
     session, token = await manager.create_session(user=SessionUser(user_id="u1"))
     client = _client(manager, config)
 

@@ -79,23 +79,46 @@ return 0
 """
 
 
-def _warn_if_not_utf8(encoding: str) -> None:
-    r"""Warn when replies would be decoded with anything but UTF-8.
+_ENCODING_REMOVED = (
+    "Version 0.4.0 removes it: the client will read raw bytes, and entries "
+    "are always UTF-8. Remove the argument; UTF-8 is what you get without it "
+    "(https://github.com/allen0099/FastAPI-CacheX/issues/126)."
+)
 
-    The shared codec writes UTF-8 JSON, and the client decodes each reply with
-    ``encoding``, so under e.g. latin-1 a stored ``b"\xe9"`` reads back as
-    ``b"\xc3\xa9"``. Aliases such as ``"UTF8"`` and ``"utf_8"`` are accepted.
+
+def _is_utf8(encoding: str) -> bool:
+    """Whether ``encoding`` names UTF-8 (unknown names count as UTF-8 here).
+
+    An unknown name is left for the client to reject itself.
     """
     try:
-        name = codecs.lookup(encoding).name
+        return codecs.lookup(encoding).name == "utf-8"
     except LookupError:
-        return  # the client rejects an unknown encoding itself
-    if name != "utf-8":
+        return True
+
+
+def _warn_encoding(encoding: str) -> None:
+    r"""Warn about an explicitly passed ``encoding``.
+
+    UTF-8 (under any alias such as ``"UTF8"`` or ``"utf_8"``) only gets the
+    ``DeprecationWarning`` for the parameter's removal in 0.4.0. Anything else
+    gets a ``RuntimeWarning``: the shared codec writes UTF-8 JSON, and the
+    client decodes each reply with ``encoding``, so under e.g. latin-1 a stored
+    ``b"\xe9"`` reads back as ``b"\xc3\xa9"``.
+    """
+    if _is_utf8(encoding):
+        warnings.warn(
+            f"AsyncRedisCacheBackend(encoding={encoding!r}) is deprecated. "
+            f"{_ENCODING_REMOVED}",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    else:
         warnings.warn(
             f"AsyncRedisCacheBackend(encoding={encoding!r}) will corrupt non-ASCII "
             "cached content: entries are always written as UTF-8, and replies "
-            "are decoded with this encoding. Use encoding='utf-8'. The encoding "
-            "parameter will be removed in version 0.4.0.",
+            "are decoded with this encoding. Remove the argument (UTF-8 is the "
+            "default); the encoding parameter will be removed in version 0.4.0.",
             RuntimeWarning,
             stacklevel=3,
         )
@@ -117,7 +140,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         port: int = 6379,
         password: str | None = None,
         db: int = 0,
-        encoding: str = "utf-8",
+        encoding: str | None = None,
         decode_responses: Literal[True] = True,
         socket_timeout: float = 1.0,
         socket_connect_timeout: float = 1.0,
@@ -132,11 +155,12 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             port: Redis port
             password: Redis password
             db: Redis database number
-            encoding: Character encoding the client decodes replies with.
-                Leave it as UTF-8: entries are always written as UTF-8 JSON, so
-                any other encoding corrupts non-ASCII content on the way back,
-                and a ``RuntimeWarning`` says so. The parameter will be removed
-                in 0.4.0.
+            encoding: Deprecated; leave it out. Character encoding the client
+                decodes replies with, UTF-8 when omitted. Entries are always
+                written as UTF-8 JSON, so any other encoding corrupts non-ASCII
+                content on the way back, and a ``RuntimeWarning`` says so.
+                Passing it at all emits a ``DeprecationWarning``: the parameter
+                is removed in 0.4.0.
             decode_responses: Whether to decode response automatically
             socket_timeout: Timeout for socket operations (in seconds)
             socket_connect_timeout: Timeout for socket connection (in seconds)
@@ -158,7 +182,10 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             )
             raise CacheXError(msg) from exc
 
-        _warn_if_not_utf8(encoding)
+        if encoding is None:
+            encoding = "utf-8"
+        else:
+            _warn_encoding(encoding)
 
         # `protocol` is not in the types-redis stubs (added in redis-py 5.x).
         # Pass it via **kwargs so mypy doesn't complain about an unknown keyword.
@@ -193,7 +220,21 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             config: RedisConfig instance
         Returns:
             An instance of AsyncRedisCacheBackend
+
+        Warns:
+            DeprecationWarning: ``config`` sets ``encoding`` explicitly; the
+                field is removed in 0.4.0.
         """
+        encoding: str | None = None
+        if "encoding" in config.model_fields_set:
+            warnings.warn(
+                f"RedisConfig(encoding={config.encoding!r}) is deprecated. "
+                f"{_ENCODING_REMOVED}",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if not _is_utf8(config.encoding):
+                encoding = config.encoding  # keeps the RuntimeWarning
         return AsyncRedisCacheBackend(
             host=config.host,
             port=config.port,
@@ -201,11 +242,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             if config.password is not None
             else None,
             db=config.db,
-            encoding=config.encoding,
             socket_timeout=config.socket_timeout,
             socket_connect_timeout=config.socket_connect_timeout,
             key_prefix=config.key_prefix,
             protocol=config.protocol,
+            encoding=encoding,
         )
 
     async def aclose(self) -> None:

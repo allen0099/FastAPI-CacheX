@@ -71,8 +71,9 @@ def build_report() -> dict:
 
 @app.get("/report")
 async def report(cache: AppCache):
-    # Cache any JSON value in your own code.
-    return await cache.get_or_set("report", build_report, ttl=300)
+    # Cache any JSON value in your own code. lock=True runs build_report once
+    # for concurrent misses (the default from 0.4.0).
+    return await cache.get_or_set("report", build_report, ttl=300, lock=True)
 ```
 
 > [!IMPORTANT]

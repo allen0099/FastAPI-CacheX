@@ -247,6 +247,35 @@ class SessionConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _warn_invalid_cookie_prefix(self) -> "SessionConfig":
+        """Warn about a ``__Host-`` / ``__Secure-`` cookie browsers will refuse.
+
+        Browsers store a ``__Secure-`` cookie only with the Secure flag, and a
+        ``__Host-`` cookie only with Secure, ``Path=/`` and no ``Domain``, so
+        the session would silently never stick. 0.4.0 rejects these
+        combinations (#256).
+        """
+        problems: list[str] = []
+        if self.cookie_name.startswith(("__Host-", "__Secure-")):
+            if not self.cookie_https_only:
+                problems.append("cookie_https_only=True")
+            if self.cookie_name.startswith("__Host-"):
+                if self.cookie_path != "/":
+                    problems.append('cookie_path="/"')
+                if self.cookie_domain is not None:
+                    problems.append("cookie_domain=None")
+        if problems:
+            warnings.warn(
+                f"cookie_name={self.cookie_name!r} requires {', '.join(problems)}: "
+                "browsers refuse a cookie with this prefix otherwise, so the "
+                "session cookie would never be stored. Version 0.4.0 will reject "
+                "this configuration.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return self
+
     @field_validator("jwt_algorithm")
     @classmethod
     def _check_jwt_algorithm(cls, value: str) -> str:

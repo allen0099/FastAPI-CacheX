@@ -202,10 +202,15 @@ def test_the_repository_changelog_can_be_released():
     assert rewritten.startswith("# Changelog\n")
     assert text.count("removed in 0.3.5") == rewritten.count("removed in 0.3.5")
     assert f"[0.9.9]: {BASE}/compare/v{latest[1]}...v0.9.9" in rewritten
-    assert body.startswith("### ")
+    # A release notice written under `Unreleased` (text above the first
+    # heading) may open the section; the entries follow under their headings.
+    notice, heading, _ = body.partition("### ")
+    assert heading
+    assert "\n- " not in f"\n{notice}"
     # Every entry waiting in `Unreleased` has the summary the release page needs.
     notes = release_notes(body, "0.9.9", "2026-09-14")
-    assert notes.startswith("### ")
+    assert notes.startswith(notice)
+    assert notes.removeprefix(notice).startswith("### ")
     # Every pending fragment reaches the release page with its issue link.
     for fragment in fragments:
         assert f"[#{fragment.issue}]({BASE}/issues/{fragment.issue})" in notes

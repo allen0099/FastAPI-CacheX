@@ -16,7 +16,14 @@ class RedisConfig(BaseModel):
         default=None, description="Redis server password"
     )
     db: int = Field(default=0, ge=0, description="Redis database number")
-    encoding: str = Field(default="utf-8", description="Character encoding to use")
+    encoding: str = Field(
+        default="utf-8",
+        description=(
+            "Deprecated, removed in 0.4.0: leave it unset. Character encoding "
+            "the client decodes replies with; setting it emits a "
+            "DeprecationWarning in load_from_config()."
+        ),
+    )
     socket_timeout: float = Field(
         default=1.0, description="Timeout for socket operations in seconds"
     )

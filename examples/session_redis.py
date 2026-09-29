@@ -26,6 +26,7 @@ from fastapi import HTTPException
 from fastapi import Request
 from pydantic import BaseModel
 
+from fastapi_cachex import SessionManagerProxy
 from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.session import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session import SessionConfig
@@ -56,8 +57,11 @@ config = SessionConfig(
     sliding_threshold=0.5,
     ip_binding=True,  # reject the token from another IP address
     user_agent_binding=False,  # optional: reject it from another User-Agent
+    cookie_name="__Host-session",  # the 0.4.0 default; needs HTTPS
+    cookie_https_only=True,
 )
 session_manager = SessionManager(backend, config)
+SessionManagerProxy.set(session_manager)  # ClientIPDep resolves it through the proxy
 
 
 @asynccontextmanager

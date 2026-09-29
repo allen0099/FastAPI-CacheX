@@ -28,6 +28,7 @@ nav = [
     { "State management" = "STATE.md" },
     { "Distributed lock" = "LOCK.md" },
   ] },
+  { "Migrating to 0.4.0" = "MIGRATING_0_4.md" },
   { "API reference" = [
     { "HTTP caching" = "api/http-caching.md" },
     { "Backends" = "api/backends.md" },

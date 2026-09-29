@@ -103,7 +103,7 @@ class CacheManager:
         key_prefix: str = "cache:",
         default_ttl: int | None = None,
         *,
-        lock: bool = False,
+        lock: bool | None = None,
         lock_ttl: int = 60,
     ) -> None:
         r"""Initialize CacheManager.
@@ -114,13 +114,18 @@ class CacheManager:
             default_ttl: Default TTL (seconds) applied when set() is called
                 without an explicit ttl. None means no expiry by default.
             lock: Whether get_or_set() uses distributed locking by default to
-                prevent cache stampedes (default: False).
+                prevent cache stampedes. ``None`` (the default) means ``False``
+                in 0.3.x, and ``get_or_set()`` emits a ``FutureWarning`` the
+                first time it relies on it: the default becomes ``True`` in
+                0.4.0. Pass ``False`` or ``True`` explicitly to keep the
+                current behaviour or opt in now.
             lock_ttl: Default TTL in seconds for stampede protection locks (default: 60).
 
         Raises:
             BackendNotFoundError: If ``backend`` is None and no backend has
                 been set with ``BackendProxy.set()``.
-            TypeError: If ``lock`` is not a bool or ``lock_ttl`` is not an int.
+            TypeError: If ``lock`` is not a bool or None, or ``lock_ttl`` is
+                not an int.
             ValueError: If ``default_ttl`` or ``lock_ttl`` is zero or negative.
 
         Warns:
@@ -133,13 +138,16 @@ class CacheManager:
         self.key_prefix = key_prefix
         self.default_ttl = validate_ttl(default_ttl)
 
-        _validate_lock(lock, allow_none=False)
+        _validate_lock(lock, allow_none=True)
 
         effective_lock_ttl = validate_ttl(lock_ttl)
         if effective_lock_ttl is None:
             msg = "lock_ttl must be a positive int, got None"
             raise ValueError(msg)
-        self.lock = lock
+        self.lock: bool = bool(lock)
+        # Whether get_or_set() still has to warn that the lock default flips
+        # in 0.4.0 (#280): only while neither the manager nor the call chose.
+        self._warn_lock_default = lock is None
         self.lock_ttl: int = effective_lock_ttl
 
         if self._prefix_has_glob:
@@ -411,7 +419,10 @@ class CacheManager:
             ttl: Time-to-live in seconds for a newly created value. If None,
                 uses ``self.default_ttl``.
             lock: Whether to use distributed locking for stampede protection.
-                If None, inherits the manager's ``lock`` setting.
+                If None, inherits the manager's ``lock`` setting. When the
+                manager was created without ``lock=`` either, the first such
+                call emits a ``FutureWarning``: the default becomes ``True``
+                in 0.4.0.
             lock_ttl: Upper bound in seconds for the lock lease. If None,
                 inherits the manager's ``lock_ttl``.
             wait_timeout: Maximum seconds waiting callers poll the cache before
@@ -432,10 +443,28 @@ class CacheManager:
                 have invalid types.
             ValueError: If ``ttl``, ``lock_ttl``, or ``wait_timeout`` is zero or negative.
             LockTimeoutError: If ``raise_on_timeout=True`` and waiting exceeds ``wait_timeout``.
+
+        Warns:
+            FutureWarning: Once per manager, when neither this call nor the
+                manager's constructor passed ``lock``: the default becomes
+                ``True`` in 0.4.0.
         """
         validated_wait_timeout = _validate_get_or_set_args(
             lock, ttl, lock_ttl, wait_timeout
         )
+        if lock is None and self._warn_lock_default:
+            self._warn_lock_default = False
+            warnings.warn(
+                "CacheManager.get_or_set() is relying on the default lock=False: "
+                "neither the call nor CacheManager(...) passed lock=. Version "
+                "0.4.0 turns stampede protection on by default (lock=True). "
+                "Pass lock=False to keep the current behaviour, or lock=True to "
+                "opt in now, to get_or_set() or to CacheManager() (for AppCache, "
+                "register one with CacheManagerProxy.set()) "
+                "(https://github.com/allen0099/FastAPI-CacheX/issues/280).",
+                FutureWarning,
+                stacklevel=2,
+            )
 
         cached = await self.get(key, default=_SENTINEL)
         if cached is not _SENTINEL:

@@ -24,6 +24,7 @@ from fastapi_cachex import BackendProxy
 from fastapi_cachex import FastAPICacheXSessionMiddleware
 from fastapi_cachex import SessionConfig
 from fastapi_cachex import SessionManager
+from fastapi_cachex import SessionManagerProxy
 from fastapi_cachex import SessionUser
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.session.dependencies import AuthenticatedSession
@@ -44,8 +45,15 @@ config = SessionConfig(
     # Optional: issued as `iss`/`aud` and checked on every request.
     jwt_issuer="https://api.example.com",
     jwt_audience="example-clients",
+    # The middleware also accepts a cookie. 0.4.0 changes both cookie defaults
+    # (to "__Host-session" with the Secure flag), so set them explicitly; over
+    # HTTPS use cookie_name="__Host-session" and cookie_https_only=True.
+    cookie_name="session",
+    cookie_https_only=False,
 )
 session_manager = SessionManager(backend, config)
+# ClientIPDep finds the manager through the proxy (only through it from 0.4.0).
+SessionManagerProxy.set(session_manager)
 
 
 @asynccontextmanager

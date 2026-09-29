@@ -32,7 +32,12 @@ _PUBLIC = "public, max-age=60"
 @pytest.fixture
 def sliding_config() -> SessionConfig:
     """A config that renews the token on every load."""
-    return SessionConfig(secret_key="a" * 32, sliding_threshold=1.0)
+    return SessionConfig(
+        secret_key="a" * 32,
+        sliding_threshold=1.0,
+        cookie_name="session",
+        cookie_https_only=False,
+    )
 
 
 @pytest.fixture

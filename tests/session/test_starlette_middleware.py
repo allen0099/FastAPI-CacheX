@@ -28,6 +28,7 @@ from fastapi_cachex.session.manager import SessionManager
 from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session.middleware import SessionMiddleware
 from fastapi_cachex.session.models import SessionUser
+from fastapi_cachex.session.proxy import SessionManagerProxy
 
 
 def _extract_cookie_token(set_cookie_header: str, cookie_name: str) -> str:
@@ -83,6 +84,7 @@ def test_set_cookie_header_includes_secure_and_domain_flags(
     """cookie_https_only and cookie_domain must be reflected in Set-Cookie."""
     config = SessionConfig(
         secret_key="a" * 32,
+        cookie_name="session",
         cookie_https_only=True,
         cookie_domain="example.com",
     )
@@ -106,7 +108,9 @@ def test_set_cookie_header_includes_secure_and_domain_flags(
 
 async def test_call_passes_through_non_http_scope() -> None:
     """Non-http/websocket scopes (e.g. lifespan) must bypass session handling entirely."""
-    config = SessionConfig(secret_key="a" * 32)
+    config = SessionConfig(
+        secret_key="a" * 32, cookie_name="session", cookie_https_only=False
+    )
     manager = SessionManager(MemoryBackend(), config)
 
     calls: list[str] = []
@@ -127,6 +131,7 @@ def test_get_session_manager_di_stashed_once_across_requests(
     """Session manager is only stashed on app.state on the first request, not re-stashed."""
     from fastapi_cachex.session.dependencies import SessionManagerDep
 
+    SessionManagerProxy.set(manager)
     app = FastAPI()
     app.add_middleware(
         FastAPICacheXSessionMiddleware, session_manager=manager, config=config
@@ -814,6 +819,7 @@ async def test_deprecated_middleware_sends_regenerated_token(
 
 def _rotating_login_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
     """An app with a Starlette-style login that rotates the ID first (#225)."""
+    SessionManagerProxy.set(manager)
     app = FastAPI()
     app.add_middleware(
         FastAPICacheXSessionMiddleware, session_manager=manager, config=config
@@ -957,7 +963,12 @@ async def test_cookie_token_varies_on_cookie_and_the_headers_checked_first(
 
 
 def test_disabled_bearer_transport_is_left_out_of_vary(manager: SessionManager) -> None:
-    config = SessionConfig(secret_key="a" * 32, use_bearer_token=False)
+    config = SessionConfig(
+        secret_key="a" * 32,
+        use_bearer_token=False,
+        cookie_name="session",
+        cookie_https_only=False,
+    )
     client = TestClient(_session_reading_app(manager, config))
 
     response = client.get("/read")

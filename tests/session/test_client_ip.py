@@ -16,6 +16,7 @@ from fastapi_cachex.session import get_client_ip
 from fastapi_cachex.session.dependencies import ClientIPDep
 from fastapi_cachex.session.dependencies import OptionalSession
 from fastapi_cachex.session.dependencies import SessionManagerDep
+from fastapi_cachex.session.proxy import SessionManagerProxy
 
 
 def _connection(peer: str | None, headers: dict[str, str]) -> HTTPConnection:
@@ -52,9 +53,14 @@ def test_get_client_ip_without_peer():
 def proxied_app() -> FastAPI:
     """An app with IP binding whose only peer (TestClient) is a trusted proxy."""
     config = SessionConfig(
-        secret_key="a" * 32, ip_binding=True, trusted_proxies=["testclient"]
+        secret_key="a" * 32,
+        ip_binding=True,
+        trusted_proxies=["testclient"],
+        cookie_name="session",
+        cookie_https_only=False,
     )
     manager = SessionManager(MemoryBackend(), config)
+    SessionManagerProxy.set(manager)
 
     app = FastAPI()
     app.add_middleware(

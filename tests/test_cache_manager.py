@@ -66,7 +66,7 @@ async def cache_manager(request: Any) -> AsyncGenerator[CacheManager, Any]:
         )
 
     BackendProxy.set(backend)
-    manager = CacheManager()
+    manager = CacheManager(lock=False)
 
     yield manager
 
@@ -225,7 +225,7 @@ async def test_get_or_set_treats_corrupted_content_as_miss(
     memory_backend: MemoryBackend,
 ) -> None:
     """get_or_set() calls factory when stored content can't be decoded."""
-    manager = CacheManager(backend=memory_backend)
+    manager = CacheManager(backend=memory_backend, lock=False)
     cache_key = f"{manager.key_prefix}bad"
     entry = CacheEntry(fingerprint="x", content=b"not valid json")
     await memory_backend.set(cache_key, entry, ttl=60)
@@ -264,7 +264,7 @@ async def test_get_or_set_miss_encodes_the_value_once(
     memory_backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """get_or_set() serialises the factory's value once and stores those bytes."""
-    manager = CacheManager(backend=memory_backend)
+    manager = CacheManager(backend=memory_backend, lock=False)
     encoded: list[Any] = []
     original = CacheManager._encode
 
@@ -734,10 +734,11 @@ async def test_stampede_protection_default_off(
         await asyncio.sleep(0.02)
         return "data"
 
-    results = await asyncio.gather(
-        manager.get_or_set("key", factory),
-        manager.get_or_set("key", factory),
-    )
+    with pytest.warns(FutureWarning, match="default lock=False"):
+        results = await asyncio.gather(
+            manager.get_or_set("key", factory),
+            manager.get_or_set("key", factory),
+        )
     assert list(results) == ["data", "data"]
     assert calls == 2
 
@@ -1047,9 +1048,6 @@ async def test_stampede_protection_validation(memory_backend: MemoryBackend) -> 
     with pytest.raises(TypeError, match="lock must be a bool"):
         CacheManager(backend=memory_backend, lock=1)  # type: ignore[arg-type]
 
-    with pytest.raises(TypeError, match="lock must be a bool"):
-        CacheManager(backend=memory_backend, lock=None)  # type: ignore[arg-type]
-
     with pytest.raises(ValueError, match="ttl must be a positive number"):
         CacheManager(backend=memory_backend, lock_ttl=0)
 
@@ -1062,7 +1060,7 @@ async def test_stampede_protection_validation(memory_backend: MemoryBackend) -> 
     with pytest.raises(TypeError, match="ttl must be an int"):
         CacheManager(backend=memory_backend, lock_ttl=1.5)  # type: ignore[arg-type]
 
-    manager = CacheManager(backend=memory_backend)
+    manager = CacheManager(backend=memory_backend, lock=False)
 
     with pytest.raises(TypeError, match="lock must be a bool or None"):
         await manager.get_or_set("key", lambda: 1, lock="yes")  # type: ignore[arg-type]
@@ -1441,3 +1439,61 @@ async def test_stampede_protection_winner_rechecks_inside_execution(
     with unittest.mock.patch.object(manager, "get", side_effect=sneaky_get):
         result = await manager.get_or_set("sneaky", lambda: "from_factory", lock=True)
         assert result == "sneaky_cached"
+
+
+# --- 0.4.0 lock default advance notice (#280) ---------------------------------
+
+
+async def test_get_or_set_warns_when_relying_on_the_lock_default(
+    memory_backend: MemoryBackend,
+) -> None:
+    """Neither the manager nor the call chose lock=: the 0.4.0 flip is announced once."""
+    manager = CacheManager(backend=memory_backend)
+
+    assert manager.lock is False
+    with pytest.warns(FutureWarning, match=r"0\.4\.0 turns stampede protection on"):
+        assert await manager.get_or_set("a", lambda: 1) == 1
+    # Once per manager: later calls relying on the default stay quiet.
+    assert await manager.get_or_set("b", lambda: 2) == 2
+
+
+async def test_get_or_set_warning_points_at_the_caller(
+    memory_backend: MemoryBackend,
+) -> None:
+    manager = CacheManager(backend=memory_backend)
+
+    with pytest.warns(FutureWarning) as record:
+        await manager.get_or_set("a", lambda: 1)
+
+    assert record[0].filename == __file__
+
+
+@pytest.mark.parametrize("lock", [False, True])
+async def test_get_or_set_is_silent_with_an_explicit_manager_lock(
+    memory_backend: MemoryBackend, lock: bool
+) -> None:
+    manager = CacheManager(backend=memory_backend, lock=lock)
+
+    assert manager.lock is lock
+    assert await manager.get_or_set("a", lambda: 1) == 1
+
+
+@pytest.mark.parametrize("lock", [False, True])
+async def test_get_or_set_is_silent_with_an_explicit_call_lock(
+    memory_backend: MemoryBackend, lock: bool
+) -> None:
+    manager = CacheManager(backend=memory_backend)
+
+    assert await manager.get_or_set("a", lambda: 1, lock=lock) == 1
+    # An explicit call does not use up the warning for a later default call.
+    with pytest.warns(FutureWarning, match="default lock=False"):
+        await manager.get_or_set("b", lambda: 2)
+
+
+async def test_lock_none_is_the_unset_default(memory_backend: MemoryBackend) -> None:
+    """lock=None means "not chosen": False today, and get_or_set() still warns."""
+    manager = CacheManager(backend=memory_backend, lock=None)
+
+    assert manager.lock is False
+    with pytest.warns(FutureWarning, match="default lock=False"):
+        await manager.get_or_set("a", lambda: 1)
