@@ -218,7 +218,7 @@ if no_store:
 
 bypass = private or not ttl
 # Authorization header, a session the middleware loaded, or non-empty request.session
-credential = None if bypass or public or cache_authorized else request_credential(request)
+credential = None if private or public or cache_authorized else request_credential(request)
 if bypass or credential:
     response, etag = await render()          # backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response

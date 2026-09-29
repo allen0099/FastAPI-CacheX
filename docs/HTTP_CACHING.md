@@ -139,9 +139,10 @@ A response that belongs to one caller is never stored either (#296):
   caller's identity (see [Authenticated endpoints](#authenticated-endpoints)).
   `must_revalidate=True` does not lift the bypass: RFC 9111 would let a shared
   cache reuse such a response under `must-revalidate`, but the library
-  requires an explicit opt-in. Routes that skip the backend anyway
-  (`private=True`, or no positive `ttl`) do not check for credentials and
-  send their own `Cache-Control` unchanged.
+  requires an explicit opt-in. A route without a positive `ttl` skips the
+  backend anyway, but its response to such a request still gets `private`
+  (before 0.3.9 it was sent without it, #362); `private=True` routes send it
+  already.
   A request has a session when `FastAPICacheXSessionMiddleware` (or the
   deprecated `SessionMiddleware`) loaded one for it, from the token header, a
   bearer token or the session cookie, with or without a user, or when
@@ -150,7 +151,7 @@ A response that belongs to one caller is never stored either (#296):
   count, so it cannot be used to skip the cache. Before 0.3.9 only
   `Authorization` did, and a plain `@cache` on a route that read the session
   served one visitor's response to the next (#319). The first bypass on each
-  route is logged at `WARNING` (see
+  route that reads the backend is logged at `WARNING` (see
   [Requests with credentials](#requests-with-credentials)).
 - **The handler's own `Cache-Control` contains `private` or `no-store`**
   (as whole directives, in any case). The response is served but not stored,

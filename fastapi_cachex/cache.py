@@ -1020,10 +1020,11 @@ def cache(
             backend as ``private=True`` does (RFC 9111 §3.5), unless
             ``public`` is set, and its response is sent with ``private``.
             A token that does not resolve to a session does not count.
-            Routes that skip the backend anyway (``private=True``, or no
-            positive ``ttl``) do not check for credentials, so their
-            ``Cache-Control`` is sent unchanged.
-            The first such bypass is logged at ``WARNING`` once per route
+            A route without a positive ``ttl`` skips the backend anyway, but
+            its response to such a request is still sent with ``private``;
+            ``private=True`` routes send it already.
+            On a route that reads the backend, the first such bypass is
+            logged at ``WARNING`` once per route
             and credential kind (the route template and the kind, never the
             value), since it otherwise leaves the route with no cache hits.
             RFC 9111 would also allow reuse under ``must-revalidate``, but
@@ -1223,10 +1224,12 @@ def cache(
             # default key carries no identity, so treat such requests as
             # private unless the route is `public` or opted in. A request that
             # arrived with a session is the same case, whichever transport
-            # carried its token (#319).
+            # carried its token (#319). Routes without a positive ttl skip the
+            # backend anyway, but their response still needs `private` for a
+            # downstream cache (#362); only `private=True` already sends it.
             credential = (
                 None
-                if bypass_backend or public or cache_authorized
+                if private or public or cache_authorized
                 else _request_credential(req)
             )
             authorized_bypass = credential is not None
@@ -1236,7 +1239,10 @@ def cache(
                     credential,
                     req.url.path,
                 )
-                warn_bypass(req, credential)
+                # The warning is about lost cache hits, which a route that
+                # never reads the backend does not have.
+                if not bypass_backend:
+                    warn_bypass(req, credential)
 
             # A private response belongs to exactly one user, so it must never
             # be read from or written to the shared backend — the default cache
