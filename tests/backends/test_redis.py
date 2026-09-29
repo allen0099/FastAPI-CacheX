@@ -60,7 +60,7 @@ def test_redis_client_reads_raw_bytes() -> None:
         backend = AsyncRedisCacheBackend(port=UNCONNECTED_PORT)
 
     kwargs = backend.client.connection_pool.connection_kwargs
-    assert kwargs.get("decode_responses", False) is False
+    assert kwargs["decode_responses"] is False
     assert kwargs.get("encoding", "utf-8") == "utf-8"
 
 
