@@ -186,6 +186,8 @@ async def search(q: str, limit: int = 10):
 
 `sort_query` 只套用於預設的 key builder。與自訂的 `key_builder` 一起使用時，套用裝飾器就會拋出 `CacheXError`；請改在 builder 中呼叫 `build_cache_key(request, ..., sort_query=True)`。對這樣的路由呼叫 `invalidate()` 時也要傳入 `sort_query=True`（見[使單一快取路由失效](#invalidating-a-single-cached-route)）。
 
+在鍵中編碼後超過 200 位元組的查詢字串，會改以 `sha256:` 加上 64 個十六進位字元的摘要儲存，因此用戶端無法讓鍵中查詢的部分無限變長。（超過 250 位元組的整個鍵，含前綴，Memcached 仍會整個雜湊；略低於門檻的查詢配上較長的 host 或路徑仍可能超過。）摘要在排序之後計算，因此 `sort_query` 仍會合併順序不同的長查詢。路徑維持可讀，所以 `clear_path()` 仍找得到該項目（需帶上 `include_params=True`，因為查詢不是空的），監控路由則以 `query_params` 顯示這個摘要。用戶端送出的查詢不可能看起來像摘要：鍵中的 `:` 會寫成 `%3A`。
+
 host 與路徑來自用戶端，因此其中的 `|` 與 `%` 會以百分比編碼寫入（`%7C` 與 `%25`）。含有 `|` 的 `Host` 標頭或路徑因此無法讓各段錯位，使某個請求的快取鍵與另一個請求相同。查詢字串本來就經過 URL 編碼。`clear_path()` 接受應用程式看到的路徑（`request.url.path`），並以同樣方式編碼；`clear_pattern()` 比對的是儲存的快取鍵，所以在模式中要把 `|` 寫成 `%7C`。0.3.8 之前兩者都照原樣儲存，因此升級後，host 或路徑含有 `|` 或 `%` 的項目會重新快取一次。
 
 host 會先經過正規化，讓同一個來源的各種寫法共用同一筆項目：轉為小寫（主機名稱不分大小寫），並去除空的連接埠或該 scheme 的預設連接埠（http 為 `:80`，https 為 `:443`）。在 http 上，`Example.com`、`example.com:80` 與 `example.com` 是同一個鍵 `example.com`；`example.com:8080` 保留連接埠，IPv6 位址則保留方括號（`[::1]:8000`）。scheme 以應用程式看到的為準：在終止 TLS 的代理之後，除非套用了代理的標頭（例如 `uvicorn --proxy-headers`），否則 scheme 是 `http`，因此這類代理送來的 `Host: example.com:443` 會保留連接埠。沒有 `Host` 標頭的請求使用 `unknown`。
@@ -448,7 +450,7 @@ add_routes(
 )
 ```
 
-- `GET {prefix}/cached-hits`：列出每筆快取項目，拆分為方法、主機、路徑與查詢，附上 ETag 與到期時間，另外統計有效與已過期的項目數，以及不重複的快取路徑。它不會計算命中次數。
+- `GET {prefix}/cached-hits`：列出每筆快取項目，拆分為方法、主機、路徑與查詢（超過 200 位元組的查詢為 `sha256:<十六進位>`），附上 ETag 與到期時間，另外統計有效與已過期的項目數，以及不重複的快取路徑。它不會計算命中次數。
 - `GET {prefix}/cached-records`：列出每筆快取紀錄的大小、到期時間、`media_type`（儲存的回應的媒體類型，沒有時為 `null`），以及快取內容前 100 個位元組的預覽。設定 `include_content_preview=False` 時，`content_preview` 為 `null`，不會有任何回應本文離開伺服器；鍵、大小與到期時間仍會回報。`content_type` 一律是 `"bytes"`，只為相容而保留；請改讀 `media_type`。
 
 兩個路由都只列出路由項目（格式為 `http:v2|method|host|path|query` 的鍵）；`CacheManager`、Session、state 與鎖的鍵都會略過，未使用 `build_cache_key()` 的 `key_builder` 產生的鍵也一樣。

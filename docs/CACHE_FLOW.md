@@ -114,7 +114,9 @@ Query parameters are joined in the order the request sent them
 (`str(request.query_params)`) and are **not sorted** by default, so
 `?page=1&limit=10` and `?limit=10&page=1` are two separate cache entries. To
 treat them as one, set `@cache(sort_query=True)`, which orders the parameters
-by name first (see [Cache keys](HTTP_CACHING.md#cache-keys)).
+by name first (see [Cache keys](HTTP_CACHING.md#cache-keys)). A query longer
+than 200 bytes is then replaced by `sha256:<hex digest>`, so the query part of
+the key stays bounded.
 
 The key format keeps each dimension cached independently:
 

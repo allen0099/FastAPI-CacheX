@@ -87,7 +87,7 @@ cache_key = "|".join(
 
 自訂的 `key_builder` 可以用 `build_cache_key(request, *components)` 在查詢字串之後加入其他段；這些段以同樣方式編碼，`clear_path()` 也仍會比對路徑（見 [HTTP 快取](HTTP_CACHING.md#adding-components-to-the-key)中的「在鍵中加入其他段」）。`@cache(vary=[...])` 會在 key builder 回傳的鍵之後，為每個列出的請求標頭附加一個 `name=value` 段，並把這些名稱加入回應的 `Vary` 標頭（見 [HTTP 快取](HTTP_CACHING.md#varying-on-request-headers)中的「依請求標頭區分」）。對於憑證標頭 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`，非空的值會寫成 `sha256:<十六進位摘要>`，因此鍵中不會出現任何權杖。
 
-查詢參數依請求送出的順序串接（`str(request.query_params)`），預設**不會排序**，因此 `?page=1&limit=10` 與 `?limit=10&page=1` 是兩個不同的快取項目。若希望兩者視為同一個，請設定 `@cache(sort_query=True)`，先依名稱排序參數（見 [HTTP 快取](HTTP_CACHING.md#cache-keys)中的「快取鍵」）。
+查詢參數依請求送出的順序串接（`str(request.query_params)`），預設**不會排序**，因此 `?page=1&limit=10` 與 `?limit=10&page=1` 是兩個不同的快取項目。若希望兩者視為同一個，請設定 `@cache(sort_query=True)`，先依名稱排序參數（見 [HTTP 快取](HTTP_CACHING.md#cache-keys)中的「快取鍵」）。超過 200 位元組的查詢接著會改寫為 `sha256:<十六進位摘要>`，讓鍵中查詢的部分維持有限長度。
 
 這個快取鍵格式讓每個維度各自獨立快取：
 

@@ -253,7 +253,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 - The separator becomes a single `|` (`CACHE_KEY_SEPARATOR`).
 - Keys start with the format tag `http:v2|` (`CacheKey.FORMAT_TAG`), so the next format change can remove old keys by pattern: `clear_pattern("http:v2|*")` removes every key of this format.
 - The host is normalised: lower-cased, and an empty port or the scheme's default one (`:80` on http, `:443` on https) dropped.
-- A long query string (over about 200 bytes) is stored as `sha256:` and its hex digest; the path stays readable.
+- A query string over 200 bytes (as encoded in the key) is stored as `sha256:` and its hex digest; the path stays readable, and the monitoring routes show the digest.
 - Query parameters are sorted by name: `sort_query` (opt-in since 0.3.9) defaults to `True` in `@cache`, `build_cache_key()` and `invalidate()`, so `?b=2&a=1` and `?a=1&b=2` share one entry.
 - One public `CacheKey` type builds, encodes and parses keys. `CACHE_KEY_MIN_PARTS`, `CACHE_KEY_MAX_SPLIT` and `CACHE_KEY_MAX_PARTS` are removed from `fastapi_cachex.routes`; read a key's components with `CacheKey.parse(key)` instead.
 
