@@ -53,104 +53,122 @@ def test_redis_load_from_config_initializes_client_and_prefix() -> None:
 
 
 @requires_redis_package
-def test_redis_without_encoding_does_not_warn() -> None:
-    """Leaving ``encoding`` out is the forward-compatible form (#126)."""
+def test_redis_client_reads_raw_bytes() -> None:
+    """The client is created with ``decode_responses=False`` (#126)."""
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         backend = AsyncRedisCacheBackend(port=UNCONNECTED_PORT)
 
-    kwargs = getattr(backend.client.connection_pool, "connection_kwargs", {})
+    kwargs = backend.client.connection_pool.connection_kwargs
+    assert kwargs.get("decode_responses", False) is False
     assert kwargs.get("encoding", "utf-8") == "utf-8"
 
 
 @requires_redis_package
-@pytest.mark.parametrize("encoding", ["utf-8", "UTF8", "utf_8"])
-def test_redis_explicit_utf8_encoding_is_deprecated(encoding: str) -> None:
-    """UTF-8 under any alias is only deprecated, not a corruption risk (#122, #126)."""
-    with pytest.warns(
-        DeprecationWarning, match=r"Version 0\.4\.0 removes it"
-    ) as record:
-        AsyncRedisCacheBackend(port=UNCONNECTED_PORT, encoding=encoding)
-
-    assert len(record) == 1
-    assert record[0].filename == __file__
-    assert "issues/126" in str(record[0].message)
-
-
-@requires_redis_package
-@pytest.mark.parametrize("encoding", ["latin-1", "utf-16", "ascii"])
-def test_redis_non_utf8_encoding_warns(encoding: str) -> None:
-    """Replies decoded as anything but UTF-8 corrupt cached content (#122)."""
-    with pytest.warns(RuntimeWarning, match="corrupt non-ASCII") as record:
-        AsyncRedisCacheBackend(port=UNCONNECTED_PORT, encoding=encoding)
-    ours = [w for w in record if "corrupt non-ASCII" in str(w.message)]
-    assert [w.filename for w in ours] == [__file__]
-
-
-@requires_redis_package
-def test_redis_unknown_encoding_is_left_to_the_client() -> None:
-    """An unknown codec is rejected by redis-py, not reported as corrupting (#122)."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        warnings.filterwarnings("ignore", category=DeprecationWarning)
-        with pytest.raises(LookupError):
-            AsyncRedisCacheBackend(port=UNCONNECTED_PORT, encoding="no-such-codec")
-
-
-@requires_redis_package
-def test_redis_load_from_config_warns_on_non_utf8_encoding() -> None:
-    """RedisConfig goes through the same check (#122)."""
-    from fastapi_cachex.backends.config import RedisConfig
-
-    config = RedisConfig(encoding="latin-1")
-    with (
-        pytest.warns(DeprecationWarning, match="RedisConfig"),
-        pytest.warns(RuntimeWarning, match="encoding='latin-1'"),
+@pytest.mark.parametrize(
+    ("name", "value"), [("encoding", "utf-8"), ("decode_responses", True)]
+)
+def test_redis_removed_keywords_are_rejected(name: str, value: object) -> None:
+    """``encoding``/``decode_responses`` must not slip through to redis-py (#126)."""
+    kwargs: dict[str, Any] = {name: value}
+    with pytest.raises(
+        TypeError, match=rf"'{name}': it was removed in version 0\.4\.0"
     ):
-        AsyncRedisCacheBackend.load_from_config(config)
+        AsyncRedisCacheBackend(port=UNCONNECTED_PORT, **kwargs)
 
 
 @requires_redis_package
-def test_redis_load_from_config_deprecates_an_explicit_encoding() -> None:
-    """Setting RedisConfig.encoding at all is deprecated (#126)."""
+def test_redis_config_has_no_encoding() -> None:
+    """RedisConfig dropped the field; load_from_config builds a bytes client (#126)."""
     from fastapi_cachex.backends.config import RedisConfig
 
-    config = RedisConfig(encoding="utf-8", port=UNCONNECTED_PORT)
-    with pytest.warns(
-        DeprecationWarning, match=r"RedisConfig\(encoding='utf-8'\)"
-    ) as record:
-        AsyncRedisCacheBackend.load_from_config(config)
-
-    assert len(record) == 1
-    assert record[0].filename == __file__
-
-
-@requires_redis_package
-def test_redis_load_from_config_without_encoding_does_not_warn() -> None:
-    from fastapi_cachex.backends.config import RedisConfig
-
+    assert "encoding" not in RedisConfig.model_fields
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        AsyncRedisCacheBackend.load_from_config(RedisConfig(port=UNCONNECTED_PORT))
+        backend = AsyncRedisCacheBackend.load_from_config(
+            RedisConfig(port=UNCONNECTED_PORT)
+        )
+    kwargs = backend.client.connection_pool.connection_kwargs
+    assert kwargs.get("decode_responses", False) is False
 
 
-async def test_redis_latin1_encoding_corrupts_non_ascii_content() -> None:
-    """What the warning is about, on a live server (#122)."""
+@requires_redis
+@pytest.mark.parametrize(
+    "content", [b"\xe9", "\u00e9t\u00e9 \u2603".encode(), b"\xff\x00\x80"]
+)
+async def test_redis_round_trips_non_ascii_content(
+    async_redis_backend: AsyncRedisCacheBackend, content: bytes
+) -> None:
+    """Raw-bytes replies return every byte as stored (#122, #126)."""
+    await async_redis_backend.set("k", CacheEntry(fingerprint="f", content=content))
+
+    entry = await async_redis_backend.get("k")
+    assert entry is not None
+    assert entry.content == content
+
+
+@requires_redis
+async def test_redis_reads_entries_stored_as_utf8_json(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """A UTF-8 JSON document, the only form 0.3.x wrote, still decodes (#126)."""
+    raw = '{"fingerprint": "f", "content": "\u00e9", "media_type": "text/plain"}'
+    await async_redis_backend.client.set(
+        async_redis_backend._make_key("old"), raw.encode()
+    )
+
+    entry = await async_redis_backend.get("old")
+    assert entry == CacheEntry(
+        fingerprint="f", content=b"\xe9", media_type="text/plain"
+    )
+    assert await async_redis_backend.delete_if_equals("old", entry) is True
+    assert await async_redis_backend.get("old") is None
+
+
+@requires_redis
+async def test_redis_non_utf8_key_under_the_prefix(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """A key that is not UTF-8 is not listed or matched by path, but clear() removes it."""
+    foreign = async_redis_backend.key_prefix.encode() + b"GET|||h|||/p|||\xff"
+    entry = CacheEntry(fingerprint="f", content=b"v")
+    await async_redis_backend.client.set(foreign, b"junk")
+    await async_redis_backend.set("GET|||h|||/p|||", entry)
+
+    assert await async_redis_backend.get_all_keys() == ["GET|||h|||/p|||"]
+    assert await async_redis_backend.get_cache_data() == {
+        "GET|||h|||/p|||": (entry, None)
+    }
+    assert await async_redis_backend.clear_path("/p", include_params=True) == 1
+    assert await async_redis_backend.client.exists(foreign) == 1
+
+    await async_redis_backend.clear()
+    assert await async_redis_backend.client.exists(foreign) == 0
+
+
+async def test_redis_accepts_a_pool_that_decodes_replies() -> None:
+    """A caller-supplied pool with ``decode_responses=True`` still works (#126)."""
     reason = redis_skip_reason()
     if reason is not None:
         pytest.skip(reason)
 
-    with pytest.warns(RuntimeWarning):
-        backend = AsyncRedisCacheBackend(
-            host=REDIS_HOST, port=REDIS_PORT, encoding="latin-1"
-        )
+    from redis.asyncio import ConnectionPool
+
+    pool = ConnectionPool(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    backend = AsyncRedisCacheBackend(
+        connection_pool=pool, key_prefix="cachex_decoding_pool:"
+    )
+    entry = CacheEntry(fingerprint="f", content="\u00e9t\u00e9".encode())
     try:
-        await backend.set("k", CacheEntry(fingerprint="f", content=b"\xe9"))
-        entry = await backend.get("k")
-        assert entry is not None
-        assert entry.content == b"\xc3\xa9"
+        await backend.set("GET|||h|||/p|||", entry)
+        assert await backend.get("GET|||h|||/p|||") == entry
+        assert await backend.get_all_keys() == ["GET|||h|||/p|||"]
+        assert await backend.clear_path("/p") == 1
+        await backend.set("k", entry)
+        assert await backend.delete_if_equals("k", entry) is True
     finally:
         await backend.clear()
+        await pool.disconnect()
 
 
 @requires_redis_package
@@ -193,7 +211,6 @@ def test_redis_config_defaults() -> None:
 
     cfg = RedisConfig(host="localhost")
     assert cfg.db == 0
-    assert cfg.encoding == "utf-8"
     assert cfg.socket_timeout == 1.0
     assert cfg.socket_connect_timeout == 1.0
     assert cfg.key_prefix == DEFAULT_REDIS_PREFIX
@@ -909,9 +926,9 @@ async def test_redis_scan_results_are_deduplicated(
         )
 
     real_scan = async_redis_backend.client.scan
-    returned: list[str] = []
+    returned: list[bytes] = []
 
-    async def scan_with_repeats(*args: Any, **kwargs: Any) -> tuple[int, list[str]]:
+    async def scan_with_repeats(*args: Any, **kwargs: Any) -> tuple[int, list[bytes]]:
         cursor, page = await real_scan(*args, **kwargs)
         page = [*page, *returned[:1]]
         returned.extend(page)
@@ -1002,9 +1019,9 @@ async def test_redis_clear_counts_a_key_scan_repeats_once(
     """A key SCAN returns again on a later page is already deleted (#173, #172)."""
     total = await _fill_pages(async_redis_backend)
     real_scan = async_redis_backend.client.scan
-    returned: list[str] = []
+    returned: list[bytes] = []
 
-    async def scan_with_repeats(*args: Any, **kwargs: Any) -> tuple[int, list[str]]:
+    async def scan_with_repeats(*args: Any, **kwargs: Any) -> tuple[int, list[bytes]]:
         cursor, page = await real_scan(*args, **kwargs)
         page = [*page, *returned[:1]]
         returned.extend(page)

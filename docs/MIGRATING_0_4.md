@@ -303,7 +303,7 @@ add_routes(app, dependencies=[], include_content_preview=True)
 
 ### Redis encoding {#redis-encoding}
 
-The Redis client reads raw bytes in 0.4.0, and the `encoding` option is removed from `AsyncRedisCacheBackend` and `RedisConfig` ([#126](https://github.com/allen0099/FastAPI-CacheX/issues/126)). Entries were always written as UTF-8, so leaving it out changes nothing. In 0.3.9, a UTF-8 `encoding` passed to `AsyncRedisCacheBackend` emits a `DeprecationWarning`, and any other value emits only its `RuntimeWarning`, which also announces the removal. A `RedisConfig` that sets `encoding` emits the `DeprecationWarning` when it is passed to `load_from_config()`, plus the `RuntimeWarning` for a value other than UTF-8.
+The Redis client reads raw bytes in 0.4.0, and the `encoding` option is removed from `AsyncRedisCacheBackend` and `RedisConfig` ([#126](https://github.com/allen0099/FastAPI-CacheX/issues/126)). Entries were always written as UTF-8, so leaving it out changes nothing. In 0.3.9, a UTF-8 `encoding` passed to `AsyncRedisCacheBackend` emits a `DeprecationWarning`, and any other value emits only its `RuntimeWarning`, which also announces the removal. A `RedisConfig` that sets `encoding` emits the `DeprecationWarning` when it is passed to `load_from_config()`, plus the `RuntimeWarning` for a value other than UTF-8. In 0.4.0, passing `encoding` or `decode_responses` to `AsyncRedisCacheBackend` raises `TypeError`, and `RedisConfig` ignores an `encoding` value like any other unknown field.
 
 ```python
 # Before

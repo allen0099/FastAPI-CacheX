@@ -1,14 +1,11 @@
 """Redis cache backend implementation."""
 
-import codecs
 import logging
 import time
-import warnings
 from collections.abc import Callable
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from typing import Any
-from typing import Literal
 
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
@@ -79,49 +76,25 @@ return 0
 """
 
 
-_ENCODING_REMOVED = (
-    "Version 0.4.0 removes it: the client will read raw bytes, and entries "
-    "are always UTF-8. Remove the argument; UTF-8 is what you get without it "
-    "(https://github.com/allen0099/FastAPI-CacheX/issues/126)."
-)
+# Constructor keywords that 0.4.0 removed. They would otherwise fall through
+# **kwargs to redis-py and change how keys and replies are encoded.
+_REMOVED_KWARGS = ("encoding", "decode_responses")
 
 
-def _is_utf8(encoding: str) -> bool:
-    """Whether ``encoding`` names UTF-8 (unknown names count as UTF-8 here).
+def _key_text(key: bytes | str) -> str | None:
+    """A key SCAN returned, as text; ``None`` if it is not UTF-8.
 
-    An unknown name is left for the client to reject itself.
+    The client reads raw bytes, so keys arrive as ``bytes`` (as ``str`` only
+    through a caller-supplied pool that decodes replies). This backend writes
+    every key as UTF-8 text, so a key that is not UTF-8 is none of its own and
+    cannot be named as a logical key.
     """
+    if isinstance(key, str):
+        return key
     try:
-        return codecs.lookup(encoding).name == "utf-8"
-    except LookupError:
-        return True
-
-
-def _warn_encoding(encoding: str) -> None:
-    r"""Warn about an explicitly passed ``encoding``.
-
-    UTF-8 (under any alias such as ``"UTF8"`` or ``"utf_8"``) only gets the
-    ``DeprecationWarning`` for the parameter's removal in 0.4.0. Anything else
-    gets a ``RuntimeWarning``: the shared codec writes UTF-8 JSON, and the
-    client decodes each reply with ``encoding``, so under e.g. latin-1 a stored
-    ``b"\xe9"`` reads back as ``b"\xc3\xa9"``.
-    """
-    if _is_utf8(encoding):
-        warnings.warn(
-            f"AsyncRedisCacheBackend(encoding={encoding!r}) is deprecated. "
-            f"{_ENCODING_REMOVED}",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-    else:
-        warnings.warn(
-            f"AsyncRedisCacheBackend(encoding={encoding!r}) will corrupt non-ASCII "
-            "cached content: entries are always written as UTF-8, and replies "
-            "are decoded with this encoding. Remove the argument (UTF-8 is the "
-            "default); the encoding parameter will be removed in version 0.4.0.",
-            RuntimeWarning,
-            stacklevel=3,
-        )
+        return key.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 class AsyncRedisCacheBackend(BaseCacheBackend):
@@ -131,7 +104,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
     applications. Keys are namespaced with 'fastapi_cachex:' by default.
     """
 
-    client: "AsyncRedis[str]"
+    client: "AsyncRedis[bytes]"
     key_prefix: str
 
     def __init__(
@@ -140,8 +113,6 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         port: int = 6379,
         password: str | None = None,
         db: int = 0,
-        encoding: str | None = None,
-        decode_responses: Literal[True] = True,
         socket_timeout: float = 1.0,
         socket_connect_timeout: float = 1.0,
         key_prefix: str = DEFAULT_REDIS_PREFIX,
@@ -155,13 +126,6 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             port: Redis port
             password: Redis password
             db: Redis database number
-            encoding: Deprecated; leave it out. Character encoding the client
-                decodes replies with, UTF-8 when omitted. Entries are always
-                written as UTF-8 JSON, so any other encoding corrupts non-ASCII
-                content on the way back, and a ``RuntimeWarning`` says so.
-                Passing it at all emits a ``DeprecationWarning``: the parameter
-                is removed in 0.4.0.
-            decode_responses: Whether to decode response automatically
             socket_timeout: Timeout for socket operations (in seconds)
             socket_connect_timeout: Timeout for socket connection (in seconds)
             key_prefix: Prefix for all cache keys (default: 'fastapi_cachex:')
@@ -172,6 +136,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         Raises:
             CacheXError: If redis-py is not installed
+            TypeError: If ``encoding`` or ``decode_responses`` is passed; both
+                were removed in 0.4.0. The client always reads raw bytes, and
+                entries are always UTF-8.
         """
         try:
             # Import top-level package first so tests that monkeypatch
@@ -185,10 +152,15 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             )
             raise CacheXError(msg) from exc
 
-        if encoding is None:
-            encoding = "utf-8"
-        else:
-            _warn_encoding(encoding)
+        for name in _REMOVED_KWARGS:
+            if name in kwargs:
+                msg = (
+                    f"AsyncRedisCacheBackend() got an unexpected keyword argument "
+                    f"{name!r}: it was removed in version 0.4.0. Remove it; the "
+                    "client reads raw bytes and entries are always UTF-8 "
+                    "(https://github.com/allen0099/FastAPI-CacheX/issues/126)."
+                )
+                raise TypeError(msg)
 
         # `protocol` is not in the types-redis stubs (added in redis-py 5.x).
         # Pass it via **kwargs so mypy doesn't complain about an unknown keyword.
@@ -198,8 +170,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             port=port,
             password=password,
             db=db,
-            encoding=encoding,
-            decode_responses=decode_responses,
+            # Replies stay bytes: the codec decodes entries itself, and the
+            # Lua compare-and-* scripts get back exactly the bytes read.
+            decode_responses=False,
             socket_timeout=socket_timeout,
             socket_connect_timeout=socket_connect_timeout,
             **kwargs,
@@ -224,23 +197,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         Returns:
             An instance of AsyncRedisCacheBackend
-
-        Warns:
-            DeprecationWarning: ``config`` sets ``encoding`` explicitly; the
-                field is removed in 0.4.0.
-            RuntimeWarning: That ``encoding`` is not UTF-8, which corrupts
-                non-ASCII content read back (emitted by the constructor).
         """
-        encoding: str | None = None
-        if "encoding" in config.model_fields_set:
-            warnings.warn(
-                f"RedisConfig(encoding={config.encoding!r}) is deprecated. "
-                f"{_ENCODING_REMOVED}",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if not _is_utf8(config.encoding):
-                encoding = config.encoding  # keeps the RuntimeWarning
         return AsyncRedisCacheBackend(
             host=config.host,
             port=config.port,
@@ -252,7 +209,6 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             socket_connect_timeout=config.socket_connect_timeout,
             key_prefix=config.key_prefix,
             protocol=config.protocol,
-            encoding=encoding,
         )
 
     async def aclose(self) -> None:
@@ -283,6 +239,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         Uses SCAN instead of KEYS so the server is never blocked. SCAN may
         return a key more than once (when the keyspace shrinks mid-iteration),
         so the result is deduplicated, keeping the order keys were first seen.
+        Keys that are not UTF-8 are left out (see ``_key_text``).
         """
         cursor = 0
         keys: dict[str, None] = {}
@@ -290,7 +247,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             cursor, page = await self.client.scan(
                 cursor, match=pattern, count=_BATCH_SIZE
             )
-            keys.update(dict.fromkeys(page))
+            texts = (_key_text(key) for key in page)
+            keys.update(dict.fromkeys(text for text in texts if text is not None))
             if cursor == 0:
                 return list(keys)
 
@@ -300,7 +258,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Delete every key matching ``pattern``, one SCAN page at a time.
 
         With ``keep``, only the matching keys it returns ``True`` for (given
-        the full, prefixed key) are deleted.
+        the full, prefixed key as text) are deleted; a key that is not UTF-8
+        is kept. Without it, every match is deleted, UTF-8 or not.
 
         Each page is deleted as it arrives, so the keyspace is never held in
         memory. Deleting keys SCAN already returned is safe: SCAN still returns
@@ -318,7 +277,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 cursor, match=pattern, count=_BATCH_SIZE
             )
             if keep is not None:
-                page = [key for key in page if keep(key)]
+                page = [
+                    key
+                    for key in page
+                    if (text := _key_text(key)) is not None and keep(text)
+                ]
             if page:
                 deleted += await self.client.delete(*page)
             if cursor == 0:

@@ -74,7 +74,7 @@ backend = AsyncRedisCacheBackend.load_from_config(config)
 BackendProxy.set(backend)
 ```
 
-請不要設定 `encoding`，`RedisConfig` 與 `AsyncRedisCacheBackend` 皆然：它已棄用並將於 0.4.0 移除，只要設定就會發出 `DeprecationWarning`。項目一律以 UTF-8 JSON 寫入，而用戶端會以 `encoding` 解碼回應，因此 UTF-8 以外的值還會在讀回時破壞非 ASCII 內容（使用 `"latin-1"` 時，儲存的 `b"\xe9"` 會讀回成 `b"\xc3\xa9"`），後端也會因此發出 `RuntimeWarning`。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#redis-encoding)。
+用戶端直接讀取原始位元組，項目則以 UTF-8 JSON 寫入。沒有 `encoding` 選項：0.4.0 已從 `RedisConfig` 與 `AsyncRedisCacheBackend` 移除它，傳入 `encoding` 或 `decode_responses` 給後端會引發 `TypeError`。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#redis-encoding)。
 
 除非你需要 RESP3 的功能，*而且*你的 `hiredis` 建置支援它（RESP3 需要 hiredis >= 3.0），否則請保留 `protocol=2`。Redis 8.0 支援 RESP3，但較舊的 hiredis 會無法協商使用它。
 
