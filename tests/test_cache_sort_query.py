@@ -13,9 +13,9 @@ from fastapi_cachex.cache import build_cache_key
 from fastapi_cachex.cache import cache
 from fastapi_cachex.cache import default_key_builder
 from fastapi_cachex.cache import invalidate
+from fastapi_cachex.cache_key import CacheKey
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
-from fastapi_cachex.routes import _parse_cache_key
 
 
 def _request(query: bytes) -> StarletteRequest:
@@ -30,8 +30,14 @@ def _request(query: bytes) -> StarletteRequest:
     )
 
 
+def _query(key: str) -> str:
+    parsed = CacheKey.parse(key)
+    assert parsed is not None
+    return parsed.query
+
+
 def _sorted_query(query: bytes) -> str:
-    return _parse_cache_key(build_cache_key(_request(query), sort_query=True))[3]
+    return _query(build_cache_key(_request(query), sort_query=True))
 
 
 def _app(*, sort_query: bool, sync: bool = False) -> tuple[TestClient, list[str]]:
@@ -105,9 +111,7 @@ def test_default_key_is_unchanged() -> None:
     for query in (b"b=2&a=1", b"tag=b&tag=a", b"q=a%20b&n%26=x%3D", b""):
         request = _request(query)
         assert default_key_builder(request) == build_cache_key(request)
-        assert _parse_cache_key(build_cache_key(request))[3] == str(
-            request.query_params
-        )
+        assert _query(build_cache_key(request)) == str(request.query_params)
 
 
 def test_sorted_key_matches_the_default_for_a_sorted_query() -> None:

@@ -679,11 +679,3 @@ class TestMonitoringEdgeCases:
         assert hits["summary"]["cached_paths"] == []
         assert records["total_records"] == 0
         assert records["summary"]["estimated_cache_size_kb"] == 0.0
-
-
-def test_cache_key_max_parts_is_an_alias_of_max_split():
-    """The renamed maxsplit constant keeps its former name importable."""
-    from fastapi_cachex.routes import CACHE_KEY_MAX_PARTS
-    from fastapi_cachex.routes import CACHE_KEY_MAX_SPLIT
-
-    assert CACHE_KEY_MAX_PARTS == CACHE_KEY_MAX_SPLIT == 3

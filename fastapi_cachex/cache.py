@@ -15,7 +15,6 @@ from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
 from inspect import Signature
-from operator import itemgetter
 from typing import TYPE_CHECKING
 from typing import Annotated
 from typing import Any
@@ -24,7 +23,6 @@ from typing import cast
 from typing import get_args
 from typing import get_origin
 from typing import get_type_hints
-from urllib.parse import urlencode
 
 from fastapi import Request
 from fastapi import Response
@@ -38,6 +36,7 @@ from starlette.status import HTTP_300_MULTIPLE_CHOICES
 from starlette.status import HTTP_304_NOT_MODIFIED
 
 from .backends.base import MAX_TTL
+from .cache_key import CacheKey
 from .directives import DirectiveType
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
@@ -71,21 +70,6 @@ _NO_STORE = DirectiveType.NO_STORE.value
 _now = time.time
 
 
-def _query_component(request: Request, sort_query: bool) -> str:
-    """The query string as it appears in the key.
-
-    Starlette parses the query (blank values kept, empty ``&&`` segments
-    dropped, names and values percent-decoded) and ``str()`` re-encodes the
-    pairs in the order sent. ``sort_query`` stable-sorts the same decoded
-    pairs by name before encoding them the same way, so only the order of
-    differently named parameters changes: repeated values of one name keep
-    their relative order, and an already sorted query gives the unsorted key.
-    """
-    if not sort_query:
-        return str(request.query_params)
-    return urlencode(sorted(request.query_params.multi_items(), key=itemgetter(0)))
-
-
 def build_cache_key(
     request: Request, *components: str | int, sort_query: bool = False
 ) -> str:
@@ -106,7 +90,9 @@ def build_cache_key(
 
     Keys built this way keep the path in the third component, so
     ``clear_path()`` still finds them and the monitoring routes still show
-    their method, host, path and query.
+    their method, host, path and query. This is
+    ``CacheKey.from_request(...).to_str()``; ``CacheKey.parse()`` decodes the
+    key again.
 
     Args:
         request: The FastAPI Request object
@@ -129,17 +115,7 @@ def build_cache_key(
             rejected too), e.g. ``None`` from a missing user ID, which would
             otherwise put every such caller under one ``"None"`` key.
     """
-    key = _append_key_components(
-        CACHE_KEY_SEPARATOR.join(
-            [
-                request.method,
-                escape_key_component(request.headers.get("host", "unknown")),
-                escape_key_component(request.url.path),
-                _query_component(request, sort_query),
-            ]
-        ),
-        components,
-    )
+    key = CacheKey.from_request(request, *components, sort_query=sort_query).to_str()
     logger.debug("Built cache key: %s", key)
     return key
 
@@ -167,18 +143,11 @@ def _log_backend_failure(
     logger.debug("Cache backend %s; key_ref=%s key=%s", what, key_ref, cache_key)
 
 
-def _append_key_components(key: str, components: Sequence[str | int]) -> str:
+def _append_key_components(key: str, components: Sequence[str]) -> str:
     """Append each component to ``key``, escaped, after another separator."""
-    parts = [key]
-    for component in components:
-        if isinstance(component, bool) or not isinstance(component, (str, int)):
-            msg = (
-                "build_cache_key components must be str or int, "
-                f"got {type(component).__name__}"
-            )
-            raise TypeError(msg)
-        parts.append(escape_key_component(str(component)))
-    return CACHE_KEY_SEPARATOR.join(parts)
+    return CACHE_KEY_SEPARATOR.join(
+        [key, *(escape_key_component(component) for component in components)]
+    )
 
 
 # RFC 9110 §5.1: a field name is a token.

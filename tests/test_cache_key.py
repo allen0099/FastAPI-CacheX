@@ -7,11 +7,18 @@ from fastapi.testclient import TestClient
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.cache import cache
 from fastapi_cachex.cache import default_key_builder
+from fastapi_cachex.cache_key import CacheKey
 from fastapi_cachex.proxy import BackendProxy
-from fastapi_cachex.routes import _parse_cache_key
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import escape_key_component
 from fastapi_cachex.types import unescape_key_component
+
+
+def _key_parts(cache_key: str) -> tuple[str, str, str, str]:
+    """``(method, host, path, query)`` of an HTTP key."""
+    key = CacheKey.parse(cache_key)
+    assert key is not None
+    return key.method, key.host, key.path, key.query
 
 
 class TestCacheKeyGeneration:
@@ -42,12 +49,9 @@ class TestCacheKeyGeneration:
         assert CACHE_KEY_SEPARATOR in cache_key
 
         # Parse the cache key to verify components
-        method, host, path, query_params = _parse_cache_key(cache_key)
-
-        assert method == "GET"
-        assert host == "127.0.0.1:8000"  # Port should be part of host
-        assert path == "/api/test"
-        assert query_params == ""
+        assert CacheKey.parse(cache_key) == CacheKey(
+            "GET", "127.0.0.1:8000", "/api/test", ""
+        )  # The port stays part of the host
 
     def test_cache_key_with_localhost(self):
         """Test cache key generation with localhost."""
@@ -68,7 +72,7 @@ class TestCacheKeyGeneration:
         cache_keys = list(backend.cache.keys())
         assert len(cache_keys) == 1
 
-        method, host, path, query_params = _parse_cache_key(cache_keys[0])
+        method, host, path, query_params = _key_parts(cache_keys[0])
 
         assert method == "GET"
         assert host == "localhost:8080"
@@ -94,7 +98,7 @@ class TestCacheKeyGeneration:
         cache_keys = list(backend.cache.keys())
         assert len(cache_keys) == 1
 
-        method, host, path, query_params = _parse_cache_key(cache_keys[0])
+        method, host, path, query_params = _key_parts(cache_keys[0])
 
         assert method == "GET"
         assert host == "127.0.0.1:8000"
@@ -105,7 +109,7 @@ class TestCacheKeyGeneration:
         """Test cache key parsing with IPv6 address containing colons."""
         # IPv6 addresses contain multiple colons, test that our separator doesn't break this
         cache_key = f"GET{CACHE_KEY_SEPARATOR}[::1]:8000{CACHE_KEY_SEPARATOR}/api/data{CACHE_KEY_SEPARATOR}"
-        method, host, path, query_params = _parse_cache_key(cache_key)
+        method, host, path, query_params = _key_parts(cache_key)
 
         assert method == "GET"
         assert host == "[::1]:8000"
@@ -119,7 +123,7 @@ class TestCacheKeyParsing:
     def test_parse_valid_cache_key(self):
         """Test parsing a valid cache key."""
         cache_key = f"GET{CACHE_KEY_SEPARATOR}localhost:8000{CACHE_KEY_SEPARATOR}/api/test{CACHE_KEY_SEPARATOR}id=123"
-        method, host, path, query_params = _parse_cache_key(cache_key)
+        method, host, path, query_params = _key_parts(cache_key)
 
         assert method == "GET"
         assert host == "localhost:8000"
@@ -129,7 +133,7 @@ class TestCacheKeyParsing:
     def test_parse_cache_key_without_query_params(self):
         """Test parsing cache key without query parameters."""
         cache_key = f"POST{CACHE_KEY_SEPARATOR}127.0.0.1:3000{CACHE_KEY_SEPARATOR}/api/create{CACHE_KEY_SEPARATOR}"
-        method, host, path, query_params = _parse_cache_key(cache_key)
+        method, host, path, query_params = _key_parts(cache_key)
 
         assert method == "POST"
         assert host == "127.0.0.1:3000"
@@ -139,7 +143,7 @@ class TestCacheKeyParsing:
     def test_parse_cache_key_with_complex_host(self):
         """Test parsing cache key with complex host (subdomain + port)."""
         cache_key = f"GET{CACHE_KEY_SEPARATOR}api.example.com:443{CACHE_KEY_SEPARATOR}/v1/users{CACHE_KEY_SEPARATOR}limit=10"
-        method, host, path, query_params = _parse_cache_key(cache_key)
+        method, host, path, query_params = _key_parts(cache_key)
 
         assert method == "GET"
         assert host == "api.example.com:443"
@@ -147,14 +151,12 @@ class TestCacheKeyParsing:
         assert query_params == "limit=10"
 
     def test_parse_invalid_cache_key(self):
-        """Test parsing invalid cache key returns empty strings."""
-        cache_key = "invalid_key"
-        method, host, path, query_params = _parse_cache_key(cache_key)
-
-        assert method == ""
-        assert host == ""
-        assert path == ""
-        assert query_params == ""
+        """A key that is not an HTTP key parses to None."""
+        assert CacheKey.parse("invalid_key") is None
+        assert CacheKey.parse(f"GET{CACHE_KEY_SEPARATOR}host") is None
+        assert (
+            CacheKey.parse(f"{CACHE_KEY_SEPARATOR}host{CACHE_KEY_SEPARATOR}/p") is None
+        )
 
     def test_cache_key_separator_constant(self):
         """Test that CACHE_KEY_SEPARATOR constant is correctly defined."""
@@ -193,8 +195,8 @@ class TestCacheKeyDifferentiation:
         assert len(cache_keys) == 2
 
         # Parse both keys and verify they differ in host
-        key1_method, key1_host, key1_path, _ = _parse_cache_key(cache_keys[0])
-        key2_method, key2_host, key2_path, _ = _parse_cache_key(cache_keys[1])
+        key1_method, key1_host, key1_path, _ = _key_parts(cache_keys[0])
+        key2_method, key2_host, key2_path, _ = _key_parts(cache_keys[1])
 
         assert key1_host != key2_host
         assert key1_method == key2_method == "GET"
@@ -224,8 +226,8 @@ class TestCacheKeyDifferentiation:
         assert len(cache_keys) == 2
 
         # Verify hosts are different
-        key1_method, key1_host, key1_path, _ = _parse_cache_key(cache_keys[0])
-        key2_method, key2_host, key2_path, _ = _parse_cache_key(cache_keys[1])
+        key1_method, key1_host, key1_path, _ = _key_parts(cache_keys[0])
+        key2_method, key2_host, key2_path, _ = _key_parts(cache_keys[1])
 
         assert key1_host == "localhost:8000"
         assert key2_host == "localhost:9000"
@@ -312,4 +314,4 @@ class TestCacheKeySeparatorInComponents:
                 "q=1",
             ]
         )
-        assert _parse_cache_key(key) == ("GET", "evil|||host", "/p|||/100%", "q=1")
+        assert _key_parts(key) == ("GET", "evil|||host", "/p|||/100%", "q=1")

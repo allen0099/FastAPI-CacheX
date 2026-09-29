@@ -13,9 +13,8 @@ from fastapi_cachex import build_cache_key
 from fastapi_cachex import cache
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.cache import default_key_builder
+from fastapi_cachex.cache_key import CacheKey
 from fastapi_cachex.proxy import BackendProxy
-from fastapi_cachex.routes import _parse_cache_key
-from fastapi_cachex.routes import _split_cache_key
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import escape_key_component
 
@@ -118,9 +117,12 @@ def test_build_cache_key_is_exported() -> None:
 def test_keys_with_components_split_into_query_and_extras() -> None:
     key = build_cache_key(_request(path="/p|q", query=b"x=1"), "a|b", 3)
 
-    assert _split_cache_key(key) == ("GET", "example.com", "/p|q", "x=1", ["a|b", "3"])
-    assert _parse_cache_key(key) == ("GET", "example.com", "/p|q", "x=1")
-    assert _split_cache_key(build_cache_key(_request(), "u"))[3:] == ("", ["u"])
+    assert CacheKey.parse(key) == CacheKey(
+        "GET", "example.com", "/p|q", "x=1", ("a|b", "3")
+    )
+    parsed = CacheKey.parse(build_cache_key(_request(), "u"))
+    assert parsed is not None
+    assert (parsed.query, parsed.extra) == ("", ("u",))
 
 
 @pytest.fixture

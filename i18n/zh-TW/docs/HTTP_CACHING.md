@@ -218,6 +218,17 @@ def per_tenant_key(request: Request) -> str:
 
 由於路徑仍是第三段，`clear_path()` 依然找得到這些鍵：不帶 `include_params` 時，會清除該路徑下查詢字串為空的所有項目，不論其他段為何；帶上它則清除該路徑的所有項目。監控路由會把其他段解碼後列在 `extra_components` 中。`default_key_builder(request)` 就是 `build_cache_key(request)`。
 
+`CacheKey` 則是以值的形式表示同一個鍵。`CacheKey.from_request(request, *components)` 建立它，`to_str()` 得到與 `build_cache_key` 相同的字串，`CacheKey.parse(key)` 則把已儲存的鍵解碼為 `method`、`host`、`path`、`query` 與 `extra`；若不是 HTTP 鍵（例如 `CacheManager` 的鍵），則回傳 `None`：
+
+```python
+from fastapi_cachex import CacheKey
+
+for key in await backend.get_all_keys():
+    parsed = CacheKey.parse(key)
+    if parsed is not None and parsed.path.startswith("/reports/"):
+        print(parsed.host, parsed.query, parsed.extra)
+```
+
 Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設為 `fastapi_cachex:`），讓其他應用程式可以共用同一台伺服器；`MemoryBackend` 沒有前綴。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|||` 分隔的格式，因為它的鍵與 HTTP 請求無關。
 
 ### 依請求標頭區分 {#varying-on-request-headers}

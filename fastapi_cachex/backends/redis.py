@@ -11,10 +11,10 @@ from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.backends.config import DEFAULT_REDIS_PREFIX as DEFAULT_REDIS_PREFIX  # noqa: PLC0414
 from fastapi_cachex.backends.config import RedisConfig
+from fastapi_cachex.cache_key import CacheKey
+from fastapi_cachex.cache_key import escape_glob
 from fastapi_cachex.exceptions import CacheXError
-from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import CacheEntry
-from fastapi_cachex.types import escape_key_component
 
 from .base import BaseCacheBackend
 from .base import validate_delta
@@ -30,21 +30,8 @@ logger = logging.getLogger(__name__)
 _PTTL_NO_EXPIRY = -1
 _PTTL_MISSING = -2
 
-# Positions of the path and the query string among an HTTP key's components.
-_PATH_INDEX = 2
-_QUERY_INDEX = 3
-
 # SCAN page size and DEL batch size; keeps individual commands small.
 _BATCH_SIZE = 100
-
-# Characters that are live in a Redis glob pattern.
-_GLOB_SPECIAL = frozenset("*?[]\\")
-
-
-def _escape_glob(text: str) -> str:
-    """Backslash-escape ``text`` so a Redis glob pattern matches it literally."""
-    return "".join(f"\\{ch}" if ch in _GLOB_SPECIAL else ch for ch in text)
-
 
 # INCRBY that attaches a TTL only when it creates the key, so a counter lives in
 # a fixed window. KEYS[1] = key, ARGV[1] = delta, ARGV[2] = ttl (0 = none).
@@ -231,7 +218,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
     @property
     def _prefix_pattern(self) -> str:
         """The key prefix as a literal glob, so ``*``/``?``/``[`` in it stay inert."""
-        return _escape_glob(self.key_prefix)
+        return escape_glob(self.key_prefix)
 
     async def _scan_keys(self, pattern: str) -> list[str]:
         """Collect every key matching ``pattern`` (a full, prefixed glob).
@@ -427,30 +414,18 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        # Keys are method|||host|||path|||query, optionally followed by extra
-        # components (build_cache_key). The glob finds every key with the path
-        # between two separators; a glob cannot pin it to the third component
-        # or tell an empty query from extra components after one, so each key
-        # SCAN returns is checked here. Without include_params only keys with
-        # an empty query match. The path is a literal, not a glob:
-        # "/files/[draft]" means those brackets. It is stored with "|" and "%"
-        # percent-encoded, so match it that way.
-        key_path = escape_key_component(path)
-        pattern = (
-            f"{self._prefix_pattern}*{CACHE_KEY_SEPARATOR}"
-            f"{_escape_glob(key_path)}{CACHE_KEY_SEPARATOR}*"
-        )
+        # The glob finds every key with the path between two separators, but
+        # cannot pin it to the path component or tell an empty query from
+        # extra components after one, so each key SCAN returns is parsed
+        # here. Without include_params only keys with an empty query match.
+        pattern = self._prefix_pattern + CacheKey.path_glob(path)
 
         def matches(key: str) -> bool:
-            parts = key.removeprefix(self.key_prefix).split(CACHE_KEY_SEPARATOR)
+            parsed = CacheKey.parse(key.removeprefix(self.key_prefix))
             return (
-                len(parts) > _PATH_INDEX
-                and parts[_PATH_INDEX] == key_path
-                and (
-                    include_params
-                    or len(parts) <= _QUERY_INDEX
-                    or not parts[_QUERY_INDEX]
-                )
+                parsed is not None
+                and parsed.path == path
+                and (include_params or not parsed.query)
             )
 
         cleared_count = await self._delete_matching(pattern, matches)

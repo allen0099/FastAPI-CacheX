@@ -7,12 +7,11 @@ import time
 from collections.abc import Callable
 from collections.abc import Iterable
 
-from fastapi_cachex.types import CACHE_KEY_SEPARATOR
+from fastapi_cachex.cache_key import CacheKey
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import CacheItem
 from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
-from fastapi_cachex.types import escape_key_component
 
 from .base import BaseCacheBackend
 from .base import validate_delta
@@ -20,25 +19,6 @@ from .base import validate_ttl
 from .base import warn_if_path_shaped
 
 logger = logging.getLogger(__name__)
-
-# HTTP cache keys are formatted as: method|||host|||path|||query_params
-_PATH_INDEX = 2
-_QUERY_INDEX = 3
-
-
-def _split_http_key(key: str) -> tuple[str, bool] | None:
-    """Return ``(path, has_query_params)`` for an HTTP cache key, else ``None``.
-
-    Keys without separators (CacheManager/StateManager keys or custom key
-    builders) are not HTTP keys and are matched on their raw value instead.
-    Components after the query string (see ``build_cache_key``) do not count
-    as query params.
-    """
-    parts = key.split(CACHE_KEY_SEPARATOR)
-    if len(parts) <= _PATH_INDEX:
-        return None
-    has_params = len(parts) > _QUERY_INDEX and bool(parts[_QUERY_INDEX])
-    return parts[_PATH_INDEX], has_params
 
 
 def _is_live(item: CacheItem, now: float) -> bool:
@@ -314,15 +294,13 @@ class MemoryBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        key_path = escape_key_component(path)
 
         def matches(key: str) -> bool:
-            parsed = _split_http_key(key)
+            parsed = CacheKey.parse(key)
             if parsed is None:
                 # Direct key match (custom key format without separators)
                 return key == path
-            cache_path, has_params = parsed
-            return cache_path == key_path and (include_params or not has_params)
+            return parsed.path == path and (include_params or not parsed.query)
 
         cleared_count = await self._evict(matches)
         logger.debug(

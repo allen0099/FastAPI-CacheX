@@ -8,23 +8,14 @@ from dataclasses import field
 from typing import TYPE_CHECKING
 from typing import Any
 
+from .cache_key import CacheKey
 from .exceptions import BackendNotFoundError
 from .proxy import BackendProxy
-from .types import CACHE_KEY_SEPARATOR
 from .types import CacheEntry
-from .types import unescape_key_component
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-# Constants
-CACHE_KEY_MIN_PARTS = 3
-# Index of the query string among a key's components. Components after it are
-# the extra ones ``build_cache_key`` appends. Before 0.3.9 keys were split at
-# most this many times, so extra components showed up inside the query string.
-CACHE_KEY_MAX_SPLIT = 3
-# Former name, kept so existing imports keep working.
-CACHE_KEY_MAX_PARTS = CACHE_KEY_MAX_SPLIT
 _PREVIEW_BYTES = 100
 
 
@@ -114,41 +105,6 @@ class CachedRecordsResponse:
     summary: CacheSummary
 
 
-def _split_cache_key(cache_key: str) -> tuple[str, str, str, str, list[str]]:
-    """Split a cache key into its components, decoding the escaped ones.
-
-    Args:
-        cache_key: Cache key in format
-            method|||host|||path|||query_params[|||extra...]
-
-    Returns:
-        Tuple of (method, host, path, query_params, extra_components), all
-        empty for a key that is not a route key
-    """
-    key_parts = cache_key.split(CACHE_KEY_SEPARATOR)
-    if len(key_parts) < CACHE_KEY_MIN_PARTS:
-        return "", "", "", "", []
-    return (
-        key_parts[0],
-        unescape_key_component(key_parts[1]),
-        unescape_key_component(key_parts[2]),
-        key_parts[3] if len(key_parts) > CACHE_KEY_MAX_SPLIT else "",
-        [unescape_key_component(part) for part in key_parts[4:]],
-    )
-
-
-def _parse_cache_key(cache_key: str) -> tuple[str, str, str, str]:
-    """Parse cache key into components.
-
-    Args:
-        cache_key: Cache key in format method|||host|||path|||query_params
-
-    Returns:
-        Tuple of (method, host, path, query_params)
-    """
-    return _split_cache_key(cache_key)[:4]
-
-
 @dataclass
 class _Entry:
     """One parsed backend entry, shared by both monitoring views."""
@@ -171,17 +127,17 @@ def _parse_entries(
     now = time.time()
     entries: list[_Entry] = []
     for cache_key, (entry, expiry) in cache_data.items():
-        method, host, path, query_params, extra = _split_cache_key(cache_key)
-        if not method:
+        key = CacheKey.parse(cache_key)
+        if key is None:
             continue
         entries.append(
             _Entry(
                 cache_key=cache_key,
-                method=method,
-                host=host,
-                path=path,
-                query_params=query_params,
-                extra_components=extra,
+                method=key.method,
+                host=key.host,
+                path=key.path,
+                query_params=key.query,
+                extra_components=list(key.extra),
                 entry=entry,
                 is_expired=expiry is not None and expiry <= now,
                 ttl_remaining=(
