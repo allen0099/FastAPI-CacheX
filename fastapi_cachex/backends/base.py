@@ -279,7 +279,8 @@ class BaseCacheBackend(ABC):
         Raises:
             CacheXError: If ``key`` holds a cached response instead of a counter
             TypeError: If ``delta`` or ``ttl`` is not an ``int``
-            ValueError: If ``ttl`` is out of range
+            ValueError: If ``ttl`` is out of range, or ``delta`` does not fit
+                in a signed 64-bit integer
         """
         validate_delta(delta)
         validate_ttl(ttl)

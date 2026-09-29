@@ -176,7 +176,8 @@ BackendProxy.set(backend)
 
 **Limitations**:
 
-- Pattern-based key clearing (`clear_pattern`) is not supported by the Memcached protocol
+- Pattern-based key clearing (`clear_pattern`) is not supported by the Memcached protocol:
+  it returns 0 with a `RuntimeWarning`
 - Keys cannot be enumerated: `get_all_keys()`/`get_cache_data()` return empty
   results (with a `RuntimeWarning`), so the monitoring routes show nothing
 - `clear_path()` cannot find HTTP cache entries: it deletes only a key named exactly
@@ -290,9 +291,11 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   and the monitoring routes treat it like any other entry. Incrementing a key
   that holds anything else raises `CacheXError` on every backend, even a cached
   response whose body is a number. A counter written with
-  `set(key, counter_entry(n))` can be incremented on every backend, except that
-  Memcached counters are unsigned: there `n` must be from 0 to 2**64 - 1, and
-  incrementing a negative one raises `CacheXError`. `delta`
+  `set(key, counter_entry(n))` can be incremented on every backend, as long as
+  `n` fits the server's counters: Redis counters are signed 64-bit, so there `n`
+  must be from -2**63 to 2**63 - 1, and Memcached counters are unsigned, so there
+  `n` must be from 0 to 2**64 - 1. Incrementing a counter outside that range
+  raises `CacheXError`. `delta`
   must be an `int` within the signed 64-bit range; anything else raises
   `TypeError` or `ValueError` before the backend is touched.
 - `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis

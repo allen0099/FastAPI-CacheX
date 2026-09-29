@@ -124,9 +124,10 @@ class CacheManager:
         Raises:
             BackendNotFoundError: If ``backend`` is None and no backend has
                 been set with ``BackendProxy.set()``.
-            TypeError: If ``lock`` is not a bool or None, or ``lock_ttl`` is
-                not an int.
-            ValueError: If ``default_ttl`` or ``lock_ttl`` is zero or negative.
+            TypeError: If ``lock`` is not a bool or None, or ``default_ttl``
+                or ``lock_ttl`` is not an int.
+            ValueError: If ``default_ttl`` or ``lock_ttl`` is zero, negative
+                or larger than ``MAX_TTL``, or ``lock_ttl`` is None.
 
         Warns:
             UserWarning: If ``key_prefix`` contains a glob metacharacter
@@ -207,8 +208,9 @@ class CacheManager:
                 (which itself defaults to no expiry).
 
         Raises:
-            TypeError: If ``value`` is not JSON-serializable.
-            ValueError: If ``ttl`` is zero or negative.
+            TypeError: If ``value`` is not JSON-serializable, or ``ttl`` is
+                not an int.
+            ValueError: If ``ttl`` is zero, negative or larger than ``MAX_TTL``.
         """
         effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         entry = self._encode(value)
@@ -238,8 +240,9 @@ class CacheManager:
             True if the value was stored, False if the key already existed.
 
         Raises:
-            TypeError: If ``value`` is not JSON-serializable.
-            ValueError: If ``ttl`` is zero or negative.
+            TypeError: If ``value`` is not JSON-serializable, or ``ttl`` is
+                not an int.
+            ValueError: If ``ttl`` is zero, negative or larger than ``MAX_TTL``.
         """
         effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         entry = self._encode(value)
@@ -441,7 +444,8 @@ class CacheManager:
             TypeError: If the value produced by ``factory`` is not JSON-serializable,
                 or if ``lock``, ``ttl``, ``lock_ttl``, or ``wait_timeout``
                 have invalid types.
-            ValueError: If ``ttl``, ``lock_ttl``, or ``wait_timeout`` is zero or negative.
+            ValueError: If ``ttl``, ``lock_ttl``, or ``wait_timeout`` is zero or
+                negative, or ``ttl`` or ``lock_ttl`` is larger than ``MAX_TTL``.
             LockTimeoutError: If ``raise_on_timeout=True`` and waiting exceeds ``wait_timeout``.
 
         Warns:
@@ -545,6 +549,10 @@ class CacheManager:
     async def clear_prefix(self, prefix: str | None = None) -> int:
         """Clear all keys under this manager's namespace matching a sub-prefix.
 
+        Built on ``get_all_keys()`` and ``delete_many()``, so on a backend
+        without key enumeration (e.g. Memcached) it clears nothing and returns
+        0, with a ``RuntimeWarning``.
+
         Args:
             prefix: Optional additional prefix (relative to ``self.key_prefix``)
                 to restrict which keys are cleared. If None, clears everything
@@ -563,6 +571,9 @@ class CacheManager:
 
     async def clear(self) -> int:
         """Clear all keys under this manager's namespace.
+
+        Same as ``clear_prefix()`` with no prefix, so it is a no-op on a
+        backend without key enumeration (e.g. Memcached).
 
         Returns:
             Number of cache entries cleared.

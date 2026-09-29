@@ -84,9 +84,10 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
 
 > [!NOTE]
 > `clear()`/`clear_prefix()` are implemented via the backend's `get_all_keys()`
-> and `delete_many()` (one batched `DEL` on Redis). Since Memcached doesn't
+> and `delete_many()` (`DEL` in batches of 100 keys on Redis). Since Memcached doesn't
 > support key enumeration (see [Backends](BACKENDS.md#memcached)), these
-> methods — and `clear_pattern()` — are no-ops on a Memcached backend;
+> methods — and `clear_pattern()` — are no-ops on a Memcached backend that
+> return 0 with a `RuntimeWarning`;
 > `get()`/`set()`/`add()`/`delete()`/`has()` work normally. Use Redis or the in-memory
 > backend if you need bulk clearing.
 
