@@ -391,6 +391,17 @@ heading nor a `- ` entry. `tests/test_changelog_release.py` runs the same check
 on the real `CHANGELOG.md`, so the pull request that adds an entry without a
 summary fails CI instead of the release.
 
+A release can also open with a notice, such as "This is the last 0.3.x
+release". Write it into `CHANGELOG.md` by hand, directly under
+`## [Unreleased]` and above the first `###` heading or `- ` entry; a fragment
+cannot carry one. The notice is copied verbatim to the top of the release body
+and stays under the version's heading in `CHANGELOG.md`, so it goes through
+review like any other change and remains on record. The fresh
+`## [Unreleased]` the release opens has no notice, so each one appears in one
+release only. Only that top position counts: a paragraph anywhere else in the
+section still fails the run, and a section holding a notice but no entries is
+still nothing to release.
+
 Two details of the promotion are worth knowing, because both have bitten this
 project:
 

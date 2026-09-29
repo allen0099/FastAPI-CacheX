@@ -34,6 +34,10 @@ becomes, under `### Added`:
 The release notes list only the bold summary, so write it for someone deciding
 whether the release matters to them.
 
+A notice for the top of the release notes, such as "This is the last 0.3.x
+release", is not a fragment: write it into `CHANGELOG.md` directly under
+`## [Unreleased]`, above the first heading or entry.
+
 `tests/test_changelog_release.py` checks every fragment here, so a malformed one
 (a bad name, an unknown section, no bold summary, a leading `- `, its own issue
 link) fails CI in the pull request that adds it. This README and dotfiles are

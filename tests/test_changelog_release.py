@@ -372,6 +372,82 @@ def test_release_notes_accept_entries_before_any_heading():
     assert notes.startswith("- Loose entry.\n\n**Full changelog**: ")
 
 
+NOTICE = (
+    "0.3.9 is the last 0.3.x release. 0.4.0 contains breaking changes;\n"
+    "see [Migrating to 0.4.0](https://example.com/migrating)."
+)
+
+
+def test_release_notes_open_with_the_notice_verbatim():
+    body = f"{NOTICE}\n\nA second paragraph.\n\n### Added\n\n- **A thing.** Details.\n"
+
+    notes = release_notes(body, "1.2.3", "2026-10-01")
+
+    assert notes.startswith(
+        f"{NOTICE}\n\nA second paragraph.\n\n### Added\n\n- A thing.\n\n"
+    )
+
+
+def test_a_notice_comes_before_loose_entries():
+    notes = release_notes(
+        f"{NOTICE}\n\n- **Loose.**\n\n### Fixed\n\n- **Fixed.**\n",
+        "1.2.3",
+        "2026-10-01",
+    )
+
+    assert notes.startswith(
+        f"{NOTICE}\n\n- Loose.\n\n### Fixed\n\n- Fixed.\n\n**Full changelog**: "
+    )
+
+
+def test_text_below_the_first_heading_is_still_not_a_notice():
+    body = f"### Added\n\n- **A thing.**\n\n{NOTICE}\n"
+
+    with pytest.raises(ChangelogError, match="neither a `###` heading"):
+        release_notes(body, "1.2.3", "2026-10-01")
+
+
+@pytest.mark.parametrize("body", [f"{NOTICE}\n", f"{NOTICE}\n\n### Added\n", ""])
+def test_a_release_without_entries_is_an_error(body: str):
+    with pytest.raises(ChangelogError, match="no changelog entries"):
+        release_notes(body, "1.2.3", "2026-10-01")
+
+
+def test_a_notice_is_released_with_the_fragments_and_kept_in_the_changelog(
+    tmp_path: Path,
+):
+    noticed = CHANGELOG.replace(
+        "## [Unreleased]\n\n### Added", f"## [Unreleased]\n\n{NOTICE}\n\n### Added"
+    )
+    directory = _fragments(tmp_path, {"2.fixed.md": "**Two.**"})
+    notes_path = tmp_path / "notes.md"
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(noticed, encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "--version=0.3.5",
+                "--date=2026-09-14",
+                f"--changelog={changelog}",
+                f"--fragments={directory}",
+                f"--release-notes={notes_path}",
+            ]
+        )
+        == 0
+    )
+
+    assert notes_path.read_text(encoding="utf-8").startswith(
+        f"{NOTICE}\n\n### Added\n\n- A thing. ([#1]({BASE}/issues/1))\n\n"
+        f"### Fixed\n\n- Two. {_link(2)}\n\n"
+    )
+    rewritten = changelog.read_text(encoding="utf-8")
+    assert (
+        f"## [Unreleased]\n\n## [0.3.5] - 2026-09-14\n\n{NOTICE}\n\n### Added\n"
+        in rewritten
+    )
+
+
 def test_main_refuses_to_release_an_entry_without_a_summary(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
