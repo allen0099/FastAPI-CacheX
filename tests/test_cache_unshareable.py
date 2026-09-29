@@ -457,13 +457,13 @@ def test_authorization_on_a_no_cache_route_is_private_no_cache():
     ("public", "cache_authorized", "expected"),
     [
         (True, False, "public, max-age=60"),
-        (False, True, "max-age=60"),
+        (False, True, "private, max-age=60"),
     ],
 )
-def test_opted_in_authorization_keeps_the_decorator_header(
+def test_opted_in_authorization_header(
     public: bool, cache_authorized: bool, expected: str
 ):
-    """Where the bypass is lifted, the header is the decorator's as before."""
+    """``public`` keeps the decorator's header; ``cache_authorized`` adds ``private`` (#372)."""
     app = FastAPI()
 
     @app.get("/opted-in")

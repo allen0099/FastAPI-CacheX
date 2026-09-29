@@ -194,7 +194,9 @@ async def me(session=Depends(require_user_session)):
   one would be logged in along with the victim. Log in with `await login(request, user)`, which
   gives the session a new ID and attaches the user (see
   [Regenerate the Session ID After Login](#5-regenerate-the-session-id-after-login)).
-- Any access to `request.session` adds `Vary` for every request header read to find the token:
+- Any access to `request.session`, or a read through the session dependencies (`get_session`,
+  `get_optional_session` and those built on them, such as `AuthenticatedSession`), adds `Vary`
+  for every request header read to find the token:
   the headers checked in `token_source_priority` order (`header_name`, and `Authorization` when
   bearer tokens are enabled) up to the one that carried the token. `Cookie` is added only when
   no header carried a token, because only then is the cookie read.
@@ -209,7 +211,7 @@ async def me(session=Depends(require_user_session)):
   the middleware loaded, from any transport, with or without a user, or a non-empty
   `request.session`), and answers it with `private`, as for `Authorization`. `public=True`
   shares the route across sessions; `cache_authorized=True` with a `key_builder` that includes
-  the session's user caches per user. See
+  the session's user caches per user, still answered with `private`. See
   [Authenticated endpoints](HTTP_CACHING.md#authenticated-endpoints).
 
 The cookie is always `HttpOnly`; `Secure`, `SameSite`, `Domain`, `Path` and `Max-Age` follow the

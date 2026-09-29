@@ -1019,6 +1019,9 @@ def cache(
             ``request.session``. By default such a request bypasses the
             backend as ``private=True`` does (RFC 9111 §3.5), unless
             ``public`` is set, and its response is sent with ``private``.
+            With this option the response to such a request still carries
+            ``private``: its entry is per caller only in this backend, while
+            a shared cache downstream keys on the URL alone.
             A token that does not resolve to a session does not count.
             A route without a positive ``ttl`` skips the backend anyway, but
             its response to such a request is still sent with ``private``;
@@ -1227,13 +1230,15 @@ def cache(
             # carried its token (#319). Routes without a positive ttl skip the
             # backend anyway, but their response still needs `private` for a
             # downstream cache (#362); only `private=True` already sends it.
-            credential = (
-                None
-                if private or public or cache_authorized
-                else _request_credential(req)
+            # `cache_authorized` lifts the bypass but not `private`: its entries
+            # are per caller only in this backend, while a shared cache
+            # downstream keys on the URL alone (#372).
+            credential = None if private or public else _request_credential(req)
+            authorized_bypass = credential is not None and not cache_authorized
+            response_cache_control = (
+                cache_control if credential is None else private_cache_control
             )
-            authorized_bypass = credential is not None
-            if credential is not None:
+            if credential is not None and not cache_authorized:
                 logger.debug(
                     "%s present; bypassing the backend for path=%s",
                     credential,
@@ -1251,35 +1256,32 @@ def cache(
             # (see `bypass_backend`). ETag revalidation still works: it
             # compares the client's validator against freshly rendered content.
             if bypass_backend or authorized_bypass:
-                # Without `public`/`cache_authorized`, RFC 9111 §3.5 would still
-                # let a downstream shared cache reuse the answer to an
-                # `Authorization` request under `must-revalidate`, and nothing
-                # at all stops one reusing the answer to a cookie; `private`
-                # rules both out.
-                bypass_cache_control = (
-                    private_cache_control if authorized_bypass else cache_control
-                )
+                # `response_cache_control` has `private` for a request with
+                # credentials: RFC 9111 §3.5 would still let a downstream shared
+                # cache reuse the answer to an `Authorization` request under
+                # `must-revalidate`, and nothing at all stops one reusing the
+                # answer to a cookie.
                 response, _, etag = await _render(func, req, *args, **kwargs)
                 if not _is_cacheable_status(response.status_code):
                     return response
                 if etag is None:
                     # StreamingResponse/FileResponse — cannot compute ETag
                     return _with_cache_control(
-                        response, bypass_cache_control, private_cache_control
+                        response, response_cache_control, private_cache_control
                     )
                 if _etag_matches(client_etag, etag):
                     logger.debug("304 Not Modified (uncached); path=%s", req.url.path)
                     return _not_modified(
                         etag,
                         _cache_control_for(
-                            response, bypass_cache_control, private_cache_control
+                            response, response_cache_control, private_cache_control
                         ),
                         response.headers,
                     )
                 response.headers["ETag"] = etag
                 logger.debug("Bypassed the backend; path=%s", req.url.path)
                 return _with_cache_control(
-                    response, bypass_cache_control, private_cache_control
+                    response, response_cache_control, private_cache_control
                 )
 
             # Built only here: the branches above never touch the backend, so a
@@ -1318,7 +1320,9 @@ def cache(
                     if current_etag is None:
                         # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
                         return _with_cache_control(
-                            current_response, cache_control, private_cache_control
+                            current_response,
+                            response_cache_control,
+                            private_cache_control,
                         )
 
                     if _etag_matches(client_etag, current_etag):
@@ -1327,7 +1331,9 @@ def cache(
                         return _not_modified(
                             current_etag,
                             _cache_control_for(
-                                current_response, cache_control, private_cache_control
+                                current_response,
+                                response_cache_control,
+                                private_cache_control,
                             ),
                             current_response.headers,
                         )
@@ -1344,7 +1350,7 @@ def cache(
                     # takes the new Age with it (RFC 9111 §4.3.4).
                     return _not_modified(
                         cached_data.fingerprint,
-                        cache_control,
+                        response_cache_control,
                         cached_data.headers,
                         _age_headers(cached_data, ttl),
                     )
@@ -1360,7 +1366,7 @@ def cache(
                     headers={
                         **(cached_data.headers or {}),
                         "ETag": cached_data.fingerprint,
-                        "Cache-Control": cache_control,
+                        "Cache-Control": response_cache_control,
                         **_age_headers(cached_data, ttl),
                     },
                 )
@@ -1383,7 +1389,7 @@ def cache(
                 if current_etag is None:
                     # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
                     return _with_cache_control(
-                        current_response, cache_control, private_cache_control
+                        current_response, response_cache_control, private_cache_control
                     )
                 logger.debug("Cache MISS; computed fresh ETag for key=%s", cache_key)
 
@@ -1424,7 +1430,7 @@ def cache(
                     logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
 
             return _with_cache_control(
-                current_response, cache_control, private_cache_control
+                current_response, response_cache_control, private_cache_control
             )
 
         wrapper: AsyncResponseCallable = serve

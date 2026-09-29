@@ -134,9 +134,12 @@ A response that belongs to one caller is never stored either (#296):
   the fresh render. The response (and a 304) is sent with `private` in place
   of `public`, keeping the decorator's other directives (`private, no-cache`
   on a `no_cache` route), so a CDN or proxy does not store it either.
-  `public=True` routes are exempt, and so are routes with
-  `cache_authorized=True`, the opt-in for a key builder that includes the
-  caller's identity (see [Authenticated endpoints](#authenticated-endpoints)).
+  `public=True` routes are exempt. Routes with `cache_authorized=True`, the
+  opt-in for a key builder that includes the caller's identity (see
+  [Authenticated endpoints](#authenticated-endpoints)), read and write the
+  backend for such requests but still answer them with `private`: the entry is
+  per caller only in the backend, while a CDN keys on the URL alone (before
+  0.3.9 they sent the decorator's header unchanged, #372).
   `must_revalidate=True` does not lift the bypass: RFC 9111 would let a shared
   cache reuse such a response under `must-revalidate`, but the library
   requires an explicit opt-in. A route without a positive `ttl` skips the
@@ -189,7 +192,8 @@ matches what the handler returns:
   `cache_authorized=True` together with a `key_builder` that puts the verified
   caller's identity into the key, so each user gets their own entry (see
   [Authenticated endpoints](#authenticated-endpoints)). Without the identity in
-  the key, one user's response is served to the next. If you do not need a
+  the key, one user's response is served to the next. The response still goes
+  out with `private`, so downstream only the user's browser keeps a copy. If you do not need a
   server-side cache for it, leave both options unset (or use `private=True`)
   and let only the browser cache it.
 
@@ -532,7 +536,7 @@ request it is given selects.
 > caller's response to everyone, so use one of the two options above.
 
 ```python
-from fastapi import Request, Response
+from fastapi import Request
 
 from fastapi_cachex import build_cache_key
 from fastapi_cachex import cache
@@ -557,17 +561,20 @@ def per_user_key(request: Request) -> str:
 
 @app.get("/me/dashboard")
 @cache(ttl=60, key_builder=per_user_key, cache_authorized=True)
-async def my_dashboard(user: CurrentUser, response: Response):
-    # Without `private`, the response goes out as `Cache-Control: max-age=60`,
-    # which a shared cache (CDN, reverse proxy) may store. Vary on whatever
-    # carries the identity so such a cache keeps one copy per user.
-    response.headers["Vary"] = "Authorization"
+async def my_dashboard(user: CurrentUser):
+    # Sent as `Cache-Control: private, max-age=60` to a request with
+    # `Authorization` or a session: only this backend and the user's browser
+    # keep a copy.
     return build_dashboard(user)
 ```
 
-A per-user entry is only safe from shared caches in front of your app if they
-honour `Vary` for that header. When they don't, or when identity comes from
-something a shared cache cannot see, use option 1 instead.
+The per-user entry lives only in your backend. A shared cache in front of the
+app (CDN, reverse proxy) sees only the URL, so every response to a request with
+`Authorization` or a session carries `private`, even with `cache_authorized`.
+When identity comes from a cookie of your own instead, nothing marks the
+request as credentialed and the decorator's header goes out unchanged: set
+`private=True` (option 1), or send `Vary: Cookie` yourself if a shared cache
+may store it.
 
 > [!CAUTION]
 > The key builder decides who sees whose data, so the identity it reads must
