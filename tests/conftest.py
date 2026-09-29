@@ -1,4 +1,7 @@
 import asyncio
+import gc
+import logging
+import os
 import time
 from collections.abc import AsyncGenerator
 from datetime import datetime
@@ -23,6 +26,60 @@ from fastapi_cachex.session.proxy import SessionManagerProxy
 from fastapi_cachex.state import manager as state_manager
 from fastapi_cachex.state import models as state_models
 from fastapi_cachex.state.proxy import StateManagerProxy
+
+_PENDING_TASK_MESSAGE = "Task was destroyed but it is pending!"
+
+
+class _PendingTaskHandler(logging.Handler):
+    """Record every "Task was destroyed but it is pending!" asyncio logs.
+
+    asyncio reports such a task through its logger, not as a warning, so
+    `filterwarnings = ["error"]` never fails on it (#295). It is logged when
+    the garbage collector frees the task, often during an unrelated test.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(logging.ERROR)
+        self.reports: list[tuple[str, str]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        if message.startswith(_PENDING_TASK_MESSAGE):
+            running = os.environ.get("PYTEST_CURRENT_TEST", "outside any test")
+            self.reports.append((running, message))
+
+
+_pending_tasks = _PendingTaskHandler()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    logging.getLogger("asyncio").addHandler(_pending_tasks)
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Fail the run if any test left a pending task behind.
+
+    Collecting here makes a task that is still waiting for the garbage
+    collector report now, so the check does not depend on when it runs.
+    """
+    gc.collect()
+    logging.getLogger("asyncio").removeHandler(_pending_tasks)
+    if _pending_tasks.reports:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def pytest_terminal_summary(terminalreporter: Any) -> None:
+    if not _pending_tasks.reports:
+        return
+    terminalreporter.section("asyncio tasks destroyed while pending", red=True)
+    terminalreporter.line(
+        "A test left an asyncio task pending on a loop that no longer runs it. "
+        "The test named below is only where the garbage collector freed it; "
+        "rerun with PYTHONASYNCIODEBUG=1 to see where the task was created."
+    )
+    for running, message in _pending_tasks.reports:
+        terminalreporter.line(f"\nfreed during: {running}\n{message}")
+
 
 # Every proxy is a process-wide singleton, so whatever one test installs is
 # still installed for the next one.
