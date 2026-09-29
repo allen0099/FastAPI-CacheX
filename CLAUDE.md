@@ -1,126 +1,41 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repository. It lists only what the code, `pyproject.toml` and the docs do not make obvious. For the rest, read the source (module docstrings are thorough), `docs/` and `docs/DEVELOPMENT.md`.
 
-## Project Overview
+## Project
 
-FastAPI-CacheX is a Python library (package: `fastapi_cachex`) providing HTTP caching and optional session management for FastAPI. It is published to PyPI as `fastapi-cachex`.
+`fastapi_cachex` (PyPI `fastapi-cachex`): HTTP caching, application cache, sessions, OAuth state and a distributed lock for FastAPI, on pluggable backends (memory, Redis, Memcached). 0.3.9 was the last 0.3.x. `master` is 0.4.0 development (milestone `0.4.0`, breaking changes allowed; `docs/MIGRATING_0_4.md` is the promise to users).
 
 ## Commands
 
-All commands use `uv` for environment management.
+Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 
-```bash
-# Install development dependencies
-uv sync --group dev
+- `uv run pytest` does not check coverage. The 90% floor (`fail_under`) applies only with `--cov=fastapi_cachex`.
+- Redis and Memcached tests are skipped unless `CACHEX_TEST_REDIS_PORT` / `CACHEX_TEST_MEMCACHED_PORT` are set. They flush the server they connect to, so point them only at a throwaway instance (`scripts/start-*-server.sh`).
+- `tox -e lowest` runs every direct dependency at its declared floor on Python 3.10.
+- Docs need `uv sync --group dev --group docs --all-extras`, then `uv run zensical build --strict -f zensical.toml` (and `-f zensical.zh-TW.toml`).
+- Before committing, `git add -A` and then run `uv run pre-commit run --all-files`. ruff-format rewrites files, so re-add and re-run until it passes. CI also runs `mypy tests` and `mypy scripts`, which pre-commit does not.
 
-# Run tests
-uv run pytest
+## Invariants that span modules
 
-# Run a single test file
-uv run pytest tests/test_cache.py
+- HTTP cache keys are `method|||host|||path|||query` (`CACHE_KEY_SEPARATOR`). Host and path go through `escape_key_component` so client input cannot inject the separator. Anything that builds or parses keys (`clear_path`, `routes.py`, backends) must stay consistent with it.
+- `@cache` fails open by default: a backend error is logged and treated as a miss, or the response is served unstored. Only GET is cached.
+- Backend lookup: `@cache` and the `CacheBackend` / `AppCache` dependencies fall back to a `MemoryBackend` when none is set. `CacheLock`, `StateManager` and a directly built `CacheManager(...)` call `BackendProxy.get()` and raise; the monitoring routes and `invalidate()` treat a missing backend as empty. The proxies' lazy creation goes through `ProxyBase.get_or_create` (per-class lock; sync dependencies run in threads).
+- Memcached cannot enumerate keys. `clear_pattern`, `get_all_keys` and every `CacheManager.clear*` are no-ops with a `RuntimeWarning`, while `MemcachedBackend.clear()` issues `flush_all` and wipes the whole server.
+- The atomic primitives on `BaseCacheBackend` (`increment`, `get_and_delete`, `set_if_absent`, `delete_if_equals`, `expire_if_equals`, `delete_many`) have non-atomic fallbacks. Every built-in backend must override them atomically; see "Atomic backend primitives" in `docs/BACKENDS.md`. `tests/backends/*_contract.py` covers TTL validation, counters and `clear_pattern`; the other primitives are tested in each backend's own test file, so a change needs all three.
+- `validate_ttl` / `validate_delta` run before any I/O in every backend; floats and bools raise `TypeError`.
+- Redis and Memcached keys carry `key_prefix` (default `fastapi_cachex:`); memory has no prefix. `CacheManager` (`cache:`), `StateManager` (`oauth_state:`) and `CacheLock` (`lock:`) add their own prefixes on top.
 
-# Run a specific test
-uv run pytest tests/test_cache.py::test_function_name
+## Tests
 
-# Run tests with coverage
-uv run pytest --cov=fastapi_cachex --cov-report=term-missing
+- `filterwarnings = ["error"]`: an expected warning needs `pytest.warns`, or a local `warnings.catch_warnings` (see `flush_memcached` in `tests/live_servers.py`).
+- `tests/conftest.py` sets a `MemoryBackend` for every test and resets the proxies. Tests for Redis or Memcached build their own backend. The autouse `close_network_clients` fixture closes every Redis/Memcached client, because an unclosed socket's `ResourceWarning` would fail a later test.
+- `examples/*.py` are tested by `tests/test_examples.py` and included in the docs with `--8<--` snippets, so editing an example changes the docs.
+- Check that a new test can fail: break the code it guards and confirm the test fails (see `docs/DEVELOPMENT.md`).
 
-# Lint and format (ruff)
-uv run ruff check fastapi_cachex
-uv run ruff format fastapi_cachex
+## Conventions
 
-# Type checking
-uv run mypy fastapi_cachex
-uv run mypy fastapi_cachex --strict
-
-# Run pre-commit on all files
-uv run pre-commit run --all-files
-
-# Run tox across all Python versions (3.10–3.14)
-uv run tox
-tox -e py310  # single version
-tox -e lowest  # every direct dependency at its declared floor, Python 3.10
-```
-
-## Architecture
-
-### Module Structure
-
-The library has five independent subsystems:
-
-**1. HTTP Caching (`fastapi_cachex/cache.py`, `proxy.py`, `backends/`)**
-- `@cache(...)` decorator wraps FastAPI route handlers. It injects a `Request` parameter into the handler signature if not already present, so the handler does not need to declare it.
-- Cache flow: check `no-store` → check `no-cache` → check ETag (`If-None-Match`) → check TTL-based cache hit → execute handler → store result.
-- Fails open by default (`fail_open=True`): a backend error on `get` is logged and treated as a miss, one on `set` is logged and the response served unstored. `fail_open=False` propagates the error.
-- Only GET requests are cached; other methods bypass the cache entirely.
-- Cache keys follow the format `method|||host|||path|||query_params` (separator defined in `types.py`). Host and path go through `escape_key_component` (`|` → `%7C`, `%` → `%25`) so client input cannot inject the separator; `clear_path` encodes its argument and `routes.py` decodes for display.
-- `BackendProxy` is a non-instantiable class-level singleton (via `ProxyMeta`). Call `BackendProxy.set(backend)` at app startup; `BackendProxy.get()` raises `BackendNotFoundError` if unset. `get_backend_or_fallback()` registers a `MemoryBackend` when none is set; `@cache`, `CacheBackend` and `AppCache` use it.
-- `ProxyBase.get_or_create(factory)` is the one lazy get-or-create: a per-class `threading.Lock` (sync dependencies run in worker threads; per class so a factory can call another proxy's `get_or_create`). Used by `get_backend_or_fallback`, `get_app_cache` and `get_state_manager` (no memory fallback for states).
-- Cache values are stored as `CacheEntry(fingerprint, content, media_type)` dataclass (defined in `types.py`).
-
-**2. Application-Level Caching (`fastapi_cachex/manager.py`, `manager_proxy.py`)**
-- `CacheManager` is a thin, JSON-serializing wrapper around whatever backend `BackendProxy` has configured, for caching arbitrary developer values (not HTTP responses) via `get`/`set`/`add`/`delete`/`has`/`get_or_set`/`clear_prefix`/`clear`. `add()` is store-if-absent on top of `backend.set_if_absent`.
-- Keys live under their own `cache:`-prefixed namespace by default (configurable via `key_prefix`), separate from HTTP route keys and `oauth_state:`.
-- `get()` never raises — returns `default` (`None` unless overridden) on a miss or decode failure. `set()` lets `TypeError` propagate for non-JSON-serializable values.
-- `CacheManagerProxy` mirrors `BackendProxy`/`SessionManagerProxy`. The `AppCache` FastAPI dependency (`get_app_cache`, in `dependencies.py`) lazily creates and registers a default `CacheManager` on first use.
-- `clear()`/`clear_prefix()` are built on `backend.get_all_keys()` + `backend.delete_many()`, so they are no-ops on the Memcached backend (see below).
-
-**3. Session Management (`fastapi_cachex/session/`)**
-- Optional subsystem, activated via `FastAPICacheXSessionMiddleware` (the header-only `SessionMiddleware` is deprecated until 0.4.0) and `SessionManagerProxy`.
-- `SessionManager` handles create/get/update/delete/invalidate/regenerate operations. It stores `Session` Pydantic models serialized as JSON, wrapped in `CacheEntry` for backend compatibility.
-- Token signing: `simple` format uses HMAC-SHA256 (`SecurityManager`); `jwt` format uses PyJWT (optional dependency `fastapi-cachex[jwt]`).
-- `get_session()` saves only when sliding expiration renewed the session (or with `touch=True`), so the stored `last_accessed` is the last write, not the last lookup. Session entries use the constant fingerprint `"session"`; nothing compares it.
-- Session token is passed via custom header (`X-Session-Token` by default), `Authorization: Bearer` token, or (`FastAPICacheXSessionMiddleware` only) the session cookie.
-- `SessionManagerProxy` mirrors the `BackendProxy` pattern for managing the `SessionManager` singleton.
-- Key FastAPI dependencies: `get_session`, `require_session`, `get_optional_session` (in `session/dependencies.py`). These accept anonymous sessions (`user=None`); `require_user_session` / `AuthenticatedSession` also require a user. `UserSessionDep` is still an alias of `SessionDep` until 0.4.0.
-- `JWTTokenSerializer` emits one `UserWarning` at construction when `secret_key` is shorter (in UTF-8 bytes) than the HMAC hash output (48 for HS384, 64 for HS512).
-- `rotate_session_id(request)` (same module) regenerates the loaded session's ID at login against session fixation; a no-op when none was loaded. The middleware notices the changed ID and sends the new token.
-- `FastAPICacheXSessionMiddleware` wraps `request.session` in `_RequestSession`, which records an explicit `clear()`: that deletes the loaded session (logout) even with empty data, and later writes start a new anonymous one. Emptying via `del`/`pop()` keeps a user session (saved empty) and deletes an anonymous one.
-
-**4. State Management (`fastapi_cachex/state/`)**
-- `StateManager` provides one-time-use state tokens for OAuth flows. States are consumed (deleted) on first successful `consume_state()` call.
-- Uses the same cache backends, with key prefix `oauth_state:` by default.
-- `create_state(binding=...)` / `consume_state(state, binding=...)` bind a state to the client that started the flow (SHA-256 stored, `hmac.compare_digest`); a mismatch in either direction raises `InvalidStateError`, and the state is consumed either way.
-
-**5. Distributed Lock (`fastapi_cachex/lock.py`)**
-- `CacheLock(name, ttl=60, ...)` is a lease on `set_if_absent` / `delete_if_equals` / `expire_if_equals`, with a per-instance random token; keys use the `lock:` prefix by default.
-- It uses `BackendProxy.get()` (no `MemoryBackend` fallback). One instance per acquisition: re-acquiring a held instance raises `RuntimeError`; `async with` raises `LockTimeoutError`; `release()`/`extend()` return `False` once the lease is lost.
-
-### Backends (`fastapi_cachex/backends/`)
-
-All backends implement `BaseCacheBackend` (abstract base in `backends/base.py`):
-- `MemoryBackend`: In-process dict with background cleanup task. Not suitable for multi-process production use.
-- `AsyncRedisCacheBackend` (`backends/redis.py`): Fully async; uses `SCAN` (not `KEYS`) for pattern operations. Requires `redis[hiredis]` and `orjson` extras.
-- `MemcachedBackend` (`backends/memcached.py`): `clear_pattern`/`get_all_keys` are no-ops (return `0`/`[]` with a `RuntimeWarning`) since the Memcached protocol has no key enumeration. Runs the sync pymemcache client in worker threads with connection pooling (`use_pooling=True`, `default_noreply=False`), so concurrent calls never share a socket and every write is acknowledged before the next call on another socket can observe it. Requires the `memcached` extra (`memcache` is a deprecated alias until 0.4.0).
-
-The Redis and Memcached backends namespace keys automatically (`key_prefix`, default `fastapi_cachex:`); `MemoryBackend` has no prefix.
-
-Five non-abstract atomic primitives live on the base class with non-atomic fallbacks, and every built-in backend overrides them (see `docs/BACKENDS.md` "Atomic backend primitives"):
-- `increment(key, delta=1, ttl=None) -> int`: fixed-window counter; `ttl` applies only when the counter is created. Redis runs a registered Lua script, Memcached uses `ADD` + `INCR`/`DECR`, memory works under its lock. A counter reads back through `get()` as a `CacheEntry` with `COUNTER_FINGERPRINT` (`types.py`).
-- `get_and_delete(key) -> CacheEntry | None`: one-shot retrieval (Redis `GETDEL`, Memcached `gets` + `cas(..., exptime=-1)`, retried up to 16 times, then `CacheXError`). `StateManager.consume_state`, `delete_state`, `CacheManager.delete` and `invalidate()` use it. `delete()` keeps returning `None` for 0.3.x compatibility.
-- `set_if_absent(key, value, ttl=None) -> bool`: claim-if-free for locks/slots. Redis `SET NX EX`, Memcached `ADD`, memory under its lock.
-- `delete_if_equals(key, expected) -> bool`: release only while the key still holds `expected` (compared as decoded `CacheEntry`). Redis compares in Python then deletes via a Lua script that re-checks the raw bytes; Memcached uses `GETS` + `CAS` with exptime `-1` (immediate expiry), since classic `DELETE` has no CAS.
-- `expire_if_equals(key, expected, ttl) -> bool`: renew the TTL only while the key still holds `expected` (used by `CacheLock.extend`). Redis compares in Python then runs a Lua `GET` compare + `EXPIRE`; Memcached `GETS` + `CAS` writing the same bytes with the new exptime.
-
-`validate_ttl` (in `backends/base.py`) accepts `None` or an `int` from 1 to `MAX_TTL` (2**31 - 1) and raises `TypeError` for floats/bools; `validate_delta` requires an `int` in signed 64-bit range. Both run before any I/O. Memcached's `_expiry` also rejects expiries after 2038-01-19.
-
-`delete_many(keys) -> int` is the sixth non-abstract base method: a per-key loop by default, one batched operation on Redis (`DEL`) and Memory (single lock). Memcached sends one acknowledged `DELETE` per key inside a single worker call and counts the ones that existed (pymemcache's `delete_many` returns `True` regardless). Every Memcached multi-step op (`increment`, `get_and_delete`, `*_if_equals`) also runs as one sync helper in one `asyncio.to_thread` call.
-
-`backends/codec.py` holds the JSON `CacheEntry` codec shared by Redis and Memcached; `decode_entry` maps a bare integer to a counter entry and every malformed value to `None`.
-
-### Test Setup
-
-`tests/conftest.py` sets `MemoryBackend` as the default backend via an `autouse=True` fixture for every test. Tests requiring Redis or Memcached must configure their own backends. The `memory_backend` fixture manages the cleanup task lifecycle.
-
-`[tool.pytest.ini_options]` sets `asyncio_mode = "auto"` (no `@pytest.mark.asyncio`), `--strict-markers`, `xfail_strict = true` and `filterwarnings = ["error"]`: an expected warning needs `pytest.warns`, live Memcached resets go through `flush_memcached` in `tests/live_servers.py`, and the autouse `close_network_clients` fixture closes every Redis/Memcached client a test builds (an unclosed socket's `ResourceWarning` would fail a later test). The one global ignore covers starlette 1.0.0's deprecated anyio alias in the `lowest` tox env.
-
-### Code Quality Rules
-
-- Ruff is configured with `extend-select = ['ALL']` with specific ignores (see `pyproject.toml`). Notable: E501 (line length), FBT001/FBT002 (boolean args — intentional for Cache-Control API). `fastapi.Depends` is allowed in argument defaults via `flake8-bugbear.extend-immutable-calls` rather than ignoring B008.
-- mypy runs in strict mode on the package (not tests).
-- pydocstring convention is Google style.
-- Forward references are mostly quoted annotations with `TYPE_CHECKING` imports; only a couple of modules use `from __future__ import annotations`.
-- All public functions must have complete type annotations.
-- Coverage threshold is 90% (enforced by `pytest-cov`).
-- Changelog entries go in `changelog.d/<issue>.<section>.md` fragments (bold summary first, no leading `- `, no issue link), not in `CHANGELOG.md`; the release merges them. See `docs/DEVELOPMENT.md#changelog-fragments`.
+- Changelog: add a `changelog.d/<issue>.<section>.md` fragment and never edit `CHANGELOG.md`. The format is in `changelog.d/README.md`.
+- Docs changes go into both `docs/` and `i18n/zh-TW/docs/`. Terms follow `i18n/zh-TW/GLOSSARY.md`.
+- Never edit `version` in `pyproject.toml` by hand. Releases run through the `release.yml` workflow (`docs/DEVELOPMENT.md#releasing`).
+- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in `docs/MIGRATING_0_4.md`.
