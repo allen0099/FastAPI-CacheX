@@ -1,4 +1,3 @@
-import warnings
 from datetime import datetime
 from datetime import timezone
 from typing import cast
@@ -312,7 +311,7 @@ def test_jwt_serializer_round_trips_hmac_algorithms(algorithm: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("algorithm", "secret", "warns"),
+    ("algorithm", "secret", "rejected"),
     [
         ("HS256", "a" * 32, False),
         ("HS384", "a" * 47, True),
@@ -321,25 +320,62 @@ def test_jwt_serializer_round_trips_hmac_algorithms(algorithm: str) -> None:
         ("HS512", "a" * 64, False),
         # 32 characters but 64 UTF-8 bytes: the key length is counted in bytes.
         ("HS512", "é" * 32, False),
+        # 32 characters but 47 UTF-8 bytes: one byte short of HS384.
+        ("HS384", "é" * 15 + "a" * 17, True),
     ],
 )
-def test_jwt_serializer_warns_once_about_a_short_hmac_key(
-    algorithm: str, secret: str, warns: bool
+def test_jwt_serializer_rejects_a_short_hmac_key(
+    algorithm: str, secret: str, rejected: bool
 ) -> None:
-    """A secret shorter than the hash output warns when the serializer is built (#116)."""
+    """A secret shorter than the hash output is refused when the serializer is built (#129)."""
     config = SessionConfig(
         secret_key=SecretStr(secret), token_format="jwt", jwt_algorithm=algorithm
     )
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    if rejected:
+        with pytest.raises(ValueError, match=f"requires for {algorithm}"):
+            JWTTokenSerializer(config, jwt_module=StubJWTModule())
+    else:
         JWTTokenSerializer(config, jwt_module=StubJWTModule())
 
-    messages = [str(w.message) for w in caught if w.category is UserWarning]
-    if warns:
-        assert len(messages) == 1
-        assert f"requires for {algorithm}" in messages[0]
-        assert "Version 0.4.0 will reject" in messages[0]
-        assert caught[0].filename == __file__
-    else:
-        assert messages == []
+
+def test_a_short_hmac_key_is_rejected_when_the_manager_is_built() -> None:
+    """The check runs at startup, before any token is signed."""
+    config = SessionConfig(
+        secret_key=SecretStr("a" * 32), token_format="jwt", jwt_algorithm="HS512"
+    )
+
+    with pytest.raises(ValueError, match=r"secrets\.token_urlsafe\(64\)"):
+        SessionManager(MemoryBackend(), config)
+
+
+def test_a_short_hmac_key_is_rejected_before_pyjwt_is_needed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The configuration error comes first, not the missing extra."""
+    import importlib
+
+    def no_jwt(name: str, package: str | None = None) -> object:
+        msg = "No module named 'jwt'"
+        raise ImportError(msg)
+
+    monkeypatch.setattr(importlib, "import_module", no_jwt)
+    config = SessionConfig(
+        secret_key=SecretStr("a" * 32), token_format="jwt", jwt_algorithm="HS512"
+    )
+
+    with pytest.raises(ValueError, match="requires for HS512"):
+        JWTTokenSerializer(config)
+
+
+def test_a_custom_serializer_holds_its_own_key() -> None:
+    """The length check guards the built-in serializer's use of secret_key only."""
+    config = SessionConfig(
+        secret_key=SecretStr("a" * 32), token_format="jwt", jwt_algorithm="HS512"
+    )
+
+    manager = SessionManager(
+        MemoryBackend(), config, token_serializer=SimpleTokenSerializer()
+    )
+
+    assert isinstance(manager._serializer, SimpleTokenSerializer)

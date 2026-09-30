@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import importlib
 import logging
-import warnings
 from datetime import datetime
 from datetime import timezone
 from typing import TYPE_CHECKING
@@ -99,26 +98,27 @@ class SimpleTokenSerializer:
         )
 
 
-def _warn_if_key_too_short(secret: str, algorithm: str) -> None:
-    """Warn once when ``secret`` is shorter than ``algorithm``'s hash output.
+def _check_key_length(secret: str, algorithm: str) -> None:
+    """Reject ``secret`` if it is shorter than ``algorithm``'s hash output.
 
     ``SessionConfig`` only requires 32 characters, enough for HS256 but not
-    for HS384 (48 bytes) or HS512 (64 bytes). PyJWT 2.11 and later warn about a
-    short key on every token they sign or verify; this names the setting to
-    fix, once, when the serializer is built.
+    for HS384 (48 bytes) or HS512 (64 bytes). 0.3.x warned; 0.4.0 refuses
+    such a key when the serializer is built (#129).
+
+    Raises:
+        ValueError: If ``secret`` is shorter in UTF-8 bytes than the hash output
     """
     min_bytes = _HMAC_MIN_KEY_BYTES[algorithm]
     key_bytes = len(secret.encode("utf-8"))
     if key_bytes < min_bytes:
-        warnings.warn(
+        msg = (
             f"secret_key is {key_bytes} bytes, shorter than the {min_bytes} "
             f"bytes RFC 7518 section 3.2 requires for {algorithm}. Use a longer "
             f"secret_key (e.g. secrets.token_urlsafe({min_bytes})) or "
-            f'jwt_algorithm="HS256". Version 0.4.0 will reject a shorter key '
-            f"(https://github.com/allen0099/FastAPI-CacheX/issues/129).",
-            UserWarning,
-            stacklevel=3,
+            f'jwt_algorithm="HS256" '
+            f"(https://github.com/allen0099/FastAPI-CacheX/issues/129)."
         )
+        raise ValueError(msg)
 
 
 class JWTTokenSerializer:
@@ -148,13 +148,10 @@ class JWTTokenSerializer:
                 serializer signs and verifies with the ``secret_key`` string,
                 which only the HMAC algorithms can use; an asymmetric
                 algorithm needs a custom ``token_serializer`` that holds the
-                key pair.
+                key pair. Also if ``secret_key`` is shorter in UTF-8 bytes
+                than the HMAC hash output (48 for HS384, 64 for HS512).
             ImportError: If no ``jwt_module`` is given and PyJWT (the ``jwt``
                 extra) is not installed.
-
-        Warns:
-            UserWarning: If ``secret_key`` is shorter in UTF-8 bytes than the
-                HMAC hash output (48 for HS384, 64 for HS512).
         """
         if config.jwt_algorithm not in JWT_HMAC_ALGORITHMS:
             supported = ", ".join(sorted(JWT_HMAC_ALGORITHMS))
@@ -165,6 +162,7 @@ class JWTTokenSerializer:
                 f"SessionManager"
             )
             raise ValueError(msg)
+        _check_key_length(config.secret_key.get_secret_value(), config.jwt_algorithm)
 
         if jwt_module is not None:
             self.jwt_encoder = jwt_module
@@ -177,7 +175,6 @@ class JWTTokenSerializer:
 
         # Copy required parameters
         self._secret = config.secret_key.get_secret_value()
-        _warn_if_key_too_short(self._secret, config.jwt_algorithm)
         self._algorithm = config.jwt_algorithm
         self._issuer = config.jwt_issuer
         self._audience = config.jwt_audience

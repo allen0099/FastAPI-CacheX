@@ -166,7 +166,7 @@ app.add_middleware(
 
 ### JWT 密鑰長度 {#jwt-secret}
 
-使用 `token_format="jwt"` 時，若 `jwt_algorithm` 為 `HS384` 或 `HS512`，而 `secret_key` 短於 48 或 64 位元組（RFC 7518 第 3.2 節），0.4.0 會在啟動時拋出例外（[#129](https://github.com/allen0099/FastAPI-CacheX/issues/129)）。0.3.x 在建立 `JWTTokenSerializer` 時會發出 `UserWarning`。請使用較長的密鑰，或改用 `HS256`：
+使用 `token_format="jwt"` 時，若 `jwt_algorithm` 為 `HS384` 或 `HS512`，而 `secret_key` 以 UTF-8 編碼後短於 48 或 64 位元組（RFC 7518 第 3.2 節），0.4.0 會在啟動時、`SessionManager` 建立 `JWTTokenSerializer` 的當下拋出 `ValueError`（[#129](https://github.com/allen0099/FastAPI-CacheX/issues/129)）。0.3.x 則是在同一處發出 `UserWarning`。請使用較長的密鑰，或改用 `HS256`：
 
 ```python
 # 修改前：32 個字元，對 HS512 來說太短

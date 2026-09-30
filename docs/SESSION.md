@@ -348,9 +348,9 @@ only supports `HS256`, `HS384` and `HS512`: with an asymmetric algorithm, `Sessi
 
 An HMAC key must be at least as long as the hash output (RFC 7518 §3.2): 32 bytes for `HS256`,
 48 for `HS384` and 64 for `HS512`, counted after UTF-8 encoding. `secret_key` only has to be 32
-characters, so with `HS384` or `HS512` a shorter key makes the serializer emit a `UserWarning`
-once when it is built (PyJWT 2.11 and later also warn with `InsecureKeyLengthWarning` whenever they
-sign or verify a token). Use a longer key, for example `secrets.token_urlsafe(64)`.
+characters, so with `HS384` or `HS512` a shorter key makes `SessionManager` raise `ValueError`
+when it builds the built-in serializer (a custom `token_serializer` holds its own key). Use a longer key, for example `secrets.token_urlsafe(64)`, or
+`HS256`.
 
 Security notes:
 
