@@ -43,7 +43,7 @@ filterwarnings = [
 | `UserSessionDep` 需要使用者 | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | 否 | [UserSessionDep](#user-session-dep) |
 | 移除 `memcache` extra | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | 否 | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` 回傳 `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | 否 | [delete() 的回傳值](#backend-delete) |
-| `CacheEntry.headers` 改為成對值的清單 | [#105](https://github.com/allen0099/FastAPI-CacheX/issues/105) | 否 | [重複的標頭](#cache-entry-headers) |
+| `CacheEntry.headers` 改為成對值的 tuple | [#105](https://github.com/allen0099/FastAPI-CacheX/issues/105) | 否 | [重複的標頭](#cache-entry-headers) |
 | HTTP 快取鍵格式 | [#271](https://github.com/allen0099/FastAPI-CacheX/issues/271)、[#270](https://github.com/allen0099/FastAPI-CacheX/issues/270)、[#269](https://github.com/allen0099/FastAPI-CacheX/issues/269)、[#266](https://github.com/allen0099/FastAPI-CacheX/issues/266)、[#265](https://github.com/allen0099/FastAPI-CacheX/issues/265)、[#72](https://github.com/allen0099/FastAPI-CacheX/issues/72) | 否 | [快取鍵](#cache-keys) |
 | 有條件的 Session 寫入 | [#128](https://github.com/allen0099/FastAPI-CacheX/issues/128) | 否 | [Session 寫入](#session-writes) |
 
@@ -272,7 +272,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 
 ### 重複的標頭 {#cache-entry-headers}
 
-0.4.0 會儲存 handler 重複送出的標頭（例如多個 `Link` 標頭）的每一行，而不是只保留最後一行（[#105](https://github.com/allen0099/FastAPI-CacheX/issues/105)）。`CacheEntry.headers` 從 `dict[str, str]` 改為有順序的 `(name, value)` 成對值清單。這會影響自訂後端，以及建立或讀取 `CacheEntry` 的程式碼：
+0.4.0 會儲存 handler 重複送出的標頭（例如多個 `Link` 標頭）的每一行，而不是只保留最後一行（[#105](https://github.com/allen0099/FastAPI-CacheX/issues/105)）。`CacheEntry.headers` 從 `dict[str, str] | None` 改為依送出順序排列的 `(name, value)` 成對值 tuple；沒有標頭時為 `()`。重播的值不再合併或拆分，因此含有逗號的值仍是一行。這會影響自訂後端，以及讀取 `CacheEntry` 的程式碼。建立 `CacheEntry` 的程式碼仍可傳入 `dict`（或任何成對值的 iterable，或 `None`）：建構函式會轉換它，但型別檢查器會標出 `dict`。
 
 ```python
 # 修改前
@@ -282,7 +282,7 @@ entry.headers["link"]
 [value for name, value in entry.headers if name == "link"]
 ```
 
-0.4.0 仍可讀取 0.3.x 寫入的項目，但 0.3.x 無法讀取 0.4.0 寫入的項目。在兩個版本共用同一個後端的滾動部署中，請在所有實例都執行 0.4.0 後清除一次 HTTP 快取（或在部署期間讓舊實例不要使用共用快取）。改由儲存格式帶版本標記是否可行，尚未決定。
+Redis 與 Memcached 以 `[name, value]` 行組成的 JSON 清單儲存標頭。0.4.0 仍能解碼 0.3.x 寫入的物件，但 0.3.x 遇到 0.4.0 寫入且帶有任何標頭的項目時會回應 `500`。使用預設 key builder 或呼叫 `build_cache_key()` 的 builder 時，`@cache` 的滾動部署不需要額外處理：[快取鍵格式](#cache-keys)在同一個版本中改變，因此兩個版本都不會查到對方寫入的 HTTP 項目。自行組出鍵的自訂 `key_builder` 在兩個版本中產生相同的鍵；對這樣的路由，請在部署期間讓 0.3.x 實例不要使用共用後端，或先把 builder 改為使用 `build_cache_key()`。以自己的鍵儲存 `CacheEntry` 並在不同版本間共用的應用程式也是如此。
 
 ### 監控路由 {#add-routes}
 

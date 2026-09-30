@@ -221,7 +221,10 @@ def test_names_already_in_vary_are_not_repeated() -> None:
     hit = client.get("/greet")
 
     for response in (miss, hit):
-        assert response.headers.get_list("vary") == ["Accept-Language, Origin, Accept"]
+        assert response.headers.get_list("vary") == [
+            "Accept-Language, Origin",
+            "Accept",
+        ]
 
 
 def test_vary_star_is_left_alone() -> None:

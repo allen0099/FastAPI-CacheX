@@ -153,7 +153,10 @@ entry = CacheEntry(
     content=b'{"data": "response"}',  # 原始回應位元組
     media_type="application/json",
     status_code=200,  # 以原本的狀態碼重播
-    headers={"Vary": "Accept-Encoding"},  # 重播時送回的標頭
+    headers=(
+        ("link", "</a.css>; rel=preload"),
+        ("link", "</b.js>; rel=preload"),
+    ),  # 重播時依序送回的標頭行
     stored_at=1702650540.5,  # @cache 儲存它時的 epoch 秒數；用來計算 Age
 )
 ```
@@ -166,45 +169,48 @@ TTL 不儲存在 `CacheEntry` 中：過期由後端負責（`MemoryBackend` 將�
 
 ```python
 if request.method != "GET":
-    return await handler()                   # 不快取，不帶 Cache-Control
+    return await handler()  # 不快取，不帶 Cache-Control
 
 if no_store:
-    return await render()                    # 不讀取，不寫入
+    return await render()  # 不讀取，不寫入
 
 bypass = private or not ttl
 # Authorization 標頭、中介軟體載入的 Session，或不是空的 request.session
 credential = None if private or public else request_credential(request)
 header = private_header if credential else decorator_header  # 用於下方每個回應
 if bypass or (credential and not cache_authorized):
-    response, etag = await render()          # 既不讀取也不寫入後端
+    response, etag = await render()  # 既不讀取也不寫入後端
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
 cache_key = key_builder(request) + vary_components(request)  # 只在這裡建立
-entry = await backend.get(cache_key)         # 過期的項目已在此略過
+entry = await backend.get(cache_key)  # 過期的項目已在此略過
 
 if client_etag and no_cache:
-    fresh = await render()                   # no-cache：一律先重新產生
+    fresh = await render()  # no-cache：一律先重新產生
     if etag_matches(client_etag, fresh.etag):
-        return not_modified(...)             # 304
+        return not_modified(...)  # 304
 elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
     return not_modified(..., age_headers(entry, ttl))  # 304，handler 不執行
 
 if entry and not no_cache:
-    return Response(                         # 200，handler 不執行
+    hit = Response(  # 200，handler 不執行
         content=entry.content,
         status_code=entry.status_code,
         media_type=entry.media_type,
-        headers={**(entry.headers or {}), "ETag": entry.fingerprint, ...,
-                 **age_headers(entry, ttl)},  # Age：now - stored_at，限制在 0..ttl
     )
+    for name, value in entry.headers:  # 依序加上儲存的每一行
+        hit.headers.append(name, value)
+    hit.headers["ETag"] = entry.fingerprint  # 接著設定 ETag、Cache-Control 與
+    ...  # Age：now - stored_at，限制在 0..ttl
+    return hit
 
-response, body, etag = await render()        # 未命中（若 no-cache 已產生過則直接沿用）
+response, body, etag = await render()  # 未命中（若 no-cache 已產生過則直接沿用）
 if not is_cacheable_status(response.status_code):
-    return response                          # 非 2xx：原樣回傳，不寫入
+    return response  # 非 2xx：原樣回傳，不寫入
 if etag is None:
-    return response                          # 串流／檔案：沒有 ETag，不寫入
+    return response  # 串流／檔案：沒有 ETag，不寫入
 if marked_private_or_no_store(response) or "set-cookie" in response.headers:
-    return response                          # 屬於單一呼叫者的回應：不寫入
+    return response  # 屬於單一呼叫者的回應：不寫入
 if not entry or entry.fingerprint != etag:
     await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
 return response
@@ -252,7 +258,7 @@ If-None-Match: *                  → 只要資源存在就相符 → 304
             content=b"...",
             media_type="application/json",
             status_code=200,
-            headers=None,
+            headers=(),
             stored_at=1702650540.5,
         ),
         expiry=1702650600.5,  # epoch 秒數；None 表示永不過期
@@ -280,13 +286,14 @@ Redis 與 Memcached 共用同一套 JSON 編解碼器；若已安裝 `orjson` �
   "content": "<response bytes decoded as latin-1>",
   "media_type": "application/json",
   "status_code": 200,
-  "headers": {"Vary": "Accept-Encoding"},
+  "headers": [["vary", "Accept-Encoding"]],
   "stored_at": 1702650540.5
 }
 ```
 
 - `content` 使用 **latin-1 來回轉換**，而不是 base64：latin-1 與位元組一一對應，因此任何位元組序列都能放進 JSON 文字中，並原封不動地還原。
 - 舊版本寫入、沒有 `status_code`／`headers` 欄位的項目仍可讀取，解碼後為 `200` 且沒有額外標頭。沒有 `stored_at` 的項目（0.3.9 以前）解碼後為 `stored_at=None`，送出時不帶 `Age` 標頭。
+- `headers` 是 `[name, value]` 行組成的清單，因此重複送出的標頭會保留每一行。0.3.x 寫入的物件（每個名稱一個值）仍可解碼。其他任何形式都會讓整個項目視為未命中。
 - 任何解碼失敗（損壞的 JSON、缺少欄位、型別錯誤）都視為**快取未命中**，回傳 `None` 而不是拋出例外。
 - `increment()` 會留下一個**單純的整數**（由 Redis／Memcached 的 INCR 系列指令寫入）；它會解碼成 fingerprint 為 `counter` 的 `CacheEntry`。
 
@@ -394,7 +401,7 @@ class CacheEntry:
     content: bytes  # 原始回應位元組
     media_type: str | None = None
     status_code: int = 200  # 原樣重播
-    headers: dict[str, str] | None = None  # 重播時送回
+    headers: tuple[tuple[str, str], ...] = ()  # 重播時送回的 (name, value) 標頭行
     stored_at: float | None = None  # @cache 儲存它時的 epoch 秒數；用來計算 Age
 
 

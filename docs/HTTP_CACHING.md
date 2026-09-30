@@ -90,7 +90,7 @@ a matching `If-None-Match` gets a 304.
 
 When a cached entry is valid (within TTL):
 
-- **Default behavior**: Returns the cached content directly, with the status code and headers the handler originally produced, without re-executing the endpoint handler
+- **Default behavior**: Returns the cached content directly, with the status code and headers the handler originally produced (every line of a header sent more than once), without re-executing the endpoint handler
 - **With `If-None-Match` header**: Returns HTTP 304 Not Modified if the ETag matches
 - **With `no-cache` directive**: Forces revalidation with fresh content before deciding on 304
 - **With `private=True`**: Nothing is read from or written to the shared backend; the handler runs every time and only `If-None-Match` revalidation applies

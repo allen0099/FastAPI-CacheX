@@ -46,7 +46,7 @@ def encode_entry(entry: CacheEntry) -> bytes:
             "content": entry.content.decode("latin-1"),
             "media_type": entry.media_type,
             "status_code": entry.status_code,
-            "headers": entry.headers,
+            "headers": [[name, value] for name, value in entry.headers],
             "stored_at": entry.stored_at,
         },
     )
@@ -72,7 +72,9 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
 
     Documents written before entries carried a status code and headers simply
     lack those keys and decode to a plain ``200`` with no extra headers; those
-    written before entries carried ``stored_at`` decode with ``None``.
+    written before entries carried ``stored_at`` decode with ``None``. Headers
+    are a list of ``[name, value]`` lines; the object 0.3.x wrote (one value
+    per name) is still read.
     """
     if raw is None:
         return None

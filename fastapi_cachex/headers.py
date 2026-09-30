@@ -6,9 +6,11 @@ from starlette.datastructures import MutableHeaders
 def add_vary(headers: MutableHeaders, names: list[str]) -> None:
     """Add header names to ``Vary``, keeping the values already there.
 
-    Starlette's ``add_vary_header`` appends unconditionally, so names the
-    response already varies on (compared case-insensitively) are skipped, as
-    is everything when it already varies on ``*``.
+    The missing names go on one new ``Vary`` line, so every line already
+    there is kept (Starlette's ``add_vary_header`` rewrites the first line and
+    drops the others). Names the response already varies on (compared
+    case-insensitively) are skipped, as is everything when it already varies
+    on ``*``.
 
     Args:
         headers: Mutable response headers to write to
@@ -21,7 +23,10 @@ def add_vary(headers: MutableHeaders, names: list[str]) -> None:
     }
     if "*" in present:
         return
+    missing: list[str] = []
     for name in names:
         if name.lower() not in present:
-            headers.add_vary_header(name)
+            missing.append(name)
             present.add(name.lower())
+    if missing:
+        headers.append("Vary", ", ".join(missing))

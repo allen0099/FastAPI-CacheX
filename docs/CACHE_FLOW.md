@@ -207,7 +207,10 @@ entry = CacheEntry(
     content=b'{"data": "response"}',  # raw response bytes
     media_type="application/json",
     status_code=200,  # replayed with the original status code
-    headers={"Vary": "Accept-Encoding"},  # headers sent back on replay
+    headers=(
+        ("link", "</a.css>; rel=preload"),
+        ("link", "</b.js>; rel=preload"),
+    ),  # header lines sent back on replay, in order
     stored_at=1702650540.5,  # epoch seconds when @cache stored it; drives Age
 )
 ```
@@ -226,45 +229,48 @@ warning that the cache is per process.
 
 ```python
 if request.method != "GET":
-    return await handler()                   # no cache, no Cache-Control
+    return await handler()  # no cache, no Cache-Control
 
 if no_store:
-    return await render()                    # no read, no write
+    return await render()  # no read, no write
 
 bypass = private or not ttl
 # Authorization header, a session the middleware loaded, or non-empty request.session
 credential = None if private or public else request_credential(request)
 header = private_header if credential else decorator_header  # for every answer below
 if bypass or (credential and not cache_authorized):
-    response, etag = await render()          # backend neither read nor written
+    response, etag = await render()  # backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
 cache_key = key_builder(request) + vary_components(request)  # built only here
-entry = await backend.get(cache_key)         # expired entries are already skipped here
+entry = await backend.get(cache_key)  # expired entries are already skipped here
 
 if client_etag and no_cache:
-    fresh = await render()                   # no-cache: always re-render first
+    fresh = await render()  # no-cache: always re-render first
     if etag_matches(client_etag, fresh.etag):
-        return not_modified(...)             # 304
+        return not_modified(...)  # 304
 elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
     return not_modified(..., age_headers(entry, ttl))  # 304, handler does not run
 
 if entry and not no_cache:
-    return Response(                         # 200, handler does not run
+    hit = Response(  # 200, handler does not run
         content=entry.content,
         status_code=entry.status_code,
         media_type=entry.media_type,
-        headers={**(entry.headers or {}), "ETag": entry.fingerprint, ...,
-                 **age_headers(entry, ttl)},  # Age: now - stored_at, clamped to 0..ttl
     )
+    for name, value in entry.headers:  # every stored line, in order
+        hit.headers.append(name, value)
+    hit.headers["ETag"] = entry.fingerprint  # then ETag, Cache-Control and
+    ...  # Age: now - stored_at, clamped to 0..ttl
+    return hit
 
-response, body, etag = await render()        # miss (reused if no-cache already rendered)
+response, body, etag = await render()  # miss (reused if no-cache already rendered)
 if not is_cacheable_status(response.status_code):
-    return response                          # non-2xx: returned as-is, not written
+    return response  # non-2xx: returned as-is, not written
 if etag is None:
-    return response                          # streaming/file: no ETag, not written
+    return response  # streaming/file: no ETag, not written
 if marked_private_or_no_store(response) or "set-cookie" in response.headers:
-    return response                          # one caller's response: not written
+    return response  # one caller's response: not written
 if not entry or entry.fingerprint != etag:
     await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
 return response
@@ -346,7 +352,7 @@ intermediate cache would lose those fields after revalidation (RFC 9110
             content=b"...",
             media_type="application/json",
             status_code=200,
-            headers=None,
+            headers=(),
             stored_at=1702650540.5,
         ),
         expiry=1702650600.5,  # epoch seconds; None means never expires
@@ -375,7 +381,7 @@ and the standard library `json` otherwise:
   "content": "<response bytes decoded as latin-1>",
   "media_type": "application/json",
   "status_code": 200,
-  "headers": {"Vary": "Accept-Encoding"},
+  "headers": [["vary", "Accept-Encoding"]],
   "stored_at": 1702650540.5
 }
 ```
@@ -387,6 +393,9 @@ and the standard library `json` otherwise:
   fields, remain readable and decode to `200` with no extra headers. Those
   without `stored_at` (before 0.3.9) decode with `stored_at=None` and are
   served without an `Age` header.
+- `headers` is a list of `[name, value]` lines, so a header sent more than once
+  keeps every line. The object 0.3.x wrote (one value per name) still decodes.
+  Anything else there makes the whole entry a miss.
 - Any decode failure (broken JSON, missing fields, wrong types) is treated as a
   **cache miss** and returns `None` instead of raising.
 - `increment()` leaves a **bare integer** behind (written by the Redis/Memcached
@@ -502,7 +511,7 @@ class CacheEntry:
     content: bytes  # raw response bytes
     media_type: str | None = None
     status_code: int = 200  # replayed as-is
-    headers: dict[str, str] | None = None  # sent back on replay
+    headers: tuple[tuple[str, str], ...] = ()  # (name, value) lines sent back on replay
     stored_at: float | None = None  # epoch seconds when @cache stored it; drives Age
 
 
