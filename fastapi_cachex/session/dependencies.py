@@ -1,6 +1,7 @@
 """FastAPI dependency injection utilities for session management."""
 
 import warnings
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from typing import Annotated
 
@@ -259,7 +260,9 @@ async def rotate_session_id(request: Request) -> bool:
     return True
 
 
-async def login(request: Request, user: "SessionUser") -> Session:
+async def login(
+    request: Request, user: "SessionUser", *, keep: Iterable[str] | None = None
+) -> Session:
     """Log ``user`` in on the request's session, under a new session ID.
 
     This is the way to log in under ``FastAPICacheXSessionMiddleware`` when
@@ -269,7 +272,7 @@ async def login(request: Request, user: "SessionUser") -> Session:
     - An anonymous loaded session (a visitor's cart, say) keeps its data and
       gets the user and a new ID, as with :func:`rotate_session_id`, so a
       token planted before the login is worthless: the old token no longer
-      resolves.
+      resolves. ``keep=`` narrows the data carried over.
     - A loaded session of the same ``user_id`` (a re-login) is handled the
       same way: its data is kept, the ID rotated, and ``user`` replaces the
       stored ``SessionUser``, so changed roles or metadata take effect.
@@ -297,7 +300,10 @@ async def login(request: Request, user: "SessionUser") -> Session:
     client gets its cookie expired). ``clear()`` before ``login()`` logs the
     loaded session out, and ``login()`` then starts a new session instead of
     rotating it. Calling ``login()`` twice rotates again and keeps the last
-    user.
+    user. :func:`logout` ends the session.
+
+    This is the only way to attach a user under the middleware:
+    ``Session.user`` is read-only.
 
     Example:
         ```python
@@ -314,6 +320,11 @@ async def login(request: Request, user: "SessionUser") -> Session:
     Args:
         request: FastAPI request object
         user: The user to attach
+        keep: The ``request.session`` keys to carry into the logged-in session
+            (``keep=["cart"]``), or ``[]`` for none. By default (None) all of
+            them are carried. Anything else, including what was written to
+            ``request.session`` earlier in this request, is dropped. It never
+            carries a different user's data, which is always dropped.
 
     Returns:
         The logged-in session, also what ``get_session`` returns for the rest
@@ -324,18 +335,81 @@ async def login(request: Request, user: "SessionUser") -> Session:
             ``FastAPICacheXSessionMiddleware``. Without it, create the
             session with ``SessionManager.create_session(user=...)`` and
             return its token.
+        TypeError: If ``keep`` is a string rather than a collection of keys
     """
+    if isinstance(keep, str):
+        msg = f"keep must be a collection of keys, not a string: use keep=[{keep!r}]"
+        raise TypeError(msg)
+    request_session = _middleware_session(request, "login()")
+    kept = None if keep is None else frozenset(keep)
+    return await _log_in(request, request_session, user, kept)
+
+
+async def logout(request: Request) -> bool:
+    """Log the request's session out: delete it and forget its token.
+
+    The session record is deleted at once, so its token stops resolving for
+    every request, including ones already in flight. The middleware then
+    expires a cookie client's cookie; a header client simply drops its token,
+    as no new one is sent. For the rest of the request, ``get_session``
+    finds no session, and ``request.session`` is empty: anything written to
+    it afterwards starts a new anonymous session.
+
+    ``request.session.clear()`` also logs out, but the record is deleted only
+    when the response starts, and ``get_session`` keeps returning the session
+    for the rest of the request. Calling :func:`login` after either in the
+    same request starts a new session.
+
+    Example:
+        ```python
+        from fastapi_cachex.session import logout
+
+
+        @app.post("/logout")
+        async def log_out(request: Request):
+            await logout(request)
+            return {"ok": True}
+        ```
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        True if a session was deleted, False if none was loaded or started
+        in this request (a token that did not resolve included)
+
+    Raises:
+        RuntimeError: If the request did not pass through
+            ``FastAPICacheXSessionMiddleware``. Without it, call
+            ``SessionManager.delete_session()`` with the session's ID.
+    """
+    request_session = _middleware_session(request, "logout()")
+    session = request_session.backend
+    # clear() makes the middleware expire the cookie (and delete the record
+    # again, which is harmless) when the response starts.
+    request_session.clear()
+    request.scope.setdefault("state", {})["__fastapi_cachex_session"] = None
+    if session is None:
+        return False
+    middleware = request_session.middleware
+    assert middleware is not None  # noqa: S101 - checked by _middleware_session()
+    await middleware.session_manager.delete_session(session.session_id)
+    return True
+
+
+def _middleware_session(request: Request, caller: str) -> _RequestSession:
+    """Return the middleware's ``request.session``, or raise for ``caller``."""
     request_session = request.scope.get("session")
     if (
         not isinstance(request_session, _RequestSession)
         or request_session.middleware is None
     ):
         msg = (
-            "login() needs FastAPICacheXSessionMiddleware: add it to the app "
+            f"{caller} needs FastAPICacheXSessionMiddleware: add it to the app "
             "so it can save the session and send its token"
         )
         raise RuntimeError(msg)
-    return await _log_in(request, request_session, user)
+    return request_session
 
 
 def get_session_client_ip(

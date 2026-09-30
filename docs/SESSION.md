@@ -104,7 +104,10 @@ above instead hands an API client its token in the body: `create_session(user=..
 `session.user` too, but the middleware sends nothing for a session it did not load or start.
 Keys written to `request.session` (`request.session["user_id"] = ...`) are application data:
 the library does not treat them as a login, so `AuthenticatedSession` still answers `401` for
-such a session.
+such a session. `session.user` itself is read-only: assigning it raises `AttributeError`, so
+apart from a `Session` built with one, a session gets a user only from `login()` or
+`create_session(user=...)`. Log out with
+`await logout(request)`.
 
 ### 3. Full Example (Redis Backend)
 
@@ -182,7 +185,9 @@ async def me(session=Depends(require_user_session)):
 - Clearing it (`request.session.clear()`) on a loaded session logs out: the backend session is
   deleted even if its data was already empty, and a cookie client also receives a `Set-Cookie`
   that expires the cookie. Keys written after `clear()` in the same request go into a new
-  anonymous session under a new ID.
+  anonymous session under a new ID. `await logout(request)` does the same, but deletes the
+  backend session at once instead of when the response is sent, and `get_session` finds no
+  session for the rest of the request.
 - Removing the last key with `del` or `pop()` is not a logout. A session with a user is saved
   with empty data; an anonymous one holds nothing and is deleted, as with `clear()`.
 - Logging in by writing to `request.session` keeps the session ID the request arrived with.
@@ -499,6 +504,11 @@ What happens to the session the request arrived with depends on whose it is:
 - **None** (a new visitor, or a token that did not resolve): `login()` creates a session with
   the user, bound to the client IP and User-Agent as configured.
 
+To carry over only some of the data, list the keys: `login(request, user, keep=["cart"])`
+drops every other key, both from the loaded session and from what was written to
+`request.session` earlier in the request; `keep=[]` drops them all. Keys written after the call
+are kept. `keep` must be a collection of keys, so a string raises `TypeError`.
+
 In every case the old token no longer resolves. The middleware then saves the session, keys
 written to `request.session` after the call included (and before it, unless the loaded session
 was a different user's), and sends its token through the transport the request used: the response header for a header or `Authorization: Bearer` token, otherwise
@@ -514,12 +524,19 @@ session `login()` returned, or issue the token from a separate endpoint, as
 [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) does. The complete browser version is
 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py).
 
+To log out, call `await logout(request)`. It deletes the session from the backend at once, so
+its token stops resolving even before the response is sent, and a cookie client gets its cookie
+expired. It returns `True`, or `False` when no session was loaded or started in the request (a
+token that did not resolve included). Keys written to
+`request.session` after it go into a new anonymous session, and a `login()` after it starts a
+new session.
+
 Within one request, `request.session.clear()` after `login()` is a logout: the new session is
 deleted and no token is sent (a cookie client gets its cookie expired). `clear()` before
 `login()` logs the loaded session out, and `login()` then starts a new session instead of
-rotating it. Without `FastAPICacheXSessionMiddleware`, `login()` raises `RuntimeError`, because
-nothing would send the token; create the session with `create_session(user=...)` and return its
-token instead.
+rotating it. Without `FastAPICacheXSessionMiddleware`, `login()` and `logout()` raise
+`RuntimeError`, because nothing would send the token or expire the cookie; create the session
+with `create_session(user=...)` and return its token, and end it with `delete_session()`.
 
 `request.session["user_id"] = "123"` is not a login. It is application data, which
 `require_user_session` and `AuthenticatedSession` do not recognise, and it keeps the session ID
