@@ -16,7 +16,7 @@ The header-only `SessionMiddleware`, deprecated since 0.3.1, was **removed in 0.
 The six `cookie_*` settings of `SessionConfig` (`cookie_name`, `cookie_max_age`, `cookie_path`,
 `cookie_same_site`, `cookie_https_only`, `cookie_domain`) are **read only by
 `FastAPICacheXSessionMiddleware`**; setting them has no effect when `SessionManager` is used
-without it.
+without it, although `SessionConfig` still validates them (see [Cookie defaults](#cookie-defaults)).
 
 Complete runnable examples: [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py) and [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py).
 
@@ -249,28 +249,25 @@ SessionConfig(
     # Backend
     backend_key_prefix="session:",
     # Cookies (read only by FastAPICacheXSessionMiddleware)
-    cookie_name="session",  # "__Host-session" from 0.4.0
+    cookie_name="__Host-session",  # see "Cookie defaults" below
     cookie_max_age=14
     * 24
     * 60
     * 60,  # None = no Max-Age (cookie ends with the browser session)
     cookie_path="/",
     cookie_same_site="lax",  # "lax" / "strict" / "none" ("none" needs cookie_https_only=True)
-    cookie_https_only=False,  # True adds the Secure flag; True from 0.4.0
+    cookie_https_only=True,  # the Secure flag: the cookie is only sent over HTTPS
     cookie_domain=None,  # None = no Domain attribute
 )
 ```
 
-#### Cookie defaults change in 0.4.0 {#cookie-defaults-change-in-040}
+#### Cookie defaults {#cookie-defaults}
 
-0.4.0 names the session cookie `__Host-session` and sets the `Secure` flag by default. Browsers accept a `__Host-` cookie only when it is `Secure`, has `Path=/` and no `Domain`, and never from a subdomain, which removes the usual way to plant a session cookie (session fixation). The new name also means every browser holding a `session` cookie is logged out once after the upgrade.
+The session cookie is named `__Host-session` and carries the `Secure` flag by default. Browsers accept a `__Host-` cookie only when it is `Secure`, has `Path=/` and no `Domain`, and never from a subdomain, which removes the usual way to plant a session cookie (session fixation).
 
-Until then, `FastAPICacheXSessionMiddleware` emits a `FutureWarning` when it is constructed (when the app builds its middleware stack, at startup or on the first request) and its config leaves `cookie_name` or `cookie_https_only` at the default. Set both to silence it:
+A `Secure` cookie is not sent over plain HTTP. For local development without TLS, name the cookie without the prefix and drop the flag: `cookie_name="session", cookie_https_only=False`.
 
-- `cookie_name="session", cookie_https_only=False` keeps the current cookie (and keeps working after the upgrade, e.g. for local development over plain HTTP);
-- `cookie_name="__Host-session", cookie_https_only=True` switches now, over HTTPS.
-
-A `__Host-` name with `cookie_https_only=False`, a `cookie_path` other than `/` or a `cookie_domain` (and a `__Secure-` name without `cookie_https_only=True`) emits a `UserWarning`, because browsers refuse such a cookie; 0.4.0 rejects the combination. See [Migrating to 0.4.0](MIGRATING_0_4.md#session-cookie).
+`SessionConfig` raises a `ValidationError` for a cookie browsers would refuse: a `__Host-` name with `cookie_https_only=False`, a `cookie_path` other than `/` or a `cookie_domain`, and a `__Secure-` name without `cookie_https_only=True`. The default name has the `__Host-` prefix, so changing only one of those settings raises too; change `cookie_name` with it. Upgrading from 0.3.x changes the cookie name, which logs every cookie session out once; see [Migrating to 0.4.0](MIGRATING_0_4.md#session-cookie).
 
 Sessions expire after `session_ttl` seconds. With `sliding_expiration`, each request that finds
 less than `session_ttl * sliding_threshold` seconds remaining extends the expiry to a full
@@ -376,13 +373,13 @@ issued so far.
 
 ### 2. HTTPS Only
 
-Always transport tokens over HTTPS in production. For cookie clients, mark the cookie `Secure`:
+Always transport tokens over HTTPS in production. For cookie clients, keep the cookie `Secure`, as it is by default:
 
 ```python
 config = SessionConfig(
     secret_key="...",
-    cookie_name="__Host-session",  # browsers refuse it without Secure, Path=/, no Domain
-    cookie_https_only=True,  # adds the Secure flag to the session cookie
+    cookie_name="__Host-session",  # the default; browsers refuse it without Secure, Path=/, no Domain
+    cookie_https_only=True,  # the default; adds the Secure flag to the session cookie
 )
 ```
 

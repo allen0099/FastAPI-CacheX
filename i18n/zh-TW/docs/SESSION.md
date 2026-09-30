@@ -10,7 +10,7 @@ FastAPI-CacheX 的 Session 管理提供完整的使用者 Session 處理，包�
 
 只支援標頭的 `SessionMiddleware` 自 0.3.1 起已棄用，**已於 0.4.0 移除**；見[遷移](#migration-sessionmiddleware-fastapicachexsessionmiddleware)。
 
-`SessionConfig` 的六個 `cookie_*` 設定（`cookie_name`、`cookie_max_age`、`cookie_path`、`cookie_same_site`、`cookie_https_only`、`cookie_domain`）**只有 `FastAPICacheXSessionMiddleware` 會讀取**；不透過它而直接使用 `SessionManager` 時，設定它們不會有任何效果。
+`SessionConfig` 的六個 `cookie_*` 設定（`cookie_name`、`cookie_max_age`、`cookie_path`、`cookie_same_site`、`cookie_https_only`、`cookie_domain`）**只有 `FastAPICacheXSessionMiddleware` 會讀取**；不透過它而直接使用 `SessionManager` 時，設定它們不會有任何效果，但 `SessionConfig` 仍會驗證它們（見 [Cookie 預設值](#cookie-defaults)）。
 
 完整可執行範例（英文）：[`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)、[`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py)。
 
@@ -156,28 +156,25 @@ SessionConfig(
     # 後端
     backend_key_prefix="session:",
     # Cookie（只有 FastAPICacheXSessionMiddleware 會讀取）
-    cookie_name="session",  # 0.4.0 起為 "__Host-session"
+    cookie_name="__Host-session",  # 見下方「Cookie 預設值」
     cookie_max_age=14
     * 24
     * 60
     * 60,  # None = 不設 Max-Age（Cookie 隨瀏覽器工作階段結束）
     cookie_path="/",
     cookie_same_site="lax",  # "lax" / "strict" / "none"（"none" 需要 cookie_https_only=True）
-    cookie_https_only=False,  # True 會加上 Secure 旗標；0.4.0 起為 True
+    cookie_https_only=True,  # Secure 旗標：Cookie 只透過 HTTPS 傳送
     cookie_domain=None,  # None = 不設 Domain 屬性
 )
 ```
 
-#### 0.4.0 的 Cookie 預設值變更 {#cookie-defaults-change-in-040}
+#### Cookie 預設值 {#cookie-defaults}
 
-0.4.0 會將 Session Cookie 命名為 `__Host-session`，並預設加上 `Secure` 旗標。瀏覽器只接受帶 `Secure`、`Path=/` 且沒有 `Domain` 的 `__Host-` Cookie，也不接受子網域設定的這種 Cookie，因此移除了植入 Session Cookie 最常見的途徑（Session 固定攻擊（session fixation））。新名稱也代表升級後，所有持有 `session` Cookie 的瀏覽器都會被登出一次。
+Session Cookie 預設命名為 `__Host-session`，並帶有 `Secure` 旗標。瀏覽器只接受帶 `Secure`、`Path=/` 且沒有 `Domain` 的 `__Host-` Cookie，也不接受子網域設定的這種 Cookie，因此移除了植入 Session Cookie 最常見的途徑（Session 固定攻擊（session fixation））。
 
-在那之前，`FastAPICacheXSessionMiddleware` 在建構時（應用程式建立中介軟體堆疊時，也就是啟動時或第一個請求時），若設定讓 `cookie_name` 或 `cookie_https_only` 維持預設值，會發出 `FutureWarning`。明確設定兩者即可消除警告：
+`Secure` Cookie 不會透過純 HTTP 傳送。沒有 TLS 的本機開發環境，請使用不帶前綴的名稱並關閉此旗標：`cookie_name="session", cookie_https_only=False`。
 
-- `cookie_name="session", cookie_https_only=False` 保留目前的 Cookie（升級後也能繼續運作，例如透過純 HTTP 進行本機開發）；
-- `cookie_name="__Host-session", cookie_https_only=True` 現在就切換，需透過 HTTPS。
-
-`__Host-` 名稱搭配 `cookie_https_only=False`、`/` 以外的 `cookie_path` 或 `cookie_domain`（以及 `__Secure-` 名稱未搭配 `cookie_https_only=True`）會發出 `UserWarning`，因為瀏覽器會拒絕這樣的 Cookie；0.4.0 會拒絕這種組合。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#session-cookie)。
+對瀏覽器會拒絕的 Cookie，`SessionConfig` 會引發 `ValidationError`：`__Host-` 名稱搭配 `cookie_https_only=False`、`/` 以外的 `cookie_path` 或 `cookie_domain`，以及 `__Secure-` 名稱未搭配 `cookie_https_only=True`。預設名稱帶有 `__Host-` 前綴，因此只變更其中一項設定也會引發錯誤；請一併變更 `cookie_name`。從 0.3.x 升級會變更 Cookie 名稱，使所有 Cookie Session 被登出一次；請參閱[遷移至 0.4.0](MIGRATING_0_4.md#session-cookie)。
 
 Session 會在 `session_ttl` 秒後過期。啟用 `sliding_expiration` 時，每個發現剩餘時間少於 `session_ttl * sliding_threshold` 秒的請求，都會將過期時間重新延長為完整的 `session_ttl`，並發行一個更新後的權杖，由中介軟體傳回給用戶端（回應標頭或 `Set-Cookie`，見上表）。標頭／Bearer 用戶端在回應帶有 `header_name` 標頭時，應以它取代已保存的權杖。`absolute_timeout` 會在 Session 建立後經過該秒數時結束 Session，不論是否有滑動更新：過期時間、後端 TTL 與 JWT 的 `exp` 都不會超過 `created_at + absolute_timeout`，過期時間到達這個上限後也不再發行更新後的權杖。
 
@@ -243,13 +240,13 @@ config = SessionConfig(secret_key=secret_key)
 
 ### 2. 僅限 HTTPS {#2-https-only}
 
-正式環境中一律透過 HTTPS 傳輸權杖。對 Cookie 用戶端，請將 Cookie 標記為 `Secure`：
+正式環境中一律透過 HTTPS 傳輸權杖。對 Cookie 用戶端，請保留 Cookie 的 `Secure` 旗標（預設即是如此）：
 
 ```python
 config = SessionConfig(
     secret_key="...",
-    cookie_name="__Host-session",  # 瀏覽器只接受帶 Secure、Path=/ 且沒有 Domain 的這種 Cookie
-    cookie_https_only=True,  # 為 Session Cookie 加上 Secure 旗標
+    cookie_name="__Host-session",  # 預設值；瀏覽器只接受帶 Secure、Path=/ 且沒有 Domain 的這種 Cookie
+    cookie_https_only=True,  # 預設值；為 Session Cookie 加上 Secure 旗標
 )
 ```
 

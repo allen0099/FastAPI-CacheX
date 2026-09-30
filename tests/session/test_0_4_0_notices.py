@@ -1,6 +1,5 @@
 """Advance notices for the session changes 0.4.0 makes (#352).
 
-- #256: the default session cookie becomes ``__Host-session`` with Secure.
 - #131: ``get_session_manager`` resolves through ``SessionManagerProxy`` only.
 - #75: a ``token_source_priority`` without ``"cookie"`` disables the cookie.
 - #377: ``SessionConfig.use_bearer_token`` is removed.
@@ -27,128 +26,10 @@ from fastapi_cachex.session.proxy import SessionManagerProxy
 
 SECRET = "a" * 32
 
-# --- #256: default cookie name and Secure flag ---------------------------------
-
 
 def _middleware(config: SessionConfig) -> FastAPICacheXSessionMiddleware:
     manager = SessionManager(MemoryBackend(), config)
     return FastAPICacheXSessionMiddleware(FastAPI(), session_manager=manager)
-
-
-@pytest.mark.parametrize(
-    ("settings", "named"),
-    [
-        ({}, "default cookie_name and cookie_https_only"),
-        ({"cookie_https_only": True}, "default cookie_name of"),
-        ({"cookie_name": "session"}, "default cookie_https_only of"),
-    ],
-)
-def test_middleware_warns_while_a_cookie_default_is_relied_upon(
-    settings: dict[str, object], named: str
-) -> None:
-    config = SessionConfig(secret_key=SECRET, **settings)
-
-    with pytest.warns(FutureWarning, match=named) as record:
-        _middleware(config)
-
-    message = str(record[0].message)
-    assert "__Host-session" in message
-    assert "cookie_name='session', cookie_https_only=False" in message
-
-
-@pytest.mark.parametrize(
-    "settings",
-    [
-        {"cookie_name": "session", "cookie_https_only": False},
-        {"cookie_name": "__Host-session", "cookie_https_only": True},
-        {"cookie_name": "sid", "cookie_https_only": True},
-    ],
-)
-def test_middleware_is_silent_with_explicit_cookie_settings(
-    settings: dict[str, object],
-) -> None:
-    config = SessionConfig(secret_key=SECRET, **settings)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        _middleware(config)
-
-
-def test_middleware_checks_the_config_it_falls_back_to() -> None:
-    """With no ``config=``, the manager's config is the one that counts."""
-    manager = SessionManager(MemoryBackend(), SessionConfig(secret_key=SECRET))
-
-    with pytest.warns(FutureWarning, match="default cookie_name and"):
-        FastAPICacheXSessionMiddleware(FastAPI(), session_manager=manager)
-
-
-def test_middleware_warns_when_the_app_builds_its_stack() -> None:
-    """``add_middleware`` defers construction; the first request builds it."""
-    manager = SessionManager(MemoryBackend(), SessionConfig(secret_key=SECRET))
-    app = FastAPI()
-    app.add_middleware(FastAPICacheXSessionMiddleware, session_manager=manager)
-
-    @app.get("/")
-    async def index() -> dict[str, bool]:
-        return {"ok": True}
-
-    with pytest.warns(FutureWarning, match="__Host-session"):
-        response = TestClient(app).get("/")
-
-    assert response.status_code == 200
-
-
-@pytest.mark.parametrize(
-    ("settings", "requirement"),
-    [
-        ({"cookie_name": "__Host-session"}, "cookie_https_only=True"),
-        ({"cookie_name": "__Secure-session"}, "cookie_https_only=True"),
-        (
-            {
-                "cookie_name": "__Host-session",
-                "cookie_https_only": True,
-                "cookie_path": "/app",
-            },
-            'cookie_path="/"',
-        ),
-        (
-            {
-                "cookie_name": "__Host-session",
-                "cookie_https_only": True,
-                "cookie_domain": "example.com",
-            },
-            "cookie_domain=None",
-        ),
-    ],
-)
-def test_prefixed_cookie_names_browsers_refuse_warn(
-    settings: dict[str, object], requirement: str
-) -> None:
-    with pytest.warns(UserWarning, match="Version 0.4.0 will reject") as record:
-        SessionConfig(secret_key=SECRET, **settings)
-
-    message = str(record[0].message)
-    assert requirement in message
-    assert "issues/256" in message
-
-
-@pytest.mark.parametrize(
-    "settings",
-    [
-        {"cookie_name": "__Host-session", "cookie_https_only": True},
-        {
-            "cookie_name": "__Secure-session",
-            "cookie_https_only": True,
-            "cookie_path": "/app",
-            "cookie_domain": "example.com",
-        },
-        {"cookie_name": "session", "cookie_domain": "example.com"},
-    ],
-)
-def test_valid_cookie_prefixes_do_not_warn(settings: dict[str, object]) -> None:
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        SessionConfig(secret_key=SECRET, **settings)
 
 
 # --- #131: get_session_manager through SessionManagerProxy ---------------------

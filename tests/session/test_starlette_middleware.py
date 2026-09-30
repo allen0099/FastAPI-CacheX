@@ -67,15 +67,44 @@ def test_middleware_initialization_uses_manager_config(
 
 
 def test_default_cookie_config_values() -> None:
-    """Ensure cookie defaults mirror Starlette's own SessionMiddleware defaults."""
+    """The cookie defaults to a ``__Host-`` name with Secure (#256)."""
     config = SessionConfig(secret_key="a" * 32)
 
-    assert config.cookie_name == "session"
+    assert config.cookie_name == "__Host-session"
     assert config.cookie_max_age == 14 * 24 * 60 * 60
     assert config.cookie_path == "/"
     assert config.cookie_same_site == "lax"
-    assert config.cookie_https_only is False
+    assert config.cookie_https_only is True
     assert config.cookie_domain is None
+
+
+def test_default_cookie_is_host_prefixed_and_round_trips_over_https() -> None:
+    """The default config sends a cookie browsers accept only from this host.
+
+    Neither the config nor the middleware warns about it any more (#256).
+    """
+    config = SessionConfig(secret_key="a" * 32)
+    manager = SessionManager(MemoryBackend(), config)
+    app = FastAPI()
+    app.add_middleware(FastAPICacheXSessionMiddleware, session_manager=manager)
+
+    @app.get("/set")
+    async def set_route(request: Request) -> dict[str, bool]:
+        request.session["foo"] = "bar"
+        return {"ok": True}
+
+    @app.get("/get")
+    async def get_route(request: Request) -> dict[str, Any]:
+        return {"foo": request.session.get("foo")}
+
+    client = TestClient(app, base_url="https://testserver")
+    set_cookie = client.get("/set").headers["set-cookie"]
+
+    assert set_cookie.startswith("__Host-session=")
+    assert "; path=/;" in set_cookie
+    assert "secure" in set_cookie
+    assert "domain" not in set_cookie
+    assert client.get("/get").json() == {"foo": "bar"}
 
 
 def test_set_cookie_header_includes_secure_and_domain_flags(

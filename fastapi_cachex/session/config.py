@@ -170,7 +170,7 @@ class SessionConfig(BaseModel):
 
     # Cookie settings (FastAPICacheXSessionMiddleware only)
     cookie_name: str = Field(
-        default="session",
+        default="__Host-session",
         description="Name of the cookie used to store the session token "
         "(FastAPICacheXSessionMiddleware only)",
     )
@@ -188,7 +188,7 @@ class SessionConfig(BaseModel):
         description="SameSite attribute for the session cookie",
     )
     cookie_https_only: bool = Field(
-        default=False,
+        default=True,
         description="Whether to set the Secure flag on the session cookie "
         "(cookie only sent over HTTPS)",
     )
@@ -238,9 +238,15 @@ class SessionConfig(BaseModel):
         """Warn about a SameSite=None cookie without the Secure flag.
 
         Browsers drop such a cookie, so the session would silently never stick.
-        Rejecting the combination would break existing configurations.
+        Rejecting the combination would break existing configurations. A
+        ``__Host-`` / ``__Secure-`` name without Secure is rejected by
+        ``_check_cookie_prefix`` instead, so it is not warned about twice.
         """
-        if self.cookie_same_site == "none" and not self.cookie_https_only:
+        if (
+            self.cookie_same_site == "none"
+            and not self.cookie_https_only
+            and not self.cookie_name.startswith(("__Host-", "__Secure-"))
+        ):
             warnings.warn(
                 'cookie_same_site="none" requires cookie_https_only=True: browsers '
                 "reject a SameSite=None cookie without the Secure flag, so the "
@@ -251,13 +257,12 @@ class SessionConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _warn_invalid_cookie_prefix(self) -> "SessionConfig":
-        """Warn about a ``__Host-`` / ``__Secure-`` cookie browsers will refuse.
+    def _check_cookie_prefix(self) -> "SessionConfig":
+        """Reject a ``__Host-`` / ``__Secure-`` cookie browsers would refuse.
 
         Browsers store a ``__Secure-`` cookie only with the Secure flag, and a
         ``__Host-`` cookie only with Secure, ``Path=/`` and no ``Domain``, so
-        the session would silently never stick. 0.4.0 rejects these
-        combinations (#256).
+        the session would silently never stick (#256).
         """
         problems: list[str] = []
         if self.cookie_name.startswith(("__Host-", "__Secure-")):
@@ -269,15 +274,27 @@ class SessionConfig(BaseModel):
                 if self.cookie_domain is not None:
                     problems.append("cookie_domain=None")
         if problems:
-            warnings.warn(
-                f"cookie_name={self.cookie_name!r} requires {', '.join(problems)}: "
-                "browsers refuse a cookie with this prefix otherwise, so the "
-                "session cookie would never be stored. Version 0.4.0 will reject "
-                "this configuration "
-                "(https://github.com/allen0099/FastAPI-CacheX/issues/256).",
-                UserWarning,
-                stacklevel=3,
+            name = f"cookie_name={self.cookie_name!r}"
+            if "cookie_name" not in self.model_fields_set:
+                name += " (the default)"
+            hints: list[str] = []
+            if "cookie_https_only=True" in problems:
+                hints.append(
+                    "For plain-HTTP development, use a name without the prefix, "
+                    "such as cookie_name='session' with cookie_https_only=False."
+                )
+            if self.cookie_path != "/" or self.cookie_domain is not None:
+                hints.append(
+                    "To set a cookie_path or cookie_domain, use "
+                    "cookie_name='__Secure-session', which keeps the Secure flag."
+                )
+            msg = (
+                f"{name} requires {', '.join(problems)}: browsers refuse a cookie "
+                "with this prefix otherwise, so the session cookie would never be "
+                f"stored. {' '.join(hints)} See "
+                "https://fastapi-cachex.readthedocs.io/en/stable/SESSION/#cookie-defaults"
             )
+            raise ValueError(msg)
         return self
 
     @field_validator("token_source_priority")

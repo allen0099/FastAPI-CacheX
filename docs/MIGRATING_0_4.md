@@ -27,7 +27,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | Change | Issue | Warned in 0.3.9 | Section |
 |--------|-------|-----------------|---------|
 | Session cookie defaults to `__Host-session` with `Secure` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `FutureWarning` | [Session cookie](#session-cookie) |
-| Contradictory `__Host-` / `__Secure-` cookie settings are rejected | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `UserWarning` | [Session cookie](#session-cookie) |
+| Contradictory `__Host-` / `__Secure-` cookie settings are rejected | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `UserWarning` (`FutureWarning` when `cookie_name` is left at its default, under the middleware only) | [Session cookie](#session-cookie) |
 | Explicit `login()` / `logout()`, read-only `Session.user` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | No | [Login and logout](#login-logout) |
 | `get_or_set()` locks by default | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set lock](#get-or-set-lock) |
 | `get_session_manager` resolves through `SessionManagerProxy` | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
@@ -83,7 +83,7 @@ config = SessionConfig(
 )
 ```
 
-0.4.0 also rejects contradictory settings: a `__Host-` name without `cookie_https_only=True`, with a `cookie_path` other than `"/"` or with a `cookie_domain`, and a `__Secure-` name without `cookie_https_only=True`. Browsers already refuse such a cookie, so the session never sticks; 0.3.9 emits a `UserWarning` when `SessionConfig` is built with one of them.
+0.4.0 also rejects contradictory settings: a `__Host-` name without `cookie_https_only=True`, with a `cookie_path` other than `"/"` or with a `cookie_domain`, and a `__Secure-` name without `cookie_https_only=True`. Browsers already refuse such a cookie, so the session never sticks; 0.3.9 emits a `UserWarning` when `SessionConfig` is built with one of them. The rejection is a `pydantic.ValidationError` (a `ValueError`) from `SessionConfig`. Because the default name is now `__Host-session`, a config that sets only `cookie_https_only=False`, a `cookie_path` or a `cookie_domain` and leaves `cookie_name` at its default raises too. 0.3.9 warned about that only under `FastAPICacheXSessionMiddleware`, with the `FutureWarning` above; a header-only setup that sets one of these options got no warning. Set `cookie_name` as well, as in the first After example, or remove the option if nothing reads the cookie.
 
 ### Login and logout {#login-logout}
 

@@ -27,7 +27,7 @@ filterwarnings = [
 | 變更 | Issue | 0.3.9 是否警告 | 章節 |
 |------|-------|----------------|------|
 | Session Cookie 預設為 `__Host-session` 並帶 `Secure` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `FutureWarning` | [Session Cookie](#session-cookie) |
-| 拒絕互相矛盾的 `__Host-`／`__Secure-` Cookie 設定 | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `UserWarning` | [Session Cookie](#session-cookie) |
+| 拒絕互相矛盾的 `__Host-`／`__Secure-` Cookie 設定 | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `UserWarning`（`cookie_name` 維持預設值時為 `FutureWarning`，僅限使用中介軟體時） | [Session Cookie](#session-cookie) |
 | 明確的 `login()`／`logout()`、唯讀的 `Session.user` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | 否 | [登入與登出](#login-logout) |
 | `get_or_set()` 預設使用鎖 | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set 的鎖](#get-or-set-lock) |
 | `get_session_manager` 透過 `SessionManagerProxy` 取得 | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
@@ -83,7 +83,7 @@ config = SessionConfig(
 )
 ```
 
-0.4.0 也會拒絕互相矛盾的設定：`__Host-` 名稱搭配 `cookie_https_only=False`、`"/"` 以外的 `cookie_path` 或 `cookie_domain`，以及 `__Secure-` 名稱搭配 `cookie_https_only=False`。瀏覽器本來就會拒絕這樣的 Cookie，所以 Session 永遠無法保存；0.3.9 在以這些設定建立 `SessionConfig` 時會發出 `UserWarning`。
+0.4.0 也會拒絕互相矛盾的設定：`__Host-` 名稱搭配 `cookie_https_only=False`、`"/"` 以外的 `cookie_path` 或 `cookie_domain`，以及 `__Secure-` 名稱搭配 `cookie_https_only=False`。瀏覽器本來就會拒絕這樣的 Cookie，所以 Session 永遠無法保存；0.3.9 在以這些設定建立 `SessionConfig` 時會發出 `UserWarning`。拒絕時 `SessionConfig` 會引發 `pydantic.ValidationError`（屬於 `ValueError`）。由於預設名稱改為 `__Host-session`，只設定 `cookie_https_only=False`、`cookie_path` 或 `cookie_domain`，而讓 `cookie_name` 維持預設值的設定也會引發錯誤。0.3.9 只在使用 `FastAPICacheXSessionMiddleware` 時透過上述 `FutureWarning` 警告這種情況；只使用標頭且設定了其中一個選項的設定不會收到警告。請一併設定 `cookie_name`，如第一個修改後範例所示；若沒有任何地方讀取 Cookie，也可以直接移除該選項。
 
 ### 登入與登出 {#login-logout}
 
