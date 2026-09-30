@@ -1,7 +1,6 @@
 """Tests for cache monitoring routes."""
 
 import time
-import warnings
 
 import pytest
 from fastapi import FastAPI
@@ -368,7 +367,7 @@ class TestCachedRecordsRoute:
 
     def test_cached_records_content_preview(self, app, client, setup_cache):
         """Test that content preview is limited to 100 bytes."""
-        add_routes(app, dependencies=[])
+        add_routes(app, dependencies=[], include_content_preview=True)
 
         @app.get("/api/large")
         @cache(ttl=60)
@@ -387,9 +386,14 @@ class TestCachedRecordsRoute:
         record = data["cached_records"][0]
         assert len(record["content_preview"]) == 100
 
-    def test_cached_records_can_omit_content_preview(self, app, client, setup_cache):
-        """include_content_preview=False hides bodies but keeps the metadata."""
-        add_routes(app, include_content_preview=False, dependencies=[])
+    @pytest.mark.parametrize(
+        "options", [{}, {"include_content_preview": False}], ids=["default", "off"]
+    )
+    def test_cached_records_can_omit_content_preview(
+        self, app, client, setup_cache, options
+    ):
+        """Previews are off by default (#298); keys, sizes and expiry remain."""
+        add_routes(app, dependencies=[], **options)
 
         @app.get("/api/secret")
         @cache(ttl=60)
@@ -542,50 +546,40 @@ class TestRoutesIntegration:
         r2 = dep_client.get("/cached-hits", headers={"x-api-key": "secret"})
         assert r2.status_code == 200
 
-    def test_add_routes_with_none_dependencies_warns_and_mounts(
-        self, app, client, setup_cache
-    ):
-        """dependencies=None warns but still mounts the routes unguarded."""
-        with pytest.warns(UserWarning, match="dependencies"):
-            add_routes(app, dependencies=None)
-        response = client.get("/cached-hits")
-        assert response.status_code == 200
 
+class TestDependenciesRequired:
+    """add_routes() requires dependencies (#298)."""
 
-class TestUnguardedWarning:
-    """add_routes() warns when mounted without dependencies (#301)."""
+    def test_leaving_dependencies_out_raises(self, app):
+        """Omitting dependencies fails when the app is set up."""
+        with pytest.raises(TypeError, match="dependencies"):
+            add_routes(app)  # type: ignore[call-arg]
 
-    def test_default_warns(self, app):
-        """Leaving dependencies unset emits a UserWarning naming it."""
-        with pytest.warns(UserWarning, match="without access control") as record:
-            add_routes(app)
+    def test_none_raises(self, app):
+        """An untyped caller cannot pass None to skip the choice."""
+        with pytest.raises(TypeError, match=r"dependencies=\[\]") as info:
+            add_routes(app, dependencies=None)  # type: ignore[arg-type]
 
-        assert len(record) == 1
-        message = str(record[0].message)
-        assert "dependencies" in message
-        assert "dependencies=[]" in message
-        assert "0.4.0" in message
-        assert "include_content_preview" in message
-        assert "298" in message
-        # stacklevel points at the caller, not at routes.py
-        assert record[0].filename == __file__
+        assert "issues/298" in str(info.value)
+        assert "/cached-hits" not in {r.path for r in app.routes}
 
-    def test_empty_dependencies_does_not_warn(self, app):
+    def test_dependencies_is_keyword_only(self, app):
+        """A 0.3.x positional call fails instead of mounting unguarded."""
+        with pytest.raises(TypeError, match="positional"):
+            add_routes(app, "", False, [])  # type: ignore[call-arg]  # noqa: FBT003
+
+    def test_empty_dependencies_mounts_unguarded(self, app, client, setup_cache):
         """An explicit dependencies=[] is a deliberate opt-out."""
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            add_routes(app, dependencies=[])
+        add_routes(app, dependencies=[])
 
-    def test_guarded_does_not_warn(self, app):
-        """Passing a real guard does not warn."""
-        from fastapi import Depends
+        assert client.get("/cached-hits").status_code == 200
 
-        def guard() -> None:
-            return None
+    def test_prefix_and_include_in_schema_stay_positional(self, app, client):
+        """Only the arguments after include_in_schema became keyword-only."""
+        add_routes(app, "/admin", True, dependencies=[])  # noqa: FBT003
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            add_routes(app, dependencies=[Depends(guard)])
+        assert client.get("/admin/cached-hits").status_code == 200
+        assert "/admin/cached-hits" in client.get("/openapi.json").json()["paths"]
 
 
 def _report_expired(backend: MemoryBackend, key: str, entry: CacheEntry) -> None:

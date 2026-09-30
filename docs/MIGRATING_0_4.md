@@ -32,7 +32,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | `get_or_set()` locks by default | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set lock](#get-or-set-lock) |
 | `get_session_manager` resolves through `SessionManagerProxy` | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
 | `token_source_priority` names every token source; a list without `"cookie"` disables the cookie | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | `FutureWarning` | [Token sources](#token-source-priority) |
-| `add_routes()` requires `dependencies`, no content preview by default | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning` | [Monitoring routes](#add-routes) |
+| `add_routes()` requires `dependencies`, no content preview by default | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning` (only when `dependencies` is left out) | [Monitoring routes](#add-routes) |
 | Redis `encoding` option removed | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning` (`RuntimeWarning` for a value other than UTF-8) | [Redis encoding](#redis-encoding) |
 | JWT HMAC secrets shorter than the hash output are rejected | [#129](https://github.com/allen0099/FastAPI-CacheX/issues/129) | `UserWarning` | [JWT secret length](#jwt-secret) |
 | `SessionMiddleware` removed | [#69](https://github.com/allen0099/FastAPI-CacheX/issues/69) | `DeprecationWarning` | [SessionMiddleware](#session-middleware) |
@@ -287,7 +287,7 @@ Redis and Memcached store the headers as a JSON list of `[name, value]` lines. 0
 
 ### Monitoring routes {#add-routes}
 
-`add_routes()` requires `dependencies` in 0.4.0, and `include_content_preview` defaults to `False` ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)). 0.3.9 emits a `UserWarning` when `dependencies` is left out.
+`add_routes()` requires `dependencies` in 0.4.0, and `include_content_preview` defaults to `False` ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)). 0.3.9 emits a `UserWarning` when `dependencies` is left out. `dependencies` and `include_content_preview` are keyword-only; leaving `dependencies` out, or passing `None`, raises `TypeError`. 0.3.9 did not warn about the two cases that break without it: passing these arguments by position, which now raises `TypeError`, and relying on the preview default while passing `dependencies`, which now hides the previews; pass `include_content_preview=True` to keep them.
 
 ```python
 # Before

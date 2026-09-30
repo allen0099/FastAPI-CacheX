@@ -32,7 +32,7 @@ filterwarnings = [
 | `get_or_set()` 預設使用鎖 | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set 的鎖](#get-or-set-lock) |
 | `get_session_manager` 透過 `SessionManagerProxy` 取得 | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
 | `token_source_priority` 列出所有權杖來源；沒有 `"cookie"` 的清單會停用 Cookie | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | `FutureWarning` | [權杖來源](#token-source-priority) |
-| `add_routes()` 必須傳入 `dependencies`，預設不含內容預覽 | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning` | [監控路由](#add-routes) |
+| `add_routes()` 必須傳入 `dependencies`，預設不含內容預覽 | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning`（僅在省略 `dependencies` 時） | [監控路由](#add-routes) |
 | 移除 Redis 的 `encoding` 選項 | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning`（UTF-8 以外的值為 `RuntimeWarning`） | [Redis encoding](#redis-encoding) |
 | 拒絕短於雜湊輸出的 JWT HMAC 密鑰 | [#129](https://github.com/allen0099/FastAPI-CacheX/issues/129) | `UserWarning` | [JWT 密鑰長度](#jwt-secret) |
 | 移除 `SessionMiddleware` | [#69](https://github.com/allen0099/FastAPI-CacheX/issues/69) | `DeprecationWarning` | [SessionMiddleware](#session-middleware) |
@@ -286,7 +286,7 @@ Redis 與 Memcached 以 `[name, value]` 行組成的 JSON 清單儲存標頭。0
 
 ### 監控路由 {#add-routes}
 
-0.4.0 起 `add_routes()` 必須傳入 `dependencies`，`include_content_preview` 預設為 `False`（[#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)）。0.3.9 在省略 `dependencies` 時會發出 `UserWarning`。
+0.4.0 起 `add_routes()` 必須傳入 `dependencies`，`include_content_preview` 預設為 `False`（[#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)）。0.3.9 在省略 `dependencies` 時會發出 `UserWarning`。`dependencies` 與 `include_content_preview` 只能以關鍵字傳入；省略 `dependencies` 或傳入 `None` 會引發 `TypeError`。0.3.9 對以下兩種情況不會發出警告：以位置傳入這些參數，現在會引發 `TypeError`；以及已傳入 `dependencies` 但依賴預覽的預設值，現在預覽會被隱藏，請傳入 `include_content_preview=True` 保留。
 
 ```python
 # 修改前

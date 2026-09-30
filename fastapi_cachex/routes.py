@@ -1,7 +1,6 @@
 """Optional routes for cache monitoring and management."""
 
 import time
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
@@ -235,18 +234,17 @@ def add_routes(
     app: "FastAPI",
     prefix: str = "",
     include_in_schema: bool = False,
-    dependencies: Sequence[Any] | None = None,
-    include_content_preview: bool = True,
+    *,
+    dependencies: Sequence[Any],
+    include_content_preview: bool = False,
 ) -> None:
     """Add cache monitoring routes to the FastAPI application.
 
     Mounts two read-only routes that report what the configured backend
     currently holds. They inspect stored entries; nothing counts cache hits.
-    The routes have no authentication of their own, so pass ``dependencies``
-    in production. Leaving ``dependencies`` unset (``None``) emits a
-    ``UserWarning``: 0.4.0 will require it. Pass ``dependencies=[]`` to mount
-    the routes unguarded on purpose (local or test setups) without the
-    warning.
+    The routes have no authentication of their own, so ``dependencies`` is
+    required: pass your guard, or ``dependencies=[]`` to mount the routes
+    unguarded on purpose (local or test setups).
 
     Args:
         app: FastAPI application instance
@@ -256,14 +254,15 @@ def add_routes(
                           Defaults to False.
         dependencies: FastAPI ``Depends`` objects applied to all monitoring
                       routes, for authentication or authorization guards
-                      (e.g. ``[Depends(verify_api_key)]``). ``None`` (the
-                      default) mounts the routes unguarded and emits a
-                      ``UserWarning``; an explicit ``[]`` does the same
-                      without the warning.
+                      (e.g. ``[Depends(verify_api_key)]``). Required and
+                      keyword-only; an empty list mounts the routes unguarded.
         include_content_preview: Whether ``/cached-records`` includes the first
-                      bytes of each cached response body. When False,
-                      ``content_preview`` is ``null`` while keys, sizes and
-                      expiry are still reported. Defaults to True.
+                      100 bytes of each cached response body. Defaults to
+                      False, which reports ``content_preview`` as ``null``
+                      while keys, sizes and expiry are still reported.
+
+    Raises:
+        TypeError: If ``dependencies`` is ``None``.
 
     Example:
         ```python
@@ -277,17 +276,14 @@ def add_routes(
         ```
     """
     if dependencies is None:
-        warnings.warn(
-            "add_routes() is mounting the cache monitoring routes without access "
-            "control: anyone who can reach the app can read every cached key "
-            "(including query strings) and previews of the cached responses. "
-            "Pass dependencies=[Depends(your_auth)] to guard them, or "
-            "dependencies=[] to opt out deliberately. Version 0.4.0 will require "
-            "dependencies and turn include_content_preview off by default "
-            "(https://github.com/allen0099/FastAPI-CacheX/issues/298).",
-            UserWarning,
-            stacklevel=2,
+        # Unreachable for type checkers; guards untyped callers.
+        msg = (  # type: ignore[unreachable]
+            "add_routes() requires dependencies: pass "
+            "dependencies=[Depends(your_auth)] to guard the cache monitoring "
+            "routes, or dependencies=[] to mount them unguarded on purpose "
+            "(https://github.com/allen0099/FastAPI-CacheX/issues/298)"
         )
+        raise TypeError(msg)
 
     @app.get(
         f"{prefix}/cached-hits",
