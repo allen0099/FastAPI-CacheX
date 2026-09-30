@@ -1,8 +1,9 @@
 """Ordinary session saves are conditional (#128).
 
 A request that loaded a session must not bring it back after another request
-deleted, invalidated or rotated it. Deleting, invalidating, expiring and
-rotating stay unconditional, so a security action always wins.
+deleted, invalidated or rotated it, whether by saving it or by rotating its
+ID. Deleting, invalidating and expiring stay unconditional, so a security
+action always wins.
 """
 
 import logging
@@ -17,6 +18,8 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 
 from fastapi_cachex.backends.memory import MemoryBackend
+from fastapi_cachex.session import login
+from fastapi_cachex.session import rotate_session_id
 from fastapi_cachex.session.config import SessionConfig
 from fastapi_cachex.session.exceptions import SessionInvalidError
 from fastapi_cachex.session.exceptions import SessionNotFoundError
@@ -25,6 +28,7 @@ from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
 from fastapi_cachex.session.models import Session
 from fastapi_cachex.session.models import SessionStatus
 from fastapi_cachex.session.models import SessionUser
+from fastapi_cachex.session.proxy import SessionManagerProxy
 from fastapi_cachex.types import CacheEntry
 from tests.live_servers import MEMCACHED_SERVER
 from tests.live_servers import REDIS_HOST
@@ -443,3 +447,199 @@ async def test_a_stored_renewal_is_not_sent_for_an_invalidated_session(
 
     assert response.status_code == 200
     assert "set-cookie" not in response.headers
+
+
+# --- ID rotation ----------------------------------------------------------------
+
+
+async def test_a_stale_copy_of_a_deleted_session_cannot_be_rotated(
+    any_manager: SessionManager,
+) -> None:
+    stale, _other, token = await _two_copies(any_manager)
+    old_id = stale.session_id
+    await any_manager.delete_session(old_id)
+
+    with pytest.raises(SessionNotFoundError):
+        await any_manager.regenerate_session_id(stale)
+
+    assert stale.session_id == old_id
+    assert await any_manager._load_session(old_id) is None
+    with pytest.raises(SessionNotFoundError):
+        await any_manager.get_session(token)
+
+
+async def test_a_stale_copy_of_an_invalidated_session_cannot_be_rotated(
+    any_manager: SessionManager,
+) -> None:
+    stale, other, token = await _two_copies(any_manager)
+    old_id = stale.session_id
+    await any_manager.invalidate_session(other)
+
+    with pytest.raises(SessionInvalidError):
+        await any_manager.regenerate_session_id(stale)
+
+    assert stale.session_id == old_id
+    with pytest.raises(SessionNotFoundError):
+        await any_manager.get_session(token)
+
+
+async def test_a_stale_copy_of_an_expired_session_cannot_be_rotated(
+    manager: SessionManager,
+) -> None:
+    """``is_valid()`` covers expiry too, not only the status."""
+    stale, other, _token = await _two_copies(manager)
+    other.expires_at = other.created_at
+    assert await manager.update_session(other) is True
+
+    with pytest.raises(SessionInvalidError):
+        await manager.regenerate_session_id(stale)
+
+
+async def test_only_one_of_two_concurrent_rotations_succeeds(
+    any_manager: SessionManager,
+) -> None:
+    first, second, _token = await _two_copies(any_manager)
+
+    _rotated, new_token = await any_manager.regenerate_session_id(first)
+    with pytest.raises(SessionNotFoundError):
+        await any_manager.regenerate_session_id(second)
+
+    assert (await any_manager.get_session(new_token))[0].session_id == (
+        first.session_id
+    )
+
+
+async def test_a_rotation_after_another_save_goes_ahead(
+    any_manager: SessionManager,
+) -> None:
+    """The session is still valid; only its data changed."""
+    stale, other, _token = await _two_copies(any_manager)
+    other.data["cart"] = ["book"]
+    assert await any_manager.update_session(other) is True
+
+    rotated, new_token = await any_manager.regenerate_session_id(stale)
+
+    assert (await any_manager.get_session(new_token))[0].session_id == (
+        rotated.session_id
+    )
+
+
+async def test_a_session_never_read_is_rotated_without_the_check(
+    manager: SessionManager,
+) -> None:
+    fresh = Session(data={"a": 1})
+
+    _rotated, new_token = await manager.regenerate_session_id(fresh)
+
+    assert (await manager.get_session(new_token))[0].data == {"a": 1}
+
+
+def _rotating_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(
+        FastAPICacheXSessionMiddleware, session_manager=manager, config=config
+    )
+
+    async def log_out_elsewhere(request: Request) -> None:
+        session_id = request.session.backend.session_id  # type: ignore[attr-defined]
+        other = await manager._load_session(session_id)
+        assert other is not None
+        await manager.invalidate_session(other)
+
+    @app.post("/sudo")
+    async def sudo(request: Request) -> dict[str, bool]:
+        request.session["seen"] = True
+        await log_out_elsewhere(request)
+        await rotate_session_id(request)
+        request.session["elevated"] = True
+        return {"ok": True}
+
+    @app.post("/sudo-quiet")
+    async def sudo_quiet(request: Request) -> dict[str, bool]:
+        await log_out_elsewhere(request)
+        await rotate_session_id(request)
+        return {"ok": True}
+
+    @app.post("/login")
+    async def log_in(request: Request) -> dict[str, bool]:
+        request.session["before"] = 1
+        await log_out_elsewhere(request)
+        await login(request, SessionUser(user_id="alice"))
+        request.session["after"] = 2
+        return {"ok": True}
+
+    return app
+
+
+async def test_rotate_session_id_refuses_a_session_logged_out_meanwhile(
+    manager: SessionManager, config: SessionConfig
+) -> None:
+    SessionManagerProxy.set(manager)
+    session, token = await manager.create_session(SessionUser(user_id="alice"))
+    client = TestClient(_rotating_app(manager, config))
+    client.cookies.set(config.cookie_name, token)
+
+    response = client.post("/sudo")
+
+    assert response.status_code == 401
+    assert "set-cookie" not in response.headers
+    assert await manager.backend.get_all_keys() == []
+    assert await manager._load_session(session.session_id) is None
+
+
+async def test_a_refused_rotation_does_not_send_a_renewed_token(
+    renewing: SessionManager, renewing_config: SessionConfig
+) -> None:
+    """The winner of a concurrent rotation may already hold the new cookie."""
+    SessionManagerProxy.set(renewing)
+    _session, token = await renewing.create_session(SessionUser(user_id="alice"))
+    client = TestClient(_rotating_app(renewing, renewing_config))
+    client.cookies.set(renewing_config.cookie_name, token)
+
+    response = client.post("/sudo-quiet")
+
+    assert response.status_code == 401
+    assert "set-cookie" not in response.headers
+
+
+@pytest.mark.parametrize("transport", ["cookie", "header"])
+async def test_login_starts_a_new_session_when_the_loaded_one_ended_meanwhile(
+    manager: SessionManager, config: SessionConfig, transport: str
+) -> None:
+    session, token = await manager.create_anonymous_session(cart=["book"])
+    client = TestClient(_rotating_app(manager, config))
+    if transport == "cookie":
+        client.cookies.set(config.cookie_name, token)
+        response = client.post("/login")
+    else:
+        response = client.post("/login", headers=_auth(transport, config, token))
+
+    assert response.status_code == 200
+    logged_in, _ = await manager.get_session(_token_sent(response, transport, config))
+    assert logged_in.session_id != session.session_id
+    assert logged_in.user is not None
+    assert logged_in.user.user_id == "alice"
+    assert logged_in.data == {"after": 2}
+    assert await manager.backend.get_all_keys() == [
+        manager._get_backend_key(logged_in.session_id)
+    ]
+
+
+async def test_rotate_session_id_refuses_an_ended_session_without_the_middleware(
+    manager: SessionManager,
+) -> None:
+    """A session put on ``request.state`` by hand is refused the same way."""
+    SessionManagerProxy.set(manager)
+    stale, _other, _token = await _two_copies(manager)
+    await manager.delete_session(stale.session_id)
+    app = FastAPI()
+    setattr(app.state, "__fastapi_cachex_session_manager", manager)
+
+    @app.post("/sudo")
+    async def sudo(request: Request) -> dict[str, bool]:
+        setattr(request.state, "__fastapi_cachex_session", stale)
+        return {"rotated": await rotate_session_id(request)}
+
+    response = TestClient(app).post("/sudo")
+
+    assert response.status_code == 401

@@ -377,7 +377,8 @@ class SessionManager:
         rotated session. Two concurrent changes to one session therefore keep
         the first save, not the last.
 
-        Deleting, invalidating and regenerating the ID are unconditional.
+        Deleting and invalidating are unconditional. Regenerating the ID
+        requires only that the session is still valid, not unchanged.
 
         Args:
             session: Session to update, as returned by ``get_session()`` or
@@ -428,17 +429,33 @@ class SessionManager:
         token through the request's transport, so a handler that only needs
         the cookie or header updated can ignore the returned token.
 
+        A session read from the backend is rotated only while its record is
+        still there and valid (#128): the old record is removed atomically, so
+        a copy read before another request deleted or invalidated the session
+        cannot come back under a new ID, and of two concurrent rotations only
+        one succeeds. The old record is gone either way, so the old token no
+        longer resolves, even when the rotation is refused. A session that was
+        never read from or written to the backend (built by hand) is rotated
+        without the check.
+
         Args:
             session: Session to regenerate
 
         Returns:
             Tuple of (updated session, new token string)
-        """
-        # Delete old session
-        await self.delete_session(session.session_id)
 
-        # Generate new ID
+        Raises:
+            SessionNotFoundError: The record was deleted since ``session`` was
+                read, or another request rotated it first
+            SessionInvalidError: The record was invalidated or has expired
+                since ``session`` was read
+        """
         old_id = session.session_id
+        if session._stored is None:  # noqa: SLF001
+            await self.delete_session(old_id)
+        else:
+            await self._claim(old_id)
+
         session.regenerate_id()
 
         # Save with new ID
@@ -605,6 +622,29 @@ class SessionManager:
         """
         return await self._load_session_by_key(self._get_backend_key(session_id))
 
+    async def _claim(self, session_id: str) -> None:
+        """Remove the record under ``session_id``, raising unless it was valid."""
+        claimed = await self.backend.get_and_delete(self._get_backend_key(session_id))
+        current = self._decode(claimed) if claimed else None
+        if current is None:
+            msg = f"Session {session_id} was deleted before its ID could be regenerated"
+            logger.debug("Session rotation refused, not found; id=%s", session_id)
+            raise SessionNotFoundError(msg)
+        if not current.is_valid():
+            msg = f"Session {session_id} ended before its ID could be regenerated"
+            logger.debug("Session rotation refused, not valid; id=%s", session_id)
+            raise SessionInvalidError(msg)
+
+    @staticmethod
+    def _decode(entry: CacheEntry) -> Session | None:
+        """The session stored as ``entry``, or None if it does not parse."""
+        try:
+            session = Session.model_validate_json(entry.content)
+        except (ValueError, TypeError):
+            return None
+        session._stored = entry  # noqa: SLF001
+        return session
+
     async def _load_session_by_key(self, key: str) -> Session | None:
         """Load session from backend by key.
 
@@ -619,10 +659,7 @@ class SessionManager:
             logger.debug("Session load MISS; key=%s", key)
             return None
 
-        try:
-            session = Session.model_validate_json(cached.content)
-        except (ValueError, TypeError):
+        session = self._decode(cached)
+        if session is None:
             logger.debug("Session load DESERIALIZE ERROR; key=%s", key)
-            return None
-        session._stored = cached  # noqa: SLF001
         return session

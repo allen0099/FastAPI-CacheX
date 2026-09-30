@@ -367,9 +367,9 @@ async def sudo(request: Request, session: AuthenticatedSession):
     return {"ok": True}
 ```
 
-`rotate_session_id()` 會對請求的 Session 呼叫 `SessionManager.regenerate_session_id()`，刪除舊 ID 底下的後端紀錄，並以新 ID 儲存該 Session，保留其資料、使用者、`created_at` 與過期時間。任一個中介軟體都會看到新 ID，並透過該請求使用的傳輸方式送出對應的權杖：Cookie 使用 `Set-Cookie`，標頭權杖則使用回應標頭。之後舊的權杖就無法再解析出 Session。新訪客沒有可換 ID 的 Session，因此它會回傳 `False`。
+`rotate_session_id()` 會對請求的 Session 呼叫 `SessionManager.regenerate_session_id()`，刪除舊 ID 底下的後端紀錄，並以新 ID 儲存該 Session，保留其資料、使用者、`created_at` 與過期時間。任一個中介軟體都會看到新 ID，並透過該請求使用的傳輸方式送出對應的權杖：Cookie 使用 `Set-Cookie`，標頭權杖則使用回應標頭。之後舊的權杖就無法再解析出 Session。新訪客沒有可換 ID 的 Session，因此它會回傳 `False`。若這個請求執行期間，另一個請求刪除、使其失效或輪替了這個 Session，則不會儲存或送出任何東西，並回應 `401`；`login()` 則改為替使用者建立新的 Session（見 [Session 寫入](MIGRATING_0_4.md#session-writes)）。
 
-已經取得請求 Session 物件的 handler，也可以直接呼叫 `await manager.regenerate_session_id(session)`，效果相同。請從 `get_optional_session` 取得 Session，並在它為 `None` 時略過呼叫；`SessionDep` 會對還沒有 Session 的訪客回應 `401`。
+已經取得請求 Session 物件的 handler，也可以直接呼叫 `await manager.regenerate_session_id(session)`。請從 `get_optional_session` 取得 Session，並在它為 `None` 時略過呼叫；`SessionDep` 會對還沒有 Session 的訪客回應 `401`。與 `rotate_session_id()` 不同，若期間另一個請求結束了這個 Session，直接呼叫會拋出 `SessionNotFoundError` 或 `SessionInvalidError`，因此請捕捉 `SessionError`，並比照沒有 Session 的情況回應。
 
 在中介軟體之外，請以中介軟體會傳入的相同綁定值載入 Session，並自行將回傳的權杖交給用戶端：
 

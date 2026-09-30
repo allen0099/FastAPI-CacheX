@@ -571,12 +571,16 @@ new ID, keeping its data, user, `created_at` and expiry. Either middleware sees 
 and sends a token for it through the transport the request used: `Set-Cookie` for a
 cookie, the response header for a header token. After that the old token no longer
 resolves to a session. For a new visitor there is no session to rotate, so it returns
-`False`.
+`False`. If another request deleted, invalidated or rotated the session while this one ran,
+nothing is saved or sent and it answers `401`; `login()` starts a new session for the user instead (see
+[Session writes](MIGRATING_0_4.md#session-writes)).
 
 A handler that already holds the request's session object can call
-`await manager.regenerate_session_id(session)` directly, with the same effect. Get it from
-`get_optional_session` and skip the call when it is `None`; `SessionDep` answers `401` to a
-visitor who has no session yet.
+`await manager.regenerate_session_id(session)` directly. Get it from `get_optional_session` and
+skip the call when it is `None`; `SessionDep` answers `401` to a visitor who has no session yet.
+Unlike `rotate_session_id()`, a direct call raises `SessionNotFoundError` or `SessionInvalidError`
+when another request ended the session meanwhile, so catch `SessionError` and answer as for a
+missing session.
 
 Outside a middleware, load the session with the same bindings the middleware would pass, and hand
 the returned token to the client yourself:

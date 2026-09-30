@@ -204,6 +204,10 @@ class _RequestSession(StarletteSession):
     """
 
     cleared: bool = False
+    # rotate_session_id() found that another request ended the loaded session
+    # (#128). Nothing is saved or sent: the winner of a concurrent rotation may
+    # already have given the client its new token.
+    ended: bool = False
     # The backend session this dict belongs to: the one the middleware loaded,
     # or the one ``login()`` started or rotated. Read when the response starts.
     backend: "Session | None" = None
@@ -376,6 +380,8 @@ class FastAPICacheXSessionMiddleware:
         Returns:
             True if a token or a clearing cookie was written to the response
         """
+        if session.ended:
+            return False
         sent_token = False
         target = backend_session
         if session.cleared and target is not None:
@@ -627,7 +633,18 @@ async def _log_in(
         # Attach the user before the rotation, so the record under the old ID
         # never holds it.
         current._attach_user(user)  # noqa: SLF001
-        await manager.regenerate_session_id(current)
+        try:
+            await manager.regenerate_session_id(current)
+        except SessionError:
+            # Another request ended the loaded session while this one ran
+            # (#128). Its data went with it: log in on a new session that
+            # starts with only what the handler writes after login().
+            dict.clear(request_session)
+            current, _ = await manager.create_session(
+                user,
+                ip_address=get_client_ip(connection, middleware.config),
+                user_agent=connection.headers.get("user-agent"),
+            )
 
     # The session is already stored with the user. Its ID differs from the one
     # the middleware loaded (if any), so the middleware sends a token for it

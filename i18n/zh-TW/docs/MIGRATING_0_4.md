@@ -184,9 +184,9 @@ SessionConfig(
 
 0.4.0 會以有條件的方式寫入 Session（[#128](https://github.com/allen0099/FastAPI-CacheX/issues/128)）：若某個請求載入 Session 之後，另一個請求刪除、使其失效或輪替了它，前者儲存時不會再讓紀錄復活。不需要修改程式碼。
 
-- 一般的儲存改為有條件寫入：中介軟體儲存 `request.session` 的修改、滑動續期，以及 `update_session()`。只有在後端的紀錄仍等於這個請求最後一次讀到或寫入的值時才會成功。刪除、使其失效、過期與輪替 ID 仍無條件執行，因此安全動作永遠優先。
+- 一般的儲存改為有條件寫入：中介軟體儲存 `request.session` 的修改、滑動續期，以及 `update_session()`。只有在後端的紀錄仍等於這個請求最後一次讀到或寫入的值時才會成功。刪除、使其失效與過期仍無條件執行，因此安全動作永遠優先。
 - 被拒絕的儲存會被捨棄並記錄 log。回應照常送出，但不附 Session 權杖。例外是這個請求已儲存的續期：若 Session 仍然有效（這次儲存只是輸給另一次儲存），會送出續期後的權杖，避免 JWT 用戶端持有比紀錄更早過期的權杖。
-- 輪替 ID（`regenerate_session_id()`、`rotate_session_id()`、`login()`）仍無條件執行。若某個請求輪替的是它在另一個請求使 Session 失效之前讀到的副本，這份副本仍會以新 ID 儲存。
+- 輪替 ID（`regenerate_session_id()`）會以原子操作移除舊紀錄，且只有在該紀錄仍然有效時才繼續，因此在另一個請求刪除、使其失效或輪替 Session 之前讀到的副本，無法以新 ID 復活。否則它會拋出 `SessionNotFoundError` 或 `SessionInvalidError`，不會以新 ID 儲存任何東西（舊紀錄無論如何都會被移除）；同一個 Session 同時被輪替兩次時，只有第一次會成功。期間另一個請求儲存的修改不會阻止輪替。此時 `rotate_session_id()` 回應 `401` 且不送出權杖，`login()` 則改為替使用者建立新的 Session，不帶已結束 Session 的資料。手動建立、從未自後端讀取或寫入的 `Session` 仍照舊輪替。
 - **副作用：**兩個請求同時修改同一個 Session 時（例如兩個分頁同時加入購物車），先儲存的成功，後儲存的被捨棄。目前是後儲存的覆蓋先儲存的，本來就會遺失其中一筆修改；0.4.0 改變的是遺失哪一筆。合併這類修改的做法由 [#376](https://github.com/allen0099/FastAPI-CacheX/issues/376) 追蹤。
 - `update_session()` 現在會回傳值：已儲存時為 `True`，儲存被捨棄時為 `False`。手動建立、從未自後端讀取的 `Session`，只有在其 ID 底下尚無紀錄時才會被儲存。
 - `get_session()` 續期 Session（滑動過期）時，若續期與另一次儲存競爭而失敗，會重新讀取 Session 並重試一次。若再次失敗，這個請求沿用它讀到的 Session，且不送出續期後的權杖。
