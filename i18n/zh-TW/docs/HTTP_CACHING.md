@@ -65,7 +65,7 @@ async def items(): ...
 
 當快取項目仍有效（在 TTL 內）時：
 
-- **預設行為**：直接回傳快取的內容，連同 handler 當初產生的狀態碼與標頭，不會重新執行端點的 handler
+- **預設行為**：直接回傳快取的內容，連同 handler 當初產生的狀態碼與標頭（重複送出的標頭會保留每一行），不會重新執行端點的 handler
 - **帶有 `If-None-Match` 標頭**：ETag 相符時回傳 HTTP 304 Not Modified
 - **使用 `no-cache` 指令**：先以新產生的內容強制重新驗證，再決定是否回 304
 - **使用 `private=True`**：不從共用後端讀取，也不寫入；每次都執行 handler，只有 `If-None-Match` 重新驗證有效

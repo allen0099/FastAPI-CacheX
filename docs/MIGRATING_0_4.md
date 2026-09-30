@@ -43,7 +43,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | `UserSessionDep` requires a user | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | No | [UserSessionDep](#user-session-dep) |
 | `memcache` extra removed | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | No | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` returns `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | No | [delete() return value](#backend-delete) |
-| `CacheEntry.headers` becomes a list of pairs | [#105](https://github.com/allen0099/FastAPI-CacheX/issues/105) | No | [Repeated headers](#cache-entry-headers) |
+| `CacheEntry.headers` becomes a tuple of pairs | [#105](https://github.com/allen0099/FastAPI-CacheX/issues/105) | No | [Repeated headers](#cache-entry-headers) |
 | HTTP cache key format | [#271](https://github.com/allen0099/FastAPI-CacheX/issues/271), [#270](https://github.com/allen0099/FastAPI-CacheX/issues/270), [#269](https://github.com/allen0099/FastAPI-CacheX/issues/269), [#266](https://github.com/allen0099/FastAPI-CacheX/issues/266), [#265](https://github.com/allen0099/FastAPI-CacheX/issues/265), [#72](https://github.com/allen0099/FastAPI-CacheX/issues/72) | No | [Cache keys](#cache-keys) |
 | Conditional session writes | [#128](https://github.com/allen0099/FastAPI-CacheX/issues/128) | No | [Session writes](#session-writes) |
 
@@ -273,7 +273,7 @@ What to change:
 
 ### Repeated headers {#cache-entry-headers}
 
-0.4.0 stores every line of a header the handler sends more than once (several `Link` headers, say) instead of only the last one ([#105](https://github.com/allen0099/FastAPI-CacheX/issues/105)). `CacheEntry.headers` becomes an ordered list of `(name, value)` pairs instead of `dict[str, str]`. This affects custom backends and code that builds or reads `CacheEntry`:
+0.4.0 stores every line of a header the handler sends more than once (several `Link` headers, say) instead of only the last one ([#105](https://github.com/allen0099/FastAPI-CacheX/issues/105)). `CacheEntry.headers` becomes a tuple of `(name, value)` pairs in the order sent, instead of `dict[str, str] | None`; no headers is `()`. A replayed value is no longer joined or split, so a value holding a comma stays one line. This affects custom backends and code that reads `CacheEntry`. Code that builds one can keep passing a `dict` (or any iterable of pairs, or `None`): the constructor converts it, though a type checker flags the `dict`.
 
 ```python
 # Before
@@ -283,7 +283,7 @@ entry.headers["link"]
 [value for name, value in entry.headers if name == "link"]
 ```
 
-0.4.0 still reads entries written by 0.3.x, but 0.3.x cannot read entries written by 0.4.0. In a rolling deploy where both versions share a backend, clear the HTTP cache once all instances run 0.4.0 (or keep the old instances away from the shared cache during the rollout). Whether the stored format carries a version marker instead is not decided yet.
+Redis and Memcached store the headers as a JSON list of `[name, value]` lines. 0.4.0 still decodes the object 0.3.x wrote, but 0.3.x fails with a `500` on an entry 0.4.0 wrote with any header. For `@cache` with the default key builder, or one that calls `build_cache_key()`, a rolling deploy needs nothing extra: the [cache key format](#cache-keys) changes in the same release, so neither version looks up an HTTP entry the other wrote. A custom `key_builder` that builds the key itself gives the same key in both versions; for such a route, keep 0.3.x instances off the shared backend during the rollout, or switch the builder to `build_cache_key()` first. The same applies to an application that stores `CacheEntry` values under its own keys and shares them across versions.
 
 ### Monitoring routes {#add-routes}
 

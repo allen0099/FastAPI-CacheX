@@ -8,6 +8,7 @@ import time
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from functools import partial
@@ -48,6 +49,7 @@ from .session.config import DEFAULT_SESSION_HEADER_NAME
 from .types import CACHE_KEY_SEPARATOR
 from .types import CacheEntry
 from .types import CacheKeyBuilder
+from .types import HeaderPairs
 from .types import escape_key_component
 from .types import log_ref
 
@@ -529,14 +531,23 @@ def _is_cacheable_status(status_code: int) -> bool:
     )
 
 
-def _cacheable_headers(response: Response) -> dict[str, str] | None:
-    """The handler's own headers worth storing, or None when there are none."""
-    headers = {
-        key: value
-        for key, value in response.headers.items()
-        if key.lower() not in _UNCACHEABLE_HEADERS
-    }
-    return headers or None
+def _cacheable_headers(response: Response) -> HeaderPairs:
+    """The handler's own header lines worth storing, in the order sent.
+
+    Every line is kept, so a header sent more than once (several ``Link``
+    lines) is replayed line by line rather than as its last value.
+    """
+    return tuple(
+        (name, value)
+        for name, value in response.headers.items()
+        if name.lower() not in _UNCACHEABLE_HEADERS
+    )
+
+
+def _append_headers(response: Response, headers: Iterable[tuple[str, str]]) -> None:
+    """Add every ``(name, value)`` line to ``response``, duplicates included."""
+    for name, value in headers:
+        response.headers.append(name, value)
 
 
 # Fields RFC 9110 §15.4.5 asks a 304 to repeat from the 200 it stands in for.
@@ -567,15 +578,13 @@ def _age_headers(entry: CacheEntry, ttl: int | None) -> dict[str, str]:
     return {"age": str(int(age))}
 
 
-def _revalidation_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
-    """The subset of a response's headers that a 304 must repeat."""
-    if not headers:
-        return {}
-    return {
-        key: value
-        for key, value in headers.items()
-        if key.lower() in _REVALIDATION_HEADERS
-    }
+def _revalidation_headers(headers: Iterable[tuple[str, str]]) -> HeaderPairs:
+    """The lines of a response's headers that a 304 must repeat."""
+    return tuple(
+        (name, value)
+        for name, value in headers
+        if name.lower() in _REVALIDATION_HEADERS
+    )
 
 
 def _media_type_of(response: Response) -> str | None:
@@ -713,27 +722,25 @@ def _etag_matches(if_none_match: str | None, etag: str) -> bool:
 def _not_modified(
     etag: str,
     cache_control: str,
-    headers: Mapping[str, str] | None = None,
+    headers: Iterable[tuple[str, str]] = (),
     age: Mapping[str, str] | None = None,
 ) -> Response:
     """Build the 304 for a successful revalidation.
 
-    ``headers`` is what the 200 for this resource would have carried; RFC 9110
+    ``headers`` is the header lines the 200 for this resource would have
+    carried, every line of a repeated field included; RFC 9110
     §15.4.5 requires the fields that steer caching to be repeated on the 304,
     otherwise a cache that stored the 200 would drop them on refresh. ``Date``
     is added by Starlette and the other two are set here. ``age`` is the
     ``Age`` header (see ``_age_headers``) when the 304 is answered from a
     stored entry.
     """
-    return Response(
-        status_code=HTTP_304_NOT_MODIFIED,
-        headers={
-            **_revalidation_headers(headers),
-            "ETag": etag,
-            "Cache-Control": cache_control,
-            **(age or {}),
-        },
-    )
+    response = Response(status_code=HTTP_304_NOT_MODIFIED)
+    _append_headers(response, _revalidation_headers(headers))
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = cache_control
+    response.headers.update(age or {})
+    return response
 
 
 # Response directives by which the handler says its response belongs to one
@@ -1252,7 +1259,7 @@ def cache(
                         _cache_control_for(
                             response, response_cache_control, private_cache_control
                         ),
-                        response.headers,
+                        response.headers.items(),
                     )
                 response.headers["ETag"] = etag
                 logger.debug("Bypassed the backend; path=%s", req.url.path)
@@ -1311,7 +1318,7 @@ def cache(
                                 response_cache_control,
                                 private_cache_control,
                             ),
-                            current_response.headers,
+                            current_response.headers.items(),
                         )
 
                 # Compare with cached ETag - if match, return 304
@@ -1335,17 +1342,25 @@ def cache(
             # valid cached copy directly (cache hit without running the handler)
             if cached_data and not no_cache:
                 logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
-                return Response(
+                hit = Response(
                     content=cached_data.content,
                     status_code=cached_data.status_code,
                     media_type=cached_data.media_type,
-                    headers={
-                        **(cached_data.headers or {}),
-                        "ETag": cached_data.fingerprint,
-                        "Cache-Control": response_cache_control,
-                        **_age_headers(cached_data, ttl),
-                    },
                 )
+                # Framing and validator headers come from this response, not
+                # the entry: an entry built outside @cache may still carry them.
+                _append_headers(
+                    hit,
+                    (
+                        (name, value)
+                        for name, value in cached_data.headers
+                        if name.lower() not in _UNCACHEABLE_HEADERS
+                    ),
+                )
+                hit.headers["ETag"] = cached_data.fingerprint
+                hit.headers["Cache-Control"] = response_cache_control
+                hit.headers.update(_age_headers(cached_data, ttl))
+                return hit
 
             if current_response is None or current_etag is None:
                 # Retrieve the current response if not already done

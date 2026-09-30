@@ -3,6 +3,8 @@
 import hashlib
 import re
 from collections.abc import Callable
+from collections.abc import Iterable
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -57,6 +59,35 @@ def log_ref(value: str) -> str:
 # Status replayed for entries stored before ``CacheEntry`` carried a status code.
 DEFAULT_STATUS_CODE = 200
 
+# Response header lines as ``(name, value)`` pairs, in the order sent.
+HeaderPairs = tuple[tuple[str, str], ...]
+
+
+def _header_pairs(
+    headers: Mapping[str, str] | Iterable[tuple[str, str]] | None,
+) -> HeaderPairs:
+    """``headers`` as a tuple of ``(name, value)`` pairs.
+
+    A mapping (the ``dict`` of 0.3.x) gives its items, so a name appears once.
+
+    Raises:
+        TypeError: If an item is not a ``tuple`` or ``list`` of two ``str``.
+    """
+    if headers is None or headers == ():
+        return ()
+    items = headers.items() if isinstance(headers, Mapping) else headers
+    pairs = tuple(items)
+    for pair in pairs:
+        if (
+            not isinstance(pair, (tuple, list))
+            or len(pair) != 2  # noqa: PLR2004
+            or not isinstance(pair[0], str)
+            or not isinstance(pair[1], str)
+        ):
+            msg = "CacheEntry.headers must hold (str, str) pairs"
+            raise TypeError(msg)
+    return tuple((name, value) for name, value in pairs)
+
 
 @dataclass
 class CacheEntry:
@@ -65,6 +96,12 @@ class CacheEntry:
     ``status_code`` and ``headers`` default to a plain ``200`` with no extra
     headers, so entries built by older callers (and documents written by older
     releases) keep their previous behaviour.
+
+    ``headers`` holds every header line the response is replayed with, as
+    ``(name, value)`` pairs in the order sent, so a header sent more than once
+    (several ``Link`` lines, say) is kept line by line. A mapping or any
+    iterable of pairs is accepted and converted to a tuple; ``None`` means no
+    headers.
 
     ``stored_at`` is when ``@cache`` stored the response, in epoch seconds
     from the wall clock (``time.time()``), since an entry written by one
@@ -77,8 +114,12 @@ class CacheEntry:
     content: bytes
     media_type: str | None = None
     status_code: int = DEFAULT_STATUS_CODE
-    headers: dict[str, str] | None = None
+    headers: HeaderPairs = ()
     stored_at: float | None = None
+
+    def __post_init__(self) -> None:
+        """Store ``headers`` as a tuple of pairs, whatever it was given as."""
+        self.headers = _header_pairs(self.headers)
 
 
 @dataclass

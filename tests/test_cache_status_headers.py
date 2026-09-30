@@ -224,7 +224,6 @@ def test_decode_entry_defaults_pre_v2_documents():
         content=b"hello",
         media_type="text/plain",
         status_code=200,
-        headers=None,
     )
 
 
@@ -243,7 +242,7 @@ async def test_redis_reads_pre_v2_documents():
 
     assert entry is not None
     assert entry.status_code == 200
-    assert entry.headers is None
+    assert entry.headers == ()
     assert entry.content == b"legacy"
     await backend.clear()
 
@@ -264,7 +263,7 @@ async def test_memcached_reads_pre_v2_documents():
 
     assert entry is not None
     assert entry.status_code == 200
-    assert entry.headers is None
+    assert entry.headers == ()
     assert entry.content == b"legacy"
     await flush_memcached(backend)
 
@@ -280,7 +279,7 @@ async def test_redis_round_trips_status_and_headers():
         content=b"body",
         media_type="text/plain",
         status_code=203,
-        headers={"X-Total-Count": "42"},
+        headers=(("link", "</a>"), ("x-total-count", "42"), ("link", "</b>")),
     )
 
     await backend.set("v2-key", entry)
@@ -301,7 +300,7 @@ async def test_memcached_round_trips_status_and_headers():
         content=b"body",
         media_type="text/plain",
         status_code=203,
-        headers={"X-Total-Count": "42"},
+        headers=(("link", "</a>"), ("x-total-count", "42"), ("link", "</b>")),
     )
 
     await backend.set("v2-key", entry)

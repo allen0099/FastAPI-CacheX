@@ -233,7 +233,7 @@ async def test_handler_age_header_is_not_replayed(clock, client_for):
     await client.get("/item")
     entry = await BackendProxy.get().get(KEY)
     assert entry is not None
-    assert entry.headers is None
+    assert entry.headers == ()
 
     clock.now = START + 3
     response = await client.get("/item")
