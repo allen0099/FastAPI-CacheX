@@ -17,8 +17,9 @@ def backend() -> MemoryBackend:
 def config() -> SessionConfig:
     """Create session config for testing.
 
-    The cookie settings are explicit so FastAPICacheXSessionMiddleware does not
-    warn about the 0.4.0 cookie defaults (#256).
+    TestClient talks plain HTTP, which the default ``__Host-session`` cookie
+    with the Secure flag is not sent back over, so the cookie settings are
+    explicit (#256).
     """
     return SessionConfig(
         secret_key="a" * 32, cookie_name="session", cookie_https_only=False

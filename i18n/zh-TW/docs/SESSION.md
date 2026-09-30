@@ -69,7 +69,7 @@ app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
 
 `UserSessionDep` 與 `AuthenticatedSession` 相同：匿名 Session 會得到 `401`。0.4.0 之前它是 `SessionDep` 的別名，也接受匿名 Session；路由確實需要接受匿名 Session 時，請使用 `SessionDep`（見[遷移至 0.4.0](MIGRATING_0_4.md#user-session-dep)）。
 
-在 `FastAPICacheXSessionMiddleware` 底下，請以 `await login(request, user)` 讓使用者登入。它會以新的 Session ID 附加 `require_user_session`／`AuthenticatedSession` 檢查的 `SessionUser`，並由中介軟體送出權杖；見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)。上面的 `/login` 則是在本文中把權杖交給 API 用戶端：`create_session(user=...)` 同樣會設定 `session.user`，但中介軟體不會為不是由它載入或建立的 Session 送出任何東西。寫入 `request.session` 的鍵（`request.session["user_id"] = ...`）是應用程式資料：函式庫不會把它視為登入，因此這種 Session 仍會讓 `AuthenticatedSession` 回應 `401`。
+在 `FastAPICacheXSessionMiddleware` 底下，請以 `await login(request, user)` 讓使用者登入。它會以新的 Session ID 附加 `require_user_session`／`AuthenticatedSession` 檢查的 `SessionUser`，並由中介軟體送出權杖；見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)。上面的 `/login` 則是在本文中把權杖交給 API 用戶端：`create_session(user=...)` 同樣會設定 `session.user`，但中介軟體不會為不是由它載入或建立的 Session 送出任何東西。寫入 `request.session` 的鍵（`request.session["user_id"] = ...`）是應用程式資料：函式庫不會把它視為登入，因此這種 Session 仍會讓 `AuthenticatedSession` 回應 `401`。`session.user` 本身是唯讀的：指定它會拋出 `AttributeError`，因此除了建立時就帶有使用者的 `Session` 之外，Session 只能從 `login()` 或 `create_session(user=...)` 得到使用者。登出請使用 `await logout(request)`。
 
 ### 3. 完整範例（Redis 後端） {#3-full-example-redis-backend}
 
@@ -116,7 +116,7 @@ async def me(session=Depends(require_user_session)):
 
 - 在沒有載入任何 Session 時寫入 `request.session`，會建立一個新的**匿名** Session（`SessionManager.create_anonymous_session()`，並依設定套用 IP / User-Agent 綁定），並透過該請求的傳輸方式傳回其權杖。
 - 修改已載入 Session 的 `request.session`，會透過 `update_session()` 將新內容儲存到後端，以 dict 的內容取代 `Session.data`。
-- 在已載入的 Session 上清除它（`request.session.clear()`）即為登出：即使資料原本就是空的，也會刪除後端的 Session；Cookie 用戶端還會收到一個使 Cookie 過期的 `Set-Cookie`。同一個請求中在 `clear()` 之後寫入的鍵，會存進一個使用新 ID 的新匿名 Session。
+- 在已載入的 Session 上清除它（`request.session.clear()`）即為登出：即使資料原本就是空的，也會刪除後端的 Session；Cookie 用戶端還會收到一個使 Cookie 過期的 `Set-Cookie`。同一個請求中在 `clear()` 之後寫入的鍵，會存進一個使用新 ID 的新匿名 Session。`await logout(request)` 的效果相同，但會立即刪除後端的 Session，而不是等到送出回應時，且在該請求剩下的處理中，`get_session` 找不到 Session。
 - 以 `del` 或 `pop()` 移除最後一個鍵並不是登出。帶有使用者的 Session 會以空資料儲存；匿名 Session 已無任何內容，會和 `clear()` 一樣被刪除。
 - 以寫入 `request.session` 的方式登入時，會沿用請求帶來的 Session ID。Starlette 的中介軟體中 Cookie *就是* Session，因此登入回應會取代任何被植入的 Cookie；這裡的 Cookie 只是指向伺服器端紀錄的名稱，被植入的 Cookie 會跟著受害者一起登入。請以 `await login(request, user)` 登入，它會為 Session 換一個新 ID 並附加使用者（見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)）。
 - 只要存取 `request.session`，或透過 Session 依賴項（`get_session`、`get_optional_session`，以及建立在它們之上的依賴項，例如 `AuthenticatedSession`）讀取 Session，就會為了尋找權杖而讀取過的每個請求標頭加入 `Vary`：依 `token_source_priority` 順序檢查的標頭（`header_name`，以及啟用 Bearer 權杖時的 `Authorization`），直到攜帶權杖的那一個為止。只有在沒有任何標頭攜帶權杖時才會讀取 Cookie，因此也只有這時才會加入 `Cookie`。
@@ -340,11 +340,15 @@ async def log_in(credentials: Credentials, request: Request):
 - **其他使用者的**：它會被刪除，連同該請求中先前寫入 `request.session` 的內容，`login()` 會建立新的 Session。前一位使用者的資料（購物車、`elevated` 旗標）都不會帶給新使用者。
 - **沒有**（新訪客，或權杖無法解析）：`login()` 會建立帶有使用者的 Session，並依設定綁定用戶端 IP 與 User-Agent。
 
+若只想帶入部分資料，請列出鍵：`login(request, user, keep=["cart"])` 會丟棄其他所有鍵，包括已載入 Session 中的鍵，以及該請求中先前寫入 `request.session` 的鍵；`keep=[]` 則全部丟棄。呼叫之後寫入的鍵會保留。`keep` 必須是鍵的集合，因此傳入字串會拋出 `TypeError`。
+
 無論哪種情況，舊的權杖都無法再解析出 Session。接著中介軟體會儲存該 Session（包括呼叫之後寫入 `request.session` 的鍵；除非已載入的 Session 屬於其他使用者，也包括呼叫之前寫入的鍵），並透過該請求使用的傳輸方式送出權杖：以標頭或 `Authorization: Bearer` 權杖送來的請求使用回應標頭，否則使用帶有所有 `cookie_*` 屬性的 HttpOnly `Set-Cookie`。和每個帶有權杖的回應一樣，它會加上 `Cache-Control: private, no-store`。之後帶著該權杖的請求會通過 `require_user_session` 與 `AuthenticatedSession`。`login()` 會回傳該 Session，在該請求剩下的處理中，`get_session` 也會回傳它。
 
 完全沒有帶權杖的請求只會收到 Cookie，頁面上的指令碼讀不到它。不要把權杖複製到瀏覽器登入回應的標頭或本文中。沒有權杖就登入的 API 用戶端需要從本文取得權杖：對 `login()` 回傳的 Session 回傳 `manager.issue_token(session)`，或由另一個端點發出權杖，如 [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) 所示。完整的瀏覽器版本請見 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)。
 
-在同一個請求中，`login()` 之後呼叫 `request.session.clear()` 就是登出：新的 Session 會被刪除，也不會送出權杖（Cookie 用戶端的 Cookie 會被設為過期）。在 `login()` 之前呼叫 `clear()` 會讓已載入的 Session 登出，`login()` 接著會建立新的 Session，而不是為它換 ID。沒有 `FastAPICacheXSessionMiddleware` 時，`login()` 會拋出 `RuntimeError`，因為沒有人會送出權杖；請改以 `create_session(user=...)` 建立 Session 並回傳其權杖。
+登出請呼叫 `await logout(request)`。它會立即從後端刪除 Session，因此權杖在回應送出之前就已失效，Cookie 用戶端也會收到讓 Cookie 過期的回應。它回傳 `True`；若該請求中沒有載入或建立任何 Session（包括權杖無法解析的情況），則回傳 `False`。之後寫入 `request.session` 的鍵會存進新的匿名 Session，之後呼叫的 `login()` 則會建立新的 Session。
+
+在同一個請求中，`login()` 之後呼叫 `request.session.clear()` 就是登出：新的 Session 會被刪除，也不會送出權杖（Cookie 用戶端的 Cookie 會被設為過期）。在 `login()` 之前呼叫 `clear()` 會讓已載入的 Session 登出，`login()` 接著會建立新的 Session，而不是為它換 ID。沒有 `FastAPICacheXSessionMiddleware` 時，`login()` 與 `logout()` 會拋出 `RuntimeError`，因為沒有人會送出權杖或讓 Cookie 過期；請改以 `create_session(user=...)` 建立 Session 並回傳其權杖，並以 `delete_session()` 結束它。
 
 `request.session["user_id"] = "123"` 不是登入。它是應用程式資料，`require_user_session` 與 `AuthenticatedSession` 不會認得它，而且它會沿用請求帶來的 Session ID。
 

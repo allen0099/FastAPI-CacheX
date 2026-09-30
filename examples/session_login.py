@@ -32,6 +32,7 @@ from fastapi_cachex import SessionManager
 from fastapi_cachex import SessionUser
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.session import login
+from fastapi_cachex.session import logout as end_session
 from fastapi_cachex.session.dependencies import AuthenticatedSession
 
 backend = MemoryBackend()
@@ -123,6 +124,5 @@ async def me(session: AuthenticatedSession) -> dict[str, object]:
 
 @app.post("/logout")
 async def logout(request: Request) -> dict[str, bool]:
-    """``clear()`` deletes the session and expires the cookie."""
-    request.session.clear()
-    return {"logged_out": True}
+    """Delete the session now; the middleware expires the cookie."""
+    return {"logged_out": await end_session(request)}

@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from enum import Enum
+from typing import TYPE_CHECKING
 from typing import Any
 from uuid import uuid4
 
@@ -39,7 +40,15 @@ class SessionUser(BaseModel):
 
 
 class Session(BaseModel):
-    """Core session model containing all session data."""
+    """Core session model containing all session data.
+
+    ``user`` is read-only (#256): a user is attached only by
+    ``login(request, user)`` under the session middleware, which always issues
+    a new session ID, or by ``SessionManager.create_session(user=...)``, which
+    starts a new session. Assigning it raises ``AttributeError``, so a session
+    whose ID an attacker may know cannot be promoted to a logged-in one in
+    place.
+    """
 
     session_id: str = Field(default_factory=lambda: str(uuid4()))
     user: SessionUser | None = None
@@ -53,6 +62,26 @@ class Session(BaseModel):
     flash_messages: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = {"use_enum_values": True}
+
+    # Hidden from type checkers: a visible __setattr__ would make them accept
+    # assignment to any attribute name, typos included.
+    if not TYPE_CHECKING:  # pragma: no branch
+
+        def __setattr__(self, name: str, value: Any) -> None:
+            """Refuse to assign ``user``; every other field is assigned as usual."""
+            if name == "user":
+                msg = (
+                    "Session.user is read-only: log a user in with "
+                    "login(request, user) under FastAPICacheXSessionMiddleware, or "
+                    "start a session with SessionManager.create_session(user=...) "
+                    "(https://github.com/allen0099/FastAPI-CacheX/issues/256)"
+                )
+                raise AttributeError(msg)
+            super().__setattr__(name, value)
+
+    def _attach_user(self, user: SessionUser) -> None:
+        """Set ``user``, for ``login()`` only, which rotates the ID right after."""
+        super().__setattr__("user", user)
 
     def is_valid(self) -> bool:
         """Check if session is valid (active and not expired)."""

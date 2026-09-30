@@ -217,7 +217,8 @@ def test_session_login() -> None:
                 == 200
             )
 
-        assert client.post("/logout").status_code == 200
+        assert client.post("/logout").json() == {"logged_out": True}
+        assert client.post("/logout").json() == {"logged_out": False}
         with TestClient(example.app) as replay:
             replay.cookies.set("session", user_token)
             assert replay.get("/me").status_code == 401

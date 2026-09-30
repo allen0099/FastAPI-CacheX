@@ -90,9 +90,9 @@ config = SessionConfig(
 0.4.0 讓使用者只能透過一個明確的 API 成為已驗證狀態，而這個 API 一律會發出新的 Session ID（[#256](https://github.com/allen0099/FastAPI-CacheX/issues/256)）：
 
 - `login(request, user)`（0.3.9 已提供，`from fastapi_cachex.session import login`）會附加使用者並輪替 ID。現在就請改用它，而不是自行設定 `session.user`。
-- 新增 `await logout(request)`：刪除 Session，Cookie 用戶端會收到讓 Cookie 過期的回應。`request.session.clear()` 仍代表登出。
-- `Session.user` 在 `login()` 與 `SessionManager.create_session(user=...)` 之外變成唯讀。直接指定它的程式碼會失效：使用中介軟體時請改用 `login()`；沒有中介軟體時，請以 `create_session(user=...)` 建立 Session。
-- 登入時預設會帶入匿名 Session 的所有資料，因此購物車在登入後仍會保留。選用的 `keep=` 參數可以縮小範圍（`keep=["cart"]`，或以 `keep=[]` 什麼都不帶）。
+- `await logout(request)`（`from fastapi_cachex.session import logout`）會立即從後端刪除 Session，因此在回應送出之前其權杖就已失效，Cookie 用戶端也會收到讓 Cookie 過期的回應。該請求中沒有載入或建立任何 Session 時回傳 `False`。`request.session.clear()` 仍代表登出。
+- 指定 `session.user` 會拋出 `AttributeError`。使用者由 `login()` 與 `SessionManager.create_session(user=...)` 設定，或在建立 `Session` 時傳入。使用中介軟體時請改用 `login()`；沒有中介軟體時，請以 `create_session(user=...)` 建立 Session。
+- 登入時預設會帶入匿名 Session 的所有資料，因此購物車在登入後仍會保留。`login(request, user, keep=["cart"])` 只帶入列出的鍵，`keep=[]` 則什麼都不帶。傳入字串會拋出 `TypeError`，否則 `keep="cart"` 會被當成它的各個字母。
 - `login()` 或 `rotate_session_id()` 輪替 ID 後，舊 ID 立即失效，沒有寬限期：若有寬限期，被植入的權杖在這段期間會解析到已登入的 Session。
 - `rotate_session_id()` 保留原名，用於不更換使用者的權限變更。
 

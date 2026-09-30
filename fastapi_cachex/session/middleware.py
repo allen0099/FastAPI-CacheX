@@ -22,6 +22,8 @@ from .manager import SessionManager
 from .proxy import SessionManagerProxy
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from .models import Session
     from .models import SessionUser
 
@@ -550,6 +552,7 @@ async def _log_in(
     connection: HTTPConnection,
     request_session: _RequestSession,
     user: "SessionUser",
+    keep: "Collection[str] | None" = None,
 ) -> "Session":
     """Attach ``user`` to the request's session under a new session ID.
 
@@ -561,6 +564,8 @@ async def _log_in(
         connection: The request being handled
         request_session: The middleware's ``request.session`` for it
         user: The user to attach
+        keep: The ``request.session`` keys to carry into the logged-in
+            session, or None for all of them
 
     Returns:
         The logged-in session
@@ -589,6 +594,15 @@ async def _log_in(
         current = None
         dict.clear(request_session)
 
+    if keep is not None:
+        # pop() marks the dict modified, so the middleware saves what is left.
+        for key in [key for key in request_session if key not in keep]:
+            request_session.pop(key)
+        if current is not None:
+            # Rotation stores ``current`` under the new ID: keep the dropped
+            # data out of that record too.
+            current.data = {k: v for k, v in current.data.items() if k in keep}
+
     if current is None:
         current, _ = await manager.create_session(
             user,
@@ -598,7 +612,7 @@ async def _log_in(
     else:
         # Attach the user before the rotation, so the record under the old ID
         # never holds it.
-        current.user = user
+        current._attach_user(user)  # noqa: SLF001
         await manager.regenerate_session_id(current)
 
     # The session is already stored with the user. Its ID differs from the one

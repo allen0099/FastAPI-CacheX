@@ -90,9 +90,9 @@ config = SessionConfig(
 0.4.0 makes becoming authenticated go through one explicit API that always issues a new session ID ([#256](https://github.com/allen0099/FastAPI-CacheX/issues/256)):
 
 - `login(request, user)` (in 0.3.9 already, `from fastapi_cachex.session import login`) attaches the user and rotates the ID. Use it today instead of setting `session.user` yourself.
-- `await logout(request)` is added. It deletes the session, and a cookie client gets its cookie expired. `request.session.clear()` keeps meaning logout.
-- `Session.user` becomes read-only outside `login()` and `SessionManager.create_session(user=...)`. Code that assigns it directly breaks: under the middleware, use `login()`; without it, create the session with `create_session(user=...)`.
-- A login carries the anonymous session's data over by default, so a cart survives it. An optional `keep=` argument narrows that (`keep=["cart"]`, or `keep=[]` for nothing).
+- `await logout(request)` (`from fastapi_cachex.session import logout`) deletes the session from the backend at once, so its token stops resolving before the response is sent, and a cookie client gets its cookie expired. It returns `False` when no session was loaded or started in the request. `request.session.clear()` keeps meaning logout.
+- Assigning `session.user` raises `AttributeError`. The user is set by `login()` and `SessionManager.create_session(user=...)`, or given when a `Session` is built. Under the middleware, use `login()`; without it, create the session with `create_session(user=...)`.
+- A login carries the anonymous session's data over by default, so a cart survives it. `login(request, user, keep=["cart"])` carries only the listed keys, and `keep=[]` carries nothing. A string is rejected with `TypeError`, since `keep="cart"` would otherwise mean its letters.
 - The old ID stops resolving the moment `login()` or `rotate_session_id()` rotates it, with no grace period: during one, a planted token would resolve to the logged-in session.
 - `rotate_session_id()` keeps its name, for privilege changes without a new user.
 
