@@ -477,7 +477,7 @@ class FastAPICacheXSessionMiddleware:
         backend_session: "Session | None",
         loaded_token: str | None,
         renewed_token: str | None,
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str | None, str | None]:
         """Create-or-update the backend session for a modified dict.
 
         The dict is non-empty, or was emptied on a session that has a user.
@@ -494,6 +494,7 @@ class FastAPICacheXSessionMiddleware:
             ``(cookie_token, new_token)`` where ``cookie_token`` is the token to
             (re)set as a cookie, and ``new_token`` is a genuinely new/renewed token
             to hand a header-based client (``None`` when the token is unchanged).
+            Both are ``None`` when the save was dropped.
         """
         if backend_session is None:
             (
@@ -510,8 +511,21 @@ class FastAPICacheXSessionMiddleware:
             assert loaded_token is not None  # noqa: S101
             new_token = renewed_token
         backend_session.data = dict(session)
-        await self.session_manager.update_session(backend_session)
+        if not await self.session_manager.update_session(backend_session):
+            # Another request changed, deleted or invalidated the session since
+            # this one read it (#128). The save is dropped. A renewal that
+            # get_session() already stored is still sent while the session is
+            # valid: a JWT client would otherwise keep a token that expires
+            # before the record does. Otherwise no token is sent.
+            if new_token is not None and await self._still_valid(backend_session):
+                return new_token, new_token
+            return None, None
         return loaded_token, new_token
+
+    async def _still_valid(self, session: "Session") -> bool:
+        """Whether the backend still holds a valid session under this ID."""
+        current = await self.session_manager._load_session(session.session_id)  # noqa: SLF001
+        return current is not None and current.is_valid()
 
     def _build_set_cookie_header(self, token: str) -> str:
         """Build a `Set-Cookie` header value carrying the session token.

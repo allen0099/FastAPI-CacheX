@@ -62,6 +62,21 @@ end
 return 0
 """
 
+# SET that only fires while the key still holds the exact bytes the caller read,
+# so a value replaced or deleted in the meantime stays as it is. KEYS[1] = key,
+# ARGV[1] = bytes read, ARGV[2] = bytes to store, ARGV[3] = ttl (0 = none).
+_SET_IF_EQUALS_SCRIPT = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+    return 0
+end
+if tonumber(ARGV[3]) > 0 then
+    redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+else
+    redis.call('SET', KEYS[1], ARGV[2])
+end
+return 1
+"""
+
 
 # Constructor keywords that 0.4.0 removed. They would otherwise fall through
 # **kwargs to redis-py and change how keys and replies are encoded.
@@ -174,6 +189,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         self._expire_if_equals_script = self.client.register_script(
             _EXPIRE_IF_EQUALS_SCRIPT
         )
+        self._set_if_equals_script = self.client.register_script(_SET_IF_EQUALS_SCRIPT)
 
     @staticmethod
     def load_from_config(config: RedisConfig) -> "AsyncRedisCacheBackend":
@@ -373,6 +389,36 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             ttl,
         )
         return bool(updated)
+
+    async def set_if_equals(
+        self,
+        key: str,
+        expected: CacheEntry,
+        value: CacheEntry,
+        ttl: int | None = None,
+    ) -> bool:
+        """Atomically store ``value`` while ``key`` holds ``expected`` (see base class).
+
+        The stored value is decoded and compared here, then a Lua script
+        writes the key only if it still holds the bytes that were compared,
+        so a value written or deleted in between is never overwritten.
+        """
+        validate_ttl(ttl)
+        prefixed_key = self._make_key(key)
+        raw = await self.client.get(prefixed_key)
+        if raw is None or decode_entry(raw) != expected:
+            logger.debug("Redis SET_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        stored = await self._set_if_equals_script(
+            keys=[prefixed_key], args=[raw, encode_entry(value), ttl or 0]
+        )
+        logger.debug(
+            "Redis SET_IF_EQUALS %s; key=%s ttl=%s",
+            "HIT" if stored else "LOST RACE",
+            key,
+            ttl,
+        )
+        return bool(stored)
 
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).

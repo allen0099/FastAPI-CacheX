@@ -182,7 +182,7 @@ class SessionManager:
                 )
 
         # Store in backend
-        await self._save_session(session)
+        await self._save_session(session, conditional=False)
 
         token = self.issue_token(session)
         logger.debug(
@@ -211,6 +211,12 @@ class SessionManager:
         it is stored only when the session is next written, unless ``touch``
         is set.
 
+        That write is conditional, like ``update_session()``. If another
+        request changed, deleted or invalidated the session since it was read,
+        the session is read and checked again, so a deleted or invalidated
+        session is refused and one another request already renewed is
+        returned as it is.
+
         Args:
             token_string: Session token string
             ip_address: Current request IP address
@@ -233,6 +239,20 @@ class SessionManager:
             SessionSecurityError: If a ``simple`` token's signature is wrong,
                 or an IP / User-Agent binding does not match
         """
+        return await self._get_session(
+            token_string, ip_address, user_agent, touch=touch, retry=True
+        )
+
+    async def _get_session(
+        self,
+        token_string: str,
+        ip_address: str | None,
+        user_agent: str | None,
+        *,
+        touch: bool,
+        retry: bool,
+    ) -> tuple[Session, str | None]:
+        """``get_session()``, reading the session again once if its save loses a race."""
         # Parse and verify token
         try:
             token = self._serializer.from_string(token_string)
@@ -329,20 +349,53 @@ class SessionManager:
                     self.config.session_ttl,
                 )
 
-        if renewed_token is not None or touch:
-            await self._save_session(session)
+        if (renewed_token is not None or touch) and not await self._save_session(
+            session, conditional=True
+        ):
+            if retry:
+                return await self._get_session(
+                    token_string, ip_address, user_agent, touch=touch, retry=False
+                )
+            # Lost the race twice: the session was valid when read again, so
+            # return it without the renewal rather than refuse the request.
+            logger.debug(
+                "Session renewal dropped after a second concurrent write; id=%s",
+                session.session_id,
+            )
+            renewed_token = None
 
         return session, renewed_token
 
-    async def update_session(self, session: Session) -> None:
-        """Update an existing session.
+    async def update_session(self, session: Session) -> bool:
+        """Save changes to an existing session.
+
+        The save is conditional (#128): it succeeds only while the backend
+        still holds what ``session`` was last read from or written as. If
+        another request changed, deleted or invalidated the session in the
+        meantime, nothing is written and ``False`` is returned, so a request
+        that loaded the session earlier cannot bring back a logged-out or
+        rotated session. Two concurrent changes to one session therefore keep
+        the first save, not the last.
+
+        Deleting, invalidating and regenerating the ID are unconditional.
 
         Args:
-            session: Session to update
+            session: Session to update, as returned by ``get_session()`` or
+                ``create_session()``
+
+        Returns:
+            Whether the session was saved
         """
         session.update_last_accessed()
-        await self._save_session(session)
+        if not await self._save_session(session, conditional=True):
+            logger.info(
+                "Session save dropped: the session changed, was deleted or was "
+                "invalidated since it was read; id=%s",
+                session.session_id,
+            )
+            return False
         logger.debug("Session updated; id=%s", session.session_id)
+        return True
 
     async def delete_session(self, session_id: str) -> None:
         """Delete a session.
@@ -361,7 +414,7 @@ class SessionManager:
             session: Session to invalidate
         """
         session.invalidate()
-        await self._save_session(session)
+        await self._save_session(session, conditional=False)
         logger.debug("Session invalidated; id=%s", session.session_id)
 
     async def regenerate_session_id(
@@ -389,7 +442,7 @@ class SessionManager:
         session.regenerate_id()
 
         # Save with new ID
-        await self._save_session(session)
+        await self._save_session(session, conditional=False)
 
         logger.debug(
             "Session ID regenerated; old_id=%s new_id=%s", old_id, session.session_id
@@ -475,7 +528,7 @@ class SessionManager:
     async def _expire(self, session: Session, reason: str) -> None:
         """Persist ``session`` as expired and raise SessionExpiredError."""
         session.status = SessionStatus.EXPIRED
-        await self._save_session(session)
+        await self._save_session(session, conditional=False)
         raise SessionExpiredError(reason)
 
     def _create_token(
@@ -504,11 +557,17 @@ class SessionManager:
             session_id=session_id, signature=signature, expires_at=expires_at
         )
 
-    async def _save_session(self, session: Session) -> None:
+    async def _save_session(self, session: Session, *, conditional: bool) -> bool:
         """Save session to backend.
 
         Args:
             session: Session to save
+            conditional: Store only while the backend holds what ``session``
+                was last read from or written as (only if the record is absent,
+                when it was never read or written); otherwise overwrite
+
+        Returns:
+            Whether the session was saved (always True when not conditional)
         """
         payload = session.model_dump_json()
 
@@ -522,10 +581,18 @@ class SessionManager:
             fingerprint=_SESSION_FINGERPRINT,
             content=payload.encode("utf-8"),
         )
-        await self.backend.set(
-            self._get_backend_key(session.session_id), entry, ttl=ttl
-        )
+        key = self._get_backend_key(session.session_id)
+        expected = session._stored  # noqa: SLF001
+        if not conditional:
+            await self.backend.set(key, entry, ttl=ttl)
+        elif expected is None:
+            if not await self.backend.set_if_absent(key, entry, ttl=ttl):
+                return False
+        elif not await self.backend.set_if_equals(key, expected, entry, ttl=ttl):
+            return False
+        session._stored = entry  # noqa: SLF001
         logger.debug("Session saved; id=%s ttl=%s", session.session_id, ttl)
+        return True
 
     async def _load_session(self, session_id: str) -> Session | None:
         """Load session from backend.
@@ -553,7 +620,9 @@ class SessionManager:
             return None
 
         try:
-            return Session.model_validate_json(cached.content)
+            session = Session.model_validate_json(cached.content)
         except (ValueError, TypeError):
             logger.debug("Session load DESERIALIZE ERROR; key=%s", key)
             return None
+        session._stored = cached  # noqa: SLF001
+        return session

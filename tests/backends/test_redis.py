@@ -1276,6 +1276,60 @@ async def test_redis_expire_if_equals_keeps_a_value_written_after_the_compare(
 
 
 @requires_redis
+async def test_redis_set_if_equals_stores_only_over_a_matching_entry(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    mine = CacheEntry(fingerprint="session", content=b"v1")
+    theirs = CacheEntry(fingerprint="session", content=b"v2")
+    new = CacheEntry(fingerprint="session", content=b"v3")
+    await async_redis_backend.set("slot", theirs, 30)
+    key = async_redis_backend._make_key("slot")
+
+    assert await async_redis_backend.set_if_equals("slot", mine, new, 60) is False
+    assert await async_redis_backend.get("slot") == theirs
+    assert await async_redis_backend.set_if_equals("slot", theirs, new, 60) is True
+    assert await async_redis_backend.get("slot") == new
+    assert 55000 <= await async_redis_backend.client.pttl(key) <= 60000
+    # ttl=None stores without expiry, as set() does.
+    assert await async_redis_backend.set_if_equals("slot", new, theirs) is True
+    assert await async_redis_backend.client.pttl(key) == -1
+    assert await async_redis_backend.set_if_equals("missing", theirs, new) is False
+    assert await async_redis_backend.get("missing") is None
+
+
+@requires_redis
+@pytest.mark.parametrize("change", ["overwrite", "delete"])
+async def test_redis_set_if_equals_keeps_a_change_made_after_the_compare(
+    async_redis_backend: AsyncRedisCacheBackend, change: str
+) -> None:
+    """A write or delete between the compare and the SET is not undone."""
+    mine = CacheEntry(fingerprint="session", content=b"v1")
+    theirs = CacheEntry(fingerprint="session", content=b"v2")
+    new = CacheEntry(fingerprint="session", content=b"v3")
+    await async_redis_backend.set("slot", mine, 60)
+
+    client = async_redis_backend.client
+    original_get = client.get
+
+    async def get_then_change(name):
+        raw = await original_get(name)
+        if change == "overwrite":
+            await async_redis_backend.set("slot", theirs, 60)
+        else:
+            await async_redis_backend.delete("slot")
+        return raw
+
+    client.get = get_then_change  # type: ignore[method-assign]
+    try:
+        assert await async_redis_backend.set_if_equals("slot", mine, new, 60) is False
+    finally:
+        client.get = original_get  # type: ignore[method-assign]
+
+    expected = theirs if change == "overwrite" else None
+    assert await async_redis_backend.get("slot") == expected
+
+
+@requires_redis
 def test_cached_route_with_ttl_zero_is_served() -> None:
     """End to end: `@cache(ttl=0)` used to send `SET ... EX 0` and answer 500."""
     from fastapi import FastAPI

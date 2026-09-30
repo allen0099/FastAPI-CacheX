@@ -300,7 +300,7 @@ async def test_valid_cookie_sliding_expiration_refreshes_cookie_without_mutation
     # Shorten expiry so time_remaining < sliding threshold (< 50% of session_ttl)
     shortened_expiry = datetime.now(timezone.utc) + timedelta(seconds=100)
     session.expires_at = shortened_expiry
-    await manager._save_session(session)
+    await manager._save_session(session, conditional=False)
 
     client = TestClient(app)
     client.cookies.set(config.cookie_name, token)
@@ -391,7 +391,7 @@ async def test_expired_cookie_starts_fresh_session(
     user = SessionUser(user_id="test-user")
     session, token = await manager.create_session(user=user)
     session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
-    await manager._save_session(session)
+    await manager._save_session(session, conditional=False)
 
     client = TestClient(app)
     client.cookies.set(config.cookie_name, token)
@@ -651,7 +651,7 @@ async def test_header_source_renewal_uses_response_header_not_cookie(
     # Shorten expiry so time_remaining < sliding threshold (< 50% of session_ttl).
     shortened_expiry = datetime.now(timezone.utc) + timedelta(seconds=100)
     session.expires_at = shortened_expiry
-    await manager._save_session(session)
+    await manager._save_session(session, conditional=False)
 
     client = TestClient(app)
     response = client.get("/noop", headers={config.header_name: token})
@@ -783,7 +783,7 @@ async def _shorten_expiry(manager: SessionManager, token: str) -> None:
     """Push the session under the sliding threshold so the load renews it."""
     session, _ = await manager.get_session(token)
     session.expires_at = datetime.now(timezone.utc) + timedelta(seconds=100)
-    await manager._save_session(session)
+    await manager._save_session(session, conditional=False)
 
 
 @pytest.mark.parametrize("write_data", [True, False])

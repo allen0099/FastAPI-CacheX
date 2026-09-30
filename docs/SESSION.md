@@ -121,8 +121,12 @@ settings from `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB` and `REDIS_PASSWORD`.
 ```
 <!-- fmt:on -->
 
-Changes made to a `Session` object inside a handler (flash messages, `session.data`,
-`session.user`) are only persisted when you call `session_manager.update_session(session)`.
+Changes made to a `Session` object inside a handler (flash messages, `session.data`) are only
+persisted when you call `session_manager.update_session(session)`. The save is conditional: it
+stores the session only while the backend still holds what this object last read or wrote, and
+returns `False` otherwise. A session that another request deleted, invalidated or rotated in the
+meantime is not brought back, and of two requests that change the same session at the same time,
+the first save wins (see [Session writes](MIGRATING_0_4.md#session-writes)).
 
 `delete_user_sessions()` and `clear_expired_sessions()` enumerate every key in the backend via
 `get_all_keys()` and load each session under `backend_key_prefix`, so their cost grows with the
@@ -181,7 +185,10 @@ async def me(session=Depends(require_user_session)):
   (`SessionManager.create_anonymous_session()`, with IP/User-Agent bindings applied as
   configured) and sends its token back through the request's transport.
 - Modifying it on a loaded session saves the new contents to the backend via `update_session()`,
-  replacing `Session.data` with the dict's contents.
+  replacing `Session.data` with the dict's contents. If another request deleted, invalidated or
+  rotated the session, or saved it first, while this one ran, the save is dropped and logged. The
+  response sends no session token, except a renewed one that this request already stored for a
+  session that is still valid.
 - Clearing it (`request.session.clear()`) on a loaded session logs out: the backend session is
   deleted even if its data was already empty, and a cookie client also receives a `Set-Cookie`
   that expires the cookie. Keys written after `clear()` in the same request go into a new

@@ -331,6 +331,50 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return bool(updated)
 
+    async def set_if_equals(
+        self,
+        key: str,
+        expected: CacheEntry,
+        value: CacheEntry,
+        ttl: int | None = None,
+    ) -> bool:
+        """Atomically store ``value`` while ``key`` holds ``expected`` (see base class).
+
+        GETS reads the value to compare along with its CAS token, and the CAS
+        write succeeds only if nothing wrote or deleted the key since.
+        """
+        validate_ttl(ttl)
+        # Converted up front so a ttl Memcached cannot store fails before I/O.
+        exptime = _expiry(ttl)
+        return await asyncio.to_thread(
+            self._set_if_equals, key, expected, value, ttl, exptime
+        )
+
+    def _set_if_equals(
+        self,
+        key: str,
+        expected: CacheEntry,
+        value: CacheEntry,
+        ttl: int | None,
+        exptime: int,
+    ) -> bool:
+        """Run ``set_if_equals``'s GETS, compare and CAS in one worker thread."""
+        prefixed_key = self._make_key(key)
+        raw, cas_token = self.client.gets(prefixed_key)
+        if raw is None or decode_entry(raw) != expected:
+            logger.debug("Memcached SET_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        stored = self.client.cas(
+            prefixed_key, encode_entry(value), cas_token, exptime, noreply=False
+        )
+        logger.debug(
+            "Memcached SET_IF_EQUALS %s; key=%s ttl=%s",
+            "HIT" if stored else "LOST RACE",
+            key,
+            ttl,
+        )
+        return bool(stored)
+
     def _add_delta(self, prefixed_key: str, delta: int) -> int | None:
         """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist."""
         if delta < 0:

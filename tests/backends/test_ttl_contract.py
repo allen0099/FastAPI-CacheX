@@ -63,11 +63,16 @@ OPERATIONS: dict[str, Callable[[BaseCacheBackend, int], Awaitable[object]]] = {
     "set": lambda backend, ttl: backend.set("k", ENTRY, ttl=ttl),
     "set_if_absent": lambda backend, ttl: backend.set_if_absent("k", ENTRY, ttl=ttl),
     "increment": lambda backend, ttl: backend.increment("n", ttl=ttl),
+    "set_if_equals": lambda backend, ttl: backend.set_if_equals(
+        "k", ENTRY, ENTRY, ttl=ttl
+    ),
 }
 
 
 @pytest.mark.parametrize(("ttl", "error", "match"), BAD_TTLS)
-@pytest.mark.parametrize("operation", ["set", "set_if_absent", "increment"])
+@pytest.mark.parametrize(
+    "operation", ["set", "set_if_absent", "increment", "set_if_equals"]
+)
 async def test_backends_reject_invalid_ttl(
     operation: str, ttl: object, error: type[Exception], match: str
 ) -> None:

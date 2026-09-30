@@ -255,6 +255,39 @@ class BaseCacheBackend(ABC):
         await self.set(key, expected, ttl=ttl)
         return True
 
+    async def set_if_equals(
+        self,
+        key: str,
+        expected: CacheEntry,
+        value: CacheEntry,
+        ttl: int | None = None,
+    ) -> bool:
+        """Store ``value`` only while ``key`` still holds ``expected``.
+
+        A compare-and-set: a caller that read ``expected`` earlier overwrites
+        it only if nothing changed, deleted or expired the key since. Sessions
+        save through it, so a request that loaded a session cannot bring it
+        back after another request deleted or invalidated it.
+
+        The base implementation is a best-effort, NON-atomic get-compare-set
+        fallback for third-party backends; the built-in backends override it
+        with an atomic implementation.
+
+        Args:
+            key: Cache key to overwrite
+            expected: The entry the caller last read or wrote (compared with ``==``)
+            value: Entry to store in its place
+            ttl: Time to live in seconds (``None`` = never expires)
+
+        Returns:
+            Whether ``value`` was stored
+        """
+        validate_ttl(ttl)
+        if await self.get(key) != expected:
+            return False
+        await self.set(key, value, ttl=ttl)
+        return True
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the integer counter stored at ``key``.
 

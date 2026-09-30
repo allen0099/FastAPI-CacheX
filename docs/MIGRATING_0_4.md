@@ -186,8 +186,12 @@ SessionConfig(
 0.4.0 writes sessions conditionally ([#128](https://github.com/allen0099/FastAPI-CacheX/issues/128)): a request that loaded a session before another request deleted, invalidated or rotated it can no longer bring the record back when it saves. No code change is needed.
 
 - Ordinary saves become conditional: the middleware's save of `request.session` changes, sliding renewal and `update_session()`. Each succeeds only while the stored record still equals what this request last read or wrote. Deleting, invalidating, expiring and rotating stay unconditional, so a security action always wins.
-- A rejected save is dropped and logged. The response is still sent, without a session token.
+- A rejected save is dropped and logged. The response is still sent, without a session token. The exception is a renewal that this request already stored: while the session is still valid (the save lost only to another save), the renewed token is sent, so a JWT client does not keep a token that expires before the record.
+- Rotating the ID (`regenerate_session_id()`, `rotate_session_id()`, `login()`) stays unconditional. A request that rotates a copy it read before another request invalidated the session still stores that copy under the new ID.
 - **Side effect:** when two requests change the same session at the same time (two tabs adding to a cart), the first save wins and the second is dropped. Today the last save wins, so one of the two changes is already lost; 0.4.0 changes which one. Merging such changes is tracked in [#376](https://github.com/allen0099/FastAPI-CacheX/issues/376).
+- `update_session()` now returns `True` when the session was stored and `False` when the save was dropped. A `Session` built by hand, never read from the backend, is stored only if no record exists under its ID yet.
+- When `get_session()` renews a session (sliding expiry) and the renewal loses a race with another save, it reads the session again and retries once. If it loses again, the request keeps the session it read and no renewed token is sent.
+- `Session` equality ignores which backend entry each copy last read or wrote, so a loaded session still equals one built with the same fields.
 - The backend gains `set_if_equals(key, expected, value, ttl=None)`, next to `delete_if_equals` and `expire_if_equals`. The base class provides a non-atomic fallback, so a custom backend keeps working unchanged; override it to make the save atomic.
 
 ### Token sources {#token-source-priority}

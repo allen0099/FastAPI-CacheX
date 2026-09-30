@@ -294,7 +294,7 @@ async def test_save_session_with_expired_session(
     session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
 
     # Save the expired session
-    await manager._save_session(session)
+    await manager._save_session(session, conditional=False)
 
     # Try to retrieve - should fail with SessionExpiredError
     with pytest.raises(SessionExpiredError):

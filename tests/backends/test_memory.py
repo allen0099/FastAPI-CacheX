@@ -946,6 +946,43 @@ async def test_memory_expire_if_equals_updates_ttl_only_when_matching(
     assert await memory_backend.expire_if_equals("missing", theirs, 60) is False
 
 
+async def test_memory_set_if_equals_stores_only_over_a_matching_entry(
+    memory_backend: MemoryBackend,
+):
+    mine = CacheEntry(fingerprint="session", content=b"v1")
+    theirs = CacheEntry(fingerprint="session", content=b"v2")
+    new = CacheEntry(fingerprint="session", content=b"v3")
+    await memory_backend.set("slot", theirs, 30)
+
+    assert await memory_backend.set_if_equals("slot", mine, new, 60) is False
+    assert await memory_backend.get("slot") == theirs
+    assert await memory_backend.set_if_equals("slot", theirs, new, 60) is True
+    assert await memory_backend.get("slot") == new
+    expiry = memory_backend.cache["slot"].expiry
+    assert expiry is not None
+    assert 55 <= expiry - time.time() <= 60
+    # ttl=None stores without expiry, as set() does.
+    assert await memory_backend.set_if_equals("slot", new, theirs) is True
+    assert memory_backend.cache["slot"].expiry is None
+    assert await memory_backend.set_if_equals("missing", theirs, new) is False
+    assert "missing" not in memory_backend.cache
+
+
+async def test_memory_set_if_equals_ignores_an_expired_entry(
+    memory_backend: MemoryBackend,
+):
+    entry = CacheEntry(fingerprint="session", content=b"v1")
+    await memory_backend.set("slot", entry, 60)
+    memory_backend.cache["slot"].expiry = time.time() - 1
+
+    assert (
+        await memory_backend.set_if_equals(
+            "slot", entry, CacheEntry(fingerprint="session", content=b"v2"), 60
+        )
+        is False
+    )
+
+
 async def test_memory_expire_if_equals_ignores_an_expired_entry(
     memory_backend: MemoryBackend,
 ):
