@@ -61,9 +61,9 @@ config = SessionConfig(
     # Optional: issued as `iss`/`aud` and checked on every request.
     jwt_issuer="https://api.example.com",
     jwt_audience="example-clients",
-    # The middleware also accepts a cookie. 0.4.0 changes both cookie defaults
-    # (to "__Host-session" with the Secure flag), so set them explicitly; over
-    # HTTPS use cookie_name="__Host-session" and cookie_https_only=True.
+    # The middleware also accepts a cookie. The default one (__Host-session
+    # with the Secure flag) needs HTTPS; this example runs over plain HTTP, so
+    # it names the cookie without the __Host- prefix and drops Secure.
     cookie_name="session",
     cookie_https_only=False,
 )

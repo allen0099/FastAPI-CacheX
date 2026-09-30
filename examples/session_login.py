@@ -59,10 +59,9 @@ config = SessionConfig(
     # At least 32 characters, from the environment; see session_secret_key().
     secret_key=session_secret_key(),
     session_ttl=3600,
-    # 0.4.0 changes both cookie defaults (to "__Host-session" with the Secure
-    # flag), so set them explicitly. In production over HTTPS use
-    # cookie_name="__Host-session" and cookie_https_only=True; keep False only
-    # for local HTTP development.
+    # The default cookie (__Host-session with the Secure flag) needs HTTPS.
+    # This example runs over plain HTTP, so it names the cookie without the
+    # __Host- prefix and drops Secure; in production, leave both out.
     cookie_name="session",
     cookie_https_only=False,
 )

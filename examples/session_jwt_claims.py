@@ -159,8 +159,7 @@ config = SessionConfig(
     jwt_algorithm="HS256",
     jwt_issuer="acme-corp",
     jwt_audience="acme-api",
-    cookie_name="__Host-session",  # the middleware also reads a cookie
-    cookie_https_only=True,
+    # The middleware also reads a cookie: __Host-session with Secure by default.
 )
 
 # token_serializer replaces the serializer chosen from token_format.

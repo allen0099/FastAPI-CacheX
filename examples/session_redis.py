@@ -73,8 +73,7 @@ config = SessionConfig(
     sliding_threshold=0.5,
     ip_binding=True,  # reject the token from another IP address
     user_agent_binding=False,  # optional: reject it from another User-Agent
-    cookie_name="__Host-session",  # the 0.4.0 default; needs HTTPS
-    cookie_https_only=True,
+    # The cookie defaults to __Host-session with the Secure flag: HTTPS only.
 )
 session_manager = SessionManager(backend, config)
 # From 0.4.0 ClientIPDep resolves the manager only through the proxy.
