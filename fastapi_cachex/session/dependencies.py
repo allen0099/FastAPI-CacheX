@@ -14,6 +14,7 @@ from fastapi.security import HTTPBearer
 
 from fastapi_cachex.exceptions import ProxyNotSetError
 
+from .exceptions import SessionError
 from .middleware import _SESSION_READ_KEY
 from .middleware import _log_in
 from .middleware import _RequestSession
@@ -249,14 +250,26 @@ async def rotate_session_id(request: Request) -> bool:
         True if a loaded session was given a new ID, False if none was loaded
 
     Raises:
-        HTTPException: 500 if no session middleware has registered a
-            SessionManager yet
+        HTTPException: 401 if another request logged the session out (deleted,
+            invalidated or rotated it) since this one loaded it; 500 if no
+            session middleware has registered a SessionManager yet
     """
     manager = get_session_manager(request)
     session: Session | None = getattr(request.state, "__fastapi_cachex_session", None)
     if session is None:
         return False
-    await manager.regenerate_session_id(session)
+    try:
+        await manager.regenerate_session_id(session)
+    except SessionError as e:
+        # Another request logged the session out while this one ran (#128).
+        request_session = request.scope.get("session")
+        if isinstance(request_session, _RequestSession):
+            request_session.ended = True
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from e
     return True
 
 
@@ -283,6 +296,10 @@ async def login(
     - With no session loaded (a new visitor, or a token that did not
       resolve) a new session is created with the user, bound to the client
       IP and User-Agent as configured.
+    - A loaded session that another request deleted, invalidated or rotated
+      while this one ran is not rotated back to life (#128). A new session is
+      created as above, and nothing written to ``request.session`` before
+      the call is carried over.
 
     The middleware then saves the session, including anything written to
     ``request.session`` after the call (and, unless the loaded session was a
