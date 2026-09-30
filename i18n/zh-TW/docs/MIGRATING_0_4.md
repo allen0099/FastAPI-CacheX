@@ -219,7 +219,7 @@ SessionConfig(secret_key=SECRET, token_source_priority=["header", "cookie"])
 
 ### get_or_set 的鎖 {#get-or-set-lock}
 
-0.4.0 起，`CacheManager.get_or_set()` 預設開啟 cache stampede 保護（[#280](https://github.com/allen0099/FastAPI-CacheX/issues/280)）：同一個鍵同時未命中時，只有一個呼叫者執行 `factory`，其他呼叫者等待它的結果。這會讓未命中時多出幾次後端往返（見 [Cache stampede 保護](APP_CACHE.md#stampede-protection)）。在 0.3.9 中，若 `get_or_set()` 呼叫沒有傳入 `lock=`，而 manager 建立時也沒有傳入 `lock=`，每個 manager 會發出一次 `FutureWarning`。`AppCache` 自動建立的 manager 也包含在內。
+0.4.0 起，`CacheManager.get_or_set()` 預設開啟 cache stampede 保護（[#280](https://github.com/allen0099/FastAPI-CacheX/issues/280)）：同一個鍵同時未命中時，只有一個呼叫者執行 `factory`，其他呼叫者等待它的結果。這會讓未命中時多出後端往返：沒有其他呼叫者等待時，在 Redis 與 Memcached 上是六次而非兩次，另外每個等待中的呼叫者每次輪詢兩次（見[成本](APP_CACHE.md#cost)）。命中時不變。在 0.3.9 中，若 `get_or_set()` 呼叫沒有傳入 `lock=`，而 manager 建立時也沒有傳入 `lock=`，每個 manager 會發出一次 `FutureWarning`。`AppCache` 自動建立的 manager 也包含在內。在 0.3.9 表示「未選擇」的 `CacheManager(lock=None)` 會引發 `TypeError`，請傳入 bool。`get_or_set(lock=None)` 仍沿用 manager 的設定。等待中的呼叫者現在會阻塞到第一個呼叫者的 `factory` 回傳為止，上限為 `lock_ttl`（預設 60 秒）；可傳入 `wait_timeout=` 限制等待時間（見 [Cache stampede 保護](APP_CACHE.md#stampede-protection)）。`factory` 執行期間，後端會保存一個短期的鎖鍵 `lock:<prefix><key>`，`get_all_keys()` 與監控路由都會列出它。
 
 修改前：
 

@@ -15,9 +15,9 @@ async def expensive_operation(cache: AppCache):
     return result
 
 
-# 也可以直接建立實例，例如在請求之外使用。請明確傳入 `lock`：
-# 它的預設值會在 0.4.0 從 False 改為 True（見「Cache stampede 保護」）。
-manager = CacheManager(key_prefix="myapp:", default_ttl=60, lock=False)
+# 也可以直接建立實例，例如在請求之外使用。`lock` 預設為 True
+# （見「Cache stampede 保護」）。
+manager = CacheManager(key_prefix="myapp:", default_ttl=60)
 await manager.set("user:42", {"name": "Alice"})
 user = await manager.get("user:42")  # {"name": "Alice"}
 await manager.delete("user:42")
@@ -43,7 +43,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 - `get()` 在快取未命中時回傳 `None`（或你提供的 `default=`），遇到不存在或損毀的項目也絕不會拋出例外。
 - `set()` 遇到無法 JSON 序列化的值時，會讓 `TypeError` 直接往外拋出。
-- `get_or_set()` 支援以 `lock=True`（或 manager 全域設定 `CacheManager(lock=True)`）選用 cache stampede 保護，避免多次並行未命中時同時執行 `factory`，若等待超時則具備直接計算的優雅降級回退。分散式鎖的鍵名格式為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
+- `get_or_set()` 預設使用 cache stampede 保護（`lock=True`，可針對單次呼叫或以 `CacheManager(lock=...)` 全域設定），避免多次並行未命中時同時執行 `factory`，若等待超時則具備直接計算的優雅降級回退。分散式鎖的鍵名格式為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
 - `get_or_set()` 在未命中與命中時都回傳經 JSON 解碼後的值（見 [JSON 往返](#json-round-trip)），因此兩條路徑的結果相同。
 - `add()` 只在鍵尚未被占用時寫入值，並回傳是否有寫入。檢查與寫入是同一個後端原子操作（`set_if_absent`），因此適合「每個鍵只做一次」的工作，例如 webhook 或電子郵件的去重。已過期的鍵視為未被占用；存放無法解碼之值的鍵則不算，即使 `get()` 會把它當成未命中。
 - 鍵預設位於獨立、以 `cache:` 為前綴的命名空間，與 HTTP 路由快取及 OAuth state 分開，因此 `clear()`／`clear_prefix()` 絕不會動到無關的快取項目。
@@ -56,7 +56,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 ## Cache stampede 保護 {#stampede-protection}
 
-當 `factory` 的運算成本很高（例如慢速資料庫查詢、受速率限制的外部 API）且該鍵又是熱門鍵時，快取過期會導致多個請求同時重新計算。你可以透過 `CacheLock` 在單次呼叫或 manager 全域啟用分散式 cache stampede 保護：
+當 `factory` 的運算成本很高（例如慢速資料庫查詢、受速率限制的外部 API）且該鍵又是熱門鍵時，快取過期會導致多個請求同時重新計算。以 `CacheLock` 實作的分散式 cache stampede 保護預設開啟；你可以在單次呼叫或 manager 全域調整或關閉它：
 
 ```python
 # 單次呼叫保護：
@@ -64,14 +64,14 @@ profile = await manager.get_or_set(
     "user:42",
     lambda: load_user(42),
     ttl=300,
-    lock=True,
+    lock=True,  # 預設：沿用 manager 的 lock，未另行設定時為 True
     lock_ttl=30,  # factory 執行的租約上限（秒，預設：60）
     wait_timeout=10,  # 呼叫者等待的延遲預算（秒，預設：None，持鎖期間持續等待）
     raise_on_timeout=False,  # True 拋出 LockTimeoutError，False 回退至執行 factory（預設：False）
 )
 
 # 或 manager 全域預設：
-manager = CacheManager(lock=True, lock_ttl=60)
+manager = CacheManager(lock=False)  # 每次並行未命中都各自計算
 ```
 
 1. **未命中**：未命中時，呼叫者嘗試使用 `CacheLock` 進行非阻塞式取鎖，鎖鍵名稱為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
@@ -83,9 +83,17 @@ manager = CacheManager(lock=True, lock_ttl=60)
 
 請確保 `lock_ttl` 超過 `factory` 的預期執行時間。若 `factory` 執行時間超過 `lock_ttl`，鎖會在執行途中過期，導致等待中的呼叫者發起第二次計算。
 
-### 0.4.0 的預設值變更 {#the-default-changes-in-040}
+### 成本 {#cost}
 
-Cache stampede 保護在 0.3.x 預設關閉，**0.4.0 起預設開啟**。若 `get_or_set()` 呼叫沒有傳入 `lock=`，而 manager 建立時也沒有傳入 `lock=`（包括 `AppCache` 自動建立的 manager），每個 manager 會發出一次 `FutureWarning`。傳入 `lock=False` 可保留目前的行為，傳入 `lock=True` 則現在就啟用，可以針對單次呼叫或傳給 `CacheManager(...)`；使用 `AppCache` 時，請以 `CacheManagerProxy.set(CacheManager(lock=...))` 註冊自己的 manager。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#get-or-set-lock)。
+0.4.0 起 cache stampede 保護預設開啟（[#280](https://github.com/allen0099/FastAPI-CacheX/issues/280)），`AppCache` 自動建立的 manager 也一樣。它會讓未命中時多出後端往返；命中時兩者都只有一次 `GET`。以下以 Redis 與 Memcached 計算，每一步都是一次網路往返：
+
+| 路徑 | `lock=False` | `lock=True` |
+|------|--------------|-------------|
+| 命中 | 1：`GET` | 1：`GET` |
+| 未命中，沒有其他呼叫者 | 2：`GET`、`SET` | 6：`GET`、取鎖的 `SET NX`（Memcached 為 `add`）、再次檢查的 `GET`、`SET`，以及釋放鎖；釋放時會先讀取鎖，只有鎖仍持有此呼叫者的權杖時才刪除（2） |
+| 每個等待中的呼叫者 | 無：自己執行 `factory` | 開始時 2 次（`GET`、嘗試取鎖），之後每次輪詢 2 次（`GET`、嘗試取鎖），直到值出現 |
+
+等待者依上述退避輪詢：第一秒約五次，之後每 500 ms 一次，因此在 `factory` 執行期間，每個等待者每秒約多出四次後端操作。記憶體後端在行程內執行相同的步驟。對重複計算比額外往返更便宜的鍵，請在單次呼叫或 `CacheManager(...)` 傳入 `lock=False`；使用 `AppCache` 時，請以 `CacheManagerProxy.set(CacheManager(lock=False))` 註冊自己的 manager。
 
 ## JSON 往返 {#json-round-trip}
 
