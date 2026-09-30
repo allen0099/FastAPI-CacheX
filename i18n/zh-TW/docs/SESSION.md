@@ -81,7 +81,7 @@ app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
 ```
 <!-- fmt:on -->
 
-在 handler 中對 `Session` 物件所做的變更（Flash 訊息、`session.data`、`session.user`），只有在呼叫 `session_manager.update_session(session)` 時才會被儲存。
+在 handler 中對 `Session` 物件所做的變更（Flash 訊息、`session.data`），只有在呼叫 `session_manager.update_session(session)` 時才會被儲存。這個儲存是有條件的：只有在後端仍存放這個物件最後一次讀到或寫入的內容時才會寫入，否則回傳 `False`。期間被另一個請求刪除、使其失效或輪替的 Session 不會被復活；兩個請求同時修改同一個 Session 時，先儲存的成功（見 [Session 寫入](MIGRATING_0_4.md#session-writes)）。
 
 `delete_user_sessions()` 與 `clear_expired_sessions()` 會透過 `get_all_keys()` 列舉後端中的每一個鍵，並載入 `backend_key_prefix` 底下的每個 Session，因此其成本會隨後端的大小增加。在無法列舉鍵的 Memcached 後端上，它們找不到任何東西並回傳 `0`（後端會發出 `RuntimeWarning`）。
 
@@ -115,7 +115,7 @@ async def me(session=Depends(require_user_session)):
 `request.session` 是後端 Session 的 `data` dict 的一個視圖：
 
 - 在沒有載入任何 Session 時寫入 `request.session`，會建立一個新的**匿名** Session（`SessionManager.create_anonymous_session()`，並依設定套用 IP / User-Agent 綁定），並透過該請求的傳輸方式傳回其權杖。
-- 修改已載入 Session 的 `request.session`，會透過 `update_session()` 將新內容儲存到後端，以 dict 的內容取代 `Session.data`。
+- 修改已載入 Session 的 `request.session`，會透過 `update_session()` 將新內容儲存到後端，以 dict 的內容取代 `Session.data`。若這個請求執行期間，另一個請求刪除、使其失效或輪替了這個 Session，或先一步儲存了它，這次儲存會被捨棄並記錄 log。回應不附 Session 權杖，除非這個請求已儲存了續期，且 Session 仍然有效，此時會送出續期後的權杖。
 - 在已載入的 Session 上清除它（`request.session.clear()`）即為登出：即使資料原本就是空的，也會刪除後端的 Session；Cookie 用戶端還會收到一個使 Cookie 過期的 `Set-Cookie`。同一個請求中在 `clear()` 之後寫入的鍵，會存進一個使用新 ID 的新匿名 Session。`await logout(request)` 的效果相同，但會立即刪除後端的 Session，而不是等到送出回應時，且在該請求剩下的處理中，`get_session` 找不到 Session。
 - 以 `del` 或 `pop()` 移除最後一個鍵並不是登出。帶有使用者的 Session 會以空資料儲存；匿名 Session 已無任何內容，會和 `clear()` 一樣被刪除。
 - 以寫入 `request.session` 的方式登入時，會沿用請求帶來的 Session ID。Starlette 的中介軟體中 Cookie *就是* Session，因此登入回應會取代任何被植入的 Cookie；這裡的 Cookie 只是指向伺服器端紀錄的名稱，被植入的 Cookie 會跟著受害者一起登入。請以 `await login(request, user)` 登入，它會為 Session 換一個新 ID 並附加使用者（見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)）。

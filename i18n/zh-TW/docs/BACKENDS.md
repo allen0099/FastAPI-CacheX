@@ -197,14 +197,15 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 - `set_if_absent(key, value, ttl=None) -> bool`：只在 `key` 不存在時儲存 `value`（已過期的鍵視為不存在），並回報是否有寫入。記憶體後端在鎖內檢查，Redis 使用 `SET NX EX`，Memcached 使用 `ADD`。
 - `delete_if_equals(key, expected) -> bool`：只在 `key` 仍存放 `expected` 時才移除它，因此項目已過期的持有者無法釋放已被他人取得的鎖。請在你儲存的項目中放入唯一的權杖，並以同一個項目釋放。記憶體後端在鎖內比較，Redis 透過 Lua 腳本刪除，並在腳本中重新檢查先前比較過的值，Memcached 則使用 `GETS` + 一個讓項目立即過期的 `CAS` 寫入（傳統協定的 `DELETE` 不接受 CAS 權杖）。
 - `expire_if_equals(key, expected, ttl) -> bool`：只在 `key` 仍存放 `expected` 時，才把它的 TTL 更新為 `ttl` 秒，因此長時間執行的鎖持有者可以續約租期，而不會在鎖已過期時動到別人的鎖。記憶體後端在鎖內更新，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `EXPIRE`），Memcached 則使用 `GETS` + 以新 exptime 寫回相同位元組的 `CAS`（`TOUCH` 不接受 CAS 權杖）。
+- `set_if_equals(key, expected, value, ttl=None) -> bool`：只在 `key` 仍存放 `expected` 時才儲存 `value`。這是 compare-and-set：若呼叫端讀取之後有任何操作變更、刪除了該鍵，或它已過期，寫入就會失敗。Session 透過它儲存（見 [Session 寫入](MIGRATING_0_4.md#session-writes)）。記憶體後端在鎖內比較，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `SET`，設定了 `ttl` 時加上 `EX`），Memcached 則使用 `GETS` + 寫入新值的 `CAS`。
 
-這五個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。
+這六個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。
 
 完整可執行範例（英文）：[`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py)。
 
 ## TTL 值 {#ttl-values}
 
-每個 `ttl` 參數（`set`、`set_if_absent`、`increment`，以及建立在它們之上的 `CacheManager` 與 `StateManager` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的 `int` 秒數。這些檢查都在存取後端之前進行：
+每個 `ttl` 參數（`set`、`set_if_absent`、`set_if_equals`、`increment`，以及建立在它們之上的 `CacheManager` 與 `StateManager` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的 `int` 秒數。這些檢查都在存取後端之前進行：
 
 - 零、負值與更大的值會拋出 `ValueError`。底層儲存對 `0` 的解讀各不相同：Memcached 把 exptime `0` 視為「永不過期」，Redis 拒絕 `EX 0`，而行程內的 dict 則會立即讓項目過期。
 - `float`、`bool` 或其他型別會拋出 `TypeError`。float 過去只在記憶體後端上有效，而 `True` 會被當成一秒。`timedelta` 請以 `int(td.total_seconds())` 轉換。

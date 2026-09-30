@@ -240,6 +240,29 @@ class MemoryBackend(BaseCacheBackend):
             logger.debug("Memory cache EXPIRE_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
             return True
 
+    async def set_if_equals(
+        self,
+        key: str,
+        expected: CacheEntry,
+        value: CacheEntry,
+        ttl: int | None = None,
+    ) -> bool:
+        """Atomically store ``value`` while ``key`` holds ``expected`` (see base class)."""
+        validate_ttl(ttl)
+        async with self.lock:
+            now = time.time()
+            item = self.cache.get(key)
+            if item is None or not _is_live(item, now):
+                logger.debug("Memory cache SET_IF_EQUALS MISS; key=%s", key)
+                return False
+            if item.value != expected:
+                logger.debug("Memory cache SET_IF_EQUALS MISMATCH; key=%s", key)
+                return False
+            expiry = now + ttl if ttl is not None else None
+            self.cache[key] = CacheItem(value=value, expiry=expiry)
+            logger.debug("Memory cache SET_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
+            return True
+
     async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 

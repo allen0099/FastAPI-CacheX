@@ -24,7 +24,7 @@ from fastapi_cachex.types import CacheEntry
 
 
 class SpyBackend(MemoryBackend):
-    """A memory backend that records every key passed to ``set``."""
+    """A memory backend that records every key passed to ``set`` or ``set_if_equals``."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -33,6 +33,16 @@ class SpyBackend(MemoryBackend):
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         self.writes.append(key)
         await super().set(key, value, ttl=ttl)
+
+    async def set_if_equals(
+        self,
+        key: str,
+        expected: CacheEntry,
+        value: CacheEntry,
+        ttl: int | None = None,
+    ) -> bool:
+        self.writes.append(key)
+        return await super().set_if_equals(key, expected, value, ttl=ttl)
 
 
 def _manager(**overrides: object) -> tuple[SessionManager, SpyBackend]:

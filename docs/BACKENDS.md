@@ -325,8 +325,15 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   Memory updates under its lock, Redis compares in Python then executes a Lua
   script (`GET` compare + `EXPIRE`), and Memcached uses `GETS` + `CAS` writing the
   same bytes with the new exptime (`TOUCH` takes no CAS token).
+- `set_if_equals(key, expected, value, ttl=None) -> bool` — stores `value` only
+  while `key` still holds `expected`: a compare-and-set that fails if anything
+  changed, deleted or expired the key since the caller read it. Sessions save
+  through it (see [Session writes](MIGRATING_0_4.md#session-writes)). Memory
+  compares under its lock, Redis compares in Python then runs a Lua script
+  (`GET` compare + `SET`, with `EX` when `ttl` is set), and Memcached uses
+  `GETS` + a `CAS` write of the new value.
 
-All five have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
+All six have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
 that only implements the abstract methods keeps working; override them to get
 real atomicity.
 
@@ -334,7 +341,7 @@ Complete runnable example: [`examples/rate_limit.py`](https://github.com/allen00
 
 ## TTL values
 
-Every `ttl` argument (`set`, `set_if_absent`, `increment`, and the `CacheManager`
+Every `ttl` argument (`set`, `set_if_absent`, `set_if_equals`, `increment`, and the `CacheManager`
 and `StateManager` methods and defaults built on them) is either `None`, meaning
 the entry never expires, or an `int` number of seconds from 1 up to `MAX_TTL`
 (2**31 - 1, about 68 years). The checks run before any backend I/O:

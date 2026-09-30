@@ -11,6 +11,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import PrivateAttr
+
+from fastapi_cachex.types import CacheEntry
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,11 @@ class Session(BaseModel):
 
     model_config = {"use_enum_values": True}
 
+    # The backend entry this object was last read from or written as. An
+    # ordinary save stores only while the backend still holds it (#128); None
+    # means the object was never read or written, so the record must not exist.
+    _stored: CacheEntry | None = PrivateAttr(default=None)
+
     # Hidden from type checkers: a visible __setattr__ would make them accept
     # assignment to any attribute name, typos included.
     if not TYPE_CHECKING:  # pragma: no branch
@@ -78,6 +86,19 @@ class Session(BaseModel):
                 )
                 raise AttributeError(msg)
             super().__setattr__(name, value)
+
+    def __eq__(self, other: object) -> bool:
+        """Compare the fields only, not which backend entry each copy last saw."""
+        if not isinstance(other, Session):
+            return NotImplemented
+        return (
+            type(self) is type(other)
+            and self.__dict__ == other.__dict__
+            and self.__pydantic_extra__ == other.__pydantic_extra__
+        )
+
+    # Mutable, like every pydantic model that is not frozen.
+    __hash__ = None  # type: ignore[assignment]
 
     def _attach_user(self, user: SessionUser) -> None:
         """Set ``user``, for ``login()`` only, which rotates the ID right after."""

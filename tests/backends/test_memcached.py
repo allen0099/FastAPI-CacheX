@@ -316,6 +316,7 @@ async def _clear_path(backend: MemcachedBackend) -> int:
         lambda b: b.get_and_delete("k"),
         lambda b: b.delete_if_equals("k", _ENTRY),
         lambda b: b.expire_if_equals("k", _ENTRY, 5),
+        lambda b: b.set_if_equals("k", _ENTRY, _ENTRY, 5),
         lambda b: b.delete_many(["a", "b"]),
         lambda b: b.delete("k"),
         _clear_path,
@@ -328,6 +329,7 @@ async def _clear_path(backend: MemcachedBackend) -> int:
         "get_and_delete",
         "delete_if_equals",
         "expire_if_equals",
+        "set_if_equals",
         "delete_many",
         "delete",
         "clear_path",
@@ -949,6 +951,56 @@ async def test_memcached_expire_if_equals_keeps_a_value_written_after_the_compar
 
 
 @requires_memcached
+async def test_memcached_set_if_equals_stores_only_over_a_matching_entry(
+    memcached_backend: MemcachedBackend,
+):
+    mine = CacheEntry(fingerprint="session", content=b"v1")
+    theirs = CacheEntry(fingerprint="session", content=b"v2")
+    new = CacheEntry(fingerprint="session", content=b"v3")
+    await memcached_backend.set("slot", theirs, 30)
+
+    assert await memcached_backend.set_if_equals("slot", mine, new, 60) is False
+    assert await memcached_backend.get("slot") == theirs
+    assert await memcached_backend.set_if_equals("slot", theirs, new, 60) is True
+    assert await memcached_backend.get("slot") == new
+    assert await memcached_backend.set_if_equals("slot", new, mine) is True
+    assert await memcached_backend.get("slot") == mine
+    assert await memcached_backend.set_if_equals("missing", theirs, new) is False
+    assert await memcached_backend.get("missing") is None
+
+
+@requires_memcached
+@pytest.mark.parametrize("change", ["overwrite", "delete"])
+async def test_memcached_set_if_equals_keeps_a_change_made_after_the_compare(
+    memcached_backend: MemcachedBackend, change: str
+):
+    """A write or delete between GETS and CAS is not undone."""
+    mine = CacheEntry(fingerprint="session", content=b"v1")
+    new = CacheEntry(fingerprint="session", content=b"v3")
+    await memcached_backend.set("slot", mine, 60)
+
+    client = memcached_backend.client
+    original_gets = client.gets
+
+    def gets_then_change(key):
+        result = original_gets(key)
+        if change == "overwrite":
+            client.set(key, b'{"overwritten": true}', 60)
+        else:
+            client.delete(key)
+        return result
+
+    client.gets = gets_then_change
+    try:
+        assert await memcached_backend.set_if_equals("slot", mine, new, 60) is False
+    finally:
+        client.gets = original_gets
+
+    raw = await asyncio.to_thread(client.get, memcached_backend._make_key("slot"))
+    assert raw == (b'{"overwritten": true}' if change == "overwrite" else None)
+
+
+@requires_memcached
 async def test_lock_lifecycle_with_memcached(
     memcached_backend: MemcachedBackend,
 ) -> None:
@@ -971,13 +1023,16 @@ def test_expiry_up_to_2038_is_sent_as_a_timestamp(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "operation", ["set", "set_if_absent", "increment", "expire_if_equals"]
+    "operation",
+    ["set", "set_if_absent", "increment", "expire_if_equals", "set_if_equals"],
 )
 async def test_ttl_past_2038_is_rejected_before_io(operation: str) -> None:
     """Such a write used to succeed while Memcached dropped the item at once (#229)."""
     backend = stubbed_backend()
     entry = CacheEntry(fingerprint="e", content=b"v")
-    args = ("k",) if operation == "increment" else ("k", entry)
+    args: tuple[object, ...] = ("k",) if operation == "increment" else ("k", entry)
+    if operation == "set_if_equals":
+        args = ("k", entry, entry)
 
     with pytest.raises(ValueError, match="expires after 2038-01-19"):
         await getattr(backend, operation)(*args, ttl=2**31 - 1)
@@ -1049,6 +1104,7 @@ def _stub_for_single_hop(backend: MemcachedBackend) -> None:
         ("get_and_delete", ("k",)),
         ("delete_if_equals", ("k", _ENTRY)),
         ("expire_if_equals", ("k", _ENTRY, 5)),
+        ("set_if_equals", ("k", _ENTRY, _ENTRY, 5)),
         ("delete_many", (["a", "b", "c"],)),
     ],
 )

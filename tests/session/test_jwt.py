@@ -119,7 +119,7 @@ async def test_jwt_sliding_renewal_returns_new_token_with_updated_exp() -> None:
     # Shorten expires_at so time_remaining < 50% of 3600 s → triggers renewal
     shortened_expiry = datetime.now(timezone.utc) + timedelta(seconds=1000)
     created.expires_at = shortened_expiry
-    await manager._save_session(created)
+    await manager._save_session(created, conditional=False)
 
     renewed_session, renewed_token = await manager.get_session(original_token)
 

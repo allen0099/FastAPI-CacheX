@@ -123,6 +123,22 @@ async def test_expire_if_equals_fallback_updates_ttl_only_when_matching(
     assert await backend.expire_if_equals("missing", theirs, ttl=60) is False
 
 
+async def test_set_if_equals_fallback_stores_only_over_a_matching_entry(
+    backend: DictBackend,
+) -> None:
+    mine = CacheEntry(fingerprint="session", content=b"v1")
+    theirs = CacheEntry(fingerprint="session", content=b"v2")
+    new = CacheEntry(fingerprint="session", content=b"v3")
+    await backend.set("slot", theirs, ttl=30)
+
+    assert await backend.set_if_equals("slot", mine, new, ttl=60) is False
+    assert backend.store["slot"] == (theirs, 30)
+    assert await backend.set_if_equals("slot", theirs, new, ttl=60) is True
+    assert backend.store["slot"] == (new, 60)
+    assert await backend.set_if_equals("missing", theirs, new) is False
+    assert "missing" not in backend.store
+
+
 async def test_aclose_is_a_no_op_by_default(backend: DictBackend) -> None:
     await backend.set("key", CacheEntry(fingerprint="f", content=b"v"))
 
