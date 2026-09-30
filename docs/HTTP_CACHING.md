@@ -754,8 +754,8 @@ add_routes(
     app,
     prefix="/admin/cache",  # default "" -> /cached-hits, /cached-records
     include_in_schema=False,  # default: hidden from OpenAPI
-    dependencies=[Depends(verify_admin)],
-    include_content_preview=False,  # default True: show the first 100 bytes
+    dependencies=[Depends(verify_admin)],  # required, keyword-only
+    include_content_preview=True,  # default False: no body previews
 )
 ```
 
@@ -764,10 +764,10 @@ add_routes(
   expiry, plus counts of valid and expired entries
   and the distinct cached paths. It does not count hits.
 - `GET {prefix}/cached-records` — every cached record with its size, expiry,
-  `media_type` (the stored response's media type, `null` if it had none) and a
-  preview of the first 100 bytes of the cached content. With
-  `include_content_preview=False`, `content_preview` is `null` and no response
-  body leaves the server; keys, sizes and expiry are still reported.
+  `media_type` (the stored response's media type, `null` if it had none) and,
+  with `include_content_preview=True`, a preview of the first 100 bytes of the
+  cached content. By default `content_preview` is `null` and no response body
+  leaves the server; keys, sizes and expiry are still reported.
   `content_type` is always `"bytes"` and is kept for compatibility; read
   `media_type` instead.
 
@@ -778,16 +778,11 @@ keys from a `key_builder` that does not use `build_cache_key()`.
 > [!WARNING]
 > **These routes have no authentication of their own.** `include_in_schema=False`
 > only hides them from the OpenAPI document; anyone who guesses the path can read
-> them. `/cached-records` includes a preview of the cached content (unless
-> `include_content_preview=False`) and exposes your whole route structure. In
-> production always pass `dependencies=[Depends(your_auth)]`, or mount them on
-> an internal-only app.
->
-> Calling `add_routes()` without `dependencies` emits a `UserWarning`. Version
-> 0.4.0 will require the parameter and turn `include_content_preview` off by
-> default ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298)). For
-> a local or test app that should stay open, pass `dependencies=[]` to opt out
-> deliberately without the warning.
+> them. They expose your whole route structure, including query strings, and
+> with `include_content_preview=True` the start of every cached response. So
+> `dependencies` is required: pass `dependencies=[Depends(your_auth)]`, or mount
+> the routes on an internal-only app. For a local or test app that should stay
+> open, pass `dependencies=[]` to opt out deliberately.
 
 The runnable example guards them with a token from an environment variable, and
 keeps them closed while the variable is unset:
