@@ -64,6 +64,11 @@ async def test_get_app_cache_falls_back_to_memory_without_a_backend():
     assert CacheManagerProxy.get() is manager
 
 
+async def test_get_app_cache_default_manager_locks():
+    """The manager `AppCache` creates follows the 0.4.0 default (#280)."""
+    assert get_app_cache().lock is True
+
+
 async def test_get_app_cache_uses_the_configured_backend():
     """A configured backend must not be replaced by the fallback."""
     backend = MemoryBackend()
