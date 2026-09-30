@@ -213,7 +213,7 @@ config = SessionConfig(
 
 `jwt_algorithm` 必須是 `HS256`、`HS384`、`HS512`、`RS256`、`RS384`、`RS512`、`ES256`、`ES384`、`ES512`、`PS256`、`PS384`、`PS512` 或 `EdDSA` 其中之一；其他任何值（包括 `none`）都會拋出 `ValidationError`。內建的序列化器以同一把 `secret_key` 簽署與驗證，因此只支援 `HS256`、`HS384` 與 `HS512`：使用非對稱演算法時，除非你傳入持有金鑰對的自訂 `token_serializer`，否則 `SessionManager` 會拋出 `ValueError`。
 
-HMAC 金鑰的長度至少須等於雜湊輸出（RFC 7518 §3.2）：`HS256` 為 32 位元組、`HS384` 為 48、`HS512` 為 64，以 UTF-8 編碼後計算。`secret_key` 只要求 32 個字元，因此搭配 `HS384` 或 `HS512` 時，較短的金鑰會讓序列化器在建立時發出一次 `UserWarning`（PyJWT 2.11 以上版本每次簽署或驗證權杖時也會發出 `InsecureKeyLengthWarning`）。請使用更長的金鑰，例如 `secrets.token_urlsafe(64)`。
+HMAC 金鑰的長度至少須等於雜湊輸出（RFC 7518 §3.2）：`HS256` 為 32 位元組、`HS384` 為 48、`HS512` 為 64，以 UTF-8 編碼後計算。`secret_key` 只要求 32 個字元，因此搭配 `HS384` 或 `HS512` 時，較短的金鑰會讓 `SessionManager` 在建立內建序列化器時拋出 `ValueError`（自訂的 `token_serializer` 自行持有金鑰）。請使用更長的金鑰，例如 `secrets.token_urlsafe(64)`，或改用 `HS256`。
 
 安全性注意事項：
 

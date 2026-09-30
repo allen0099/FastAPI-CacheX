@@ -53,8 +53,10 @@ class SessionManager:
                 overrides the built-in selection (simple/jwt).
 
         Raises:
-            ValueError: If ``config.token_format`` is ``"jwt"`` with an
-                asymmetric ``jwt_algorithm`` and no ``token_serializer``.
+            ValueError: If ``config.token_format`` is ``"jwt"`` and no
+                ``token_serializer`` is given, with an asymmetric
+                ``jwt_algorithm``, or with a ``secret_key`` shorter in UTF-8
+                bytes than the HMAC hash output (48 for HS384, 64 for HS512).
             ImportError: If ``config.token_format`` is ``"jwt"``, no
                 ``token_serializer`` is given and PyJWT is not installed.
         """

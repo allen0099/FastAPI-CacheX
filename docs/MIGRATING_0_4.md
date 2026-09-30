@@ -167,7 +167,7 @@ app.add_middleware(
 
 ### JWT secret length {#jwt-secret}
 
-With `token_format="jwt"`, 0.4.0 raises at startup when `jwt_algorithm` is `HS384` or `HS512` and `secret_key` is shorter than 48 or 64 bytes (RFC 7518 section 3.2) ([#129](https://github.com/allen0099/FastAPI-CacheX/issues/129)). 0.3.x emits a `UserWarning` when `JWTTokenSerializer` is built. Use a longer key, or `HS256`:
+With `token_format="jwt"`, 0.4.0 raises `ValueError` at startup, when `SessionManager` builds its `JWTTokenSerializer`, if `jwt_algorithm` is `HS384` or `HS512` and `secret_key` is shorter than 48 or 64 bytes in UTF-8 (RFC 7518 section 3.2) ([#129](https://github.com/allen0099/FastAPI-CacheX/issues/129)). 0.3.x emitted a `UserWarning` there instead. Use a longer key, or `HS256`:
 
 ```python
 # Before: 32 characters, too short for HS512
