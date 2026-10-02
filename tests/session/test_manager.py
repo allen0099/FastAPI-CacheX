@@ -755,9 +755,9 @@ async def test_session_sweeps_delete_in_one_batch() -> None:
             self.deletes = 0
             self.batches: list[int] = []
 
-        async def delete(self, key: str) -> None:
+        async def delete(self, key: str) -> bool:
             self.deletes += 1
-            await super().delete(key)
+            return await super().delete(key)
 
         async def delete_many(self, keys: Iterable[str]) -> int:
             keys = list(keys)

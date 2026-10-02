@@ -353,8 +353,9 @@ class TestAsyncRedisCacheBackend:
     async def test_delete(self, async_redis_backend: AsyncRedisCacheBackend):
         value = CacheEntry(fingerprint="test-etag", content=b"test-content")
         await async_redis_backend.set("test-key", value)
-        await async_redis_backend.delete("test-key")
+        assert await async_redis_backend.delete("test-key") is True
         assert await async_redis_backend.get("test-key") is None
+        assert await async_redis_backend.delete("test-key") is False
 
     @requires_redis
     async def test_clear(self, async_redis_backend: AsyncRedisCacheBackend):

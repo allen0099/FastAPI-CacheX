@@ -166,11 +166,13 @@ class MemoryBackend(BaseCacheBackend):
             self.cache[key] = CacheItem(value=value, expiry=expiry)
             logger.debug("Memory cache SET; key=%s ttl=%s", key, ttl)
 
-    async def delete(self, key: str) -> None:
-        """Remove a response from the cache."""
+    async def delete(self, key: str) -> bool:
+        """Remove a response from the cache; returns whether it had not expired."""
         async with self.lock:
-            self.cache.pop(key, None)
-            logger.debug("Memory cache DELETE; key=%s", key)
+            item = self.cache.pop(key, None)
+            removed = item is not None and _is_live(item, time.time())
+            logger.debug("Memory cache DELETE; key=%s removed=%s", key, removed)
+            return removed
 
     async def delete_many(self, keys: Iterable[str]) -> int:
         """Remove every key in ``keys`` under one lock; returns how many existed."""

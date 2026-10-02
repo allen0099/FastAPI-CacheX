@@ -24,8 +24,8 @@ class DictBackend(BaseCacheBackend):
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         self.store[key] = (value, ttl)
 
-    async def delete(self, key: str) -> None:
-        self.store.pop(key, None)
+    async def delete(self, key: str) -> bool:
+        return self.store.pop(key, None) is not None
 
     async def clear(self) -> None:
         self.store.clear()
@@ -76,11 +76,29 @@ async def test_get_and_delete_fallback_returns_then_removes(
     assert await backend.get_and_delete("once") is None
 
 
+async def test_fallbacks_lose_to_a_delete_between_get_and_delete(
+    backend: DictBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another caller removed the key after the get: only it got the entry."""
+    value = CacheEntry(fingerprint="e", content=b"once")
+    await backend.set("once", value)
+
+    async def lost_the_race(key: str) -> bool:
+        backend.store.pop(key, None)
+        return False
+
+    monkeypatch.setattr(backend, "delete", lost_the_race)
+
+    assert await backend.get_and_delete("once") is None
+    await backend.set("once", value)
+    assert await backend.delete_if_equals("once", value) is False
+
+
 async def test_delete_many_fallback_deletes_one_by_one(backend: DictBackend) -> None:
     await backend.set("a", CacheEntry(fingerprint="e", content=b"1"))
     await backend.set("b", CacheEntry(fingerprint="e", content=b"2"))
 
-    assert await backend.delete_many(["a", "b", "missing"]) == 3
+    assert await backend.delete_many(["a", "b", "missing"]) == 2
     assert backend.store == {}
 
 
