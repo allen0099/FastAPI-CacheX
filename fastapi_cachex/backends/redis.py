@@ -309,10 +309,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         await self.client.set(self._make_key(key), encode_entry(value), ex=ttl)
         logger.debug("Redis SET; key=%s ttl=%s", key, ttl)
 
-    async def delete(self, key: str) -> None:
-        """Remove a response from the cache."""
-        await self.client.delete(self._make_key(key))
-        logger.debug("Redis DELETE; key=%s", key)
+    async def delete(self, key: str) -> bool:
+        """Remove a response from the cache; returns whether the key existed."""
+        removed = bool(await self.client.delete(self._make_key(key)))
+        logger.debug("Redis DELETE; key=%s removed=%s", key, removed)
+        return removed
 
     async def delete_many(self, keys: Iterable[str]) -> int:
         """Remove every key in ``keys`` with batched DELs; returns how many existed."""

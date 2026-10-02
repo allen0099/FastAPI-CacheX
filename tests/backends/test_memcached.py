@@ -113,10 +113,11 @@ async def test_memcached_delete(memcached_backend: MemcachedBackend):
     value = CacheEntry(fingerprint="test_etag", content=b"test_content")
 
     await memcached_backend.set(key, value)
-    await memcached_backend.delete(key)
+    assert await memcached_backend.delete(key) is True
     retrieved_value = await memcached_backend.get(key)
 
     assert retrieved_value is None
+    assert await memcached_backend.delete(key) is False
 
 
 @requires_memcached
@@ -1077,6 +1078,18 @@ async def test_memcached_delete_many_sends_each_namespaced_key_once() -> None:
         call.kwargs == {"noreply": False}
         for call in backend.client.delete.call_args_list
     )
+
+
+@pytest.mark.parametrize("present", [True, False])
+async def test_memcached_delete_reports_what_the_server_answered(
+    present: bool,
+) -> None:
+    backend = stubbed_backend()
+    backend.client.delete.return_value = present
+
+    assert await backend.delete("k") is present
+
+    backend.client.delete.assert_called_once_with(backend._make_key("k"), noreply=False)
 
 
 async def test_memcached_delete_many_with_no_keys_does_no_io() -> None:

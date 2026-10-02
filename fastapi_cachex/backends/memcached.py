@@ -443,15 +443,21 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
         return value
 
-    async def delete(self, key: str) -> None:
+    async def delete(self, key: str) -> bool:
         """Delete value from cache.
 
         Args:
             key: Cache key to delete
+
+        Returns:
+            Whether the server held ``key``
         """
         prefixed = self._make_key(key)
-        await asyncio.to_thread(self.client.delete, prefixed)
-        logger.debug("Memcached DELETE; key=%s", key)
+        removed = bool(
+            await asyncio.to_thread(self.client.delete, prefixed, noreply=False)
+        )
+        logger.debug("Memcached DELETE; key=%s removed=%s", key, removed)
+        return removed
 
     async def delete_many(self, keys: Iterable[str]) -> int:
         """Remove every key in ``keys`` in one worker call; returns how many existed.
@@ -525,17 +531,14 @@ class MemcachedBackend(BaseCacheBackend):
         )
 
         # Try to delete the prefixed key (exact match only)
-        prefixed_key = self._make_key(path)
-        result = await asyncio.to_thread(
-            self.client.delete, prefixed_key, noreply=False
-        )
+        removed = int(await self.delete(path))
         logger.debug(
             "Memcached CLEAR_PATH; path=%s include_params=%s removed=%s",
             path,
             include_params,
-            1 if result else 0,
+            removed,
         )
-        return 1 if result else 0
+        return removed
 
     async def clear_pattern(self, pattern: str) -> int:
         """Clear cached responses matching a pattern.

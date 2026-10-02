@@ -140,21 +140,24 @@ class BaseCacheBackend(ABC):
         """
 
     @abstractmethod
-    async def delete(self, key: str) -> None:
-        """Remove a response from the cache."""
+    async def delete(self, key: str) -> bool:
+        """Remove a response from the cache.
+
+        Returns:
+            Whether ``key`` held an entry that had not expired yet
+        """
 
     async def delete_many(self, keys: Iterable[str]) -> int:
         """Remove every key in ``keys``; returns how many were removed.
 
-        The base implementation deletes one key at a time and reports how
-        many were attempted, since ``delete`` does not say whether the key
-        existed. The built-in backends override it and count what was
-        actually removed.
+        The base implementation deletes one key at a time and counts the
+        deletes that found an entry. The built-in backends override it with
+        batched deletes.
         """
         count = 0
         for key in keys:
-            await self.delete(key)
-            count += 1
+            if await self.delete(key):
+                count += 1
         return count
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
@@ -172,8 +175,10 @@ class BaseCacheBackend(ABC):
             The entry that was stored under ``key``, or ``None`` if there was none
         """
         value = await self.get(key)
-        if value is not None:
-            await self.delete(key)
+        if value is None or not await self.delete(key):
+            # Absent, or another caller removed it between the get and the
+            # delete: that caller got the entry.
+            return None
         return value
 
     async def set_if_absent(
@@ -226,8 +231,7 @@ class BaseCacheBackend(ABC):
         """
         if await self.get(key) != expected:
             return False
-        await self.delete(key)
-        return True
+        return await self.delete(key)
 
     async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
         """Update expiry on ``key`` to ``ttl`` seconds only while it still holds ``expected``.

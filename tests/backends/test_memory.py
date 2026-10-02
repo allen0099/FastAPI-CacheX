@@ -69,10 +69,11 @@ async def test_memory_backend_delete(memory_backend: MemoryBackend):
     ttl = 60
 
     await memory_backend.set(key, value, ttl)
-    await memory_backend.delete(key)
+    assert await memory_backend.delete(key) is True
     retrieved_value = await memory_backend.get(key)
 
     assert retrieved_value is None
+    assert await memory_backend.delete(key) is False
 
 
 async def test_memory_backend_clear(memory_backend: MemoryBackend):
@@ -599,8 +600,9 @@ async def test_memory_backend_enumeration_skips_expired_entries(
         lambda backend: backend.clear_pattern("stale"),
         lambda backend: backend.clear_path("stale"),
         lambda backend: backend.delete_many(["stale"]),
+        lambda backend: backend.delete("stale"),
     ],
-    ids=["clear_pattern", "clear_path", "delete_many"],
+    ids=["clear_pattern", "clear_path", "delete_many", "delete"],
 )
 async def test_memory_backend_does_not_count_expired_entries_as_cleared(
     memory_backend: MemoryBackend, clear: Callable[[MemoryBackend], Awaitable[int]]
