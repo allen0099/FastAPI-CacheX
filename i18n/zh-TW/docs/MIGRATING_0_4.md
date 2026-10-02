@@ -31,8 +31,8 @@ filterwarnings = [
 | 拒絕互相矛盾的 `__Host-`／`__Secure-` Cookie 設定 | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `UserWarning`（`cookie_name` 維持預設值時為 `FutureWarning`，僅限使用中介軟體時） | [Session Cookie](#session-cookie) |
 | 明確的 `login()`／`logout()`、唯讀的 `Session.user` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | 否 | [登入與登出](#login-logout) |
 | `get_or_set()` 預設使用鎖 | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set 的鎖](#get-or-set-lock) |
-| `get_session_manager` 透過 `SessionManagerProxy` 取得 | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
-| `token_source_priority` 列出所有權杖來源；沒有 `"cookie"` 的清單會停用 Cookie | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | `FutureWarning` | [權杖來源](#token-source-priority) |
+| 已取消：`get_session_manager` 透過 `SessionManagerProxy` 取得 | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning`（0.4.0 不再警告） | [get_session_manager](#get-session-manager) |
+| 已取消：`token_source_priority` 列出所有權杖來源 | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | `FutureWarning`（0.4.0 不再警告） | [權杖來源](#token-source-priority) |
 | `add_routes()` 必須傳入 `dependencies`，預設不含內容預覽 | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning`（僅在省略 `dependencies` 時） | [監控路由](#add-routes) |
 | 移除 Redis 的 `encoding` 選項 | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning`（UTF-8 以外的值為 `RuntimeWarning`） | [Redis encoding](#redis-encoding) |
 | 拒絕短於雜湊輸出的 JWT HMAC 密鑰 | [#129](https://github.com/allen0099/FastAPI-CacheX/issues/129) | `UserWarning` | [JWT 密鑰長度](#jwt-secret) |
@@ -40,7 +40,7 @@ filterwarnings = [
 | 移除 `BackendProxy.get_backend()`／`set_backend()` | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
 | 移除 `CacheError` | [#130](https://github.com/allen0099/FastAPI-CacheX/issues/130) | `DeprecationWarning` | [CacheError](#cache-error) |
 | 移除 Redis `clear_pattern()` 去除前綴後的重試 | [#125](https://github.com/allen0099/FastAPI-CacheX/issues/125) | `DeprecationWarning` | [Redis clear_pattern](#redis-clear-pattern) |
-| 移除 `SessionConfig.use_bearer_token` | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [權杖來源](#token-source-priority) |
+| `SessionConfig.use_bearer_token` 維持已棄用，0.5.0 移除 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [權杖來源](#token-source-priority) |
 | `UserSessionDep` 需要使用者 | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | 否 | [UserSessionDep](#user-session-dep) |
 | 移除 `memcache` extra | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | 否 | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` 回傳 `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | 否 | [delete() 的回傳值](#backend-delete) |
@@ -60,7 +60,7 @@ filterwarnings = [
 |----------|------|
 | 搭配 Cookie Session 的 `FastAPICacheXSessionMiddleware` | Starlette 的 `SessionMiddleware` 會把少量的 Session 資料存放在簽署過的 Cookie 中。若 Session 必須存放在伺服器端（資料量大，或需要在伺服器端撤銷），請改用伺服器端 Session 函式庫，例如 `starsessions`。 |
 | API 以標頭或 `Authorization: Bearer` 傳遞 Session 權杖 | 改用驗證機制本身的存取權杖，例如以 JWT 函式庫驗證的 OAuth 2 Bearer 權杖。 |
-| 以 `StateManager` 處理 OAuth/OIDC 的 `state` | 改用 OAuth 用戶端函式庫。例如 Authlib 的 Starlette 整合會替你產生並檢查 `state` 與 `nonce`。 |
+| 以 `StateManager` 處理 OAuth/OIDC 的 `state` | 改用 OAuth 用戶端函式庫。例如 Authlib 的 Starlette 整合會替你產生並檢查 `state` 與 `nonce`；它把這些值存放在 `request.session`，因此需要 Starlette 的 `SessionMiddleware`。 |
 | `CacheManager`、`CacheLock`、`@cache` | 不需處理，這些並未棄用。 |
 
 後端中已存在的 Session 與 state 不需要清理，會依各自的 TTL 自行過期。
@@ -72,6 +72,9 @@ import warnings
 
 warnings.filterwarnings(
     "ignore", message="fastapi_cachex.session is deprecated", category=FutureWarning
+)
+warnings.filterwarnings(
+    "ignore", message="fastapi_cachex.state is deprecated", category=FutureWarning
 )
 ```
 
@@ -146,22 +149,7 @@ await login(request, SessionUser(user_id=user_id))
 
 ### get_session_manager {#get-session-manager}
 
-`get_session_manager`（以及使用它的 `SessionManagerDep`、`ClientIPDep` 與 `rotate_session_id()`）目前回傳中介軟體存放在 `app.state` 的管理器。0.4.0 改為只透過 `SessionManagerProxy` 取得，與 `BackendProxy` 和 `CacheManagerProxy` 一致（[#131](https://github.com/allen0099/FastAPI-CacheX/issues/131)）。在 0.3.9 中，當 proxy 沒有管理器或持有不同的管理器時，每個應用程式會發出一次 `FutureWarning`。
-
-修改前：
-
-```python
-session_manager = SessionManager(backend, config)
-app.add_middleware(FastAPICacheXSessionMiddleware, session_manager=session_manager)
-```
-
-修改後：
-
-```python
-session_manager = SessionManager(backend, config)
-SessionManagerProxy.set(session_manager)
-app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得管理器
-```
+0.3.9 曾預告 0.4.0 會改為只透過 `SessionManagerProxy` 取得 `get_session_manager`（以及使用它的 `SessionManagerDep`、`ClientIPDep` 與 `rotate_session_id()`）（[#131](https://github.com/allen0099/FastAPI-CacheX/issues/131)），並發出 `FutureWarning`。由於 Session 已棄用（[#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)），0.4.0 不會做這項變更：它仍回傳中介軟體存放在 `app.state` 的管理器，也不再發出警告。若你已經呼叫 `SessionManagerProxy.set()`，保留它也沒有影響。
 
 ### UserSessionDep {#user-session-dep}
 
@@ -225,19 +213,10 @@ SessionConfig(
 
 ### 權杖來源 {#token-source-priority}
 
-0.4.0 起，`SessionConfig.token_source_priority` 列出所有權杖來源（[#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)）。`FastAPICacheXSessionMiddleware` 會依照清單順序尋找權杖，`"cookie"` 可以放在任何位置，預設值改為 `["header", "bearer", "cookie"]`，也就是目前使用的順序。沒有 `"cookie"` 的清單代表不使用 Cookie：中介軟體既不讀取也不設定它，而為沒有權杖的請求建立的 Session 會在 `header_name` 回應標頭中送出權杖。純 API 的應用就是用這種方式關閉 Cookie。
+0.3.9 在這裡預告了兩項變更。由於 Session 已棄用（[#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)），0.4.0 兩項都不會做：
 
-0.3.9 接受把 `"cookie"` 放在最後一項（也就是目前讀取 Cookie 的位置，因此暫時不會改變任何行為）；明確設定的清單沒有它時，`FastAPICacheXSessionMiddleware` 會發出 `FutureWarning`。預設清單不會發出警告。
-
-```python
-# 之前：雖然清單沒寫，Cookie 仍會在這兩者之後被讀取
-SessionConfig(secret_key=SECRET, token_source_priority=["bearer", "header"])
-
-# 之後，保留 Cookie（在 0.3.9 與 0.4.0 皆可運作）
-SessionConfig(secret_key=SECRET, token_source_priority=["bearer", "header", "cookie"])
-```
-
-`use_bearer_token` 已移除（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)），是否讀取 Bearer 權杖只由清單決定。0.3.9 在傳入它時，不論值為何，都會發出 `DeprecationWarning`：
+- **取消 `token_source_priority` 列出所有權杖來源（[#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)）。** 不論清單是否列出 `"cookie"`，中介軟體仍會在標頭來源之後讀取 Session Cookie，且 `"cookie"` 仍只能放在最後一項。0.4.0 不再對沒有 `"cookie"` 的清單發出 `FutureWarning`。已經以 `"cookie"` 結尾的清單可以照常使用。
+- **0.4.0 不會移除 `use_bearer_token`（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)）。** 它維持已棄用，傳入時仍會發出 `DeprecationWarning`，並在 0.5.0 隨 `fastapi_cachex.session` 一起移除。是否讀取 Bearer 權杖只由清單決定：
 
 ```python
 # 之前

@@ -1,8 +1,11 @@
-"""Advance notices for the session changes 0.4.0 makes (#352).
+"""Session changes 0.3.9 announced for 0.4.0 and dropped with #420.
 
-- #131: ``get_session_manager`` resolves through ``SessionManagerProxy`` only.
-- #75: a ``token_source_priority`` without ``"cookie"`` disables the cookie.
-- #377: ``SessionConfig.use_bearer_token`` is removed.
+Sessions are deprecated and leave in 0.5.0, so 0.4.0 keeps 0.3.9's behaviour
+and no longer warns about these changes:
+
+- #131: ``get_session_manager`` keeps returning the middleware's manager.
+- #75: the cookie is read whether or not ``token_source_priority`` lists it.
+- #377: ``SessionConfig.use_bearer_token`` stays deprecated, now until 0.5.0.
 """
 
 import warnings
@@ -32,7 +35,7 @@ def _middleware(config: SessionConfig) -> FastAPICacheXSessionMiddleware:
     return FastAPICacheXSessionMiddleware(FastAPI(), session_manager=manager)
 
 
-# --- #131: get_session_manager through SessionManagerProxy ---------------------
+# --- #131: get_session_manager keeps the middleware's manager -----------------
 
 
 def _manager_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
@@ -56,72 +59,24 @@ def _manager_app(manager: SessionManager, config: SessionConfig) -> FastAPI:
     return app
 
 
-@pytest.mark.parametrize("path", ["/manager", "/ip"])
-def test_get_session_manager_warns_without_the_proxy(
-    manager: SessionManager, config: SessionConfig, path: str
+@pytest.mark.parametrize("proxy", ["empty", "other"])
+def test_get_session_manager_returns_the_middleware_manager_silently(
+    manager: SessionManager, config: SessionConfig, proxy: str
 ) -> None:
-    client = TestClient(_manager_app(manager, config))
-
-    with pytest.warns(FutureWarning, match=r"SessionManagerProxy\.set\(") as record:
-        first = client.get(path)
-    # Once per app: later requests stay quiet.
-    second = client.get(path)
-
-    assert first.status_code == second.status_code == 200
-    assert "issues/131" in str(record[0].message)
-
-
-def test_rotate_session_id_warns_without_the_proxy(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    client = TestClient(_manager_app(manager, config))
-
-    with pytest.warns(FutureWarning, match="rotate_session_id"):
-        response = client.post("/rotate")
-
-    assert response.json() == {"rotated": False}
-
-
-def test_get_session_manager_warns_when_the_proxy_holds_another_manager(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    SessionManagerProxy.set(SessionManager(MemoryBackend(), config))
-    client = TestClient(_manager_app(manager, config))
-
-    with pytest.warns(
-        FutureWarning, match="a different SessionManager is set in SessionManagerProxy"
-    ):
-        response = client.get("/manager")
-
-    # 0.3.x still answers with the middleware's manager.
-    assert response.json() == {"is_same": True}
-
-
-def test_get_session_manager_warns_when_the_proxy_is_empty(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    client = TestClient(_manager_app(manager, config))
-
-    with pytest.warns(
-        FutureWarning, match="no SessionManager is set in SessionManagerProxy"
-    ):
-        response = client.get("/manager")
-
-    assert response.json() == {"is_same": True}
-
-
-def test_get_session_manager_is_silent_when_the_proxy_agrees(
-    manager: SessionManager, config: SessionConfig
-) -> None:
-    SessionManagerProxy.set(manager)
+    """Whatever the proxy holds, 0.4.0 answers with the middleware's manager."""
+    if proxy == "other":
+        SessionManagerProxy.set(SessionManager(MemoryBackend(), config))
     client = TestClient(_manager_app(manager, config))
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         response = client.get("/manager")
-        client.post("/rotate")
+        ip = client.get("/ip")
+        rotated = client.post("/rotate")
 
     assert response.json() == {"is_same": True}
+    assert ip.status_code == 200
+    assert rotated.json() == {"rotated": False}
 
 
 def test_middleware_from_the_proxy_is_silent(config: SessionConfig) -> None:
@@ -142,35 +97,22 @@ def test_middleware_from_the_proxy_is_silent(config: SessionConfig) -> None:
     assert response.json() == {"is_same": True}
 
 
-# --- #75: token_source_priority names every token source -----------------------
+# --- #75: the cookie is read whether or not the list names it ------------------
 
 _COOKIE = {"cookie_name": "session", "cookie_https_only": False}
 
 
 @pytest.mark.parametrize(
-    "priority", [["header", "bearer"], ["bearer", "header"], ["header"], []]
-)
-def test_middleware_warns_for_an_explicit_list_without_cookie(
-    priority: list[str],
-) -> None:
-    config = SessionConfig(secret_key=SECRET, token_source_priority=priority, **_COOKIE)
-
-    with pytest.warns(FutureWarning, match='does not list "cookie"') as record:
-        _middleware(config)
-
-    assert "issues/75" in str(record[0].message)
-
-
-@pytest.mark.parametrize(
     "settings",
     [
-        {},  # the default list becomes ["header", "bearer", "cookie"]: same order
+        {},
+        {"token_source_priority": ["header", "bearer"]},
+        {"token_source_priority": ["header"]},
+        {"token_source_priority": []},
         {"token_source_priority": ["header", "bearer", "cookie"]},
-        {"token_source_priority": ["bearer", "cookie"]},
-        {"token_source_priority": ["cookie"]},
     ],
 )
-def test_middleware_is_silent_for_the_default_or_a_list_with_cookie(
+def test_middleware_is_silent_with_or_without_cookie(
     settings: dict[str, object],
 ) -> None:
     config = SessionConfig(secret_key=SECRET, **settings, **_COOKIE)
@@ -188,14 +130,12 @@ def test_cookie_is_accepted_only_as_the_last_source(priority: list[str]) -> None
         SessionConfig(secret_key=SECRET, token_source_priority=priority)
 
 
-async def test_the_cookie_is_still_read_before_0_4_0_with_or_without_the_entry() -> (
-    None
-):
-    """Listing "cookie" last is today's order, and leaving it out changes nothing yet."""
+async def test_the_cookie_is_read_with_or_without_the_entry() -> None:
+    """Listing "cookie" last is the order it is read in; leaving it out changes nothing."""
     backend = MemoryBackend()
     for priority in (["header", "cookie"], ["header"]):
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)
+            warnings.simplefilter("error")
             config = SessionConfig(
                 secret_key=SECRET, token_source_priority=priority, **_COOKIE
             )
@@ -220,7 +160,7 @@ async def test_the_cookie_is_still_read_before_0_4_0_with_or_without_the_entry()
             assert client.get("/").json() == {"user": "u"}, priority
 
 
-# --- #377: use_bearer_token is removed ------------------------------------------
+# --- #377: use_bearer_token is deprecated until 0.5.0 ----------------------------
 
 
 @pytest.mark.parametrize("value", [True, False])
@@ -229,7 +169,7 @@ def test_passing_use_bearer_token_warns(value: bool) -> None:
         SessionConfig(secret_key=SECRET, use_bearer_token=value)
 
     message = str(record[0].message)
-    assert "0.4.0" in message
+    assert "removed in version 0.5.0" in message
     assert "issues/377" in message
 
 

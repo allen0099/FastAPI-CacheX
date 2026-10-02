@@ -29,7 +29,7 @@ nav = [
     { "後端" = "BACKENDS.md" },
     { "分散式鎖" = "LOCK.md" },
   ] },
-  { "Session 與登入" = [
+  { "Session 與登入（已棄用）" = [
     { "Session 管理" = "SESSION.md" },
     { "OAuth state" = "STATE.md" },
     { "JWT claims" = "JWT_CLAIMS.md" },
