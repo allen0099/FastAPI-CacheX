@@ -4,7 +4,7 @@ Guidance for Claude Code in this repository. It lists only what the code, `pypro
 
 ## Project
 
-`fastapi_cachex` (PyPI `fastapi-cachex`): HTTP caching, application cache, sessions, OAuth state and a distributed lock for FastAPI, on pluggable backends (memory, Redis, Memcached). 0.3.9 was the last 0.3.x. `master` is 0.4.0 development (milestone `0.4.0`, breaking changes allowed; `docs/MIGRATING_0_4.md` is the promise to users).
+`fastapi_cachex` (PyPI `fastapi-cachex`): HTTP caching, application cache and a distributed lock for FastAPI, on pluggable backends (memory, Redis, Memcached). The 0.4 line is current (0.4.0 released 2026-10-02). `release.yml` releases only from `master`, so `master` stays 0.4.x-compatible: merging breaking 0.5.0 work (milestone `0.5.0`) ends 0.4.x patch releases. Sessions and OAuth state (`fastapi_cachex.session`, `fastapi_cachex.state`) are deprecated (#420) and get security fixes only until 0.5.0 removes them (#421).
 
 ## Commands
 
@@ -38,4 +38,4 @@ Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 - Changelog: add a `changelog.d/<issue>.<section>.md` fragment and never edit `CHANGELOG.md`. The format is in `changelog.d/README.md`.
 - Docs changes go into both `docs/` and `i18n/zh-TW/docs/`. Terms follow `i18n/zh-TW/GLOSSARY.md`.
 - Never edit `version` in `pyproject.toml` by hand. Releases run through the `release.yml` workflow (`docs/DEVELOPMENT.md#releasing`).
-- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in `docs/MIGRATING_0_4.md`.
+- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in that minor's migration guide (`docs/MIGRATING_0_4.md` for 0.4.0; 0.5.0 gets a new `docs/MIGRATING_0_5.md` with its zh-TW copy and nav entry).
