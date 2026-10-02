@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 from typing import Any
 
+from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import HTTP_KEY_FORMAT_TAG
@@ -192,7 +193,7 @@ class BaseCacheBackend(ABC):
                 "it as False. See https://fastapi-cachex.readthedocs.io/en/"
                 "stable/MIGRATING_0_4/#backend-delete",
                 FutureWarning,
-                stacklevel=3,
+                stacklevel=caller_stacklevel(),
             )
             return True
         return bool(result)
