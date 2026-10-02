@@ -29,6 +29,7 @@ finally:
 - **阻塞與非阻塞模式**：
     - 非阻塞（`acquire(blocking=False)`）：只執行一次原子性的 `set_if_absent`，取得時立即回傳 `True`，已被占用時回傳 `False`。
     - 阻塞（預設；`CacheLock(..., blocking=True, timeout=None, poll_interval=0.1)`，每個值都可以在單次 `acquire()` 呼叫中覆寫，傳入 `None` 表示「沿用實例的值」）：每隔 `poll_interval` 秒重試一次，直到取得鎖或經過 `timeout` 秒為止。預設的 `timeout=None` 會讓阻塞的 `acquire()`（以及 `async with CacheLock(...)`）一直等到鎖被釋放。若到達有限的 `timeout`，`acquire()` 會回傳 `False`。
+- **中斷的取得**：若 `acquire()` 在 `set_if_absent` 尚未回應時被取消（請求逾時、用戶端中斷連線）或失敗，後端可能已經存下這次的佔用。此時 `acquire()` 會先以 `delete_if_equals` 刪除它再重新拋出例外，讓鎖不會在 `ttl` 到期前一直被無人持有（0.4.1 之前會）。這個刪除不受第二次取消影響，而且只是盡力而為：若刪除失敗，會在 `fastapi_cachex.lock` logger 記錄一筆 `WARNING`，佔用則隨 `ttl` 過期。
 - **Context manager 逾時**：進入 context manager（`async with CacheLock(...)`）時會呼叫 `acquire()`。若取得失敗或逾時，會拋出 `LockTimeoutError`。
 - **TTL 過期**：若工作花費的時間超過 `ttl` 且沒有續約，鎖的項目會在後端過期並被釋出。此時其他行程或容器就能在原本的程式碼仍在執行時取得這把鎖。原持有者之後呼叫 `extend()` 或 `release()` 會安全地回傳 `False`，而不會拋出錯誤。請選擇比預期工作時間更長的 `ttl`，或在長時間執行的操作中定期呼叫 `extend()`。
 - **TTL 續約（`extend`）**：`extend(ttl)` 只在鎖仍由這個持有者實例擁有時才更新鍵的 TTL，避免在已過期的鎖上發生競爭條件。
