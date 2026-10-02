@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 from typing import Any
 
+from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import HTTP_KEY_FORMAT_TAG
 from fastapi_cachex.types import CacheEntry
@@ -95,6 +96,18 @@ def validate_delta(delta: int) -> int:
         msg = "delta must fit in a signed 64-bit integer"
         raise ValueError(msg)
     return delta
+
+
+def check_counter_range(value: int) -> int:
+    """Return ``value`` if a signed 64-bit counter can hold it.
+
+    Raises:
+        CacheXError: If ``value`` is outside the signed 64-bit range
+    """
+    if not -(2**63) <= value < 2**63:
+        msg = "Counter increment would overflow a signed 64-bit integer"
+        raise CacheXError(msg)
+    return value
 
 
 class BaseCacheBackend(ABC):
@@ -340,7 +353,10 @@ class BaseCacheBackend(ABC):
             The counter value after the increment
 
         Raises:
-            CacheXError: If ``key`` holds a cached response instead of a counter
+            CacheXError: If ``key`` holds a cached response instead of a
+                counter, or the result would leave the counter's range: signed
+                64-bit, except on Memcached, whose counters are unsigned 64-bit.
+                The counter is left unchanged.
             TypeError: If ``delta`` or ``ttl`` is not an ``int``
             ValueError: If ``ttl`` is out of range, or ``delta`` does not fit
                 in a signed 64-bit integer
@@ -349,6 +365,7 @@ class BaseCacheBackend(ABC):
         validate_ttl(ttl)
         current = await self.get(key)
         value = delta if current is None else counter_value(current) + delta
+        check_counter_range(value)
         await self.set(key, counter_entry(value), ttl=ttl)
         return value
 

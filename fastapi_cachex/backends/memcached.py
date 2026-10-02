@@ -376,12 +376,32 @@ class MemcachedBackend(BaseCacheBackend):
         return bool(stored)
 
     def _add_delta(self, prefixed_key: str, delta: int) -> int | None:
-        """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist."""
+        """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist.
+
+        Memcached's INCR wraps around past 2**64 - 1. A wrapped result is
+        smaller than ``delta``, which no other result can be, so the wrap is
+        undone with an INCR of ``2**64 - delta`` (addition modulo 2**64 also
+        keeps any increment that landed in between) and reported. The two
+        INCRs are not atomic: a concurrent INCR between them can return the
+        wrapped value, and a DECR that clamps at 0 between them makes the undo
+        land on a different value. Making it exact would take a CAS loop on
+        every increment.
+
+        Raises:
+            CacheXError: If the INCR wrapped the counter around.
+        """
         if delta < 0:
             result = self.client.decr(prefixed_key, -delta, noreply=False)
         else:
             result = self.client.incr(prefixed_key, delta, noreply=False)
-        return None if result is None else int(result)
+        if result is None:
+            return None
+        value = int(result)
+        if delta > 0 and value < delta:
+            self.client.incr(prefixed_key, 2**64 - delta, noreply=False)
+            msg = "Counter increment would overflow an unsigned 64-bit integer"
+            raise CacheXError(msg)
+        return value
 
     def _increment(self, prefixed_key: str, delta: int, exptime: int) -> int | None:
         """Run ``increment``'s INCR, ADD and retried INCR in one worker thread.
@@ -418,7 +438,8 @@ class MemcachedBackend(BaseCacheBackend):
         pair is retried, starting a new window at ``delta``.
 
         Raises:
-            CacheXError: If the key holds a value that is not a counter, or
+            CacheXError: If the key holds a value that is not a counter, the
+                result would pass 2**64 - 1 (the counter is restored), or
                 the counter vanished after every ADD + INCR attempt.
         """
         validate_delta(delta)

@@ -813,6 +813,31 @@ async def test_increment_retries_when_the_new_counter_expires_before_incr() -> N
     assert backend.client.incr.call_count == 3
 
 
+@pytest.mark.parametrize("delta", [1, 5, 2**63 - 1])
+async def test_memcached_undoes_and_reports_a_wrapped_increment(delta: int) -> None:
+    # Memcached's INCR wraps past 2**64 - 1; the result is smaller than delta.
+    backend = stubbed_backend()
+    backend.client.incr.side_effect = [delta - 1, 2**64 - 1]
+
+    with pytest.raises(CacheXError, match="overflow an unsigned 64-bit integer"):
+        await backend.increment("k", delta)
+
+    # The undo adds 2**64 - delta, which subtracts delta modulo 2**64.
+    undo = backend.client.incr.call_args_list[1]
+    assert undo.args[1] == 2**64 - delta
+
+
+@pytest.mark.parametrize(("delta", "result"), [(1, 1), (5, 5), (5, 2**64 - 1)])
+async def test_memcached_does_not_report_an_increment_that_did_not_wrap(
+    delta: int, result: int
+) -> None:
+    backend = stubbed_backend()
+    backend.client.incr.return_value = result
+
+    assert await backend.increment("k", delta) == result
+    assert backend.client.incr.call_count == 1
+
+
 @requires_memcached
 async def test_memcached_set_if_absent_stores_only_the_first_value(
     memcached_backend: MemcachedBackend,
