@@ -1,6 +1,6 @@
 # 遷移至 0.4.0 {#migrating-to-040}
 
-0.3.9 是最後一個 0.3.x 版本。0.4.0 包含破壞性變更，收錄於 [0.4.0 milestone](https://github.com/allen0099/FastAPI-CacheX/issues?q=milestone%3A0.4.0)。本頁逐一列出這些變更、需要修改的地方，以及 0.3.9 是否已經發出警告。部分 0.4.0 的設計尚未定案；若 issue 對某個細節仍未決定，該節會說明目前已知與尚未決定的部分。
+0.3.9 是最後一個 0.3.x 版本。0.4.0 包含破壞性變更，收錄於 [0.4.0 milestone](https://github.com/allen0099/FastAPI-CacheX/issues?q=milestone%3A0.4.0)。本頁逐一列出這些變更、需要修改的地方，以及 0.3.9 是否已經發出警告。0.3.9 預告的三項 Session 變更並未照預告進行；見[權杖來源](#token-source-priority)與 [get_session_manager](#get-session-manager)。
 
 ## 升級前 {#before-you-upgrade}
 
@@ -40,7 +40,7 @@ filterwarnings = [
 | 移除 `BackendProxy.get_backend()`／`set_backend()` | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
 | 移除 `CacheError` | [#130](https://github.com/allen0099/FastAPI-CacheX/issues/130) | `DeprecationWarning` | [CacheError](#cache-error) |
 | 移除 Redis `clear_pattern()` 去除前綴後的重試 | [#125](https://github.com/allen0099/FastAPI-CacheX/issues/125) | `DeprecationWarning` | [Redis clear_pattern](#redis-clear-pattern) |
-| `SessionConfig.use_bearer_token` 維持已棄用，0.5.0 移除 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [權杖來源](#token-source-priority) |
+| `SessionConfig.use_bearer_token` 維持已棄用，0.5.0 移除 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377), [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | `DeprecationWarning` | [權杖來源](#token-source-priority) |
 | `UserSessionDep` 需要使用者 | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | 否 | [UserSessionDep](#user-session-dep) |
 | 移除 `memcache` extra | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | 否 | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` 回傳 `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | 否 | [delete() 的回傳值](#backend-delete) |
@@ -153,7 +153,7 @@ await login(request, SessionUser(user_id=user_id))
 
 ### UserSessionDep {#user-session-dep}
 
-`UserSessionDep` 是 `SessionDep` 的別名，也接受匿名 Session。0.4.0 起它與 `AuthenticatedSession` 一樣需要帶有使用者的 Session（[#127](https://github.com/allen0099/FastAPI-CacheX/issues/127)），因此匿名請求存取使用它的路由會得到 `401`。0.3.9 不會警告：型別別名在被使用時沒有可以執行程式碼的時機，而在匯入時警告會對每個人觸發。請選擇符合你本意的依賴項：
+在 0.3.x 中，`UserSessionDep` 是 `SessionDep` 的別名，也接受匿名 Session。0.4.0 起它與 `AuthenticatedSession` 一樣需要帶有使用者的 Session（[#127](https://github.com/allen0099/FastAPI-CacheX/issues/127)），因此匿名請求存取使用它的路由會得到 `401`。0.3.9 不會警告：型別別名在被使用時沒有可以執行程式碼的時機，而在匯入時警告會對每個人觸發。請選擇符合你本意的依賴項：
 
 ```python
 # 修改前
@@ -216,7 +216,7 @@ SessionConfig(
 0.3.9 在這裡預告了兩項變更。由於 Session 已棄用（[#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)），0.4.0 兩項都不會做：
 
 - **取消 `token_source_priority` 列出所有權杖來源（[#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)）。** 不論清單是否列出 `"cookie"`，中介軟體仍會在標頭來源之後讀取 Session Cookie，且 `"cookie"` 仍只能放在最後一項。0.4.0 不再對沒有 `"cookie"` 的清單發出 `FutureWarning`。已經以 `"cookie"` 結尾的清單可以照常使用。
-- **0.4.0 不會移除 `use_bearer_token`（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)）。** 它維持已棄用，傳入時仍會發出 `DeprecationWarning`，並在 0.5.0 隨 `fastapi_cachex.session` 一起移除。是否讀取 Bearer 權杖只由清單決定：
+- **0.4.0 不會移除 `use_bearer_token`（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)）。** 它維持已棄用，傳入時仍會發出 `DeprecationWarning`，並在 0.5.0 隨 `fastapi_cachex.session` 一起移除。0.4.x 中 `use_bearer_token=False` 仍會關閉 Bearer 權杖；請現在就改用清單，0.5.0 起只由清單決定：
 
 ```python
 # 修改前
@@ -241,19 +241,18 @@ manager = CacheManager(key_prefix="myapp:")
 value = await manager.get_or_set("report", build_report)
 ```
 
-修改後，可以針對 manager 或單次呼叫設定：
+修改後，若要保留 0.3.x 的行為，可以針對 manager 或單次呼叫設定（`lock=True` 是預設值）：
 
 ```python
-manager = CacheManager(key_prefix="myapp:", lock=False)  # 保留目前的行為
-manager = CacheManager(key_prefix="myapp:", lock=True)  # 現在就啟用
+manager = CacheManager(key_prefix="myapp:", lock=False)
 
-value = await manager.get_or_set("report", build_report, lock=True)
+value = await manager.get_or_set("report", build_report, lock=False)
 ```
 
-使用 `AppCache` 時，請在啟動時註冊自己的 manager：
+使用 `AppCache` 時，請在啟動時、`BackendProxy.set(...)` 之後註冊自己的 manager：
 
 ```python
-CacheManagerProxy.set(CacheManager(lock=True))
+CacheManagerProxy.set(CacheManager(lock=False))
 ```
 
 ## HTTP 快取 {#http-caching}
@@ -374,7 +373,7 @@ backend = BackendProxy.get()
 
 ### CacheError {#cache-error}
 
-`CacheError` 別名會被移除（[#130](https://github.com/allen0099/FastAPI-CacheX/issues/130)）；0.3.x 在匯入它時已經會發出 `DeprecationWarning`。
+`CacheError` 別名會被移除（[#130](https://github.com/allen0099/FastAPI-CacheX/issues/130)）；0.3.8 與 0.3.9 在匯入它時已經會發出 `DeprecationWarning`。
 
 ```python
 # 修改前

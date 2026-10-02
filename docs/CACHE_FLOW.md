@@ -139,10 +139,10 @@ The decorator arguments control both the server-side behaviour and the
 
 # Normal caching behaviour
 @cache(ttl=3600)          # Cache for 1 hour (also used as the max-age value)
-@cache(public=True)       # Allow shared caches, also for Authorization/session requests
+@cache(ttl=3600, public=True)     # Allow shared caches, also for Authorization/session requests
 @cache(private=True)      # Private only; never touches the shared backend
 @cache(ttl=60, key_builder=per_user_key, cache_authorized=True)  # Authorization/session requests use the backend, answered private
-@cache(immutable=True)    # Content never changes
+@cache(ttl=3600, immutable=True)  # Content never changes
 
 # Header-only directives (they do not change server-side behaviour)
 @cache(ttl=60, must_revalidate=True)                        # must-revalidate
@@ -463,7 +463,7 @@ async def cleanup_task():
 
 # The task is only started lazily on the first get/set/set_if_absent/increment/
 # get_and_delete call (it needs a running event loop), so write-only usage (for
-# example StateManager.create_state) starts it too.
+# example CacheManager.add()) starts it too.
 
 # Redis/Memcached: TTL mechanism
 # Use the backend's built-in TTL (SET ... EX, exptime)

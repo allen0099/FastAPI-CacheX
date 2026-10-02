@@ -15,7 +15,8 @@ async def expensive_operation(cache: AppCache):
     return result
 
 
-# 也可以直接建立實例，例如在請求之外使用。`lock` 預設為 True
+# 也可以直接建立實例，例如在請求之外使用，前提是已用 BackendProxy.set(...)
+# 設定後端。`lock` 預設為 True
 # （見「Cache stampede 保護」）。
 manager = CacheManager(key_prefix="myapp:", default_ttl=60)
 await manager.set("user:42", {"name": "Alice"})

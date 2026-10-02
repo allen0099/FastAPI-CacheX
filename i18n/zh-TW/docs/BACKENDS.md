@@ -54,7 +54,7 @@ BackendProxy.set(backend)
 - 只有傳給 `clear_pattern()` 的模式是萬用字元（glob）模式。鍵前綴與傳給 `clear_path()` 的路徑都以字面值比對，因此其中的 `*`、`?`、`[` 或 `]` 不會觸及前綴以外的鍵，也不會漏掉該路徑
 - `clear_pattern()` 比對的是邏輯鍵，也就是不含後端前綴的鍵，並一律自行加上前綴，因此模式中不要寫出前綴。以前綴開頭的模式不會被去掉前綴：它只會比對到本身以前綴開頭的邏輯鍵（見[遷移至 0.4.0](MIGRATING_0_4.md#redis-clear-pattern)）
 
-**從模型設定**：`RedisConfig` 是具有相同設定項與驗證的 pydantic 模型，當設定來自環境變數或設定檔時很方便：
+**從模型設定**：`RedisConfig` 是具有相同設定項的 pydantic 模型，並會驗證其範圍（連接埠範圍、`db >= 0`），當設定來自環境變數或設定檔時很方便：
 
 ```python
 from fastapi_cachex.backends import AsyncRedisCacheBackend
@@ -128,7 +128,7 @@ BackendProxy.set(backend)
 - Memcached 協定不支援依模式清除鍵（`clear_pattern`）：它會回傳 0 並發出 `RuntimeWarning`
 - 無法列舉鍵：`get_all_keys()`／`get_cache_data()` 會回傳空結果（並發出 `RuntimeWarning`），因此監控路由不會顯示任何內容
 - `clear_path()` 找不到 HTTP 快取項目：它只會刪除名稱與路徑完全相同的鍵，忽略 `include_params`，而且每次呼叫都會發出 `RuntimeWarning`。資料變更後要刪除某個快取路由的項目，請呼叫 [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route)，它會重建完全相同的鍵
-- `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用層快取](APP_CACHE.md)）
+- `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間，且每次呼叫都會發出 `RuntimeWarning`。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用層快取](APP_CACHE.md)）
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存
 - 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
 - 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕並拋出錯誤。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）；其他呼叫端則會收到該錯誤

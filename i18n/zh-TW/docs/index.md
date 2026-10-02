@@ -88,7 +88,7 @@ async def report(cache: AppCache):
 
 ## 文件 {#documentation}
 
-- [遷移至 0.4.0](MIGRATING_0_4.md)：0.4.0 的變更，以及現在如何處理 0.3.9 的警告
+- [遷移至 0.4.0](MIGRATING_0_4.md)：0.4.0 的變更，以及如何從 0.3.x 升級
 - [HTTP 快取](HTTP_CACHING.md)：`@cache` 裝飾器、Cache-Control 指令、快取鍵、快取失效與監控路由
 - [應用層快取](APP_CACHE.md)：`CacheManager`
 - [後端](BACKENDS.md)：選擇與設定後端、原子操作的基本功能

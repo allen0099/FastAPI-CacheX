@@ -146,8 +146,8 @@ A response that belongs to one caller is never stored either (#296):
   backend anyway, but its response to such a request still gets `private`
   (before 0.3.9 it was sent without it, #362); `private=True` routes send it
   already.
-  A request has a session when `FastAPICacheXSessionMiddleware` loaded one
-  for it, from the token header, a
+  A request has a session when `FastAPICacheXSessionMiddleware` (deprecated,
+  removed in 0.5.0) loaded one for it, from the token header, a
   bearer token or the session cookie, with or without a user, or when
   `request.session` is non-empty under any session middleware, Starlette's
   included. A token that resolves to no session (forged, expired) does not
@@ -278,8 +278,8 @@ async def report():
     return await build_report()
 ```
 
-This only covers `@cache`. `invalidate()`, `CacheManager`, `StateManager`,
-`CacheLock` and sessions still raise backend errors to the caller.
+This only covers `@cache`. `invalidate()`, `CacheManager`, `CacheLock` and the
+deprecated `StateManager` and sessions still raise backend errors to the caller.
 
 ## Cache keys
 
@@ -295,7 +295,7 @@ another tag, so its keys never collide with these; on Redis and memory,
 
 This ensures that:
 
-- Different HTTP methods (GET, POST, etc.) don't share cache
+- The method is part of the key (only `GET` is cached, but a custom key builder sees it)
 - Different hosts don't share cache (useful for multi-tenant scenarios)
 - Different query parameters get separate cache entries
 - The same endpoint with different parameters can be cached independently
@@ -348,9 +348,9 @@ The host and path come from the client, so `|` and `%` in them are percent-encod
 the components and make one request's key equal another's. The query string is
 URL-encoded already. `clear_path()` takes the path as your application sees it
 (`request.url.path`) and encodes it the same way; `clear_pattern()` matches the
-stored key, so write `%7C` there for a `|`. Before 0.3.8 both were stored as sent,
-so after upgrading, entries for a host or path containing `|` or `%` are cached
-afresh once.
+stored key, so write `%7C` there for a `|`. 0.4.0 does not read entries
+written by 0.3.x at all; they are cached afresh once (see
+[Migrating to 0.4.0](MIGRATING_0_4.md#cache-keys)).
 
 The host is normalised first, so every spelling of one origin shares an entry:
 it is lower-cased (hostnames are case-insensitive), and an empty port or the
@@ -475,7 +475,7 @@ The key is not secret: it is listed by `get_all_keys()`, shown by the
 `/cached-records` and `/cached-hits` monitoring routes, and stored as-is in the
 Redis or Memcached keyspace. So for the headers that carry credentials,
 `Authorization`, `Proxy-Authorization`, `Cookie` and `X-Session-Token` (the
-session subsystem's default `header_name`), matched in any case, the component
+deprecated session subsystem's default `header_name`), matched in any case, the component
 holds the full hex SHA-256 of the value (trimmed and joined as above) instead
 of the value:
 
@@ -580,8 +580,8 @@ request it is given selects.
 >    `cache_authorized=True` when callers authenticate with an `Authorization`
 >    header or a session: without it such requests bypass the backend too.
 >
-> If callers authenticate with a cookie of your own rather than the library's
-> session, nothing triggers the bypass: a plain `@cache` serves the first
+> If callers authenticate with a cookie that no session middleware loads (for
+> example a token cookie your own dependency reads), nothing triggers the bypass: a plain `@cache` serves the first
 > caller's response to everyone, so use one of the two options above.
 
 ```python
