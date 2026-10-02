@@ -163,7 +163,7 @@ The header value is built once per decorated route:
 |-----------|----------------------|
 | `no_store=True` | `no-store` (overrides everything else) |
 | `no_cache=True` | `no-cache`, plus `must-revalidate` if requested; `public`/`private`/`max-age`/`stale-*`/`immutable` are omitted |
-| none (a bare `@cache()`) | none of its own; the handler's header, if any, is kept |
+| none (a bare `@cache()`) | none of its own; the handler's header, if any, is kept (`private` for a cookie or credentials, as on every route) |
 | anything else | in order: `public` or `private`, `max-age=<ttl>`, `must-revalidate`, `stale-while-revalidate=<n>` or `stale-if-error=<n>`, `immutable` |
 
 > [!NOTE]

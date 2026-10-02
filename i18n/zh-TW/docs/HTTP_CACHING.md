@@ -57,10 +57,9 @@ async def items(): ...
 
 `no_cache=True` 與 `no_store=True` 會取代標頭的其餘內容：使用 `no_cache` 時只送出 `no-cache`（若有設定，再加上 `must-revalidate`），使用 `no_store` 時只送出 `no-store`。其他參數如何組合，請見[快取流程](CACHE_FLOW.md#2-cache-control-directives)。
 
-有兩種參數組合不會有任何效果，套用裝飾器時 `@cache` 會發出指向你 `@cache(...)` 那一行的 `UserWarning`：
+`no_store=True` 搭配其他任何快取參數（`ttl`、`stale`、`no_cache`、`public`、`private`、`immutable`、`must_revalidate`）時，套用裝飾器時 `@cache` 會發出指向你 `@cache(...)` 那一行的 `UserWarning`：`no_store` 會覆蓋這些參數，警告會列出它們。
 
-- `no_store=True` 搭配其他任何快取參數（`ttl`、`stale`、`no_cache`、`public`、`private`、`immutable`、`must_revalidate`）：`no_store` 會覆蓋它們，警告會列出這些參數。
-- 不帶參數的 `@cache()`，既沒有 `ttl` 也沒有任何指令：不會儲存任何內容，裝飾器也沒有 `Cache-Control` 可送，因此會保留 handler 自己的標頭（沒有就不送），只加上 ETag。
+不帶參數的 `@cache()`，既沒有 `ttl` 也沒有任何指令，不會儲存任何內容，也沒有自己的 `Cache-Control`。它會加上 ETag，以 `304` 回應相符的 `If-None-Match`，並保留 handler 自己的 `Cache-Control`（沒有就不送）。與其他路由一樣，設定 Cookie 的回應，或回應帶有 `Authorization` 或 Session 的請求時，仍會送出 `private`。
 
 ### 請求的 `Cache-Control` 會被忽略 {#the-requests-cache-control-is-ignored}
 

@@ -19,10 +19,6 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
 
-# Most tests here use a bare @cache() for the ETag handling alone; the warning
-# it emits is tested in test_cache_arguments.py.
-pytestmark = pytest.mark.filterwarnings("ignore:cache has nothing to do:UserWarning")
-
 app = FastAPI()
 client = TestClient(app)
 

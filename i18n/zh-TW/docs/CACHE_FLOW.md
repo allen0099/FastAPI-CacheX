@@ -126,7 +126,7 @@ cache_key = "|".join(
 |------|------------------------|
 | `no_store=True` | `no-store`（覆蓋其他所有設定） |
 | `no_cache=True` | `no-cache`，若有要求則加上 `must-revalidate`；省略 `public`／`private`／`max-age`／`stale-*`／`immutable` |
-| 無（不帶參數的 `@cache()`） | 不送出自己的標頭；保留 handler 的標頭（若有） |
+| 無（不帶參數的 `@cache()`） | 不送出自己的標頭；保留 handler 的標頭（若有）（遇到 Cookie 或憑證時送出 `private`，與其他路由相同） |
 | 其他情況 | 依序為：`public` 或 `private`、`max-age=<ttl>`、`must-revalidate`、`stale-while-revalidate=<n>` 或 `stale-if-error=<n>`、`immutable` |
 
 > [!NOTE]
