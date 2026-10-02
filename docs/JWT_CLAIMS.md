@@ -186,7 +186,7 @@ The base class below does what the built-in `JWTTokenSerializer` does and leaves
 ```
 <!-- fmt:on -->
 
-PyJWT verifies the signature, `exp`, `iat` and (when present) `nbf` by default, and `iss`/`aud` when `issuer`/`audience` are given. Two checks of the built-in serializer are not repeated here: it rejects an asymmetric `jwt_algorithm` and warns about a `secret_key` shorter than the HMAC output. This class signs with `secret_key` too, so keep an `HS*` algorithm; for an asymmetric one, hold the private and public keys in the class and use them in `jwt.encode()` and `jwt.decode()`.
+PyJWT verifies the signature, `exp`, `iat` and (when present) `nbf` by default, and `iss`/`aud` when `issuer`/`audience` are given. Two checks of the built-in serializer are not repeated here: it rejects an asymmetric `jwt_algorithm` and rejects (`ValueError`) a `secret_key` shorter than the HMAC output. This class signs with `secret_key` too, so keep an `HS*` algorithm; for an asymmetric one, hold the private and public keys in the class and use them in `jwt.encode()` and `jwt.decode()`.
 
 ### Example 1: Adding `jti` and `nbf`
 

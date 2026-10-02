@@ -219,10 +219,10 @@ SessionConfig(
 - **0.4.0 不會移除 `use_bearer_token`（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)）。** 它維持已棄用，傳入時仍會發出 `DeprecationWarning`，並在 0.5.0 隨 `fastapi_cachex.session` 一起移除。是否讀取 Bearer 權杖只由清單決定：
 
 ```python
-# 之前
+# 修改前
 SessionConfig(secret_key=SECRET, use_bearer_token=False)
 
-# 之後
+# 修改後
 SessionConfig(secret_key=SECRET, token_source_priority=["header", "cookie"])
 ```
 
@@ -278,7 +278,7 @@ CacheManagerProxy.set(CacheManager(lock=True))
 
 - 直接寫出分隔符號的 `clear_pattern()` 模式（`"GET|||*|||/users/*"`）需要改寫，以大寫或帶預設連接埠寫出 host 的模式也一樣。`clear_path()` 與 `invalidate()` 會自行組出鍵，不需要修改。
 - 呼叫 `build_cache_key()` 的自訂 `key_builder` 會自動跟上，包括排序；若要保留送出的順序，請對 `build_cache_key()` 傳入 `sort_query=False`。`@cache` 與 `invalidate()` 現在會拒絕與自訂 `key_builder` 一起傳入的 `sort_query`，`False` 也包括在內（0.3.9 接受在此傳入 `False`，但它沒有作用）：請移除它，由 builder 決定。自行組出鍵的（以 `CACHE_KEY_SEPARATOR` 串接或直接寫死 `|||`）仍可以快取，也仍能搭配 `invalidate()` 與 `clear_pattern()`，但其鍵沒有 `http:v2` 標籤，因此 `clear_path()` 不再找得到它們，監控路由也不再列出它們。改用 `build_cache_key(request, *components)` 即可兩者都保留。
-- 回應取決於用戶端送出的查詢字串順序的處理函式（例如從 `request.url` 複製的自身連結或分頁連結、對原始查詢字串計算的簽章），請設定 `@cache(sort_query=False)`，並對該路由的 `invalidate()` 傳入 `sort_query=False`。否則第一位呼叫者的順序會被快取，並提供給送出其他順序的呼叫者。`sort_query=False` 在 0.3.9 就能使用。
+- 回應取決於用戶端送出的查詢字串順序的 handler（例如從 `request.url` 複製的自身連結或分頁連結、對原始查詢字串計算的簽章），請設定 `@cache(sort_query=False)`，並對該路由的 `invalidate()` 傳入 `sort_query=False`。否則第一位呼叫者的順序會被快取，並提供給送出其他順序的呼叫者。`sort_query=False` 在 0.3.9 就能使用。
 - 0.4.0 不會讀取 0.3.x 寫入的項目。這些項目會在 TTL 到期後過期；在 Redis 與記憶體後端上，可以在升級後立即以 `await backend.clear_pattern("*|||*")` 移除。這個模式會比對任何含有 `|||` 的鍵，因此請先確認你自己的鍵（例如 `CacheManager` 的鍵）都不含它。Memcached 無法列舉鍵，只能等它們過期。
 
 0.3.9 不會警告：0.3.x 無從判斷某個模式或 key builder 是否符合新格式，而執行期唯一的代價只是一次未命中。與自訂 `key_builder` 一起傳入的 `sort_query` 同樣不會警告，但它會在套用裝飾器時（通常是匯入時）拋出 `CacheXError`，而不是在請求時。

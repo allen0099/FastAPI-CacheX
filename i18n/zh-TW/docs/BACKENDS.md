@@ -113,7 +113,7 @@ BackendProxy.set(backend)
 
 ## Memcached {#memcached}
 
-以 `uv add "fastapi-cachex[memcached]"` 安裝此 extra。0.3.8 以前這個 extra 名為 `memcache`，0.4.0 已移除這個名稱。安裝時遇到不存在的 extra 只會顯示警告，因此 `fastapi-cachex[memcache]` 會裝好套件但不含 `pymemcache`，建構 `MemcachedBackend` 時才會拋出錯誤。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#memcache-extra)。
+以 `uv add "fastapi-cachex[memcached]"` 安裝此 extra。0.3.8 之前這個 extra 名為 `memcache`，0.4.0 已移除這個名稱。安裝時遇到不存在的 extra 只會顯示警告，因此 `fastapi-cachex[memcache]` 會裝好套件但不含 `pymemcache`，建構 `MemcachedBackend` 時才會拋出錯誤。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#memcache-extra)。
 
 ```python
 from fastapi_cachex.backends import MemcachedBackend
@@ -128,7 +128,7 @@ BackendProxy.set(backend)
 - Memcached 協定不支援依模式清除鍵（`clear_pattern`）：它會回傳 0 並發出 `RuntimeWarning`
 - 無法列舉鍵：`get_all_keys()`／`get_cache_data()` 會回傳空結果（並發出 `RuntimeWarning`），因此監控路由不會顯示任何內容
 - `clear_path()` 找不到 HTTP 快取項目：它只會刪除名稱與路徑完全相同的鍵，忽略 `include_params`，而且每次呼叫都會發出 `RuntimeWarning`。資料變更後要刪除某個快取路由的項目，請呼叫 [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route)，它會重建完全相同的鍵
-- `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用程式快取](APP_CACHE.md)）
+- `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用層快取](APP_CACHE.md)）
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存
 - 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
 - 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕並拋出錯誤。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）；其他呼叫端則會收到該錯誤
@@ -136,7 +136,7 @@ BackendProxy.set(backend)
 
 同步的 pymemcache 用戶端在工作執行緒中執行，並使用連線池，因此並行的請求絕不會共用同一個 socket。寫入會等待伺服器確認（`default_noreply=False`），因此只要 `set()` 返回，就能從連線池中的任何連線讀到該值。每次呼叫只切換到工作執行緒一次，多步驟的[原子操作](#atomic-backend-primitives)也是如此。`delete_many()` 在這一次呼叫中逐一對每個鍵送出 `DELETE`，並回傳實際存在的鍵數；0.3.8 之前它每個鍵都要切換一次執行緒，回傳的是傳入的鍵數。
 
-伺服器無法連線時，所有要送往它的呼叫都會拋出錯誤，一秒後會再嘗試連線。0.3.8 以前，失敗後一秒內的呼叫會回傳虛構的結果：`get()` 當成未命中、`set()` 沒有任何反應（寫入遺失）、`increment()` 當成新的計數器並回傳 0。設定多台伺服器時，失敗的那台會立即移出輪替，它的鍵會改由其餘伺服器處理，直到它恢復回應。
+伺服器無法連線時，所有要送往它的呼叫都會拋出錯誤，一秒後會再嘗試連線。0.3.8 之前，失敗後一秒內的呼叫會回傳虛構的結果：`get()` 當成未命中、`set()` 沒有任何反應（寫入遺失）、`increment()` 當成新的計數器並回傳 0。設定多台伺服器時，失敗的那台會立即移出輪替，它的鍵會改由其餘伺服器處理，直到它恢復回應。
 
 ## 關閉後端 {#closing-a-backend}
 

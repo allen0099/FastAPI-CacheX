@@ -161,7 +161,7 @@ entry = CacheEntry(
 )
 ```
 
-TTL 不儲存在 `CacheEntry` 中：過期由後端負責（`MemoryBackend` 將它存在 `CacheItem.expiry`，Redis 使用 `SET ... EX`，Memcached 使用 exptime）。`stored_at` 是系統時鐘時間（`time.time()`），因為送出項目的行程不一定是儲存它的行程；0.3.9 以前的版本寫入的項目為 `None`。
+TTL 不儲存在 `CacheEntry` 中：過期由後端負責（`MemoryBackend` 將它存在 `CacheItem.expiry`，Redis 使用 `SET ... EX`，Memcached 使用 exptime）。`stored_at` 是系統時鐘時間（`time.time()`），因為送出項目的行程不一定是儲存它的行程；0.3.9 之前的版本寫入的項目為 `None`。
 
 若尚未以 `BackendProxy.set()` 設定後端，裝飾器會在第一個請求時建立 `MemoryBackend`、註冊它，並記錄一則警告，說明這個快取是每個行程各自一份。
 
@@ -223,7 +223,7 @@ return response
 > 「非 2xx 不寫入」是刻意的設計：暫時性的錯誤不應抹除最後一次正常的快取回應，也不應在之後被當成 200 重播。`206 Partial Content` 同樣不會快取，因為它的內容只對產生它的那個 `Range` 請求有意義。非 2xx 回應也永遠不會以 `304` 回應，且回傳時不帶裝飾器的 `Cache-Control` 標頭（只有 `no_store=True` 會在每個回應加上 `no-store`）。
 
 > [!NOTE]
-> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），帶有 Session 的請求（Session 中介軟體從任何權杖來源載入了 Session，或 `request.session` 不是空的）也一樣，除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及任何 `Authorization` 或 Session 請求的回應（無論繞過後端，或設定 `cache_authorized` 而由後端回應；200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 以前這類回應會被儲存並重播給每位呼叫者（#296）；帶有 Session 的請求在 0.3.9 以前也不會繞過（#319）。
+> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），帶有 Session 的請求（Session 中介軟體從任何權杖來源載入了 Session，或 `request.session` 不是空的）也一樣，除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及任何 `Authorization` 或 Session 請求的回應（無論繞過後端，或設定 `cache_authorized` 而由後端回應；200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 之前這類回應會被儲存並重播給每位呼叫者（#296）；帶有 Session 的請求在 0.3.9 之前也不會繞過（#319）。
 
 ### 4. ETag 產生與驗證 {#4-etag-generation-and-validation}
 
@@ -292,7 +292,7 @@ Redis 與 Memcached 共用同一套 JSON 編解碼器；若已安裝 `orjson` �
 ```
 
 - `content` 使用 **latin-1 來回轉換**，而不是 base64：latin-1 與位元組一一對應，因此任何位元組序列都能放進 JSON 文字中，並原封不動地還原。
-- 舊版本寫入、沒有 `status_code`／`headers` 欄位的項目仍可讀取，解碼後為 `200` 且沒有額外標頭。沒有 `stored_at` 的項目（0.3.9 以前）解碼後為 `stored_at=None`，送出時不帶 `Age` 標頭。
+- 舊版本寫入、沒有 `status_code`／`headers` 欄位的項目仍可讀取，解碼後為 `200` 且沒有額外標頭。沒有 `stored_at` 的項目（0.3.9 之前）解碼後為 `stored_at=None`，送出時不帶 `Age` 標頭。
 - `headers` 是 `[name, value]` 行組成的清單，因此重複送出的標頭會保留每一行。0.3.x 寫入的物件（每個名稱一個值）仍可解碼。其他任何形式都會讓整個項目視為未命中。
 - 任何解碼失敗（損壞的 JSON、缺少欄位、型別錯誤）都視為**快取未命中**，回傳 `None` 而不是拋出例外。
 - `increment()` 會留下一個**單純的整數**（由 Redis／Memcached 的 INCR 系列指令寫入）；它會解碼成 fingerprint 為 `counter` 的 `CacheEntry`。

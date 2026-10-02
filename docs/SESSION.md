@@ -11,7 +11,7 @@ the cache backend; the client only holds a single signed token.
 
 | Token source | Response side |
 |--------------|---------------|
-| Custom header (default `X-Session-Token`) / `Authorization: Bearer` / **cookie** (default name `session`) | Routed by source: a request that sent a header or bearer token (even one that no longer resolves) gets its token in the response header; otherwise (a cookie, or no token at all) it gets `Set-Cookie` |
+| Custom header (default `X-Session-Token`) / `Authorization: Bearer` / **cookie** (default name `__Host-session`) | Routed by source: a request that sent a header or bearer token (even one that no longer resolves) gets its token in the response header; otherwise (a cookie, or no token at all) it gets `Set-Cookie` |
 
 The header-only `SessionMiddleware`, deprecated since 0.3.1, was **removed in 0.4.0**; see
 [Migration](#migration-sessionmiddleware-fastapicachexsessionmiddleware).
@@ -149,7 +149,7 @@ Both methods delete what they find with a single `backend.delete_many()` call.
   where the client manages the token. Cookie transport was not supported.
 - **`FastAPICacheXSessionMiddleware`** (a pure ASGI middleware): compatible with Starlette's
   built-in `SessionMiddleware`, exposing the same dict-like `request.session`. It passes the signed
-  session token in a cookie (default cookie name `session`), while the session contents are stored
+  session token in a cookie (default cookie name `__Host-session`), while the session contents are stored
   in the backend (the cache backend of the `SessionManager`) rather than encoded into the cookie
   itself as Starlette's own implementation does. Token resolution is "header first, cookie
   second": it reads the custom header (default `X-Session-Token`) and/or `Authorization: Bearer`
@@ -562,7 +562,7 @@ async def sudo(request: Request, session: AuthenticatedSession):
 
 `rotate_session_id()` calls `SessionManager.regenerate_session_id()` on the request's
 session, which deletes the backend record under the old ID and saves the session under a
-new ID, keeping its data, user, `created_at` and expiry. Either middleware sees the new ID
+new ID, keeping its data, user, `created_at` and expiry. The middleware sees the new ID
 and sends a token for it through the transport the request used: `Set-Cookie` for a
 cookie, the response header for a header token. After that the old token no longer
 resolves to a session. For a new visitor there is no session to rotate, so it returns

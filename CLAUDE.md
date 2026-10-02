@@ -18,7 +18,7 @@ Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 
 ## Invariants that span modules
 
-- HTTP cache keys are `method|||host|||path|||query` (`CACHE_KEY_SEPARATOR`). Host and path go through `escape_key_component` so client input cannot inject the separator. Anything that builds or parses keys (`clear_path`, `routes.py`, backends) must stay consistent with it.
+- HTTP cache keys are `http:v2|method|host|path|query` (`HTTP_KEY_FORMAT_TAG`, `CACHE_KEY_SEPARATOR = "|"`), built and parsed by `CacheKey` in `cache_key.py`. Method, host, path and extra components go through `escape_key_component` so client input cannot inject the separator; a query over 200 bytes becomes `sha256:<hex>`. A format change bumps the tag. Anything that builds or parses keys (`clear_path`, `routes.py`, backends) must go through `CacheKey`.
 - `@cache` fails open by default: a backend error is logged and treated as a miss, or the response is served unstored. Only GET is cached.
 - Backend lookup: `@cache` and the `CacheBackend` / `AppCache` dependencies fall back to a `MemoryBackend` when none is set. `CacheLock`, `StateManager` and a directly built `CacheManager(...)` call `BackendProxy.get()` and raise; the monitoring routes and `invalidate()` treat a missing backend as empty. The proxies' lazy creation goes through `ProxyBase.get_or_create` (per-class lock; sync dependencies run in threads).
 - Memcached cannot enumerate keys. `clear_pattern`, `get_all_keys` and every `CacheManager.clear*` are no-ops with a `RuntimeWarning`, while `MemcachedBackend.clear()` issues `flush_all` and wipes the whole server.
