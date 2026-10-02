@@ -1,6 +1,7 @@
 """In-memory cache backend implementation."""
 
 import asyncio
+import copy
 import fnmatch
 import logging
 import time
@@ -143,7 +144,7 @@ class MemoryBackend(BaseCacheBackend):
                 logger.debug("Memory cache EXPIRED; key=%s removed", key)
                 return None
             logger.debug("Memory cache HIT; key=%s", key)
-            return cached_item.value
+            return copy.copy(cached_item.value)
 
     async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
         """Store a response in the cache.
@@ -163,7 +164,7 @@ class MemoryBackend(BaseCacheBackend):
 
         async with self.lock:
             expiry = time.time() + ttl if ttl is not None else None
-            self.cache[key] = CacheItem(value=value, expiry=expiry)
+            self.cache[key] = CacheItem(value=copy.copy(value), expiry=expiry)
             logger.debug("Memory cache SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> bool:
@@ -209,7 +210,7 @@ class MemoryBackend(BaseCacheBackend):
                 logger.debug("Memory cache SET_IF_ABSENT EXISTS; key=%s", key)
                 return False
             expiry = now + ttl if ttl is not None else None
-            self.cache[key] = CacheItem(value=value, expiry=expiry)
+            self.cache[key] = CacheItem(value=copy.copy(value), expiry=expiry)
             logger.debug("Memory cache SET_IF_ABSENT STORED; key=%s ttl=%s", key, ttl)
             return True
 
@@ -261,7 +262,7 @@ class MemoryBackend(BaseCacheBackend):
                 logger.debug("Memory cache SET_IF_EQUALS MISMATCH; key=%s", key)
                 return False
             expiry = now + ttl if ttl is not None else None
-            self.cache[key] = CacheItem(value=value, expiry=expiry)
+            self.cache[key] = CacheItem(value=copy.copy(value), expiry=expiry)
             logger.debug("Memory cache SET_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
             return True
 
@@ -378,7 +379,7 @@ class MemoryBackend(BaseCacheBackend):
         async with self.lock:
             now = time.time()
             return {
-                key: (item.value, item.expiry)
+                key: (copy.copy(item.value), item.expiry)
                 for key, item in self.cache.items()
                 if _is_live(item, now)
             }

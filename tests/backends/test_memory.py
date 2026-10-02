@@ -993,3 +993,38 @@ async def test_memory_expire_if_equals_ignores_an_expired_entry(
     memory_backend.cache["slot"].expiry = time.time() - 1
 
     assert await memory_backend.expire_if_equals("slot", entry, 60) is False
+
+
+async def test_mutating_a_read_entry_does_not_change_the_cache() -> None:
+    """Redis and Memcached decode a fresh entry on every read; memory copies (#238)."""
+    backend = MemoryBackend()
+    await backend.set(
+        "k", CacheEntry(fingerprint="a", content=b"x", headers=(("h", "1"),))
+    )
+
+    entry = await backend.get("k")
+    assert entry is not None
+    entry.content = b"MUTATED"
+    entry.headers = (("h", "MUTATED"),)
+    data = await backend.get_cache_data()
+    data["k"][0].fingerprint = "MUTATED"
+
+    assert await backend.get("k") == CacheEntry(
+        fingerprint="a", content=b"x", headers=(("h", "1"),)
+    )
+
+
+async def test_mutating_a_written_entry_does_not_change_the_cache() -> None:
+    backend = MemoryBackend()
+    old = CacheEntry(fingerprint="old", content=b"o")
+    written = [CacheEntry(fingerprint=f"v{n}", content=b"x") for n in range(3)]
+
+    await backend.set("set", written[0])
+    assert await backend.set_if_absent("absent", written[1])
+    await backend.set("equals", old)
+    assert await backend.set_if_equals("equals", old, written[2])
+    for entry in written:
+        entry.content = b"MUTATED"
+
+    for key, n in (("set", 0), ("absent", 1), ("equals", 2)):
+        assert await backend.get(key) == CacheEntry(fingerprint=f"v{n}", content=b"x")
