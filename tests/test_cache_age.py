@@ -175,6 +175,7 @@ async def test_no_cache_revalidation_sends_no_age(clock, client_for):
     assert "age" not in full.headers
 
 
+@pytest.mark.filterwarnings("ignore:cache no_store ignores:UserWarning")
 @pytest.mark.parametrize(
     ("cache_kwargs", "method", "headers"),
     [

@@ -78,6 +78,16 @@ header, and the server-side cache behaves the same with or without them.
 `no_store` only `no-store`. How the other arguments combine is described in
 [Cache flow](CACHE_FLOW.md#2-cache-control-directives).
 
+Two kinds of arguments do nothing, and `@cache` emits a `UserWarning` pointing
+at your `@cache(...)` line when the decorator is applied:
+
+- `no_store=True` together with any other caching argument (`ttl`, `stale`,
+  `no_cache`, `public`, `private`, `immutable`, `must_revalidate`): `no_store`
+  overrides them, and the warning names them.
+- A bare `@cache()`, with neither `ttl` nor a directive: nothing is stored and
+  the decorator has no `Cache-Control` to send, so it keeps the handler's own
+  header (or sends none) and only adds an ETag.
+
 ### The request's `Cache-Control` is ignored
 
 A client's own `Cache-Control` request header (`no-cache`, `max-age=0`, as sent

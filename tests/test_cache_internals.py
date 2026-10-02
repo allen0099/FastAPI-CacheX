@@ -27,6 +27,8 @@ def _app_counting_keys(**cache_kwargs: object) -> tuple[TestClient, list[str]]:
     return TestClient(app), calls
 
 
+@pytest.mark.filterwarnings("ignore:cache no_store ignores:UserWarning")
+@pytest.mark.filterwarnings("ignore:cache has nothing to do:UserWarning")
 @pytest.mark.parametrize(
     "cache_kwargs",
     [

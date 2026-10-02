@@ -258,6 +258,21 @@ _COOKIE_VARY_WARNING = (
     "warnings.filterwarnings('ignore', message='cache vary on Cookie')."
 )
 
+_NOTHING_TO_CACHE_WARNING = (
+    "cache has nothing to do: @cache() without ttl or a Cache-Control option "
+    "stores nothing and sends no Cache-Control header; it only adds an ETag. "
+    "Set ttl=<seconds> to cache the response, or pass a directive such as "
+    "no_cache=True."
+)
+
+
+def _no_store_ignored_warning(ignored: list[str]) -> str:
+    return (
+        f"cache no_store ignores {', '.join(ignored)}: @cache(no_store=True) "
+        "stores nothing and sends only Cache-Control: no-store, so the other "
+        "arguments have no effect. Remove them, or drop no_store."
+    )
+
 
 # How the one-time bypass warning names each `_request_credential` result.
 _CREDENTIAL_DESCRIPTIONS = {
@@ -739,7 +754,8 @@ def _not_modified(
     response = Response(status_code=HTTP_304_NOT_MODIFIED)
     _append_headers(response, _revalidation_headers(headers))
     response.headers["ETag"] = etag
-    response.headers["Cache-Control"] = cache_control
+    if cache_control:
+        response.headers["Cache-Control"] = cache_control
     response.headers.update(age or {})
     return response
 
@@ -781,12 +797,16 @@ def _cache_control_for(
     A handler that marked its response ``private`` or ``no-store`` keeps its own
     header; the decorator's would widen what the handler allowed. A response
     that sets a cookie gets ``private_cache_control``, so a shared cache in
-    front of the app does not store it either.
+    front of the app does not store it either. When the decorator has no
+    directive to send (a bare ``@cache()``), the handler's own header is kept,
+    or none is sent (#363).
     """
     if _marked_unshareable(response):
         return ", ".join(response.headers.getlist("cache-control"))
     if "set-cookie" in response.headers:
         return private_cache_control
+    if not cache_control:
+        return ", ".join(response.headers.getlist("cache-control"))
     return cache_control
 
 
@@ -794,9 +814,9 @@ def _with_cache_control(
     response: Response, cache_control: str, private_cache_control: str
 ) -> Response:
     if not _marked_unshareable(response):
-        response.headers["Cache-Control"] = _cache_control_for(
-            response, cache_control, private_cache_control
-        )
+        value = _cache_control_for(response, cache_control, private_cache_control)
+        if value:
+            response.headers["Cache-Control"] = value
     return response
 
 
@@ -1062,6 +1082,13 @@ def cache(
             ``key_builder``, or if ``key_builder`` is an ``async`` callable.
             At request time, if
             ``key_builder`` returns anything but a ``str``.
+
+    Warns:
+        UserWarning: When the decorator is applied, if ``vary`` lists
+            ``Cookie``, if ``no_store`` is combined with another caching
+            argument it overrides, or if neither ``ttl`` nor any directive is
+            given (a bare ``@cache()`` stores nothing and keeps the handler's
+            own ``Cache-Control``).
     """
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
@@ -1092,6 +1119,28 @@ def cache(
             # stacklevel=2: the caller applying the decorator, i.e. the line
             # of the user's @cache(...).
             warnings.warn(_COOKIE_VARY_WARNING, UserWarning, stacklevel=2)
+        # Combinations that cache nothing, or that no_store overrides, are
+        # accepted but warned about (#328); rejecting them would break routes
+        # that work today.
+        if no_store:
+            ignored = [
+                name
+                for name, value in (
+                    ("ttl", ttl),
+                    ("stale", stale),
+                    ("stale_ttl", stale_ttl),
+                    ("no_cache", no_cache),
+                    ("public", public),
+                    ("private", private),
+                    ("immutable", immutable),
+                    ("must_revalidate", must_revalidate),
+                )
+                if value is not None and value is not False
+            ]
+            if ignored:
+                warnings.warn(
+                    _no_store_ignored_warning(ignored), UserWarning, stacklevel=2
+                )
 
         # Analyze the original function's signature
         sig: Signature = inspect.signature(func)
@@ -1143,6 +1192,8 @@ def cache(
             immutable=immutable,
             must_revalidate=must_revalidate,
         )
+        if ttl is None and not no_store and not cache_control:
+            warnings.warn(_NOTHING_TO_CACHE_WARNING, UserWarning, stacklevel=2)
         # Sent instead for a response that must not be stored downstream
         # either: one that sets a cookie, or one answering an `Authorization`
         # or session request the backend was bypassed for. `public` becomes `private`;

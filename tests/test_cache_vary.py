@@ -154,6 +154,7 @@ def test_vary_header_on_miss_hit_and_304() -> None:
         assert response.headers["vary"] == "Accept-Language"
 
 
+@pytest.mark.filterwarnings("ignore:cache no_store ignores:UserWarning")
 @pytest.mark.parametrize(
     ("cache_kwargs", "request_headers"),
     [
