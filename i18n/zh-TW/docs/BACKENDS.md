@@ -54,7 +54,7 @@ BackendProxy.set(backend)
 - 只有傳給 `clear_pattern()` 的模式是萬用字元（glob）模式。鍵前綴與傳給 `clear_path()` 的路徑都以字面值比對，因此其中的 `*`、`?`、`[` 或 `]` 不會觸及前綴以外的鍵，也不會漏掉該路徑
 - `clear_pattern()` 比對的是邏輯鍵，也就是不含後端前綴的鍵，並一律自行加上前綴，因此模式中不要寫出前綴。以前綴開頭的模式不會被去掉前綴：它只會比對到本身以前綴開頭的邏輯鍵（見[遷移至 0.4.0](MIGRATING_0_4.md#redis-clear-pattern)）
 
-**從模型設定**：`RedisConfig` 是具有相同設定項的 pydantic 模型，並會驗證其範圍（連接埠範圍、`db >= 0`），當設定來自環境變數或設定檔時很方便：
+**從模型設定**：`RedisConfig` 是具有相同設定項的 pydantic 模型，並會驗證其範圍（連接埠範圍、`db >= 0`、`protocol` 為 2 或 3），當設定來自環境變數或設定檔時很方便：
 
 ```python
 from fastapi_cachex.backends import AsyncRedisCacheBackend

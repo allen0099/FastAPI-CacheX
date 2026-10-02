@@ -144,7 +144,6 @@ SessionConfig(
     # 權杖來源（API 優先架構）
     token_format="simple",  # "simple"（預設）或 "jwt"
     header_name="X-Session-Token",
-    use_bearer_token=True,  # 已棄用：改為不在 token_source_priority 中列出 "bearer"
     token_source_priority=["header", "bearer"],  # "cookie" 只能放在最後（見下文）
     # JWT（token_format == "jwt" 時使用）
     jwt_algorithm="HS256",  # 拒絕 "none"

@@ -82,7 +82,7 @@ BackendProxy.set(backend)
   the prefix (see [Migrating to 0.4.0](MIGRATING_0_4.md#redis-clear-pattern))
 
 **Configuring from a model**: `RedisConfig` is a pydantic model with the same
-settings, validated (port range, `db >= 0`), which is handy when they come from environment
+settings, validated (port range, `db >= 0`, `protocol` 2 or 3), which is handy when they come from environment
 variables or a settings file:
 
 ```python

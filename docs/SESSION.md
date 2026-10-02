@@ -244,7 +244,6 @@ SessionConfig(
     # Token sources (API-first architecture)
     token_format="simple",  # "simple" (default) or "jwt"
     header_name="X-Session-Token",
-    use_bearer_token=True,  # deprecated: leave "bearer" out of token_source_priority instead
     token_source_priority=[
         "header",
         "bearer",
