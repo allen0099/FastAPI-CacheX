@@ -17,7 +17,8 @@ async def expensive_operation(cache: AppCache):
     return result
 
 
-# Or instantiate directly, e.g. outside of a request. `lock` defaults to True
+# Or instantiate directly, e.g. outside of a request, once a backend is set with
+# BackendProxy.set(...). `lock` defaults to True
 # (see "Stampede protection").
 manager = CacheManager(key_prefix="myapp:", default_ttl=60)
 await manager.set("user:42", {"name": "Alice"})

@@ -100,7 +100,7 @@ async def report(cache: AppCache):
 
 ## Documentation
 
-- [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/) — what 0.4.0 changes and how to act on the 0.3.9 warnings now
+- [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x
 - [HTTP caching](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation and monitoring routes
 - [Application cache](https://fastapi-cachex.readthedocs.io/en/latest/APP_CACHE/) — `CacheManager`
 - [Backends](https://fastapi-cachex.readthedocs.io/en/latest/BACKENDS/) — choosing and configuring a backend, atomic primitives

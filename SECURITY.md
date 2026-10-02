@@ -2,16 +2,16 @@
 
 ## Supported versions
 
-Security fixes are released for the latest 0.3.x release line only. Upgrade
-to the newest 0.3.x release before reporting, and check whether the problem is
-still there.
+Security fixes are released for the latest release line only, currently
+0.4.x. Upgrade to the newest 0.4.x release before reporting, and check whether
+the problem is still there.
 
-| Version                  | Supported |
-|--------------------------|-----------|
-| Latest 0.3.x (now 0.3.8) | Yes       |
-| Any older release        | No        |
+| Version           | Supported |
+|-------------------|-----------|
+| Latest 0.4.x      | Yes       |
+| 0.3.9 and older   | No        |
 
-A fix ships as a new 0.3.x patch release; earlier releases are not patched.
+A fix ships as a new 0.4.x patch release; earlier releases are not patched.
 
 `fastapi_cachex.session` and `fastapi_cachex.state` are deprecated in 0.4.0.
 They get security fixes during 0.4.x and none after 0.5.0 removes them.
@@ -53,7 +53,7 @@ guaranteed response times. What you can expect:
 - An acknowledgement once a maintainer has read the report, and a follow-up
   after it has been looked into, saying whether it is being treated as a
   vulnerability.
-- If it is, a fix in a new 0.3.x patch release, followed by a published GitHub
+- If it is, a fix in a new 0.4.x patch release, followed by a published GitHub
   security advisory that credits you, unless you prefer not to be named.
 - Questions in the advisory thread if the report needs more detail.
 

@@ -87,7 +87,7 @@ GET /items  → 200, Cache-Control: max-age=60, Age: 42（儲存後 42 秒送出
 
 屬於單一呼叫者的回應同樣不會被儲存（#296）：
 
-- **請求帶有 `Authorization` 或 Session。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限。設定 `cache_authorized=True`（給包含呼叫者身分的 key builder 使用的明確選項，見[需驗證身分的端點](#authenticated-endpoints)）的路由會為這類請求讀寫後端，但回應仍帶有 `private`：項目只在後端依呼叫者區分，CDN 則只以 URL 為鍵（0.3.9 之前會原樣送出裝飾器的標頭，#372）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。沒有正數 `ttl` 的路由本來就不經過後端，但它對這類請求的回應仍會加上 `private`（0.3.9 之前不會加，#362）；`private=True` 的路由本來就會送出 `private`。請求「帶有 Session」是指 `FastAPICacheXSessionMiddleware` 為它載入了 Session（權杖來自標頭、Bearer 權杖或 Session Cookie 皆可，有沒有使用者都算），或在任何 Session 中介軟體（包括 Starlette 的）下 `request.session` 不是空的。解析不出 Session 的權杖（偽造、過期）不算，因此無法用來略過快取。0.3.9 之前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。會讀取後端的路由第一次繞過時，會以 `WARNING` 等級記錄（見[帶有憑證的請求](#requests-with-credentials)）。
+- **請求帶有 `Authorization` 或 Session。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限。設定 `cache_authorized=True`（給包含呼叫者身分的 key builder 使用的明確選項，見[需驗證身分的端點](#authenticated-endpoints)）的路由會為這類請求讀寫後端，但回應仍帶有 `private`：項目只在後端依呼叫者區分，CDN 則只以 URL 為鍵（0.3.9 之前會原樣送出裝飾器的標頭，#372）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。沒有正數 `ttl` 的路由本來就不經過後端，但它對這類請求的回應仍會加上 `private`（0.3.9 之前不會加，#362）；`private=True` 的路由本來就會送出 `private`。請求「帶有 Session」是指 `FastAPICacheXSessionMiddleware`（已棄用，0.5.0 移除）為它載入了 Session（權杖來自標頭、Bearer 權杖或 Session Cookie 皆可，有沒有使用者都算），或在任何 Session 中介軟體（包括 Starlette 的）下 `request.session` 不是空的。解析不出 Session 的權杖（偽造、過期）不算，因此無法用來略過快取。0.3.9 之前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。會讀取後端的路由第一次繞過時，會以 `WARNING` 等級記錄（見[帶有憑證的請求](#requests-with-credentials)）。
 - **handler 自己的 `Cache-Control` 含有 `private` 或 `no-store`**（完整指令，不分大小寫）。回應照常送出但不儲存，而且 handler 的標頭會原樣送出，不會被裝飾器的標頭取代。
 - **回應設定了 cookie。** 回應照常送出（包含 `Set-Cookie`），但不儲存；它（以及 304）會以 `private` 取代 `public` 送出並保留其他指令，讓下游的共用快取也不會儲存它。
 
@@ -154,7 +154,7 @@ async def report():
     return await build_report()
 ```
 
-這只適用於 `@cache`。`invalidate()`、`CacheManager`、`StateManager`、`CacheLock` 與 Session 仍會把後端錯誤拋給呼叫端。
+這只適用於 `@cache`。`invalidate()`、`CacheManager`、`CacheLock`，以及已棄用的 `StateManager` 與 Session 仍會把後端錯誤拋給呼叫端。
 
 ## 快取鍵 {#cache-keys}
 
@@ -168,7 +168,7 @@ http:v2|{method}|{host}|{path}|{query_params}
 
 這可確保：
 
-- 不同的 HTTP 方法（GET、POST 等）不共用快取
+- 方法是快取鍵的一部分（只有 `GET` 會被快取，但自訂的 key builder 看得到它）
 - 不同的主機不共用快取（適用於多租戶情境）
 - 不同的查詢參數各有獨立的快取項目
 - 同一個端點搭配不同參數時可以各自快取
@@ -190,7 +190,7 @@ async def search(request: Request, q: str, limit: int = 10):
 
 在鍵中編碼後超過 200 位元組的查詢字串，會改以 `sha256:` 加上 64 個十六進位字元的摘要儲存，因此用戶端無法讓鍵中查詢的部分無限變長。（超過 250 位元組的整個鍵，含前綴，Memcached 仍會整個雜湊；略低於門檻的查詢配上較長的 host 或路徑仍可能超過。）摘要在排序之後計算，因此順序不同的長查詢仍共用同一筆項目。路徑維持可讀，所以 `clear_path()` 仍找得到該項目（需帶上 `include_params=True`，因為查詢不是空的），監控路由則以 `query_params` 顯示這個摘要。用戶端送出的查詢不可能看起來像摘要：鍵中的 `:` 會寫成 `%3A`。
 
-host 與路徑來自用戶端，因此其中的 `|` 與 `%` 會以百分比編碼寫入（`%7C` 與 `%25`）。含有 `|` 的 `Host` 標頭或路徑因此無法讓各段錯位，使某個請求的快取鍵與另一個請求相同。查詢字串本來就經過 URL 編碼。`clear_path()` 接受應用程式看到的路徑（`request.url.path`），並以同樣方式編碼；`clear_pattern()` 比對的是儲存的快取鍵，所以在模式中要把 `|` 寫成 `%7C`。0.3.8 之前兩者都照原樣儲存，因此升級後，host 或路徑含有 `|` 或 `%` 的項目會重新快取一次。
+host 與路徑來自用戶端，因此其中的 `|` 與 `%` 會以百分比編碼寫入（`%7C` 與 `%25`）。含有 `|` 的 `Host` 標頭或路徑因此無法讓各段錯位，使某個請求的快取鍵與另一個請求相同。查詢字串本來就經過 URL 編碼。`clear_path()` 接受應用程式看到的路徑（`request.url.path`），並以同樣方式編碼；`clear_pattern()` 比對的是儲存的快取鍵，所以在模式中要把 `|` 寫成 `%7C`。0.4.0 完全不讀取 0.3.x 寫入的項目，它們會重新快取一次（見[遷移至 0.4.0](MIGRATING_0_4.md#cache-keys)）。
 
 host 會先經過正規化，讓同一個來源的各種寫法共用同一筆項目：轉為小寫（主機名稱不分大小寫），並去除空的連接埠或該 scheme 的預設連接埠（http 為 `:80`，https 為 `:443`）。在 http 上，`Example.com`、`example.com:80` 與 `example.com` 是同一個鍵 `example.com`；`example.com:8080` 保留連接埠，IPv6 位址則保留方括號（`[::1]:8000`）。scheme 以應用程式看到的為準：在終止 TLS 的代理之後，除非套用了代理的標頭（例如 `uvicorn --proxy-headers`），否則 scheme 是 `http`，因此這類代理送來的 `Host: example.com:443` 會保留連接埠。沒有 `Host` 標頭的請求使用 `unknown`。
 
@@ -260,7 +260,7 @@ async def greeting(request: Request):
 
 #### 憑證標頭會雜湊 {#credential-headers-are-hashed}
 
-快取鍵並非機密：`get_all_keys()` 會列出它、`/cached-records` 與 `/cached-hits` 監控路由會顯示它，Redis 或 Memcached 的鍵空間也會原樣儲存它。因此對於攜帶憑證的標頭，也就是 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`（Session 子系統預設的 `header_name`），不分大小寫，該段存放的是值（依上述方式去除空白並串接）的完整十六進位 SHA-256，而不是值本身：
+快取鍵並非機密：`get_all_keys()` 會列出它、`/cached-records` 與 `/cached-hits` 監控路由會顯示它，Redis 或 Memcached 的鍵空間也會原樣儲存它。因此對於攜帶憑證的標頭，也就是 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`（已棄用的 Session 子系統預設的 `header_name`），不分大小寫，該段存放的是值（依上述方式去除空白並串接）的完整十六進位 SHA-256，而不是值本身：
 
 ```
 http:v2|GET|example.com|/me||authorization=sha256:3f0a…（64 個十六進位字元）
@@ -321,7 +321,7 @@ warnings.filterwarnings("ignore", message="cache vary on Cookie")
 > 1. **`private=True`**：回應永遠不會從共用後端讀取，也不會寫入。`Cache-Control: private` 仍允許使用者自己的瀏覽器快取它，而 `If-None-Match` 重新驗證仍會對新產生的內容運作。
 > 2. **包含呼叫者身分的 key builder**：確實需要依使用者區分的伺服器端快取時使用。不要設定 `private`：`private=True` 會繞過後端，key builder 就永遠不會被使用。呼叫者以 `Authorization` 標頭或 Session 驗證身分時，請傳入 `cache_authorized=True`：沒有它，這類請求同樣會繞過後端。
 >
-> 若呼叫者以你自己的 Cookie（而非本函式庫的 Session）驗證身分，沒有任何條件會觸發繞過：只加上 `@cache` 會把第一位呼叫者的回應提供給所有人，請改用上面兩種做法之一。
+> 若呼叫者以沒有任何 Session 中介軟體載入的 Cookie 驗證身分（例如由你自己的依賴項讀取的權杖 Cookie），沒有任何條件會觸發繞過：只加上 `@cache` 會把第一位呼叫者的回應提供給所有人，請改用上面兩種做法之一。
 
 ```python
 from fastapi import Request

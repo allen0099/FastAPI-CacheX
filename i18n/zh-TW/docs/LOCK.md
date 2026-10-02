@@ -28,7 +28,7 @@ finally:
 - **安全性與權杖所有權**：每個 `CacheLock` 實例都會產生一個唯一的權杖（`secrets.token_hex(16)`），存放在 `CacheEntry` 中。釋放（`release()`）與續約（`extend()`）都使用會檢查持有者的後端原子操作（`delete_if_equals` 與 `expire_if_equals`），因此鎖已過期的持有者無法釋放或續約已被他人取得的鎖。
 - **阻塞與非阻塞模式**：
     - 非阻塞（`acquire(blocking=False)`）：只執行一次原子性的 `set_if_absent`，取得時立即回傳 `True`，已被占用時回傳 `False`。
-    - 阻塞（`acquire(blocking=True, timeout=None, poll_interval=0.1)`）：每隔 `poll_interval` 秒重試一次，直到取得鎖或經過 `timeout` 秒為止。預設的 `timeout=None` 會讓阻塞的 `acquire()`（以及 `async with CacheLock(...)`）一直等到鎖被釋放。若到達有限的 `timeout`，`acquire()` 會回傳 `False`。
+    - 阻塞（預設；`CacheLock(..., blocking=True, timeout=None, poll_interval=0.1)`，每個值都可以在單次 `acquire()` 呼叫中覆寫，傳入 `None` 表示「沿用實例的值」）：每隔 `poll_interval` 秒重試一次，直到取得鎖或經過 `timeout` 秒為止。預設的 `timeout=None` 會讓阻塞的 `acquire()`（以及 `async with CacheLock(...)`）一直等到鎖被釋放。若到達有限的 `timeout`，`acquire()` 會回傳 `False`。
 - **Context manager 逾時**：進入 context manager（`async with CacheLock(...)`）時會呼叫 `acquire()`。若取得失敗或逾時，會拋出 `LockTimeoutError`。
 - **TTL 過期**：若工作花費的時間超過 `ttl` 且沒有續約，鎖的項目會在後端過期並被釋出。此時其他行程或容器就能在原本的程式碼仍在執行時取得這把鎖。原持有者之後呼叫 `extend()` 或 `release()` 會安全地回傳 `False`，而不會拋出錯誤。請選擇比預期工作時間更長的 `ttl`，或在長時間執行的操作中定期呼叫 `extend()`。
 - **TTL 續約（`extend`）**：`extend(ttl)` 只在鎖仍由這個持有者實例擁有時才更新鍵的 TTL，避免在已過期的鎖上發生競爭條件。

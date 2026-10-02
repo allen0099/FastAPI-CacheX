@@ -107,10 +107,10 @@ cache_key = "|".join(
 
 # 一般快取行為
 @cache(ttl=3600)          # 快取 1 小時（也作為 max-age 的值）
-@cache(public=True)       # 允許共用快取，帶有 Authorization／Session 的請求也一樣
+@cache(ttl=3600, public=True)     # 允許共用快取，帶有 Authorization／Session 的請求也一樣
 @cache(private=True)      # 僅限私有；永遠不接觸共用後端
 @cache(ttl=60, key_builder=per_user_key, cache_authorized=True)  # 帶有 Authorization／Session 的請求也使用後端，以 private 回應
-@cache(immutable=True)    # 內容永不改變
+@cache(ttl=3600, immutable=True)  # 內容永不改變
 
 # 只影響標頭的指令（不會改變伺服器端行為）
 @cache(ttl=60, must_revalidate=True)                        # must-revalidate
@@ -356,7 +356,7 @@ async def cleanup_task():
 
 # 此任務只會在第一次呼叫 get/set/set_if_absent/increment/
 # get_and_delete 時延遲啟動（它需要執行中的事件迴圈），因此只寫入的
-# 用法（例如 StateManager.create_state）也會啟動它。
+# 用法（例如 CacheManager.add()）也會啟動它。
 
 # Redis/Memcached：TTL 機制
 # 使用後端內建的 TTL（SET ... EX、exptime）

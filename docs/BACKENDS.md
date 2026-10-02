@@ -82,7 +82,7 @@ BackendProxy.set(backend)
   the prefix (see [Migrating to 0.4.0](MIGRATING_0_4.md#redis-clear-pattern))
 
 **Configuring from a model**: `RedisConfig` is a pydantic model with the same
-settings and validation, which is handy when they come from environment
+settings, validated (port range, `db >= 0`), which is handy when they come from environment
 variables or a settings file:
 
 ```python
@@ -187,7 +187,8 @@ BackendProxy.set(backend)
   [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route), which
   rebuilds the exact key
 - `backend.clear()` (`MemcachedBackend.clear()`) issues `flush_all`, which wipes the whole
-  Memcached server, not just this namespace. `CacheManager.clear()` is different: it
+  Memcached server, not just this namespace, and emits a `RuntimeWarning` each time.
+  `CacheManager.clear()` is different: it
   enumerates keys, so on Memcached it deletes nothing (see
   [Application cache](APP_CACHE.md))
 - A key Memcached would reject (over 250 bytes, whitespace, non-ASCII) is stored

@@ -1,6 +1,6 @@
 # Migrating to 0.4.0 {#migrating-to-040}
 
-0.3.9 is the last 0.3.x release. 0.4.0 contains breaking changes, collected in the [0.4.0 milestone](https://github.com/allen0099/FastAPI-CacheX/issues?q=milestone%3A0.4.0). This page lists every one of them, what to change, and whether 0.3.9 already warns about it. Some 0.4.0 designs are not final yet; where an issue leaves a detail open, the section says what is known and what is still undecided.
+0.3.9 is the last 0.3.x release. 0.4.0 contains breaking changes, collected in the [0.4.0 milestone](https://github.com/allen0099/FastAPI-CacheX/issues?q=milestone%3A0.4.0). This page lists every one of them, what to change, and whether 0.3.9 already warns about it. Three changes 0.3.9 announced for sessions are not made as announced; see [Token sources](#token-source-priority) and [get_session_manager](#get-session-manager).
 
 ## Before you upgrade {#before-you-upgrade}
 
@@ -40,7 +40,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | `BackendProxy.get_backend()` / `set_backend()` removed | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
 | `CacheError` removed | [#130](https://github.com/allen0099/FastAPI-CacheX/issues/130) | `DeprecationWarning` | [CacheError](#cache-error) |
 | Redis `clear_pattern()` prefix-stripped retry removed | [#125](https://github.com/allen0099/FastAPI-CacheX/issues/125) | `DeprecationWarning` | [Redis clear_pattern](#redis-clear-pattern) |
-| `SessionConfig.use_bearer_token` stays deprecated, removed in 0.5.0 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [Token sources](#token-source-priority) |
+| `SessionConfig.use_bearer_token` stays deprecated, removed in 0.5.0 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377), [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | `DeprecationWarning` | [Token sources](#token-source-priority) |
 | `UserSessionDep` requires a user | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | No | [UserSessionDep](#user-session-dep) |
 | `memcache` extra removed | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | No | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` returns `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | No (0.4.0 warns if it returns `None`: `FutureWarning`) | [delete() return value](#backend-delete) |
@@ -153,7 +153,7 @@ await login(request, SessionUser(user_id=user_id))
 
 ### UserSessionDep {#user-session-dep}
 
-`UserSessionDep` is an alias of `SessionDep` and admits anonymous sessions. In 0.4.0 it requires a session with a user, like `AuthenticatedSession` ([#127](https://github.com/allen0099/FastAPI-CacheX/issues/127)), so anonymous requests to routes that use it get `401`. 0.3.9 does not warn: a type alias has no hook that runs when it is used, and a warning on import would fire for everyone. Pick the dependency that says what you mean:
+In 0.3.x, `UserSessionDep` is an alias of `SessionDep` and admits anonymous sessions. In 0.4.0 it requires a session with a user, like `AuthenticatedSession` ([#127](https://github.com/allen0099/FastAPI-CacheX/issues/127)), so anonymous requests to routes that use it get `401`. 0.3.9 does not warn: a type alias has no hook that runs when it is used, and a warning on import would fire for everyone. Pick the dependency that says what you mean:
 
 ```python
 # Before
@@ -216,7 +216,7 @@ SessionConfig(
 0.3.9 announced two changes here. Since sessions are deprecated ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)), 0.4.0 makes neither of them:
 
 - **`token_source_priority` naming every token source ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)) is dropped.** The middleware still reads the session cookie after the header sources whether or not the list names it, and `"cookie"` is still accepted only as the last entry. 0.4.0 no longer emits the `FutureWarning` for a list without `"cookie"`. A list that already ends in `"cookie"` keeps working.
-- **`use_bearer_token` is not removed in 0.4.0 ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)).** It stays deprecated, still emits a `DeprecationWarning` when it is passed, and is removed in 0.5.0 together with `fastapi_cachex.session`. The list alone decides whether bearer tokens are read:
+- **`use_bearer_token` is not removed in 0.4.0 ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)).** It stays deprecated, still emits a `DeprecationWarning` when it is passed, and is removed in 0.5.0 together with `fastapi_cachex.session`. `use_bearer_token=False` still turns bearer tokens off in 0.4.x; move to the list now, which alone decides from 0.5.0:
 
 ```python
 # Before
@@ -241,19 +241,18 @@ manager = CacheManager(key_prefix="myapp:")
 value = await manager.get_or_set("report", build_report)
 ```
 
-After, either per manager or per call:
+After, to keep the 0.3.x behaviour, either per manager or per call (`lock=True` is the default):
 
 ```python
-manager = CacheManager(key_prefix="myapp:", lock=False)  # keep today's behaviour
-manager = CacheManager(key_prefix="myapp:", lock=True)  # opt in now
+manager = CacheManager(key_prefix="myapp:", lock=False)
 
-value = await manager.get_or_set("report", build_report, lock=True)
+value = await manager.get_or_set("report", build_report, lock=False)
 ```
 
-With `AppCache`, register your own manager at startup:
+With `AppCache`, register your own manager at startup, after `BackendProxy.set(...)`:
 
 ```python
-CacheManagerProxy.set(CacheManager(lock=True))
+CacheManagerProxy.set(CacheManager(lock=False))
 ```
 
 ## HTTP caching {#http-caching}
@@ -374,7 +373,7 @@ backend = BackendProxy.get()
 
 ### CacheError {#cache-error}
 
-The `CacheError` alias is removed ([#130](https://github.com/allen0099/FastAPI-CacheX/issues/130)); 0.3.x already emits a `DeprecationWarning` when it is imported.
+The `CacheError` alias is removed ([#130](https://github.com/allen0099/FastAPI-CacheX/issues/130)); 0.3.8 and 0.3.9 already emit a `DeprecationWarning` when it is imported.
 
 ```python
 # Before
