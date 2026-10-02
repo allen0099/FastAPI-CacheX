@@ -27,6 +27,41 @@ DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
 # the printable ASCII range with the space removed.
 _MAX_KEY_BYTES = 250
 _LEGAL_KEY_BYTES = frozenset(range(0x21, 0x7F))
+# A key Memcached refuses becomes the prefix plus a 64-character digest, so a
+# longer prefix leaves even the hashed key too long.
+_MAX_PREFIX_BYTES = _MAX_KEY_BYTES - 64
+
+
+def _validate_key_prefix(key_prefix: str) -> None:
+    """Reject a ``key_prefix`` that would make keys Memcached refuses (#239).
+
+    The prefix stays in front of the digest of a hashed key, so a prefix with
+    whitespace, control characters or non-ASCII, or one that leaves no room
+    for a key, makes every call raise ``MemcacheIllegalInputError``. A prefix
+    that leaves room for short keys but not for a digest works until the
+    first key that needs hashing, so it warns instead of raising.
+
+    Raises:
+        ValueError: If no key with this prefix is legal
+    """
+    encoded = key_prefix.encode("utf-8")
+    if not _LEGAL_KEY_BYTES.issuperset(encoded):
+        msg = (
+            "MemcachedBackend key_prefix must be printable ASCII without "
+            f"whitespace, got {key_prefix!r}"
+        )
+        raise ValueError(msg)
+    if len(encoded) >= _MAX_KEY_BYTES:
+        msg = f"MemcachedBackend key_prefix must be shorter than {_MAX_KEY_BYTES} bytes"
+        raise ValueError(msg)
+    if len(encoded) > _MAX_PREFIX_BYTES:
+        warnings.warn(
+            f"MemcachedBackend key_prefix is {len(encoded)} bytes; keys that "
+            f"need hashing fail above {_MAX_PREFIX_BYTES} bytes",
+            UserWarning,
+            stacklevel=3,
+        )
+
 
 # An exptime above 30 days is read by Memcached as an absolute Unix timestamp,
 # not as a duration, so a longer TTL has to be converted before it is sent.
@@ -121,7 +156,10 @@ class MemcachedBackend(BaseCacheBackend):
 
         Raises:
             CacheXError: If pymemcache is not installed
+            ValueError: If ``key_prefix`` holds whitespace, control
+                characters or non-ASCII, or is 250 bytes or longer
         """
+        _validate_key_prefix(key_prefix)
         try:
             from pymemcache import HashClient
         except ImportError as exc:

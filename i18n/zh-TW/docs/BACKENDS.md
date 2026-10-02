@@ -129,7 +129,7 @@ BackendProxy.set(backend)
 - 無法列舉鍵：`get_all_keys()`／`get_cache_data()` 會回傳空結果（並發出 `RuntimeWarning`），因此監控路由不會顯示任何內容
 - `clear_path()` 找不到 HTTP 快取項目：它只會刪除名稱與路徑完全相同的鍵，忽略 `include_params`，而且每次呼叫都會發出 `RuntimeWarning`。資料變更後要刪除某個快取路由的項目，請呼叫 [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route)，它會重建完全相同的鍵
 - `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間，且每次呼叫都會發出 `RuntimeWarning`。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用層快取](APP_CACHE.md)）
-- Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存
+- Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存，摘要前面仍帶著 `key_prefix`。因此建立後端時會先檢查前綴本身：含空白字元、控制字元或非 ASCII 字元，或長度達 250 位元組以上的前綴會拋出 `ValueError`；超過 186 位元組、放不下 64 個字元摘要的前綴則會發出警告（0.4.1 之前，這類前綴會讓呼叫以 `MemcacheIllegalInputError` 失敗）
 - 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
 - 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕並拋出錯誤。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）；其他呼叫端則會收到該錯誤
 - 若需要依模式清除快取，請考慮使用 Redis 後端

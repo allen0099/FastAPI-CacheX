@@ -1274,3 +1274,41 @@ def test_caller_stacklevel_without_frame_support(
 ) -> None:
     monkeypatch.setattr(inspect, "currentframe", lambda: None)
     assert _caller_stacklevel() == 2
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    ["my app:", "tab\t", "café:", "nl\n", "x" * 250],
+    ids=["space", "tab", "non-ascii", "newline", "250-bytes"],
+)
+def test_a_key_prefix_no_key_can_use_raises(prefix: str) -> None:
+    """Every key, hashed or not, kept the prefix and was refused (#239)."""
+    with pytest.raises(ValueError, match="key_prefix"):
+        MemcachedBackend(servers=[MEMCACHED_SERVER], key_prefix=prefix)
+
+
+def test_a_key_prefix_too_long_for_a_hashed_key_warns() -> None:
+    with pytest.warns(UserWarning, match="187 bytes") as record:
+        MemcachedBackend(servers=[MEMCACHED_SERVER], key_prefix="x" * 187)
+
+    assert record[0].filename == __file__
+
+
+@pytest.mark.parametrize("prefix", ["", "x" * 186, "app:v2|"])
+def test_a_usable_key_prefix_is_accepted(prefix: str) -> None:
+    # filterwarnings = error: a warning fails the test.
+    assert (
+        MemcachedBackend(servers=[MEMCACHED_SERVER], key_prefix=prefix).key_prefix
+        == prefix
+    )
+
+
+@requires_memcached
+async def test_the_longest_accepted_prefix_stores_a_hashed_key() -> None:
+    backend = MemcachedBackend(servers=[MEMCACHED_SERVER], key_prefix="x" * 186)
+    entry = CacheEntry(fingerprint="a", content=b"x")
+
+    await backend.set("needs hashing " * 30, entry, ttl=60)
+
+    assert await backend.get("needs hashing " * 30) == entry
+    await backend.delete("needs hashing " * 30)
