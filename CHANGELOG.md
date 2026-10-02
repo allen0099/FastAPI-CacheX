@@ -20,11 +20,215 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-02
+
 0.4.0 contains breaking changes; read
 [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/)
 before upgrading. Sessions and OAuth state are deprecated and will be removed
 in 0.5.0. Three session changes announced in 0.3.9 are not made as announced:
 see the entries for #75, #131 and #377.
+
+### Added
+
+- **`set_if_equals(key, expected, value, ttl=None)` on every backend.** It stores
+  `value` only while `key` still holds `expected`, atomically on the memory,
+  Redis and Memcached backends. `BaseCacheBackend` provides a non-atomic
+  fallback for custom backends. ([#128](https://github.com/allen0099/FastAPI-CacheX/issues/128))
+- **`logout()` ends a session, and `login()` takes `keep=`.**
+  `await logout(request)` (in `fastapi_cachex.session`) deletes the session from
+  the backend at once and expires the cookie, returning `False` when no session was
+  loaded or started in the request. `login(request, user, keep=["cart"])` carries only the
+  listed keys of the session the request arrived with over to the logged-in one;
+  `keep=[]` carries none. Both need `FastAPICacheXSessionMiddleware`. ([#256](https://github.com/allen0099/FastAPI-CacheX/issues/256))
+- **`CacheKey` builds, encodes and parses HTTP cache keys.**
+  `CacheKey.from_request(request, *components, sort_query=...)` gives the key
+  `@cache` stores a request under, `to_str()` the string the backend holds, and
+  `CacheKey.parse(key)` decodes a stored key back into `method`, `host`, `path`,
+  `query` and `extra`, or returns `None` for a key that is not an HTTP key.
+  `build_cache_key()`, `clear_path()` and the monitoring routes all go through
+  it, so the key format is defined in one place. ([#270](https://github.com/allen0099/FastAPI-CacheX/issues/270))
+
+### Changed
+
+- **`BaseCacheBackend.delete()` returns whether a key was removed.** The memory,
+  Redis and Memcached backends return `True` when the key held an entry and
+  `False` otherwise; on memory an entry that had already expired counts as
+  absent, as it does on Redis. The non-atomic fallbacks on the base class use the
+  result: `delete_many()` counts only the keys that existed, and
+  `get_and_delete()` and `delete_if_equals()` let a caller win only if its delete
+  removed the key. A third-party backend whose `delete()` still declares
+  `-> None` fails type checking; at runtime the fallbacks count `None` as
+  removed, as 0.3.x did, and emit a `FutureWarning`, and 0.5.0 treats it as
+  `False`. See the [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#backend-delete). ([#71](https://github.com/allen0099/FastAPI-CacheX/issues/71))
+- **Query parameters are sorted by name in HTTP cache keys by default.**
+  `sort_query` defaults to on in `@cache`, `build_cache_key()`,
+  `CacheKey.from_request()` and `invalidate()`, so `?b=2&a=1` and `?a=1&b=2`
+  share one entry; repeated values of one name keep the order sent. A handler
+  whose response depends on the query order as sent should set
+  `@cache(sort_query=False)` and pass the same to `invalidate()`. Passing
+  `sort_query` together with a custom `key_builder` now raises `CacheXError`,
+  `False` included; call `build_cache_key(request, ..., sort_query=False)` in the
+  builder instead. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#cache-keys). ([#72](https://github.com/allen0099/FastAPI-CacheX/issues/72))
+- **`token_source_priority` does not have to name `"cookie"`, and the 0.3.9
+  `FutureWarning` is gone.** 0.3.9 announced that 0.4.0 would read the session
+  cookie only when the list names it. With sessions deprecated, that change is
+  not made: the cookie is still read after the header sources, and `"cookie"` is
+  still accepted only as the last entry. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#token-source-priority). ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75))
+- **A header the handler sends more than once is cached and replayed line by
+  line.** `CacheEntry.headers` is a tuple of `(name, value)` pairs in the order
+  sent instead of `dict[str, str] | None`, so several `Link` lines, or a custom
+  header read with `getlist()`, come back from the cache as they were sent, and a
+  `304` repeats every `Vary` line; `vary=` adds its names on a new line instead
+  of rewriting the first one. Building a `CacheEntry` still accepts a
+  `dict`; code that reads `headers` as a `dict` needs updating. Redis and
+  Memcached still decode entries with the old header object. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#cache-entry-headers). ([#105](https://github.com/allen0099/FastAPI-CacheX/issues/105))
+- **`UserSessionDep` requires a session with a user.** It now resolves through
+  `require_user_session`, like `AuthenticatedSession`, so an anonymous session
+  gets `401` instead of passing. Routes that should keep admitting anonymous
+  sessions use `SessionDep`. ([#127](https://github.com/allen0099/FastAPI-CacheX/issues/127))
+- **Session saves are conditional.** The middleware's save of `request.session`
+  changes, sliding renewal in `get_session()` and `update_session()` store a
+  session only while the backend still holds what the request last read or
+  wrote, so a request cannot bring back a session that another request deleted,
+  invalidated or rotated. A dropped save is logged and the response is sent
+  without a session token, unless the request already stored a renewal for a
+  session that is still valid. When two requests change the same session at once,
+  the first save wins. `update_session()` returns `True` or `False`. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#session-writes). ([#128](https://github.com/allen0099/FastAPI-CacheX/issues/128))
+- **Rotating a session ID refuses a session that ended meanwhile.**
+  `regenerate_session_id()` removes the old record atomically and raises
+  `SessionNotFoundError` or `SessionInvalidError`, storing nothing under a new
+  ID, if another request deleted, invalidated or rotated the session since it
+  was read. `rotate_session_id()` answers `401` in that case and sends no token,
+  and `login()` starts a new session for the user without the ended session's
+  data. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#session-writes). ([#128](https://github.com/allen0099/FastAPI-CacheX/issues/128))
+- **A JWT HMAC secret shorter than the hash output is rejected.** With
+  `token_format="jwt"`, `SessionManager` raises `ValueError` when it builds its
+  serializer if `jwt_algorithm` is `HS384` or `HS512` and `secret_key` is
+  shorter than 48 or 64 bytes in UTF-8 (RFC 7518 section 3.2). 0.3.x only
+  warned. Use a longer key or `HS256`. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#jwt-secret). ([#129](https://github.com/allen0099/FastAPI-CacheX/issues/129))
+- **`get_session_manager` keeps returning the middleware's manager, and the 0.3.9
+  `FutureWarning` is gone.** 0.3.9 announced that 0.4.0 would resolve it through
+  `SessionManagerProxy`. With sessions deprecated, that change is not made. See
+  the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#get-session-manager). ([#131](https://github.com/allen0099/FastAPI-CacheX/issues/131))
+- **The session cookie defaults to `__Host-session` with the `Secure` flag, and
+  `SessionConfig` rejects cookie settings browsers would refuse.** `SessionConfig.cookie_name`
+  defaults to `"__Host-session"` and `cookie_https_only` to `True`, so a planted
+  cookie from a subdomain or over plain HTTP is refused by the browser. The new
+  name logs every cookie session out once after the upgrade. For plain-HTTP
+  development, set `cookie_name="session", cookie_https_only=False`. A
+  `__Host-` name without `Secure`, with a `cookie_path` other than `"/"` or with
+  a `cookie_domain`, and a `__Secure-` name without `Secure`, raise a
+  `ValidationError` instead of a `UserWarning`; because of the new default name,
+  so does changing only one of those settings. The middleware's `FutureWarning`
+  about the defaults is removed. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#session-cookie). ([#256](https://github.com/allen0099/FastAPI-CacheX/issues/256))
+- **`Session.user` is read-only.** Assigning it raises `AttributeError`: log a
+  user in with `login(request, user)` under `FastAPICacheXSessionMiddleware`,
+  which also gives the session a new ID, or create the session with
+  `SessionManager.create_session(user=...)`. A `user` given when a `Session` is
+  built is still accepted. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#login-logout). ([#256](https://github.com/allen0099/FastAPI-CacheX/issues/256))
+- **The host in an HTTP cache key is normalised.** It is lower-cased, and an
+  empty port or the scheme's default one (`:80` for http, `:443` for https) is
+  dropped, so `Example.com`, `example.com:80` and `example.com` share one entry
+  instead of three. IPv6 literals keep their brackets. Keys for hosts written
+  with upper case or a default port change, so those entries are cached afresh
+  once. ([#265](https://github.com/allen0099/FastAPI-CacheX/issues/265))
+- **HTTP cache keys start with the format tag `http:v2`.** A key is now
+  `http:v2|method|host|path|query`, and `CacheKey.FORMAT_TAG` holds the tag, so a
+  later format change never collides with these keys and
+  `clear_pattern("http:v2|*")` removes every one of them. `clear_path()` and the
+  monitoring routes only recognise tagged keys: a custom `key_builder` that does
+  not use `build_cache_key()` still caches, but those two no longer see its keys. ([#266](https://github.com/allen0099/FastAPI-CacheX/issues/266))
+- **A query string over 200 bytes is stored in the HTTP cache key as its
+  SHA-256 digest.** The key holds `sha256:` and the 64-digit hex digest instead
+  of the query, so a client cannot make the query part of the key arbitrarily
+  long. The path stays readable, so `clear_path()` still finds such entries, and
+  the monitoring routes show the digest as `query_params`. ([#269](https://github.com/allen0099/FastAPI-CacheX/issues/269))
+- **HTTP cache keys are separated by a single `|` instead of `|||`.**
+  `CACHE_KEY_SEPARATOR` is now `"|"`. Every client-controlled component is
+  percent-encoded, so one character is enough. Entries written by 0.3.x are no
+  longer read: each is a cache miss once and expires on its TTL, or remove them
+  with `clear_pattern("*|||*")` on Redis and memory. `clear_pattern()` patterns
+  that spell out `|||` need rewriting; see
+  [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#cache-keys). ([#271](https://github.com/allen0099/FastAPI-CacheX/issues/271))
+- **`CacheManager.get_or_set()` uses stampede protection by default.**
+  `CacheManager(lock=...)` defaults to `True`, including the manager `AppCache`
+  creates, so concurrent misses of one key run `factory` once while the other
+  callers wait for its result. A miss costs six backend round trips instead of
+  two on Redis and Memcached, and each waiting caller polls; a hit is unchanged.
+  Pass `lock=False` to `get_or_set()` or `CacheManager()` to keep computing on
+  every miss. `CacheManager(lock=None)` now raises `TypeError`. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#get-or-set-lock). ([#280](https://github.com/allen0099/FastAPI-CacheX/issues/280))
+- **`add_routes()` requires `dependencies`, and content previews are off by
+  default.** The monitoring routes have no authentication of their own, so
+  `dependencies` is now a required keyword-only argument: pass your guard, or
+  `dependencies=[]` to mount the routes unguarded on purpose. Leaving it out, or
+  passing `None`, raises `TypeError`. `include_content_preview` is keyword-only
+  and defaults to `False`, also for apps that already pass a guard; pass `True`
+  to keep the first 100 bytes of each cached body in `/cached-records`. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#add-routes). ([#298](https://github.com/allen0099/FastAPI-CacheX/issues/298))
+
+### Deprecated
+
+- **`SessionConfig.use_bearer_token` is removed in 0.5.0, not 0.4.0.** It keeps
+  working and keeps its `DeprecationWarning`, and goes with
+  `fastapi_cachex.session`; list the token sources in `token_source_priority`
+  instead. See the
+  [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#token-source-priority). ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377))
+- **Sessions and OAuth state are deprecated and will be removed in 0.5.0.**
+  FastAPI-CacheX is narrowing to HTTP and application caching. Importing
+  `fastapi_cachex.session` or `fastapi_cachex.state`, or reading one of their
+  names from the `fastapi_cachex` package, emits a `FutureWarning`; a plain
+  `import fastapi_cachex` does not. The names are no longer in
+  `fastapi_cachex.__all__`. Both packages get security fixes only until 0.5.0;
+  the [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#session-state-deprecated) says where to move. ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420))
+
+### Removed
+
+- **The deprecated header-only `SessionMiddleware` is removed.** It was
+  deprecated in favour of `FastAPICacheXSessionMiddleware` since 0.3.1, which
+  reads the same custom header and `Authorization: Bearer` token and adds
+  `request.session` and the session cookie. Replace
+  `app.add_middleware(SessionMiddleware, ...)` with
+  `app.add_middleware(FastAPICacheXSessionMiddleware, ...)` and set the cookie
+  options (see the [migration guide](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/#session-middleware)). ([#69](https://github.com/allen0099/FastAPI-CacheX/issues/69))
+- **`BackendProxy.get_backend()` and `BackendProxy.set_backend()` are removed.**
+  They had emitted a `DeprecationWarning` since 0.3.0. Call `BackendProxy.get()`
+  and `BackendProxy.set(backend)` instead. ([#70](https://github.com/allen0099/FastAPI-CacheX/issues/70))
+- **Redis `clear_pattern()` no longer retries a pattern with the key prefix
+  stripped.** A pattern always matches the logical key, as on every other
+  backend, so one that starts with the backend's `key_prefix` now clears only
+  logical keys that themselves start with it, and the `DeprecationWarning` is
+  gone. Leave the prefix out: `clear_pattern("fastapi_cachex:GET|||*")` becomes
+  `clear_pattern("http:v2|GET|*")`. ([#125](https://github.com/allen0099/FastAPI-CacheX/issues/125))
+- **The Redis `encoding` option is removed; the client reads raw bytes.**
+  `AsyncRedisCacheBackend` no longer takes `encoding` or `decode_responses` and
+  raises `TypeError` for either. `RedisConfig` has no `encoding` field and now
+  ignores one like any other unknown field. Replies go straight to the entry
+  codec. Entries were always UTF-8 JSON, so data stored with the default
+  encoding reads back unchanged. Remove the argument:
+  `AsyncRedisCacheBackend(host="redis", encoding="utf-8")` becomes
+  `AsyncRedisCacheBackend(host="redis")`. ([#126](https://github.com/allen0099/FastAPI-CacheX/issues/126))
+- **`fastapi_cachex.exceptions.CacheError` is removed.** Nothing in the package
+  ever raised it, and it had emitted a `DeprecationWarning` since 0.3.8. Catch
+  `CacheXError` instead. ([#130](https://github.com/allen0099/FastAPI-CacheX/issues/130))
+- **The deprecated `memcache` extra is removed; install `fastapi-cachex[memcached]`.**
+  The failure is quiet: pip and uv only warn about an unknown extra, so
+  `fastapi-cachex[memcache]` still installs, but without `pymemcache`, and
+  `MemcachedBackend` raises when it is constructed. Replace `[memcache]` with
+  `[memcached]` in your requirements. ([#202](https://github.com/allen0099/FastAPI-CacheX/issues/202))
+- **`CACHE_KEY_MIN_PARTS`, `CACHE_KEY_MAX_SPLIT` and `CACHE_KEY_MAX_PARTS` are
+  removed from `fastapi_cachex.routes`.** They described how the monitoring
+  routes split a key, which `CacheKey.parse()` now does. Use
+  `CacheKey.parse(key)` to read a key's components. ([#270](https://github.com/allen0099/FastAPI-CacheX/issues/270))
 
 ## [0.3.9] - 2026-09-29
 
@@ -1038,7 +1242,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.6...v0.3.7
