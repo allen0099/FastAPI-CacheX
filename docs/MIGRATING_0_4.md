@@ -43,7 +43,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | `SessionConfig.use_bearer_token` stays deprecated, removed in 0.5.0 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [Token sources](#token-source-priority) |
 | `UserSessionDep` requires a user | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | No | [UserSessionDep](#user-session-dep) |
 | `memcache` extra removed | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | No | [memcache extra](#memcache-extra) |
-| `BaseCacheBackend.delete()` returns `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | No | [delete() return value](#backend-delete) |
+| `BaseCacheBackend.delete()` returns `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | No (0.4.0 warns if it returns `None`: `FutureWarning`) | [delete() return value](#backend-delete) |
 | `CacheEntry.headers` becomes a tuple of pairs | [#105](https://github.com/allen0099/FastAPI-CacheX/issues/105) | No | [Repeated headers](#cache-entry-headers) |
 | HTTP cache key format | [#271](https://github.com/allen0099/FastAPI-CacheX/issues/271), [#270](https://github.com/allen0099/FastAPI-CacheX/issues/270), [#269](https://github.com/allen0099/FastAPI-CacheX/issues/269), [#266](https://github.com/allen0099/FastAPI-CacheX/issues/266), [#265](https://github.com/allen0099/FastAPI-CacheX/issues/265), [#72](https://github.com/allen0099/FastAPI-CacheX/issues/72) | No | [Cache keys](#cache-keys) |
 | Conditional session writes | [#128](https://github.com/allen0099/FastAPI-CacheX/issues/128) | No | [Session writes](#session-writes) |
