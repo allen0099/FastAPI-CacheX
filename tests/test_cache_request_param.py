@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 from fastapi_cachex import cache
 
 INJECTED = "__cachex_request"
+# The sub-response is injected the same way, for the dependencies' headers (#233).
+INJECTED_RESPONSE = "__cachex_response"
 
 
 class MyRequest(Request):
@@ -71,7 +73,7 @@ def test_kwargs_handler_can_be_decorated():
 
     params = list(inspect.signature(handler).parameters.values())
 
-    assert [param.name for param in params] == [INJECTED, "kwargs"]
+    assert [param.name for param in params] == [INJECTED, INJECTED_RESPONSE, "kwargs"]
     assert params[-1].kind is inspect.Parameter.VAR_KEYWORD
 
 
@@ -135,7 +137,7 @@ def test_declared_request_is_not_injected_twice(annotation: Any, label: str):
     wrapped = cache(ttl=60)(handler)
     names = list(inspect.signature(wrapped).parameters)
 
-    assert names == ["request"]
+    assert names == ["request", INJECTED_RESPONSE]
     assert INJECTED not in names
 
 
@@ -168,7 +170,11 @@ def test_unresolvable_annotation_falls_back_instead_of_crashing():
 
     wrapped = cache(ttl=60)(handler)
 
-    assert list(inspect.signature(wrapped).parameters) == ["thing", INJECTED]
+    assert list(inspect.signature(wrapped).parameters) == [
+        "thing",
+        INJECTED,
+        INJECTED_RESPONSE,
+    ]
 
 
 def test_unresolvable_annotation_still_finds_a_plain_request():
@@ -182,4 +188,8 @@ def test_unresolvable_annotation_still_finds_a_plain_request():
 
     wrapped = cache(ttl=60)(handler)
 
-    assert list(inspect.signature(wrapped).parameters) == ["request", "thing"]
+    assert list(inspect.signature(wrapped).parameters) == [
+        "request",
+        "thing",
+        INJECTED_RESPONSE,
+    ]

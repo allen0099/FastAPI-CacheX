@@ -99,6 +99,11 @@ GET /items  → 200, Cache-Control: max-age=60, Age: 42（儲存後 42 秒送出
 
 handler 回傳一般資料而非 `Response` 時，得到的處理與沒有 `@cache` 時相同：回傳值會經過路由的 response model 驗證與過濾（明確宣告的，或由回傳型別註記推斷，並套用 `response_model_*` 選項），套用路由的 `status_code`，而在注入的 `response: Response` 參數上設定的狀態碼與標頭也會保留。
 
+依賴項在 FastAPI 共用的 `Response` 上設定的標頭與 cookie，會以本次請求的值送到用戶端，未命中、命中與 304 皆然，不論 handler 是否宣告 `response: Response`。它們不會隨項目儲存，因此 `X-RateLimit-Remaining` 這類標頭不會重播寫入快取那次請求的值。依賴項帶有 `private` 或 `no-store` 的 `Cache-Control`，以及依賴項設定的 cookie，都與 handler 自己設定的視為相同：回應不會儲存，並以依賴項的標頭或 `private` 送出，命中與 304 也一樣。依賴項其他的 `Cache-Control` 與 handler 自己的視為相同：裝飾器的會取代它，不帶參數的 `@cache()` 則保留它。依賴項設定的狀態碼會送出，但回應不會寫入後端，因為它可能只適用於該次請求；命中時沿用儲存的狀態碼。handler 自己加到 `response` 上的標頭，以及它設定的狀態碼，則屬於儲存的回應；handler 設定了依賴項也設定過的標頭時，送出的是 handler 的值，命中時也一樣。handler 刪除依賴項的標頭，只在它執行時才有效。FastAPI 本身只在 handler 回傳一般資料時合併這些標頭；`@cache` 也會把依賴項的標頭加到 handler 自己回傳的 `Response` 上。0.4.1 之前，沒有宣告 `response: Response` 參數的 handler 會遺失它們，有宣告的則會重播寫入快取那次請求的標頭（#233）。
+
+> [!NOTE]
+> 因此，每次請求都設定 cookie 的依賴項（例如套用到整個應用程式的 CSRF 或 session 更新依賴項），會讓它套用到的每個 `@cache` 路由都不寫入後端。請只把它套用到需要的路由，或只在 cookie 改變時才設定。
+
 ### 帶有憑證的請求 {#requests-with-credentials}
 
 每個請求都送出 `Authorization` 的單頁應用程式，或每位訪客都有 Session 的網站，在只加上 `@cache` 的路由上完全不會命中快取：每個請求都會繞過後端（見上文）。請依 handler 回傳的內容選擇：
