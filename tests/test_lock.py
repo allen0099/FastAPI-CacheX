@@ -230,3 +230,115 @@ async def test_lock_acquire_cancelled_resets_is_held() -> None:
 
     assert await lock2.acquire(blocking=False) is True
     assert await lock2.release() is True
+
+
+class StoreThenStallBackend(MemoryBackend):
+    """Stores the claim, then delays the reply, like a SET NX in flight (#234)."""
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        super().__init__()
+        self.error = error
+
+    async def set_if_absent(
+        self, key: str, value: CacheEntry, ttl: int | None = None
+    ) -> bool:
+        stored = await super().set_if_absent(key, value, ttl=ttl)
+        if self.error is not None:
+            raise self.error
+        await asyncio.sleep(10)
+        return stored
+
+
+@pytest.mark.parametrize("blocking", [True, False])
+async def test_a_cancelled_acquire_withdraws_a_stored_claim(blocking: bool) -> None:
+    backend = StoreThenStallBackend()
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            CacheLock("job", ttl=60, backend=backend).acquire(blocking=blocking), 0.05
+        )
+
+    assert await CacheLock("job", backend=backend).locked() is False
+
+
+async def test_a_failed_acquire_withdraws_a_stored_claim() -> None:
+    backend = StoreThenStallBackend(error=ConnectionError("reply lost"))
+
+    with pytest.raises(ConnectionError, match="reply lost"):
+        await CacheLock("job", ttl=60, backend=backend).acquire()
+
+    assert await CacheLock("job", backend=backend).locked() is False
+
+
+async def test_a_failed_withdrawal_is_logged_and_the_error_kept(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Unreachable(StoreThenStallBackend):
+        async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+            msg = "down"
+            raise ConnectionError(msg)
+
+    backend = Unreachable(error=ConnectionError("reply lost"))
+
+    with pytest.raises(ConnectionError, match="reply lost"):
+        await CacheLock("job", ttl=60, backend=backend).acquire()
+
+    assert "could not withdraw an interrupted claim" in caplog.text
+
+
+async def test_a_cancelled_acquire_leaves_another_holders_lock() -> None:
+    backend = MemoryBackend()
+    holder = CacheLock("job", ttl=60, backend=backend)
+    assert await holder.acquire(blocking=False) is True
+
+    waiter = asyncio.create_task(
+        CacheLock("job", backend=backend, poll_interval=0.01).acquire()
+    )
+    await asyncio.sleep(0.03)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert await holder.release() is True
+
+
+async def test_a_second_cancellation_does_not_stop_the_withdrawal() -> None:
+    class SlowDelete(StoreThenStallBackend):
+        async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+            await asyncio.sleep(0.05)
+            return await super().delete_if_equals(key, expected)
+
+    backend = SlowDelete()
+    task = asyncio.create_task(CacheLock("job", ttl=60, backend=backend).acquire())
+    await asyncio.sleep(0.02)  # the claim is stored, the reply stalls
+    task.cancel()
+    await asyncio.sleep(0.01)  # the withdrawal has started
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.sleep(0.1)
+    assert await CacheLock("job", backend=backend).locked() is False
+
+
+async def test_a_withdrawal_that_fails_after_a_second_cancellation_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class SlowFailingDelete(StoreThenStallBackend):
+        async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+            await asyncio.sleep(0.05)
+            msg = "down"
+            raise ConnectionError(msg)
+
+    backend = SlowFailingDelete()
+    task = asyncio.create_task(CacheLock("job", ttl=60, backend=backend).acquire())
+    await asyncio.sleep(0.02)  # the claim is stored, the reply stalls
+    task.cancel()
+    await asyncio.sleep(0.01)  # the withdrawal has started
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.sleep(0.1)
+    assert "could not withdraw an interrupted claim" in caplog.text
+    assert "ConnectionError: down" in caplog.text
