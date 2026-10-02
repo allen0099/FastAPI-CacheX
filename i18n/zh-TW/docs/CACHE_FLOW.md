@@ -45,6 +45,9 @@ private、沒有正數的 ttl，或帶有 Authorization／Session 且未設定 p
                             不同時才寫入後端
                             （fail_open 時，寫入失敗會記錄警告，
                             回應照常送出但不儲存）
+              接著，若 If-None-Match 與新的 ETag 相符（項目已過期、
+              已清除或被淘汰、從未儲存，或存在另一個 worker 中）
+              → 以 304 取代 200，並帶上 Set-Cookie 與 handler 的背景任務
     ↓
 在回應中附加 Cache-Control（非 2xx 回應回傳時不帶此標頭，
 handler 自己送出的 private／no-store Cache-Control 永遠不會被取代，
@@ -210,10 +213,14 @@ if not is_cacheable_status(response.status_code):
     return response  # 非 2xx：原樣回傳，不寫入
 if etag is None:
     return response  # 串流／檔案：沒有 ETag，不寫入
-if marked_private_or_no_store(response) or "set-cookie" in response.headers:
-    return response  # 屬於單一呼叫者的回應：不寫入
-if not entry or entry.fingerprint != etag:
+shareable = not (
+    marked_private_or_no_store(response) or "set-cookie" in response.headers
+)  # 屬於單一呼叫者的回應不寫入
+if shareable and (not entry or entry.fingerprint != etag):
     await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
+if etag_matches(client_etag, etag):
+    return not_modified(...)  # 304：用戶端的副本仍是最新的；
+    # 它保留回應的 Set-Cookie 與背景任務
 return response
 ```
 
@@ -244,7 +251,7 @@ If-None-Match: "abc", W/"def"     → 多個值逐一比對；任一相符 → 3
 If-None-Match: *                  → 只要資源存在就相符 → 304
 ```
 
-304 回應會帶有與 200 相同的 `Cache-Control` 與 `ETag`，以及影響快取行為的標頭 `Vary`、`Content-Location` 與 `Expires`；否則中介快取在重新驗證後會遺失這些欄位（RFC 9110 §15.4.5）。
+304 回應會帶有與 200 相同的 `Cache-Control` 與 `ETag`，以及影響快取行為的標頭 `Vary`、`Content-Location` 與 `Expires`；否則中介快取在重新驗證後會遺失這些欄位（RFC 9110 §15.4.5）。針對 handler 新產生之回應的 304 另外會帶上 handler 的 `Set-Cookie`（這類回應一律以 `private` 送出）。
 
 ## 後端儲存格式 {#backend-storage-formats}
 

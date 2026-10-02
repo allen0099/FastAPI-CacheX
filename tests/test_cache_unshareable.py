@@ -351,9 +351,11 @@ async def test_set_cookie_on_a_public_route_is_sent_as_private():
         "private, max-age=60, must-revalidate, stale-while-revalidate=30, immutable"
     )
     assert first.headers["Cache-Control"] == expected
-    # Not stored: the handler ran again, and its fresh cookie response is a 200.
-    assert again.status_code == 200
+    # Not stored: the handler ran again, and the 304 for its fresh render
+    # carries the cookie and the private header (#233, #237).
+    assert again.status_code == 304
     assert again.headers["Cache-Control"] == expected
+    assert "seen=1" in again.headers["set-cookie"]
     assert await BackendProxy.get().get(_key("/banner")) is None
 
 
@@ -376,6 +378,7 @@ def test_set_cookie_304_on_a_bypassed_route_is_private():
     assert first.headers["Cache-Control"] == "private"
     assert revalidated.status_code == 304
     assert revalidated.headers["Cache-Control"] == "private"
+    assert "seen=1" in revalidated.headers["set-cookie"]
 
 
 async def test_set_cookie_on_a_no_cache_route_is_private_no_cache():
@@ -399,6 +402,7 @@ async def test_set_cookie_on_a_no_cache_route_is_private_no_cache():
     assert revalidated.headers["Cache-Control"] == (
         "private, no-cache, must-revalidate"
     )
+    assert "seen=1" in revalidated.headers["set-cookie"]
     assert await BackendProxy.get().get(_key("/ticker")) is None
 
 

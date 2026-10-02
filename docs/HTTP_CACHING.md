@@ -173,7 +173,9 @@ A response that belongs to one caller is never stored either (#296):
 - **The response sets a cookie.** It is served, `Set-Cookie` included, but not
   stored, and it (and a 304) is sent with `private` in place of `public`,
   keeping the other directives, so a shared cache downstream does not store it
-  either.
+  either. A 304 for a fresh render carries the `Set-Cookie` lines too, and the
+  handler's background task still runs (before 0.4.1 the 304s on bypassed and
+  `no_cache` requests dropped both, #233).
 
 In the last two cases an entry already stored under the key is left alone, and
 a request that finds a valid entry is still answered from it before the
