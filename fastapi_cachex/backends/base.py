@@ -166,6 +166,9 @@ class BaseCacheBackend(ABC):
         ``delete`` returned ``None`` before 0.4.0, and a third-party backend
         written then may still do so. ``None`` counts as removed, as every
         fallback assumed in 0.3.x, and warns: 0.5.0 will treat it as ``False``.
+        ``FutureWarning`` rather than ``DeprecationWarning``: the warning is
+        raised inside the package, where a ``DeprecationWarning`` is hidden by
+        default, and the change affects the application at runtime.
         """
         result: object = await self.delete(key)
         if result is None:
@@ -175,7 +178,7 @@ class BaseCacheBackend(ABC):
                 "removed; None is counted as removed until 0.5.0, which treats "
                 "it as False. See https://fastapi-cachex.readthedocs.io/en/"
                 "stable/MIGRATING_0_4/#backend-delete",
-                DeprecationWarning,
+                FutureWarning,
                 stacklevel=3,
             )
             return True

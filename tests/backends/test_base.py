@@ -226,7 +226,7 @@ async def test_fallbacks_count_a_none_delete_as_removed_and_warn(
     await backend.set("k", entry)
 
     with pytest.warns(
-        DeprecationWarning, match=r"LegacyDictBackend\.delete\(\) returned None"
+        FutureWarning, match=r"LegacyDictBackend\.delete\(\) returned None"
     ):
         result = await call(backend, entry)
 

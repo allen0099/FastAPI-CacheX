@@ -341,7 +341,7 @@ await backend.clear_pattern("GET|||*")  # 在 0.4.0 的鍵格式下為 "http:v2|
 
 ### delete() 的回傳值 {#backend-delete}
 
-0.4.0 起 `BaseCacheBackend.delete()` 回傳是否移除了鍵，而不是 `None`（[#71](https://github.com/allen0099/FastAPI-CacheX/issues/71)），基底類別的非原子性後備實作也會使用這個結果：`delete_many()` 改為計算實際存在的鍵，而不是嘗試刪除的鍵；`get_and_delete()` 與 `delete_if_equals()` 只在呼叫者的刪除確實移除了鍵時才算成功。仍回傳 `None` 的第三方後端無法通過型別檢查；執行時，後備實作會像 0.3.x 一樣把 `None` 視為已移除，並發出 `DeprecationWarning`。0.5.0 會把 `None` 視為 `False`。0.3.9 不會警告：子類別在該版本無法宣告 `-> bool` 而不與 0.3.x 的基底類別產生型別錯誤。
+0.4.0 起 `BaseCacheBackend.delete()` 回傳是否移除了鍵，而不是 `None`（[#71](https://github.com/allen0099/FastAPI-CacheX/issues/71)），基底類別的非原子性後備實作也會使用這個結果：`delete_many()` 改為計算實際存在的鍵，而不是嘗試刪除的鍵；`get_and_delete()` 與 `delete_if_equals()` 只在呼叫者的刪除確實移除了鍵時才算成功。仍宣告 `-> None` 的第三方後端無法通過型別檢查；執行時，後備實作會像 0.3.x 一樣把 `None` 視為已移除，並發出 `FutureWarning`。0.5.0 會把 `None` 視為 `False`。0.3.9 不會警告：子類別在該版本無法宣告 `-> bool` 而不與 0.3.x 的基底類別產生型別錯誤。
 
 ```python
 # 修改前
