@@ -195,7 +195,12 @@ BackendProxy.set(backend)
   enumerates keys, so on Memcached it deletes nothing (see
   [Application cache](APP_CACHE.md))
 - A key Memcached would reject (over 250 bytes, whitespace, non-ASCII) is stored
-  under its SHA-256 digest
+  under its SHA-256 digest, behind the `key_prefix`. The prefix itself is
+  therefore checked when the backend is built: one with whitespace, control
+  characters or non-ASCII, or of 250 bytes or more, raises `ValueError`, and
+  one over 186 bytes, which leaves no room for the 64-character digest, warns
+  (before 0.4.1 such a prefix made calls fail with
+  `MemcacheIllegalInputError`)
 - A `ttl` whose expiry falls after 2038-01-19 raises `ValueError` (see
   [TTL values](#ttl-values))
 - Values larger than the server's item size limit (1 MB by default, `memcached -I`)
