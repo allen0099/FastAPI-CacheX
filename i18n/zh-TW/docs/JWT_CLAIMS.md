@@ -186,7 +186,7 @@ await session_manager.delete_session("session-abc123")
 ```
 <!-- fmt:on -->
 
-PyJWT 預設會驗證簽章、`exp`、`iat` 與（存在時的）`nbf`，並在傳入 `issuer`／`audience` 時驗證 `iss`／`aud`。內建序列化器的兩項檢查在這裡沒有重複：它會拒絕非對稱的 `jwt_algorithm`，並在 `secret_key` 短於 HMAC 輸出長度時發出警告。這個類別同樣以 `secret_key` 簽署，因此請使用 `HS*` 演算法；若要使用非對稱演算法，請在類別中保存私鑰與公鑰，並在 `jwt.encode()` 與 `jwt.decode()` 中使用它們。
+PyJWT 預設會驗證簽章、`exp`、`iat` 與（存在時的）`nbf`，並在傳入 `issuer`／`audience` 時驗證 `iss`／`aud`。內建序列化器的兩項檢查在這裡沒有重複：它會拒絕非對稱的 `jwt_algorithm`，並在 `secret_key` 短於 HMAC 輸出長度時拋出 `ValueError`。這個類別同樣以 `secret_key` 簽署，因此請使用 `HS*` 演算法；若要使用非對稱演算法，請在類別中保存私鑰與公鑰，並在 `jwt.encode()` 與 `jwt.decode()` 中使用它們。
 
 ### 範例 1：加入 `jti` 與 `nbf` {#example-1-adding-jti-and-nbf}
 

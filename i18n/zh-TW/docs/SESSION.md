@@ -9,7 +9,7 @@ FastAPI-CacheX 的 Session 管理提供完整的使用者 Session 處理，包�
 
 | 權杖來源 | 回應端 |
 |--------------|---------------|
-| 自訂標頭（預設 `X-Session-Token`）／`Authorization: Bearer`／**Cookie**（預設名稱 `session`） | 依來源決定：送出標頭或 Bearer 權杖的請求（即使該權杖已無法解析）會在回應標頭中收到權杖；其他情況（Cookie，或完全沒有權杖）則使用 `Set-Cookie` |
+| 自訂標頭（預設 `X-Session-Token`）／`Authorization: Bearer`／**Cookie**（預設名稱 `__Host-session`） | 依來源決定：送出標頭或 Bearer 權杖的請求（即使該權杖已無法解析）會在回應標頭中收到權杖；其他情況（Cookie，或完全沒有權杖）則使用 `Set-Cookie` |
 
 只支援標頭的 `SessionMiddleware` 自 0.3.1 起已棄用，**已於 0.4.0 移除**；見[遷移](#migration-sessionmiddleware-fastapicachexsessionmiddleware)。
 
@@ -95,7 +95,7 @@ app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
 `SessionMiddleware` 自 0.3.1 起已棄用，已於 0.4.0 移除。請改用 `FastAPICacheXSessionMiddleware`：
 
 - **`SessionMiddleware`**（一個 `BaseHTTPMiddleware`，已移除）：以自訂標頭（預設 `X-Session-Token`）和／或 `Authorization: Bearer` 傳遞權杖，適合由用戶端管理權杖的 API 優先架構。不支援以 Cookie 傳輸。
-- **`FastAPICacheXSessionMiddleware`**（一個純 ASGI 中介軟體）：與 Starlette 內建的 `SessionMiddleware` 相容，提供相同的類 dict `request.session`。它以 Cookie（預設 Cookie 名稱 `session`）傳遞簽署過的 Session 權杖，而 Session 內容則存放在後端（`SessionManager` 的快取後端），而不是像 Starlette 自己的實作那樣編碼進 Cookie 本身。權杖解析採「標頭優先、Cookie 其次」：它會先讀取自訂標頭（預設 `X-Session-Token`）和／或 `Authorization: Bearer`，只有兩者都不存在時才退回使用 Cookie，因此原本搭配 `SessionMiddleware` 使用 `X-Session-Token` 的用戶端不需修改即可繼續運作。回應端同樣依來源決定：請求送出標頭或 Bearer 權杖時（即使該權杖已無法解析），新的或更新後的權杖會在 `header_name` 回應標頭中傳回，且不會發出 `Set-Cookie`；從 Cookie 傳入的權杖（或沒有權杖的請求所建立的全新匿名 Session）則使用 `Set-Cookie`。
+- **`FastAPICacheXSessionMiddleware`**（一個純 ASGI 中介軟體）：與 Starlette 內建的 `SessionMiddleware` 相容，提供相同的類 dict `request.session`。它以 Cookie（預設 Cookie 名稱 `__Host-session`）傳遞簽署過的 Session 權杖，而 Session 內容則存放在後端（`SessionManager` 的快取後端），而不是像 Starlette 自己的實作那樣編碼進 Cookie 本身。權杖解析採「標頭優先、Cookie 其次」：它會先讀取自訂標頭（預設 `X-Session-Token`）和／或 `Authorization: Bearer`，只有兩者都不存在時才退回使用 Cookie，因此原本搭配 `SessionMiddleware` 使用 `X-Session-Token` 的用戶端不需修改即可繼續運作。回應端同樣依來源決定：請求送出標頭或 Bearer 權杖時（即使該權杖已無法解析），新的或更新後的權杖會在 `header_name` 回應標頭中傳回，且不會發出 `Set-Cookie`；從 Cookie 傳入的權杖（或沒有權杖的請求所建立的全新匿名 Session）則使用 `Set-Cookie`。
 
 `FastAPICacheXSessionMiddleware` 和 `SessionMiddleware` 一樣會將載入的 `Session` 物件放進 `request.state`，因此 Session 依賴項 `get_session`、`get_optional_session`、`require_session` 與 `require_user_session` 都能直接運作，不需任何修改：
 
@@ -123,7 +123,7 @@ async def me(session=Depends(require_user_session)):
 - 以 `del` 或 `pop()` 移除最後一個鍵並不是登出。帶有使用者的 Session 會以空資料儲存；匿名 Session 已無任何內容，會和 `clear()` 一樣被刪除。
 - 以寫入 `request.session` 的方式登入時，會沿用請求帶來的 Session ID。Starlette 的中介軟體中 Cookie *就是* Session，因此登入回應會取代任何被植入的 Cookie；這裡的 Cookie 只是指向伺服器端紀錄的名稱，被植入的 Cookie 會跟著受害者一起登入。請以 `await login(request, user)` 登入，它會為 Session 換一個新 ID 並附加使用者（見[登入後重新產生 Session ID](#5-regenerate-the-session-id-after-login)）。
 - 只要存取 `request.session`，或透過 Session 依賴項（`get_session`、`get_optional_session`，以及建立在它們之上的依賴項，例如 `AuthenticatedSession`）讀取 Session，就會為了尋找權杖而讀取過的每個請求標頭加入 `Vary`：依 `token_source_priority` 順序檢查的標頭（`header_name`，以及啟用 Bearer 權杖時的 `Authorization`），直到攜帶權杖的那一個為止。只有在沒有任何標頭攜帶權杖時才會讀取 Cookie，因此也只有這時才會加入 `Cookie`。
-- 帶有 Session 權杖的回應（新建立的 Session、滑動續期、重新產生的 ID），或帶有讓 Session Cookie 失效之 `Set-Cookie` 的回應，一律不可快取。中介軟體會設定 `Cache-Control: private, no-store`，取代路由原本設定的值（包括 `@cache(public=True)` 的路由），並且即使處理函式沒有碰過 `request.session`，也會加入與上一項相同的 `Vary` 名稱。否則 CDN 或反向 proxy 可能存下權杖，再交給下一位訪客。不帶權杖的回應則維持原本的標頭。
+- 帶有 Session 權杖的回應（新建立的 Session、滑動續期、重新產生的 ID），或帶有讓 Session Cookie 失效之 `Set-Cookie` 的回應，一律不可快取。中介軟體會設定 `Cache-Control: private, no-store`，取代路由原本設定的值（包括 `@cache(public=True)` 的路由），並且即使 handler 沒有碰過 `request.session`，也會加入與上一項相同的 `Vary` 名稱。否則 CDN 或反向 proxy 可能存下權杖，再交給下一位訪客。不帶權杖的回應則維持原本的標頭。
 - 對帶有 Session 的請求（中介軟體從任何來源載入的 Session，有沒有使用者都算，或不是空的 `request.session`），`@cache` 不會讀寫後端，並像 `Authorization` 一樣以 `private` 回應。`public=True` 讓路由在各 Session 間共用；`cache_authorized=True` 搭配包含 Session 使用者的 `key_builder` 則依使用者快取，回應仍帶有 `private`。見[需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
 
 Cookie 一律為 `HttpOnly`；`Secure`、`SameSite`、`Domain`、`Path` 與 `Max-Age` 則依 `cookie_*` 設定（`cookie_max_age=None` 或 `0` 時不設 `Max-Age`）。
@@ -345,7 +345,7 @@ async def log_in(credentials: Credentials, request: Request):
 
 無論哪種情況，舊的權杖都無法再解析出 Session。接著中介軟體會儲存該 Session（包括呼叫之後寫入 `request.session` 的鍵；除非已載入的 Session 屬於其他使用者，也包括呼叫之前寫入的鍵），並透過該請求使用的傳輸方式送出權杖：以標頭或 `Authorization: Bearer` 權杖送來的請求使用回應標頭，否則使用帶有所有 `cookie_*` 屬性的 HttpOnly `Set-Cookie`。和每個帶有權杖的回應一樣，它會加上 `Cache-Control: private, no-store`。之後帶著該權杖的請求會通過 `require_user_session` 與 `AuthenticatedSession`。`login()` 會回傳該 Session，在該請求剩下的處理中，`get_session` 也會回傳它。
 
-完全沒有帶權杖的請求只會收到 Cookie，頁面上的指令碼讀不到它。不要把權杖複製到瀏覽器登入回應的標頭或本文中。沒有權杖就登入的 API 用戶端需要從本文取得權杖：對 `login()` 回傳的 Session 回傳 `manager.issue_token(session)`，或由另一個端點發出權杖，如 [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) 所示。完整的瀏覽器版本請見 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)。
+完全沒有帶權杖的請求只會收到 Cookie，頁面上的腳本讀不到它。不要把權杖複製到瀏覽器登入回應的標頭或本文中。沒有權杖就登入的 API 用戶端需要從本文取得權杖：對 `login()` 回傳的 Session 回傳 `manager.issue_token(session)`，或由另一個端點發出權杖，如 [`examples/session_jwt.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt.py) 所示。完整的瀏覽器版本請見 [`examples/session_login.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_login.py)。
 
 登出請呼叫 `await logout(request)`。它會立即從後端刪除 Session，因此權杖在回應送出之前就已失效，Cookie 用戶端也會收到讓 Cookie 過期的回應。它回傳 `True`；若該請求中沒有載入或建立任何 Session（包括權杖無法解析的情況），則回傳 `False`。之後寫入 `request.session` 的鍵會存進新的匿名 Session，之後呼叫的 `login()` 則會建立新的 Session。
 
@@ -368,7 +368,7 @@ async def sudo(request: Request, session: AuthenticatedSession):
     return {"ok": True}
 ```
 
-`rotate_session_id()` 會對請求的 Session 呼叫 `SessionManager.regenerate_session_id()`，刪除舊 ID 底下的後端紀錄，並以新 ID 儲存該 Session，保留其資料、使用者、`created_at` 與過期時間。任一個中介軟體都會看到新 ID，並透過該請求使用的傳輸方式送出對應的權杖：Cookie 使用 `Set-Cookie`，標頭權杖則使用回應標頭。之後舊的權杖就無法再解析出 Session。新訪客沒有可換 ID 的 Session，因此它會回傳 `False`。若這個請求執行期間，另一個請求刪除、使其失效或輪替了這個 Session，則不會儲存或送出任何東西，並回應 `401`；`login()` 則改為替使用者建立新的 Session（見 [Session 寫入](MIGRATING_0_4.md#session-writes)）。
+`rotate_session_id()` 會對請求的 Session 呼叫 `SessionManager.regenerate_session_id()`，刪除舊 ID 底下的後端紀錄，並以新 ID 儲存該 Session，保留其資料、使用者、`created_at` 與過期時間。中介軟體會看到新 ID，並透過該請求使用的傳輸方式送出對應的權杖：Cookie 使用 `Set-Cookie`，標頭權杖則使用回應標頭。之後舊的權杖就無法再解析出 Session。新訪客沒有可換 ID 的 Session，因此它會回傳 `False`。若這個請求執行期間，另一個請求刪除、使其失效或輪替了這個 Session，則不會儲存或送出任何東西，並回應 `401`；`login()` 則改為替使用者建立新的 Session（見 [Session 寫入](MIGRATING_0_4.md#session-writes)）。
 
 已經取得請求 Session 物件的 handler，也可以直接呼叫 `await manager.regenerate_session_id(session)`。請從 `get_optional_session` 取得 Session，並在它為 `None` 時略過呼叫；`SessionDep` 會對還沒有 Session 的訪客回應 `401`。與 `rotate_session_id()` 不同，若期間另一個請求結束了這個 Session，直接呼叫會拋出 `SessionNotFoundError` 或 `SessionInvalidError`，因此請捕捉 `SessionError`，並比照沒有 Session 的情況回應。
 

@@ -81,13 +81,13 @@ GET /items  → 200, Cache-Control: max-age=60，沒有 Age（handler 有執行�
 GET /items  → 200, Cache-Control: max-age=60, Age: 42（儲存後 42 秒送出）
 ```
 
-項目的儲存時間取自儲存它的行程的系統時鐘，而由送出它的行程讀取，因此 `Age` 會限制在 `0`–`ttl` 之間，以防兩台主機的時鐘不一致。handler 有執行時（未命中、`no_cache=True`、繞過後端的請求）不會送出 `Age`；0.3.9 以前的版本儲存的項目沒有記錄時間，也不會送出。handler 自己設定的 `Age` 標頭不會被儲存。
+項目的儲存時間取自儲存它的行程的系統時鐘，而由送出它的行程讀取，因此 `Age` 會限制在 `0`–`ttl` 之間，以防兩台主機的時鐘不一致。handler 有執行時（未命中、`no_cache=True`、繞過後端的請求）不會送出 `Age`；0.3.9 之前的版本儲存的項目沒有記錄時間，也不會送出。handler 自己設定的 `Age` 標頭不會被儲存。
 
 只有成功的回應會被儲存。handler *回傳* 非 2xx 狀態的回應（例如 `Response(..., status_code=404)`）會原樣傳出、永不快取，因此暫時性的錯誤不會取代或污染上一筆正常的項目。`206 Partial Content` 同樣排除在外，因為它的本文只對產生它的那個 `Range` 請求有意義。
 
 屬於單一呼叫者的回應同樣不會被儲存（#296）：
 
-- **請求帶有 `Authorization` 或 Session。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限。設定 `cache_authorized=True`（給包含呼叫者身分的 key builder 使用的明確選項，見[需驗證身分的端點](#authenticated-endpoints)）的路由會為這類請求讀寫後端，但回應仍帶有 `private`：項目只在後端依呼叫者區分，CDN 則只以 URL 為鍵（0.3.9 以前會原樣送出裝飾器的標頭，#372）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。沒有正數 `ttl` 的路由本來就不經過後端，但它對這類請求的回應仍會加上 `private`（0.3.9 以前不會加，#362）；`private=True` 的路由本來就會送出 `private`。請求「帶有 Session」是指 `FastAPICacheXSessionMiddleware` 為它載入了 Session（權杖來自標頭、Bearer 權杖或 Session Cookie 皆可，有沒有使用者都算），或在任何 Session 中介軟體（包括 Starlette 的）下 `request.session` 不是空的。解析不出 Session 的權杖（偽造、過期）不算，因此無法用來略過快取。0.3.9 以前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。會讀取後端的路由第一次繞過時，會以 `WARNING` 等級記錄（見[帶有憑證的請求](#requests-with-credentials)）。
+- **請求帶有 `Authorization` 或 Session。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限。設定 `cache_authorized=True`（給包含呼叫者身分的 key builder 使用的明確選項，見[需驗證身分的端點](#authenticated-endpoints)）的路由會為這類請求讀寫後端，但回應仍帶有 `private`：項目只在後端依呼叫者區分，CDN 則只以 URL 為鍵（0.3.9 之前會原樣送出裝飾器的標頭，#372）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。沒有正數 `ttl` 的路由本來就不經過後端，但它對這類請求的回應仍會加上 `private`（0.3.9 之前不會加，#362）；`private=True` 的路由本來就會送出 `private`。請求「帶有 Session」是指 `FastAPICacheXSessionMiddleware` 為它載入了 Session（權杖來自標頭、Bearer 權杖或 Session Cookie 皆可，有沒有使用者都算），或在任何 Session 中介軟體（包括 Starlette 的）下 `request.session` 不是空的。解析不出 Session 的權杖（偽造、過期）不算，因此無法用來略過快取。0.3.9 之前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。會讀取後端的路由第一次繞過時，會以 `WARNING` 等級記錄（見[帶有憑證的請求](#requests-with-credentials)）。
 - **handler 自己的 `Cache-Control` 含有 `private` 或 `no-store`**（完整指令，不分大小寫）。回應照常送出但不儲存，而且 handler 的標頭會原樣送出，不會被裝飾器的標頭取代。
 - **回應設定了 cookie。** 回應照常送出（包含 `Set-Cookie`），但不儲存；它（以及 304）會以 `private` 取代 `public` 送出並保留其他指令，讓下游的共用快取也不會儲存它。
 
@@ -173,9 +173,9 @@ http:v2|{method}|{host}|{path}|{query_params}
 - 不同的查詢參數各有獨立的快取項目
 - 同一個端點搭配不同參數時可以各自快取
 
-查詢參數會先依名稱排序，再建立快取鍵，因此 `?a=1&b=2` 與 `?b=2&a=1` 共用同一筆項目。排序是穩定的：同名參數的多個值保留用戶端送出的順序，因為以 `tag: list[str]` 讀取的處理函式看到的正是這個順序，所以 `?tag=b&tag=a` 與 `?tag=a&tag=b` 仍是兩筆項目。名稱以解碼後的值比較（`%61` 視為 `a` 排序，快取鍵本來就這樣寫它），每個名稱與值的編碼都與未排序的快取鍵完全相同，只有順序改變：已經依序排列的查詢，不論是否排序都得到相同的鍵。快取鍵原本就視為相同的仍然相同（`?a` 與 `?a=`、`&&` 產生的空段），其餘一律不會合併。0.4.0 起預設會排序（[#72](https://github.com/allen0099/FastAPI-CacheX/issues/72)，見[遷移至 0.4.0](MIGRATING_0_4.md#cache-keys)）。
+查詢參數會先依名稱排序，再建立快取鍵，因此 `?a=1&b=2` 與 `?b=2&a=1` 共用同一筆項目。排序是穩定的：同名參數的多個值保留用戶端送出的順序，因為以 `tag: list[str]` 讀取的 handler看到的正是這個順序，所以 `?tag=b&tag=a` 與 `?tag=a&tag=b` 仍是兩筆項目。名稱以解碼後的值比較（`%61` 視為 `a` 排序，快取鍵本來就這樣寫它），每個名稱與值的編碼都與未排序的快取鍵完全相同，只有順序改變：已經依序排列的查詢，不論是否排序都得到相同的鍵。快取鍵原本就視為相同的仍然相同（`?a` 與 `?a=`、`&&` 產生的空段），其餘一律不會合併。0.4.0 起預設會排序（[#72](https://github.com/allen0099/FastAPI-CacheX/issues/72)，見[遷移至 0.4.0](MIGRATING_0_4.md#cache-keys)）。
 
-回應取決於用戶端送出之查詢順序的處理函式（例如從 `request.url` 複製的自身連結或分頁連結）應關閉排序，否則第一位呼叫者的順序會被快取，並提供給送出其他順序的呼叫者：
+回應取決於用戶端送出之查詢順序的 handler（例如從 `request.url` 複製的自身連結或分頁連結）應關閉排序，否則第一位呼叫者的順序會被快取，並提供給送出其他順序的呼叫者：
 
 ```python
 @app.get("/search")
@@ -367,7 +367,7 @@ async def my_dashboard(user: CurrentUser):
 >
 > 以原始請求標頭組成的鍵等同於水平權限提升：送出 `X-User-Id: <someone-else>` 就會拿到該使用者的快取回應。
 
-key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True`、沒有 `ttl` 的路由，以及路由未設定 `public=True` 或 `cache_authorized=True` 時帶有 `Authorization` 或 Session 的請求，都不會呼叫它。0.3.8 以前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
+key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True`、沒有 `ttl` 的路由，以及路由未設定 `public=True` 或 `cache_authorized=True` 時帶有 `Authorization` 或 Session 的請求，都不會呼叫它。0.3.8 之前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
 
 key builder 必須是回傳 `str` 的同步函式，呼叫時不會被 await。`async def` 函式、具有 `async def __call__` 的物件，或包裝上述兩者的 `functools.partial`，都會在套用 `@cache` 時以 `CacheXError` 拒絕；`invalidate()` 也會在存取後端之前拒絕它們。仍然回傳非 `str` 的 builder（例如回傳協程的同步包裝函式）會在請求時拋出 `CacheXError`。`fail_open` 不涵蓋這種情況：這是路由的錯誤，不是後端故障。需要非同步讀取的資料（例如從資料庫取得使用者），請在依賴項或中介軟體中讀取，放到 `request.state` 供 builder 使用。
 
