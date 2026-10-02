@@ -22,7 +22,10 @@ and has no prefix.
 If you don't specify a backend, FastAPI-CacheX will use the in-memory cache by default.
 This is suitable for development and testing purposes. The backend automatically runs
 a cleanup task to remove expired entries every 60 seconds (`MemoryBackend(cleanup_interval=60)`;
-the interval must be positive).
+the interval must be positive). It stores and returns copies of each
+`CacheEntry`, so changing an entry you read or wrote does not change the
+cache, as on Redis and Memcached, which decode a new entry on every read
+(before 0.4.1, the memory backend handed out the stored object itself).
 
 When `@cache`, `CacheBackend` or `AppCache` registers this fallback because no
 backend was set, the `fastapi_cachex.proxy` logger logs a `WARNING` once per
