@@ -39,6 +39,8 @@
 | revalidation | 重新驗證 | |
 | invalidate / invalidation | 使……失效／快取失效 | |
 | expire / expiration | 過期 | |
+| evict / eviction | 淘汰 | 後端因容量或 TTL 移除項目 |
+| background task | 背景任務 | Starlette 回應的 `background` |
 | sliding expiration | 滑動過期 | |
 | TTL | 保留 | |
 | prefix / namespace | 前綴／命名空間 | |

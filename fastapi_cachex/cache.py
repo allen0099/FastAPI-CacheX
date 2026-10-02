@@ -753,6 +753,28 @@ def _not_modified(
     return response
 
 
+def _fresh_not_modified(
+    response: Response, etag: str, client_etag: str | None, cache_control: str
+) -> Response | None:
+    """The 304 for a response the handler just rendered, or None to send it.
+
+    None unless ``client_etag`` matches. The handler ran, so what it did
+    beyond the body still reaches the client: its ``Set-Cookie`` lines are
+    repeated on the 304 (such a response is never stored, and
+    ``_cache_control_for`` marks it ``private``), and its ``background`` task
+    moves onto the 304 (#233).
+    """
+    if not _etag_matches(client_etag, etag):
+        return None
+    not_modified = _not_modified(etag, cache_control, response.headers.items())
+    _append_headers(
+        not_modified,
+        [(k, v) for k, v in response.headers.items() if k.lower() == "set-cookie"],
+    )
+    not_modified.background = response.background
+    return not_modified
+
+
 # Response directives by which the handler says its response belongs to one
 # caller (``private``) or must not be kept at all (``no-store``).
 _UNSHAREABLE_DIRECTIVES = frozenset(
@@ -1298,15 +1320,17 @@ def cache(
                     return _with_cache_control(
                         response, response_cache_control, private_cache_control
                     )
-                if _etag_matches(client_etag, etag):
+                not_modified = _fresh_not_modified(
+                    response,
+                    etag,
+                    client_etag,
+                    _cache_control_for(
+                        response, response_cache_control, private_cache_control
+                    ),
+                )
+                if not_modified is not None:
                     logger.debug("304 Not Modified (uncached); path=%s", req.url.path)
-                    return _not_modified(
-                        etag,
-                        _cache_control_for(
-                            response, response_cache_control, private_cache_control
-                        ),
-                        response.headers.items(),
-                    )
+                    return not_modified
                 response.headers["ETag"] = etag
                 logger.debug("Bypassed the backend; path=%s", req.url.path)
                 return _with_cache_control(
@@ -1354,18 +1378,20 @@ def cache(
                             private_cache_control,
                         )
 
-                    if _etag_matches(client_etag, current_etag):
-                        # For no-cache, compare fresh data with client's ETag
+                    # For no-cache, compare fresh data with client's ETag
+                    not_modified = _fresh_not_modified(
+                        current_response,
+                        current_etag,
+                        client_etag,
+                        _cache_control_for(
+                            current_response,
+                            response_cache_control,
+                            private_cache_control,
+                        ),
+                    )
+                    if not_modified is not None:
                         logger.debug("304 Not Modified via no-cache; key=%s", cache_key)
-                        return _not_modified(
-                            current_etag,
-                            _cache_control_for(
-                                current_response,
-                                response_cache_control,
-                                private_cache_control,
-                            ),
-                            current_response.headers.items(),
-                        )
+                        return not_modified
 
                 # Compare with cached ETag - if match, return 304
                 elif cached_data and _etag_matches(
@@ -1465,6 +1491,22 @@ def cache(
                     )
                 else:
                     logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
+
+            # A client revalidating a copy that the fresh render reproduces gets
+            # a 304, as on the bypass and no_cache paths: the entry may have
+            # expired, been cleared or evicted, or never been stored in this
+            # worker, while the client's ETag still matches (#237).
+            not_modified = _fresh_not_modified(
+                current_response,
+                current_etag,
+                client_etag,
+                _cache_control_for(
+                    current_response, response_cache_control, private_cache_control
+                ),
+            )
+            if not_modified is not None:
+                logger.debug("304 Not Modified (fresh render); key=%s", cache_key)
+                return not_modified
 
             return _with_cache_control(
                 current_response, response_cache_control, private_cache_control

@@ -49,6 +49,10 @@ Cached entry exists and no-cache is off?
                                     differs from the existing entry's ETag
                                     (with fail_open, a failed write is logged
                                     and the response served unstored)
+              then, If-None-Match matches the fresh ETag (the entry expired,
+              was cleared or evicted, was never stored, or is held by another
+              worker) → 304 instead of the 200, carrying any Set-Cookie and
+              the handler's background task
     ↓
 Attach Cache-Control to the response (non-2xx responses are returned without it,
 a handler's own private/no-store Cache-Control is never replaced, and a
@@ -270,10 +274,14 @@ if not is_cacheable_status(response.status_code):
     return response  # non-2xx: returned as-is, not written
 if etag is None:
     return response  # streaming/file: no ETag, not written
-if marked_private_or_no_store(response) or "set-cookie" in response.headers:
-    return response  # one caller's response: not written
-if not entry or entry.fingerprint != etag:
+shareable = not (
+    marked_private_or_no_store(response) or "set-cookie" in response.headers
+)  # one caller's response is not written
+if shareable and (not entry or entry.fingerprint != etag):
     await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
+if etag_matches(client_etag, etag):
+    return not_modified(...)  # 304: the client's copy is still current;
+    # it keeps the response's Set-Cookie lines and background task
 return response
 ```
 
@@ -338,7 +346,8 @@ If-None-Match: *                  → matches whenever the resource exists → 3
 A 304 carries the same `Cache-Control` and `ETag` a 200 would, together with the
 cache-steering headers `Vary`, `Content-Location` and `Expires`; otherwise an
 intermediate cache would lose those fields after revalidation (RFC 9110
-§15.4.5).
+§15.4.5). A 304 for a response the handler just rendered also carries the
+handler's `Set-Cookie` lines (such a response is always sent `private`).
 
 ## Backend storage formats
 
