@@ -341,7 +341,7 @@ await backend.clear_pattern("GET|||*")  # "http:v2|GET|*" with 0.4.0's key forma
 
 ### delete() return value {#backend-delete}
 
-`BaseCacheBackend.delete()` returns whether a key was removed in 0.4.0, instead of `None` ([#71](https://github.com/allen0099/FastAPI-CacheX/issues/71)), and the base `delete_many()` fallback counts the keys that existed rather than the ones attempted. A third-party backend that returns `None` fails type checking and makes that count wrong. 0.3.9 does not warn: a subclass cannot declare `-> bool` today without a type error against the 0.3.x base class, and nobody uses the `None`.
+`BaseCacheBackend.delete()` returns whether a key was removed in 0.4.0, instead of `None` ([#71](https://github.com/allen0099/FastAPI-CacheX/issues/71)), and the non-atomic fallbacks on the base class use the result: `delete_many()` counts the keys that existed rather than the ones attempted, and `get_and_delete()` and `delete_if_equals()` let a caller win only if its delete removed the key. A third-party backend that still returns `None` fails type checking; at runtime the fallbacks count `None` as removed, as 0.3.x did, and emit a `DeprecationWarning`. 0.5.0 treats `None` as `False`. 0.3.9 does not warn: a subclass cannot declare `-> bool` there without a type error against the 0.3.x base class.
 
 ```python
 # Before

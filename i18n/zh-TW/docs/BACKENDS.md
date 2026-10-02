@@ -199,7 +199,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 - `expire_if_equals(key, expected, ttl) -> bool`：只在 `key` 仍存放 `expected` 時，才把它的 TTL 更新為 `ttl` 秒，因此長時間執行的鎖持有者可以續約租期，而不會在鎖已過期時動到別人的鎖。記憶體後端在鎖內更新，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `EXPIRE`），Memcached 則使用 `GETS` + 以新 exptime 寫回相同位元組的 `CAS`（`TOUCH` 不接受 CAS 權杖）。
 - `set_if_equals(key, expected, value, ttl=None) -> bool`：只在 `key` 仍存放 `expected` 時才儲存 `value`。這是 compare-and-set：若呼叫端讀取之後有任何操作變更、刪除了該鍵，或它已過期，寫入就會失敗。Session 透過它儲存（見 [Session 寫入](MIGRATING_0_4.md#session-writes)）。記憶體後端在鎖內比較，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `SET`，設定了 `ttl` 時加上 `EX`），Memcached 則使用 `GETS` + 寫入新值的 `CAS`。
 
-這六個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。
+這六個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。這些後備實作依賴 `delete()` 回傳鍵是否存有項目；仍像 0.3.x 一樣回傳 `None` 的 `delete()` 會發出警告，並在 0.5.0 之前視為已移除（見 [delete() 的回傳值](MIGRATING_0_4.md#backend-delete)）。
 
 完整可執行範例（英文）：[`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py)。
 

@@ -335,7 +335,9 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 
 All six have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
 that only implements the abstract methods keeps working; override them to get
-real atomicity.
+real atomicity. The fallbacks rely on `delete()` returning whether the key held
+an entry; a `delete()` that still returns `None`, as in 0.3.x, warns and counts
+as removed until 0.5.0 (see [delete() return value](MIGRATING_0_4.md#backend-delete)).
 
 Complete runnable example: [`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py).
 

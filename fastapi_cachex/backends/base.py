@@ -156,9 +156,30 @@ class BaseCacheBackend(ABC):
         """
         count = 0
         for key in keys:
-            if await self.delete(key):
+            if await self._delete_reporting(key):
                 count += 1
         return count
+
+    async def _delete_reporting(self, key: str) -> bool:
+        """Call ``delete`` for the fallbacks, accepting a 0.3.x ``None`` result.
+
+        ``delete`` returned ``None`` before 0.4.0, and a third-party backend
+        written then may still do so. ``None`` counts as removed, as every
+        fallback assumed in 0.3.x, and warns: 0.5.0 will treat it as ``False``.
+        """
+        result: object = await self.delete(key)
+        if result is None:
+            warnings.warn(
+                f"{type(self).__name__}.delete() returned None. Since "
+                "fastapi-cachex 0.4.0 it must return whether the key was "
+                "removed; None is counted as removed until 0.5.0, which treats "
+                "it as False. See https://fastapi-cachex.readthedocs.io/en/"
+                "stable/MIGRATING_0_4/#backend-delete",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            return True
+        return bool(result)
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry.
@@ -175,7 +196,7 @@ class BaseCacheBackend(ABC):
             The entry that was stored under ``key``, or ``None`` if there was none
         """
         value = await self.get(key)
-        if value is None or not await self.delete(key):
+        if value is None or not await self._delete_reporting(key):
             # Absent, or another caller removed it between the get and the
             # delete: that caller got the entry.
             return None
@@ -231,7 +252,7 @@ class BaseCacheBackend(ABC):
         """
         if await self.get(key) != expected:
             return False
-        return await self.delete(key)
+        return await self._delete_reporting(key)
 
     async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
         """Update expiry on ``key`` to ``ttl`` seconds only while it still holds ``expected``.
