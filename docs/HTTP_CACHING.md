@@ -295,7 +295,7 @@ another tag, so its keys never collide with these; on Redis and memory,
 
 This ensures that:
 
-- The method is part of the key (only `GET` is cached, but a custom key builder sees it)
+- The method is part of the key
 - Different hosts don't share cache (useful for multi-tenant scenarios)
 - Different query parameters get separate cache entries
 - The same endpoint with different parameters can be cached independently

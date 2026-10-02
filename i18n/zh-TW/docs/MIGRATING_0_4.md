@@ -20,7 +20,7 @@ filterwarnings = [
 ]
 ```
 
-下方每個警告都會指出要修改的設定，並附上對應 issue 的連結。`FutureWarning` 預告會改變行為的預設值，預設就會顯示；`DeprecationWarning` 預告移除；`UserWarning` 標示目前就已經有問題、0.4.0 不再接受的設定。0.3.9 不再發出這些警告後，「0.3.9 是否警告」欄位中有警告的變更就已處理完畢；本頁其餘部分說明警告無法偵測的變更。
+下方每個警告都會指出要修改的設定，並附上對應 issue 的連結。`FutureWarning` 預告會改變行為的預設值，預設就會顯示；`DeprecationWarning` 預告移除；`UserWarning` 標示目前就已經有問題、0.4.0 不再接受的設定。0.3.9 不再發出這些警告後，「0.3.9 是否警告」欄位中有警告的變更就已處理完畢（標為「已取消」的列不需處理）；本頁其餘部分說明警告無法偵測的變更。
 
 ## 總覽 {#summary}
 
@@ -40,7 +40,7 @@ filterwarnings = [
 | 移除 `BackendProxy.get_backend()`／`set_backend()` | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
 | 移除 `CacheError` | [#130](https://github.com/allen0099/FastAPI-CacheX/issues/130) | `DeprecationWarning` | [CacheError](#cache-error) |
 | 移除 Redis `clear_pattern()` 去除前綴後的重試 | [#125](https://github.com/allen0099/FastAPI-CacheX/issues/125) | `DeprecationWarning` | [Redis clear_pattern](#redis-clear-pattern) |
-| `SessionConfig.use_bearer_token` 維持已棄用，0.5.0 移除 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377), [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | `DeprecationWarning` | [權杖來源](#token-source-priority) |
+| `SessionConfig.use_bearer_token` 維持已棄用，0.5.0 移除 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)、[#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | `DeprecationWarning` | [權杖來源](#token-source-priority) |
 | `UserSessionDep` 需要使用者 | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | 否 | [UserSessionDep](#user-session-dep) |
 | 移除 `memcache` extra | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | 否 | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` 回傳 `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | 否 | [delete() 的回傳值](#backend-delete) |

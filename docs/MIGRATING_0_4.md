@@ -20,7 +20,7 @@ filterwarnings = [
 ]
 ```
 
-Every warning below names the setting to change and links to its issue. `FutureWarning` announces a default that changes behaviour and is shown by default; `DeprecationWarning` announces a removal; `UserWarning` flags a configuration that is already wrong today and that 0.4.0 no longer accepts. Once 0.3.9 runs without these warnings, the changes in the "Warned in 0.3.9" column are done; the rest of this page covers what no warning can detect.
+Every warning below names the setting to change and links to its issue. `FutureWarning` announces a default that changes behaviour and is shown by default; `DeprecationWarning` announces a removal; `UserWarning` flags a configuration that is already wrong today and that 0.4.0 no longer accepts. Once 0.3.9 runs without these warnings, the changes with a warning in the "Warned in 0.3.9" column are done (the "Dropped" rows need nothing); the rest of this page covers what no warning can detect.
 
 ## Summary {#summary}
 
