@@ -199,3 +199,36 @@ async def test_async_with_closes_the_backend_when_the_body_raises() -> None:
         await fail_inside()
 
     assert backend.closed == 1
+
+
+class LegacyDictBackend(DictBackend):
+    """A backend written against 0.3.x, whose ``delete`` returns ``None``."""
+
+    async def delete(self, key: str) -> None:  # type: ignore[override]
+        self.store.pop(key, None)
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        (lambda b, e: b.get_and_delete("k"), "entry"),
+        (lambda b, e: b.delete_if_equals("k", e), True),
+        (lambda b, e: b.delete_many(["k"]), 1),
+    ],
+    ids=["get_and_delete", "delete_if_equals", "delete_many"],
+)
+async def test_fallbacks_count_a_none_delete_as_removed_and_warn(
+    call: Any, expected: object
+) -> None:
+    """0.3.x semantics until 0.5.0: the key is gone, so the caller won."""
+    backend = LegacyDictBackend()
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    await backend.set("k", entry)
+
+    with pytest.warns(
+        DeprecationWarning, match=r"LegacyDictBackend\.delete\(\) returned None"
+    ):
+        result = await call(backend, entry)
+
+    assert result == (entry if expected == "entry" else expected)
+    assert "k" not in backend.store
