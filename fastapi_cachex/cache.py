@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 import warnings
+from collections import Counter
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Iterable
@@ -28,6 +29,7 @@ from typing import get_type_hints
 from fastapi import Request
 from fastapi import Response
 from fastapi.encoders import jsonable_encoder
+from fastapi.params import Depends as DependsParam
 from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import TypeAdapter
 from starlette.concurrency import run_in_threadpool
@@ -661,15 +663,52 @@ def _is_request_annotation(annotation: Any) -> bool:
     return isinstance(annotation, type) and issubclass(annotation, Request)
 
 
+def _is_response_annotation(annotation: Any) -> bool:
+    """Whether an annotation asks for the sub-``Response`` FastAPI injects.
+
+    ``Annotated[Response, Depends(...)]`` is a dependency that returns a
+    ``Response``, not the sub-response.
+    """
+    if get_origin(annotation) is Annotated:
+        annotation, *metadata = get_args(annotation)
+        if any(isinstance(item, DependsParam) for item in metadata):
+            return False
+    return isinstance(annotation, type) and issubclass(annotation, Response)
+
+
 def _find_request_param(
     func: HandlerCallable, params: list[Parameter]
 ) -> Parameter | None:
-    """The handler's own ``Request`` parameter, if it declares one.
+    """The handler's own ``Request`` parameter, if it declares one (see ``_find_param``)."""
+    return _find_param(func, params, _is_request_annotation)
+
+
+def _find_response_param(
+    func: HandlerCallable, params: list[Parameter]
+) -> Parameter | None:
+    """The handler's own ``Response`` parameter, if it declares one (see ``_find_param``).
+
+    A parameter defaulting to ``Depends(...)`` is a dependency's result, not
+    the sub-response, whatever its annotation.
+    """
+    return _find_param(
+        func,
+        [param for param in params if not isinstance(param.default, DependsParam)],
+        _is_response_annotation,
+    )
+
+
+def _find_param(
+    func: HandlerCallable,
+    params: list[Parameter],
+    matches: Callable[[Any], bool],
+) -> Parameter | None:
+    """The handler's first parameter whose annotation ``matches``.
 
     Annotations are resolved first, so a handler under ``from __future__ import
     annotations`` (where the annotation is the string ``"Request"``),
     ``Annotated[Request, ...]``, or a ``Request`` subclass is recognised
-    instead of being given a second, unused request parameter. Resolution can
+    instead of being given a second, unused parameter. Resolution can
     fail on a forward reference that does not resolve in the handler's module,
     which must not break decoration: the raw annotations are used instead.
     """
@@ -679,13 +718,105 @@ def _find_request_param(
         hints = {}
 
     return next(
-        (
-            param
-            for param in params
-            if _is_request_annotation(hints.get(param.name, param.annotation))
-        ),
+        (param for param in params if matches(hints.get(param.name, param.annotation))),
         None,
     )
+
+
+def _split_header_lines(
+    lines: Iterable[tuple[bytes, bytes]], before: Iterable[tuple[bytes, bytes]]
+) -> tuple[list[tuple[bytes, bytes]], list[tuple[bytes, bytes]]]:
+    """Split a sub-response's header lines into those of ``before`` and the rest.
+
+    FastAPI resolves the dependencies before it calls the handler, so the
+    sub-response's lines when the wrapper starts (``before``) are the
+    dependencies' and the lines added since are the handler's. Lines are
+    matched as a multiset, so a repeated line is counted once per copy.
+    """
+    remaining = Counter(before)
+    kept: list[tuple[bytes, bytes]] = []
+    added: list[tuple[bytes, bytes]] = []
+    for line in lines:
+        if remaining[line] > 0:
+            remaining[line] -= 1
+            kept.append(line)
+        else:
+            added.append(line)
+    return kept, added
+
+
+def _sets_cookie(lines: Iterable[tuple[bytes, bytes]]) -> bool:
+    return any(name.lower() == b"set-cookie" for name, _ in lines)
+
+
+def _cache_control_values(lines: Iterable[tuple[bytes, bytes]]) -> list[str]:
+    return [
+        value.decode("latin-1")
+        for name, value in lines
+        if name.lower() == b"cache-control"
+    ]
+
+
+def _dependency_unshareable_reason(
+    dependency_lines: Iterable[tuple[bytes, bytes]],
+) -> str | None:
+    """Why the dependencies' lines keep a response out of the backend, if they do."""
+    lines = list(dependency_lines)
+    if _has_unshareable_directive(_cache_control_values(lines)):
+        return "a dependency's Cache-Control is private or no-store"
+    if _sets_cookie(lines):
+        return "a dependency sets a cookie"
+    return None
+
+
+def _with_dependency_headers(
+    response: Response,
+    sub_response: Response | None,
+    dependency_lines: Sequence[tuple[bytes, bytes]],
+    private_cache_control: str,
+    *,
+    cacheable_get: bool,
+) -> Response:
+    """Add the header lines the dependencies set on this request (#233).
+
+    FastAPI merges the sub-response into the response only when the handler
+    returns plain data, and the wrapper always returns a ``Response``, so it
+    merges them itself: on a miss, a hit and a 304 alike, with the values of
+    this request rather than those stored with the entry.
+
+    On a cacheable GET response, ``Cache-Control`` is decided as for the
+    handler's own lines: a handler's ``private`` or ``no-store`` header (or
+    ``no_store=True``) is kept; otherwise a dependency's ``private`` or
+    ``no-store`` header replaces the decorator's, and a ``Set-Cookie`` makes it
+    ``private``. Any header the response already carries (other than
+    ``Set-Cookie``) is not added, the decorator's ``Cache-Control`` included:
+    the handler set it over the dependency's, which on a hit is the stored
+    value.
+    Any other response gets every line, as FastAPI would send them.
+    """
+    if sub_response is None or not dependency_lines:
+        return response
+    current, _ = _split_header_lines(sub_response.headers.raw, dependency_lines)
+    if not cacheable_get or not (
+        response.status_code == HTTP_304_NOT_MODIFIED
+        or _is_cacheable_status(response.status_code)
+    ):
+        response.headers.raw.extend(current)
+        return response
+    own = {name.lower() for name, _ in response.headers.raw}
+    response.headers.raw.extend(
+        (name, value)
+        for name, value in current
+        if name.lower() == b"set-cookie" or name.lower() not in own
+    )
+    if _marked_unshareable(response):
+        return response
+    dependency_cache_control = _cache_control_values(current)
+    if _has_unshareable_directive(dependency_cache_control):
+        response.headers["Cache-Control"] = ", ".join(dependency_cache_control)
+    elif _sets_cookie(current):
+        response.headers["Cache-Control"] = private_cache_control
+    return response
 
 
 def _get_response_body(response: Response) -> bytes | None:
@@ -788,9 +919,14 @@ def _marked_unshareable(response: Response) -> bool:
     Directive names are matched as whole tokens, case-insensitively, across
     every ``Cache-Control`` field the response carries.
     """
+    return _has_unshareable_directive(response.headers.getlist("cache-control"))
+
+
+def _has_unshareable_directive(cache_control: Iterable[str]) -> bool:
+    """Whether any of these ``Cache-Control`` values has ``private`` or ``no-store``."""
     return any(
         directive.split("=", 1)[0].strip().lower() in _UNSHAREABLE_DIRECTIVES
-        for value in response.headers.getlist("cache-control")
+        for value in cache_control
         for directive in value.split(",")
     )
 
@@ -836,10 +972,23 @@ def _with_cache_control(
 
 
 async def _render(
-    func: HandlerCallable, request: Request, /, *args: Any, **kwargs: Any
+    func: HandlerCallable,
+    request: Request,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    *,
+    sub_response: Response | None,
+    dependency_lines: Sequence[tuple[bytes, bytes]],
 ) -> tuple[Response, bytes | None, str | None]:
     """Run the handler; the body and ETag are None for streaming/file responses."""
-    response = await get_response(func, request, *args, **kwargs)
+    response = await _respond(
+        func,
+        request,
+        args,
+        kwargs,
+        sub_response=sub_response,
+        dependency_lines=dependency_lines,
+    )
     body = _get_response_body(response)
     return response, body, None if body is None else _etag_for(body)
 
@@ -900,12 +1049,37 @@ async def get_response(
 
     Coroutine handlers are awaited. Sync handlers run in the threadpool, as
     FastAPI would run them without the (async) cache wrapper, so blocking I/O
-    in a ``def`` handler does not stall the event loop.
+    in a ``def`` handler does not stall the event loop. Every header line of a
+    ``Response`` among ``kwargs`` is carried over onto a plain-data result.
     """
-    if _is_coroutine_callable(__func):
-        result = await cast("Callable[..., Awaitable[object]]", __func)(*args, **kwargs)
+    sub_response = next(
+        (value for value in kwargs.values() if isinstance(value, Response)), None
+    )
+    return await _respond(
+        __func, __request, args, kwargs, sub_response=sub_response, dependency_lines=()
+    )
+
+
+async def _respond(
+    func: HandlerCallable,
+    request: Request,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    *,
+    sub_response: Response | None,
+    dependency_lines: Sequence[tuple[bytes, bytes]],
+) -> Response:
+    """Run the handler and build its response, as ``get_response`` describes.
+
+    Only the lines added to ``sub_response`` beyond ``dependency_lines`` are
+    carried over here: the dependencies' own lines are added to every
+    response the wrapper sends (``_with_dependency_headers``), and must not be
+    stored with the entry.
+    """
+    if _is_coroutine_callable(func):
+        result = await cast("Callable[..., Awaitable[object]]", func)(*args, **kwargs)
     else:
-        result = await run_in_threadpool(__func, *args, **kwargs)
+        result = await run_in_threadpool(func, *args, **kwargs)
     # A sync callable can still hand back an awaitable (a lambda wrapping a
     # coroutine function, say); await it rather than try to encode it.
     if inspect.isawaitable(result):
@@ -916,7 +1090,7 @@ async def get_response(
         return result
 
     # Get response_class from route if available
-    route: APIRoute | None = __request.scope.get("route")
+    route: APIRoute | None = request.scope.get("route")
     if route is None:
         msg = "Route not found in request scope"
         raise CacheXError(msg)
@@ -924,7 +1098,7 @@ async def get_response(
     # A placeholder means this route uses the application default. Unwrap the
     # application value instead of calling the route's DefaultPlaceholder.
     route_response_class = route.response_class
-    application_default_response_class = __request.app.router.default_response_class
+    application_default_response_class = request.app.router.default_response_class
     response_class: type[Response] = cast(
         "type[Response]",
         (
@@ -940,10 +1114,7 @@ async def get_response(
 
     # Build the response the way FastAPI would have without the cache wrapper:
     # serialize through the response model, apply the route's status code and
-    # carry over what the handler set on an injected `response: Response`.
-    sub_response = next(
-        (value for value in kwargs.values() if isinstance(value, Response)), None
-    )
+    # carry over what the handler set on the injected `response: Response`.
     status_code = route.status_code
     if sub_response is not None and sub_response.status_code:
         status_code = sub_response.status_code
@@ -955,7 +1126,8 @@ async def get_response(
     if not is_body_allowed_for_status_code(response.status_code):
         response.body = b""
     if sub_response is not None:
-        response.headers.raw.extend(sub_response.headers.raw)
+        _, added = _split_header_lines(sub_response.headers.raw, dependency_lines)
+        response.headers.raw.extend(added)
     return response
 
 
@@ -1167,16 +1339,32 @@ def cache(
         # Check if Request is already in the parameters
         found_request: Parameter | None = _find_request_param(func, params)
 
-        # Add Request parameter if it's not present
+        # FastAPI's sub-response: the wrapper needs it even when the handler
+        # does not ask for it, to send what the dependencies set on it (#233).
+        found_response: Parameter | None = _find_response_param(func, params)
+
+        # Add the Request and Response parameters the handler does not declare
+        injected: list[Parameter] = []
         if not found_request:
             request_name: str = "__cachex_request"
-
-            request_param = inspect.Parameter(
-                request_name,
-                inspect.Parameter.KEYWORD_ONLY,
-                annotation=Request,
+            injected.append(
+                inspect.Parameter(
+                    request_name, inspect.Parameter.KEYWORD_ONLY, annotation=Request
+                )
             )
+        else:
+            request_name = found_request.name
+        if not found_response:
+            response_name: str = "__cachex_response"
+            injected.append(
+                inspect.Parameter(
+                    response_name, inspect.Parameter.KEYWORD_ONLY, annotation=Response
+                )
+            )
+        else:
+            response_name = found_response.name
 
+        if injected:
             # A keyword-only parameter must precede **kwargs; appending it
             # after one makes `Signature.replace` raise at decoration time,
             # so a handler taking **kwargs could not be cached at all.
@@ -1189,15 +1377,8 @@ def cache(
                 len(params),
             )
             sig = sig.replace(
-                parameters=[
-                    *params[:insert_at],
-                    request_param,
-                    *params[insert_at:],
-                ]
+                parameters=[*params[:insert_at], *injected, *params[insert_at:]]
             )
-
-        else:
-            request_name = found_request.name
 
         # The header only depends on the decorator arguments, so build it once.
         cache_control = _build_cache_control(
@@ -1238,8 +1419,14 @@ def cache(
             f"{getattr(func, '__module__', '?')}.{getattr(func, '__qualname__', '?')}"
         )
 
-        @wraps(func)
-        async def serve(*args: Any, **kwargs: Any) -> Response:
+        async def respond(
+            sub_response: Response | None,
+            dependency_lines: Sequence[tuple[bytes, bytes]],
+            dependency_status: int | None,
+            /,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Response:
             # Resolve backend on every request to support lifespan-configured backends
             cache_backend = get_backend_or_fallback()
 
@@ -1258,11 +1445,25 @@ def cache(
                 logger.debug(
                     "Non-GET request; bypassing cache for method=%s", req.method
                 )
-                return await get_response(func, req, *args, **kwargs)
+                return await _respond(
+                    func,
+                    req,
+                    args,
+                    kwargs,
+                    sub_response=sub_response,
+                    dependency_lines=dependency_lines,
+                )
 
             # Handle special case: no-store (highest priority)
             if no_store:
-                response = await get_response(func, req, *args, **kwargs)
+                response = await _respond(
+                    func,
+                    req,
+                    args,
+                    kwargs,
+                    sub_response=sub_response,
+                    dependency_lines=dependency_lines,
+                )
                 logger.debug(
                     "no-store active; bypassed cache for path=%s", req.url.path
                 )
@@ -1312,7 +1513,14 @@ def cache(
                 # cache reuse the answer to an `Authorization` request under
                 # `must-revalidate`, and nothing at all stops one reusing the
                 # answer to a cookie.
-                response, _, etag = await _render(func, req, *args, **kwargs)
+                response, _, etag = await _render(
+                    func,
+                    req,
+                    args,
+                    kwargs,
+                    sub_response=sub_response,
+                    dependency_lines=dependency_lines,
+                )
                 if not _is_cacheable_status(response.status_code):
                     return response
                 if etag is None:
@@ -1359,7 +1567,12 @@ def cache(
                 if no_cache:
                     # Get fresh response first if using no-cache
                     current_response, current_body, current_etag = await _render(
-                        func, req, *args, **kwargs
+                        func,
+                        req,
+                        args,
+                        kwargs,
+                        sub_response=sub_response,
+                        dependency_lines=dependency_lines,
                     )
                     if not _is_cacheable_status(current_response.status_code):
                         # Error responses carry no validator: never answer 304.
@@ -1437,7 +1650,12 @@ def cache(
             if current_response is None or current_etag is None:
                 # Retrieve the current response if not already done
                 current_response, current_body, current_etag = await _render(
-                    func, req, *args, **kwargs
+                    func,
+                    req,
+                    args,
+                    kwargs,
+                    sub_response=sub_response,
+                    dependency_lines=dependency_lines,
                 )
                 if not _is_cacheable_status(current_response.status_code):
                     # Leave any existing entry alone: a transient error must not
@@ -1462,6 +1680,11 @@ def cache(
             # stored. An entry already under this key is left alone, as for an
             # error status: it came from a response that was shareable.
             skip_reason = _unshareable_reason(current_response)
+            if skip_reason is None:
+                skip_reason = _dependency_unshareable_reason(dependency_lines)
+            if skip_reason is None and dependency_status is not None:
+                # It may hold for this request only, and a hit would replay it.
+                skip_reason = "a dependency set the status code"
             if skip_reason is not None:
                 logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
 
@@ -1510,6 +1733,32 @@ def cache(
 
             return _with_cache_control(
                 current_response, response_cache_control, private_cache_control
+            )
+
+        @wraps(func)
+        async def serve(*args: Any, **kwargs: Any) -> Response:
+            if found_response:
+                sub_response: Response | None = kwargs.get(response_name)
+            else:
+                sub_response = kwargs.pop(response_name, None)
+            # The dependencies have run; the handler has not (see
+            # `_split_header_lines`).
+            dependency_lines = (
+                [] if sub_response is None else list(sub_response.headers.raw)
+            )
+            dependency_status = (
+                None if sub_response is None else sub_response.status_code
+            )
+            req: Request | None = kwargs.get(request_name)
+            response = await respond(
+                sub_response, dependency_lines, dependency_status, *args, **kwargs
+            )
+            return _with_dependency_headers(
+                response,
+                sub_response,
+                dependency_lines,
+                private_cache_control,
+                cacheable_get=req is not None and req.method == "GET",
             )
 
         wrapper: AsyncResponseCallable = serve

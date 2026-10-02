@@ -188,6 +188,32 @@ route's response model (declared or inferred from the return annotation, with
 the `response_model_*` options), the route's `status_code` applies, and the
 status and headers set on an injected `response: Response` parameter are kept.
 
+Headers and cookies that dependencies set on FastAPI's shared `Response` reach
+the client with this request's values, on a miss, a hit and a 304 alike, whether
+or not the handler declares `response: Response`. They are never stored with
+the entry, so a header such as `X-RateLimit-Remaining` is not replayed from the
+request that filled the cache. A dependency's `Cache-Control` with `private`
+or `no-store`, and a cookie a dependency sets, count as the handler's own: the
+response is not stored, and it is sent with the dependency's header or with
+`private`, a hit or 304 included. A dependency's other `Cache-Control` is
+treated like the handler's own: the decorator's replaces it, and a bare
+`@cache()` keeps it. A status code a dependency sets is sent but keeps the
+response out of the backend, since it may hold for that request only; a hit
+keeps the stored status. Lines the handler itself adds to `response`, and the
+status code it sets, belong to the stored response; where the handler sets a
+header a dependency also set, the handler's value is sent, on a hit as well. A
+handler that deletes a dependency's header removes it only when it runs. FastAPI
+itself merges these lines only when the handler returns plain data; `@cache`
+adds the dependencies' lines to a handler's own `Response` too. Before 0.4.1, a
+handler without a `response: Response` parameter lost them, and one with it
+replayed the headers of the request that filled the cache (#233).
+
+> [!NOTE]
+> A dependency that sets a cookie on every request, such as an app-wide CSRF or
+> session-refresh dependency, therefore keeps every `@cache` route it applies to
+> out of the backend. Limit it to the routes that need it, or set the cookie
+> only when it changes.
+
 ### Requests with credentials
 
 A single-page app that sends `Authorization` on every request, or a site where

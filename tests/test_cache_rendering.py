@@ -4,11 +4,13 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from fastapi_cachex.cache import cache
+from fastapi_cachex.cache import get_response
 
 EVENT_ID = UUID("12345678-1234-5678-1234-567812345678")
 EVENT_AT = datetime(2026, 9, 25, 12, 0)  # noqa: DTZ001 - naive encodes the same both ways
@@ -117,3 +119,21 @@ def test_injected_response_headers_and_status_are_kept() -> None:
         assert response.status_code == 203
         assert response.headers["x-tag"] == "blue"
         assert response.json() == {"tag": "blue"}
+
+
+def test_get_response_still_carries_a_response_argument() -> None:
+    """`get_response` is no longer used by `@cache`, but keeps its behaviour."""
+    app = FastAPI()
+
+    async def handler(response: Response) -> dict[str, bool]:
+        response.headers["X-Tag"] = "blue"
+        return {"ok": True}
+
+    @app.get("/direct")
+    async def direct(request: Request, response: Response) -> Response:
+        return await get_response(handler, request, response=response)
+
+    result = TestClient(app).get("/direct")
+
+    assert result.headers.get_list("x-tag") == ["blue"]
+    assert result.json() == {"ok": True}
