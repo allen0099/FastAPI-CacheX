@@ -1,5 +1,8 @@
 # JWT claims：實作說明與擴充指南 {#jwt-claims-implementation-notes-and-extension-guide}
 
+> [!WARNING]
+> **已棄用。** `fastapi_cachex.session` 在 0.4.0 已棄用，並將在 0.5.0 移除（[#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)）。匯入時會發出 `FutureWarning`。遷移方向請見[遷移至 0.4.0](MIGRATING_0_4.md#session-state-deprecated)。
+
 ## 概觀 {#overview}
 
 FastAPI-CacheX 的 JWT 權杖序列化器只實作了最小的一組 JWT claim，用來安全地承載 Session 權杖。本文件說明：

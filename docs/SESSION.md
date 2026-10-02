@@ -1,5 +1,8 @@
 # Session Management Extension
 
+> [!WARNING]
+> **Deprecated.** `fastapi_cachex.session` is deprecated in 0.4.0 and removed in 0.5.0 ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)). Importing it emits a `FutureWarning`. [Migrating to 0.4.0](MIGRATING_0_4.md#session-state-deprecated) says where to move.
+
 FastAPI-CacheX Session Management provides complete user session handling, including signed
 tokens, sliding expiration, and optional IP/User-Agent binding. Session contents always live in
 the cache backend; the client only holds a single signed token.

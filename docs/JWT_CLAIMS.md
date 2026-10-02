@@ -1,5 +1,8 @@
 # JWT Claims: Implementation Notes and Extension Guide
 
+> [!WARNING]
+> **Deprecated.** `fastapi_cachex.session` is deprecated in 0.4.0 and removed in 0.5.0 ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)). Importing it emits a `FutureWarning`. [Migrating to 0.4.0](MIGRATING_0_4.md#session-state-deprecated) says where to move.
+
 ## Overview
 
 FastAPI-CacheX's JWT token serializer implements a minimal set of JWT claims to carry session tokens securely. This document explains:
