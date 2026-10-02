@@ -19,6 +19,10 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
 
+# Most tests here use a bare @cache() for the ETag handling alone; the warning
+# it emits is tested in test_cache_arguments.py.
+pytestmark = pytest.mark.filterwarnings("ignore:cache has nothing to do:UserWarning")
+
 app = FastAPI()
 client = TestClient(app)
 
@@ -34,7 +38,7 @@ def test_default_cache():
 
     response = client.get("/default")
     assert response.status_code == 200
-    assert response.headers["Cache-Control"] == ""
+    assert "Cache-Control" not in response.headers
     assert "ETag" in response.headers
 
 
@@ -627,10 +631,12 @@ def test_no_store_and_no_cache_combined():
     """no_store=True takes priority; only 'no-store' appears in Cache-Control."""
     combo_app = FastAPI()
 
-    @combo_app.get("/no-store-no-cache")
-    @cache(no_store=True, no_cache=True)
-    async def no_store_no_cache_endpoint():
-        return Response(content=b"data", media_type="text/plain")
+    with pytest.warns(UserWarning, match="no_store ignores no_cache"):
+
+        @combo_app.get("/no-store-no-cache")
+        @cache(no_store=True, no_cache=True)
+        async def no_store_no_cache_endpoint():
+            return Response(content=b"data", media_type="text/plain")
 
     combo_client = TestClient(combo_app)
     r = combo_client.get("/no-store-no-cache")
@@ -640,7 +646,7 @@ def test_no_store_and_no_cache_combined():
     assert "no-cache" not in cc
 
 
-@pytest.mark.parametrize(("ttl", "cache_control"), [(None, ""), (0, "max-age=0")])
+@pytest.mark.parametrize(("ttl", "cache_control"), [(None, None), (0, "max-age=0")])
 def test_without_a_positive_ttl_nothing_is_stored_or_served(ttl, cache_control):
     """No positive ttl means no server-side cache, and no 304 from a stale ETag (#110).
 
@@ -664,14 +670,14 @@ def test_without_a_positive_ttl_nothing_is_stored_or_served(ttl, cache_control):
 
     r1 = no_ttl_client.get("/no-ttl")
     assert r1.status_code == 200
-    assert r1.headers["Cache-Control"] == cache_control
+    assert r1.headers.get("Cache-Control") == cache_control
     old_etag = r1.headers["ETag"]
     assert backend.cache == {}
 
     # An unchanged response still revalidates, against the fresh render.
     r2 = no_ttl_client.get("/no-ttl", headers={"If-None-Match": old_etag})
     assert r2.status_code == 304
-    assert r2.headers["Cache-Control"] == cache_control
+    assert r2.headers.get("Cache-Control") == cache_control
     assert len(calls) == 2
 
     # The data changes: the old validator must not get a 304 any more.

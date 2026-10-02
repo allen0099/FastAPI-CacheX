@@ -34,6 +34,7 @@ def _client(**cache_kwargs: object) -> TestClient:
     return TestClient(app)
 
 
+@pytest.mark.filterwarnings("ignore:cache has nothing to do:UserWarning")
 @pytest.mark.parametrize(
     ("cache_kwargs", "expected"),
     [

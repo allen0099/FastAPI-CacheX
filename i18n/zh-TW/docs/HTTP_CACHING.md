@@ -57,6 +57,11 @@ async def items(): ...
 
 `no_cache=True` 與 `no_store=True` 會取代標頭的其餘內容：使用 `no_cache` 時只送出 `no-cache`（若有設定，再加上 `must-revalidate`），使用 `no_store` 時只送出 `no-store`。其他參數如何組合，請見[快取流程](CACHE_FLOW.md#2-cache-control-directives)。
 
+有兩種參數組合不會有任何效果，套用裝飾器時 `@cache` 會發出指向你 `@cache(...)` 那一行的 `UserWarning`：
+
+- `no_store=True` 搭配其他任何快取參數（`ttl`、`stale`、`no_cache`、`public`、`private`、`immutable`、`must_revalidate`）：`no_store` 會覆蓋它們，警告會列出這些參數。
+- 不帶參數的 `@cache()`，既沒有 `ttl` 也沒有任何指令：不會儲存任何內容，裝飾器也沒有 `Cache-Control` 可送，因此會保留 handler 自己的標頭（沒有就不送），只加上 ETag。
+
 ### 請求的 `Cache-Control` 會被忽略 {#the-requests-cache-control-is-ignored}
 
 用戶端自己送出的 `Cache-Control` 請求標頭（例如瀏覽器強制重新整理時送出的 `no-cache`、`max-age=0` 等）不會改變 `@cache` 的行為。這是刻意的設計：若請求標頭能繞過快取，任何用戶端都能讓每個請求直接打到你的 handler。條件式請求仍會處理：`If-None-Match` 相符時回 304。

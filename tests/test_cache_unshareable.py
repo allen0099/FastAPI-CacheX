@@ -482,10 +482,12 @@ def test_opted_in_authorization_header(
 def test_no_store_decorator_wins_over_set_cookie():
     app = FastAPI()
 
-    @app.get("/nothing")
-    @cache(no_store=True, public=True)
-    async def nothing(response: Response):
-        response.set_cookie("c", "1")
-        return {}
+    with pytest.warns(UserWarning, match="no_store ignores public"):
+
+        @app.get("/nothing")
+        @cache(no_store=True, public=True)
+        async def nothing(response: Response):
+            response.set_cookie("c", "1")
+            return {}
 
     assert TestClient(app).get("/nothing").headers["Cache-Control"] == "no-store"

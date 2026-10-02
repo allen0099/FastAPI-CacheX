@@ -8,6 +8,7 @@ to the next.
 
 from collections.abc import AsyncIterator
 
+import pytest
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi import Response
@@ -134,10 +135,12 @@ def test_no_store_still_wins_over_private():
     app = FastAPI()
     client = TestClient(app)
 
-    @app.get("/private-no-store")
-    @cache(private=True, no_store=True)
-    async def private_no_store():
-        return Response(content="x", media_type="text/plain")
+    with pytest.warns(UserWarning, match="no_store ignores private"):
+
+        @app.get("/private-no-store")
+        @cache(private=True, no_store=True)
+        async def private_no_store():
+            return Response(content="x", media_type="text/plain")
 
     assert client.get("/private-no-store").headers["Cache-Control"] == "no-store"
 
