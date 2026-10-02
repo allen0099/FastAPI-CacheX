@@ -67,9 +67,7 @@ keeps the token it gets back and sends it on later requests.
 ```
 <!-- fmt:on -->
 
-The example also registers the manager on `SessionManagerProxy`, where
-`get_session_manager` looks for it from 0.4.0 (see
-[Migrating to 0.4.0](MIGRATING_0_4.md#get-session-manager)). With the manager
+The example also registers the manager on `SessionManagerProxy`. With the manager
 there, the middleware can pick it up instead of taking it as an argument. When
 `config` is omitted, the middleware uses `session_manager.config`:
 
@@ -299,19 +297,13 @@ the expiry reaches that cap no further renewed tokens are issued.
 and only falls back to the cookie when none of them yields a token. The response side follows the
 token's source (header in, header out; cookie in, `Set-Cookie` out).
 
-Until 0.4.0 the cookie is read whether or not the list names it. `"cookie"` is accepted only as the
-last entry, which is where it is read anyway, so listing it changes nothing yet; any other position
-raises a `ValidationError`.
+The cookie is read whether or not the list names it. `"cookie"` is accepted only as the last
+entry, which is where it is read anyway, so listing it changes nothing; any other position raises a
+`ValidationError`. (0.3.9 announced that 0.4.0 would make the list name every token source; that
+change was dropped when sessions were deprecated. See
+[Migrating to 0.4.0](MIGRATING_0_4.md#token-source-priority).)
 
-In 0.4.0 the list names every token source, and its default becomes `["header", "bearer",
-"cookie"]`, the order used today. A list without `"cookie"` then means no cookie at all: the
-middleware neither reads nor sets it, and a session created for a request without a token sends
-its token in the `header_name` response header ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)).
-So `FastAPICacheXSessionMiddleware` emits a `FutureWarning` when the list was set explicitly
-without `"cookie"`. Add `"cookie"` as the last entry to keep the cookie; the default list does not
-warn. See [Migrating to 0.4.0](MIGRATING_0_4.md#token-source-priority).
-
-`use_bearer_token` is deprecated and removed in 0.4.0 ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)):
+`use_bearer_token` is deprecated and removed in 0.5.0 with this package ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)):
 passing it emits a `DeprecationWarning`. Instead of `use_bearer_token=False`, leave `"bearer"` out
 of the list (`token_source_priority=["header", "cookie"]`); `use_bearer_token=True` is the
 default and can simply be dropped.
@@ -645,11 +637,7 @@ from fastapi_cachex.session.dependencies import (
 
 `get_session_manager` returns the manager the middleware stored on `app.state` when it handled
 its first request; it responds with `500` if no session middleware has run yet. Using it avoids
-importing the manager into your route modules. From 0.4.0 it resolves the manager through
-`SessionManagerProxy` instead, so register it there with `SessionManagerProxy.set(manager)`:
-until then, `get_session_manager` (and `SessionManagerDep`, `ClientIPDep` and
-`rotate_session_id()`, which use it) emits a `FutureWarning` once per app when the proxy holds no
-manager or a different one. See [Migrating to 0.4.0](MIGRATING_0_4.md#get-session-manager).
+importing the manager into your route modules.
 
 ```python
 from fastapi_cachex.session import SessionUser

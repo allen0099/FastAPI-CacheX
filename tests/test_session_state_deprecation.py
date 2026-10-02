@@ -4,6 +4,8 @@ Each package warns once per process, on first import, so these tests run the
 import in a fresh interpreter.
 """
 
+import ast
+import pkgutil
 import subprocess
 import sys
 from pathlib import Path
@@ -26,10 +28,25 @@ def _run(script: str, tmp_path: Path) -> str:
     return result.stderr
 
 
-def test_plain_import_does_not_warn(tmp_path: Path) -> None:
+def _core_modules() -> list[str]:
+    """Every fastapi_cachex module outside the session and state packages."""
+    return sorted(
+        info.name
+        for info in pkgutil.walk_packages(
+            fastapi_cachex.__path__, prefix="fastapi_cachex."
+        )
+        if not info.name.startswith(("fastapi_cachex.session", "fastapi_cachex.state"))
+    )
+
+
+def test_core_modules_do_not_warn(tmp_path: Path) -> None:
+    """Nothing outside session and state imports them, the backends included."""
+    modules = _core_modules()
+    assert "fastapi_cachex.backends.redis" in modules
     stderr = _run(
         "import fastapi_cachex\n"
-        "from fastapi_cachex import cache, CacheManager, CacheLock\n",
+        "from fastapi_cachex import cache, CacheManager, CacheLock\n"
+        + "".join(f"import {name}\n" for name in modules),
         tmp_path,
     )
     assert "FutureWarning" not in stderr
@@ -73,3 +90,20 @@ def test_deprecated_name_resolves_but_is_not_exported(name: str) -> None:
 def test_unknown_name_raises_attribute_error() -> None:
     with pytest.raises(AttributeError, match="has no attribute 'nope'"):
         fastapi_cachex.nope  # noqa: B018
+
+
+def test_type_checking_imports_match_the_lazy_names() -> None:
+    """The names type checkers see are the names ``__getattr__`` resolves."""
+    tree = ast.parse(Path(fastapi_cachex.__file__).read_text())
+    block = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "TYPE_CHECKING"
+    )
+    imported = {
+        alias.name: f"fastapi_cachex.{node.module}"
+        for node in block.body
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert imported == fastapi_cachex._DEPRECATED_NAMES

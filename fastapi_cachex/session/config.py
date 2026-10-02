@@ -108,13 +108,13 @@ class SessionConfig(BaseModel):
     use_bearer_token: bool = Field(
         default=True,
         description="Whether to accept Authorization Bearer tokens (deprecated: "
-        'leave "bearer" out of token_source_priority instead; removed in 0.4.0)',
+        'leave "bearer" out of token_source_priority instead)',
     )
     token_source_priority: list[Literal["header", "bearer", "cookie"]] = Field(
         default=["header", "bearer"],
         description="Priority order for token sources. The session cookie is "
-        'read after the header sources; "cookie" may only be the last entry '
-        "until 0.4.0, which drops the cookie from a list without it",
+        "read after the header sources, whether or not the list names it; "
+        '"cookie" may only be the last entry',
     )
 
     # JWT settings (used when token_format == 'jwt')
@@ -302,24 +302,23 @@ class SessionConfig(BaseModel):
     def _check_cookie_is_last(
         cls, value: list[Literal["header", "bearer", "cookie"]]
     ) -> list[Literal["header", "bearer", "cookie"]]:
-        """Only accept ``"cookie"`` where the cookie is read today: last.
+        """Only accept ``"cookie"`` where the cookie is read: last.
 
         ``FastAPICacheXSessionMiddleware`` reads the cookie after the header
-        sources, so listing it last changes nothing before 0.4.0, when the
-        list decides the order and a list without it disables the cookie (#75).
+        sources whether or not the list names it, so listing it anywhere else
+        would promise an order the middleware does not follow.
         """
         if "cookie" in value and value.index("cookie") != len(value) - 1:
             msg = (
                 '"cookie" must be the last entry of token_source_priority: the '
-                "session cookie is read after the header sources until 0.4.0 "
-                "(https://github.com/allen0099/FastAPI-CacheX/issues/75)"
+                "session cookie is read after the header sources"
             )
             raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
     def _warn_use_bearer_token(self) -> "SessionConfig":
-        """Deprecate ``use_bearer_token``, which 0.4.0 removes (#377).
+        """Deprecate ``use_bearer_token``, removed with the session package in 0.5.0.
 
         ``token_source_priority`` already decides whether bearer tokens are
         read, so passing the flag at all warns, whatever its value.
@@ -327,7 +326,8 @@ class SessionConfig(BaseModel):
         if "use_bearer_token" in self.model_fields_set:
             warnings.warn(
                 "SessionConfig(use_bearer_token=...) is deprecated and will be "
-                "removed in version 0.4.0. token_source_priority decides the "
+                "removed in version 0.5.0 with fastapi_cachex.session. "
+                "token_source_priority decides the "
                 "token sources: drop use_bearer_token=True (the default), and "
                 'replace use_bearer_token=False by leaving "bearer" out of '
                 'token_source_priority, keeping "cookie" last, e.g. '

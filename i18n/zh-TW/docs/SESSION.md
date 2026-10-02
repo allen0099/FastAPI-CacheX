@@ -58,7 +58,7 @@ uv add "fastapi-cachex[jwt]"
 ```
 <!-- fmt:on -->
 
-範例也把管理器註冊到 `SessionManagerProxy`，0.4.0 起 `get_session_manager` 只會從那裡取得它（見[遷移至 0.4.0](MIGRATING_0_4.md#get-session-manager)）。管理器註冊在那裡之後，中介軟體也可以從 proxy 取得，而不必以參數傳入。省略 `config` 時，中介軟體會使用 `session_manager.config`：
+範例也把管理器註冊到 `SessionManagerProxy`。管理器註冊在那裡之後，中介軟體可以從 proxy 取得，而不必以參數傳入。省略 `config` 時，中介軟體會使用 `session_manager.config`：
 
 ```python
 app.add_middleware(FastAPICacheXSessionMiddleware)  # 從 proxy 取得
@@ -185,11 +185,9 @@ Session 會在 `session_ttl` 秒後過期。啟用 `sliding_expiration` 時，�
 
 `FastAPICacheXSessionMiddleware` 先依照 `token_source_priority` 的順序讀取標頭來源，只有它們都沒有產生權杖時才退回使用 Cookie。回應端依權杖的來源決定（標頭進、標頭出；Cookie 進、`Set-Cookie` 出）。
 
-在 0.4.0 以前，不論清單是否列出 Cookie，都會讀取 Cookie。`"cookie"` 只能放在清單的最後一項，也就是它現在本來就被讀取的位置，因此列出它目前不會改變任何行為；放在其他位置會引發 `ValidationError`。
+不論清單是否列出 Cookie，都會讀取 Cookie。`"cookie"` 只能放在清單的最後一項，也就是它本來就被讀取的位置，因此列出它不會改變任何行為；放在其他位置會引發 `ValidationError`。（0.3.9 曾預告 0.4.0 會讓清單列出所有權杖來源；Session 棄用後，這項變更已取消。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#token-source-priority)。）
 
-0.4.0 起，這個清單列出所有權杖來源，預設值改為 `["header", "bearer", "cookie"]`，也就是目前使用的順序。沒有 `"cookie"` 的清單代表完全不使用 Cookie：中介軟體既不讀取也不設定它，而為沒有權杖的請求建立的 Session 會在 `header_name` 回應標頭中送出權杖（[#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)）。因此，明確設定了不含 `"cookie"` 的清單時，`FastAPICacheXSessionMiddleware` 會發出 `FutureWarning`。要保留 Cookie，請把 `"cookie"` 加在最後一項；預設清單不會發出警告。見[遷移至 0.4.0](MIGRATING_0_4.md#token-source-priority)。
-
-`use_bearer_token` 已棄用，並於 0.4.0 移除（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)）：傳入它會發出 `DeprecationWarning`。請以不在清單中列出 `"bearer"`（`token_source_priority=["header", "cookie"]`）取代 `use_bearer_token=False`；`use_bearer_token=True` 是預設值，直接拿掉即可。
+`use_bearer_token` 已棄用，並將在 0.5.0 隨本套件一起移除（[#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)）：傳入它會發出 `DeprecationWarning`。請以不在清單中列出 `"bearer"`（`token_source_priority=["header", "cookie"]`）取代 `use_bearer_token=False`；`use_bearer_token=True` 是預設值，直接拿掉即可。
 
 **標頭／Bearer 用戶端**應將權杖存放在 `localStorage` 或 `sessionStorage`，並以 `Authorization: Bearer <token>` 或 `X-Session-Token: <token>` 送出。**Cookie 用戶端**（瀏覽器）不需要自行處理權杖，但要留意 CSRF：瀏覽器會自動附上 Cookie，因此請將 `cookie_same_site` 與你自己的 CSRF 防護搭配使用。
 
@@ -415,7 +413,7 @@ from fastapi_cachex.session.dependencies import (
 )
 ```
 
-`get_session_manager` 回傳中介軟體在處理第一個請求時存放在 `app.state` 上的管理器；若尚未有任何 Session 中介軟體執行過，它會回應 `500`。使用它可以避免在路由模組中匯入管理器。0.4.0 起它改為透過 `SessionManagerProxy` 取得管理器，因此請以 `SessionManagerProxy.set(manager)` 註冊：在那之前，當 proxy 沒有管理器或持有不同的管理器時，`get_session_manager`（以及使用它的 `SessionManagerDep`、`ClientIPDep` 與 `rotate_session_id()`）每個應用程式會發出一次 `FutureWarning`。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#get-session-manager)。
+`get_session_manager` 回傳中介軟體在處理第一個請求時存放在 `app.state` 上的管理器；若尚未有任何 Session 中介軟體執行過，它會回應 `500`。使用它可以避免在路由模組中匯入管理器。
 
 ```python
 from fastapi_cachex.session import SessionUser

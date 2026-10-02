@@ -31,8 +31,8 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | Contradictory `__Host-` / `__Secure-` cookie settings are rejected | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `UserWarning` (`FutureWarning` when `cookie_name` is left at its default, under the middleware only) | [Session cookie](#session-cookie) |
 | Explicit `login()` / `logout()`, read-only `Session.user` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | No | [Login and logout](#login-logout) |
 | `get_or_set()` locks by default | [#280](https://github.com/allen0099/FastAPI-CacheX/issues/280) | `FutureWarning` | [get_or_set lock](#get-or-set-lock) |
-| `get_session_manager` resolves through `SessionManagerProxy` | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` | [get_session_manager](#get-session-manager) |
-| `token_source_priority` names every token source; a list without `"cookie"` disables the cookie | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | `FutureWarning` | [Token sources](#token-source-priority) |
+| Dropped: `get_session_manager` resolving through `SessionManagerProxy` | [#131](https://github.com/allen0099/FastAPI-CacheX/issues/131) | `FutureWarning` (0.4.0 no longer warns) | [get_session_manager](#get-session-manager) |
+| Dropped: `token_source_priority` naming every token source | [#75](https://github.com/allen0099/FastAPI-CacheX/issues/75) | `FutureWarning` (0.4.0 no longer warns) | [Token sources](#token-source-priority) |
 | `add_routes()` requires `dependencies`, no content preview by default | [#298](https://github.com/allen0099/FastAPI-CacheX/issues/298) | `UserWarning` (only when `dependencies` is left out) | [Monitoring routes](#add-routes) |
 | Redis `encoding` option removed | [#126](https://github.com/allen0099/FastAPI-CacheX/issues/126) | `DeprecationWarning` (`RuntimeWarning` for a value other than UTF-8) | [Redis encoding](#redis-encoding) |
 | JWT HMAC secrets shorter than the hash output are rejected | [#129](https://github.com/allen0099/FastAPI-CacheX/issues/129) | `UserWarning` | [JWT secret length](#jwt-secret) |
@@ -40,7 +40,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | `BackendProxy.get_backend()` / `set_backend()` removed | [#70](https://github.com/allen0099/FastAPI-CacheX/issues/70) | `DeprecationWarning` | [BackendProxy](#backend-proxy) |
 | `CacheError` removed | [#130](https://github.com/allen0099/FastAPI-CacheX/issues/130) | `DeprecationWarning` | [CacheError](#cache-error) |
 | Redis `clear_pattern()` prefix-stripped retry removed | [#125](https://github.com/allen0099/FastAPI-CacheX/issues/125) | `DeprecationWarning` | [Redis clear_pattern](#redis-clear-pattern) |
-| `SessionConfig.use_bearer_token` removed | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [Token sources](#token-source-priority) |
+| `SessionConfig.use_bearer_token` stays deprecated, removed in 0.5.0 | [#377](https://github.com/allen0099/FastAPI-CacheX/issues/377) | `DeprecationWarning` | [Token sources](#token-source-priority) |
 | `UserSessionDep` requires a user | [#127](https://github.com/allen0099/FastAPI-CacheX/issues/127) | No | [UserSessionDep](#user-session-dep) |
 | `memcache` extra removed | [#202](https://github.com/allen0099/FastAPI-CacheX/issues/202) | No | [memcache extra](#memcache-extra) |
 | `BaseCacheBackend.delete()` returns `bool` | [#71](https://github.com/allen0099/FastAPI-CacheX/issues/71) | No | [delete() return value](#backend-delete) |
@@ -60,7 +60,7 @@ Where to move:
 |---------|---------|
 | `FastAPICacheXSessionMiddleware` with cookie sessions | Starlette's `SessionMiddleware` keeps small session data in a signed cookie. If sessions must live on the server (large data, server-side revocation), use a server-side session library, for example `starsessions`. |
 | Session tokens in a header or `Authorization: Bearer` for an API | The access tokens of your authentication stack, for example OAuth 2 bearer tokens verified with a JWT library. |
-| `StateManager` for the OAuth/OIDC `state` | Your OAuth client library. Authlib's Starlette integration, for example, creates and checks `state` and `nonce` for you. |
+| `StateManager` for the OAuth/OIDC `state` | Your OAuth client library. Authlib's Starlette integration, for example, creates and checks `state` and `nonce` for you; it keeps them in `request.session`, so it needs Starlette's `SessionMiddleware`. |
 | `CacheManager`, `CacheLock`, `@cache` | Nothing to do: they are not deprecated. |
 
 Sessions and states already in the backend need no cleanup; they expire on their own TTL.
@@ -72,6 +72,9 @@ import warnings
 
 warnings.filterwarnings(
     "ignore", message="fastapi_cachex.session is deprecated", category=FutureWarning
+)
+warnings.filterwarnings(
+    "ignore", message="fastapi_cachex.state is deprecated", category=FutureWarning
 )
 ```
 
@@ -146,23 +149,7 @@ await login(request, SessionUser(user_id=user_id))
 
 ### get_session_manager {#get-session-manager}
 
-`get_session_manager` (and `SessionManagerDep`, `ClientIPDep` and `rotate_session_id()`, which use it) currently returns the manager the middleware stored on `app.state`. 0.4.0 resolves it through `SessionManagerProxy` only, like `BackendProxy` and `CacheManagerProxy` ([#131](https://github.com/allen0099/FastAPI-CacheX/issues/131)). In 0.3.9 it emits a `FutureWarning`, once per app, when the proxy holds no manager or a different one.
-
-Before:
-
-```python
-session_manager = SessionManager(backend, config)
-app.add_middleware(FastAPICacheXSessionMiddleware, session_manager=session_manager)
-```
-
-After:
-
-```python
-session_manager = SessionManager(backend, config)
-SessionManagerProxy.set(session_manager)
-# The middleware picks the manager up from the proxy.
-app.add_middleware(FastAPICacheXSessionMiddleware)
-```
+0.3.9 announced that 0.4.0 would resolve `get_session_manager` (and `SessionManagerDep`, `ClientIPDep` and `rotate_session_id()`, which use it) through `SessionManagerProxy` only ([#131](https://github.com/allen0099/FastAPI-CacheX/issues/131)), and emitted a `FutureWarning`. Since sessions are deprecated ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)), 0.4.0 does not make this change. It keeps returning the manager the middleware stored on `app.state` and no longer warns. If you already call `SessionManagerProxy.set()`, keeping it is harmless.
 
 ### UserSessionDep {#user-session-dep}
 
@@ -226,19 +213,10 @@ SessionConfig(
 
 ### Token sources {#token-source-priority}
 
-In 0.4.0, `SessionConfig.token_source_priority` names every token source ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)). `FastAPICacheXSessionMiddleware` resolves the token by walking the list, `"cookie"` may appear anywhere in it, and the default becomes `["header", "bearer", "cookie"]`, which is the order used today. A list without `"cookie"` means no cookie: the middleware neither reads nor sets it, and a session created for a request without a token sends its token in the `header_name` response header. That is how an API-only app turns the cookie off.
+0.3.9 announced two changes here. Since sessions are deprecated ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)), 0.4.0 makes neither of them:
 
-In 0.3.9, `"cookie"` is accepted as the last entry (where the cookie is read today, so it changes nothing yet), and `FastAPICacheXSessionMiddleware` emits a `FutureWarning` when the list was set explicitly without it. The default list does not warn.
-
-```python
-# Before: the cookie is read after these, although the list does not say so
-SessionConfig(secret_key=SECRET, token_source_priority=["bearer", "header"])
-
-# After, keeping the cookie (works on 0.3.9 and 0.4.0)
-SessionConfig(secret_key=SECRET, token_source_priority=["bearer", "header", "cookie"])
-```
-
-`use_bearer_token` is removed ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)); the list alone decides whether bearer tokens are read. 0.3.9 emits a `DeprecationWarning` when it is passed, whatever its value:
+- **`token_source_priority` naming every token source ([#75](https://github.com/allen0099/FastAPI-CacheX/issues/75)) is dropped.** The middleware still reads the session cookie after the header sources whether or not the list names it, and `"cookie"` is still accepted only as the last entry. 0.4.0 no longer emits the `FutureWarning` for a list without `"cookie"`. A list that already ends in `"cookie"` keeps working.
+- **`use_bearer_token` is not removed in 0.4.0 ([#377](https://github.com/allen0099/FastAPI-CacheX/issues/377)).** It stays deprecated, still emits a `DeprecationWarning` when it is passed, and is removed in 0.5.0 together with `fastapi_cachex.session`. The list alone decides whether bearer tokens are read:
 
 ```python
 # Before

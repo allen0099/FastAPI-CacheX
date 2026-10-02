@@ -1,7 +1,6 @@
 """Session middleware for FastAPI."""
 
 import logging
-import warnings
 from typing import TYPE_CHECKING
 from typing import Any
 
@@ -165,36 +164,6 @@ def _stash_session_manager(app: Any, manager: SessionManager) -> None:
         setattr(app.state, "__fastapi_cachex_session_manager", manager)
 
 
-def _warn_if_priority_without_cookie(config: SessionConfig) -> None:
-    """Warn that 0.4.0 stops using the cookie for a list without ``"cookie"``.
-
-    In 0.4.0 ``token_source_priority`` lists every token source, so a list
-    set without ``"cookie"`` means the middleware neither reads nor sets the
-    session cookie (#75). The default list becomes ``["header", "bearer",
-    "cookie"]``, which is today's order, so it does not warn.
-
-    Args:
-        config: The configuration the middleware uses
-    """
-    if (
-        "token_source_priority" not in config.model_fields_set
-        or "cookie" in config.token_source_priority
-    ):
-        return
-    warnings.warn(
-        f"SessionConfig(token_source_priority={config.token_source_priority!r}) "
-        'does not list "cookie". In version 0.4.0 the list names every token '
-        "source, so FastAPICacheXSessionMiddleware will neither read nor set the "
-        "session cookie, and a session created for a request without a token "
-        'sends its token in the header_name response header. Add "cookie" as the '
-        "last entry to keep the cookie; leaving it out opts into 0.4.0's "
-        "cookie-less behaviour, which only takes effect then "
-        "(https://github.com/allen0099/FastAPI-CacheX/issues/75).",
-        FutureWarning,
-        stacklevel=3,
-    )
-
-
 class _RequestSession(StarletteSession):
     """``request.session`` that remembers an explicit ``clear()``.
 
@@ -251,15 +220,10 @@ class FastAPICacheXSessionMiddleware:
         Raises:
             ProxyNotSetError: If ``session_manager`` is omitted and
                 ``SessionManagerProxy`` holds none.
-
-        Warns:
-            FutureWarning: If the configuration sets ``token_source_priority``
-                without ``"cookie"``, which disables the cookie in 0.4.0.
         """
         self.app = app
         self.session_manager = session_manager or SessionManagerProxy.get()
         self.config = config or self.session_manager.config
-        _warn_if_priority_without_cookie(self.config)
 
         security_flags = f"httponly; samesite={self.config.cookie_same_site}"
         if self.config.cookie_https_only:

@@ -25,7 +25,7 @@ nav = [
     { "Backends" = "BACKENDS.md" },
     { "Distributed lock" = "LOCK.md" },
   ] },
-  { "Sessions and sign-in" = [
+  { "Sessions and sign-in (deprecated)" = [
     { "Session management" = "SESSION.md" },
     { "OAuth state" = "STATE.md" },
     { "JWT claims" = "JWT_CLAIMS.md" },
@@ -38,8 +38,8 @@ nav = [
     { "CacheManager" = "api/cache-manager.md" },
     { "Backends" = "api/backends.md" },
     { "CacheLock" = "api/lock.md" },
-    { "Session" = "api/session.md" },
-    { "State" = "api/state.md" },
+    { "Session (deprecated)" = "api/session.md" },
+    { "State (deprecated)" = "api/state.md" },
     { "Types and exceptions" = "api/types.md" },
   ] },
   { "Development" = [
