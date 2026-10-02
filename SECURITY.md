@@ -13,6 +13,9 @@ still there.
 
 A fix ships as a new 0.3.x patch release; earlier releases are not patched.
 
+`fastapi_cachex.session` and `fastapi_cachex.state` are deprecated in 0.4.0.
+They get security fixes during 0.4.x and none after 0.5.0 removes them.
+
 ## Reporting a vulnerability
 
 Please do **not** open a public issue, pull request or discussion for a

@@ -99,6 +99,11 @@ filterwarnings = [
     # TestClient through an alias that newer anyio deprecates. Later starlette
     # releases no longer use it; nothing in this package or its tests does.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+    # Session and OAuth state are deprecated (#420) and warn once, on first
+    # import; their own tests keep running until 0.5.0 removes them.
+    # tests/test_session_state_deprecation.py checks the warnings themselves.
+    "ignore:fastapi_cachex.session is deprecated:FutureWarning",
+    "ignore:fastapi_cachex.state is deprecated:FutureWarning",
 ]
 
 [tool.ruff.lint]

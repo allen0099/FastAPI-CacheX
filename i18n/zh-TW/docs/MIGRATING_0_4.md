@@ -26,6 +26,7 @@ filterwarnings = [
 
 | 變更 | Issue | 0.3.9 是否警告 | 章節 |
 |------|-------|----------------|------|
+| Session 與 OAuth state 已棄用，0.5.0 移除 | [#420](https://github.com/allen0099/FastAPI-CacheX/issues/420) | 否（0.4.0 會發出 `FutureWarning`） | [Session 與 OAuth state 已棄用](#session-state-deprecated) |
 | Session Cookie 預設為 `__Host-session` 並帶 `Secure` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `FutureWarning` | [Session Cookie](#session-cookie) |
 | 拒絕互相矛盾的 `__Host-`／`__Secure-` Cookie 設定 | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `UserWarning`（`cookie_name` 維持預設值時為 `FutureWarning`，僅限使用中介軟體時） | [Session Cookie](#session-cookie) |
 | 明確的 `login()`／`logout()`、唯讀的 `Session.user` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | 否 | [登入與登出](#login-logout) |
@@ -47,7 +48,36 @@ filterwarnings = [
 | HTTP 快取鍵格式 | [#271](https://github.com/allen0099/FastAPI-CacheX/issues/271)、[#270](https://github.com/allen0099/FastAPI-CacheX/issues/270)、[#269](https://github.com/allen0099/FastAPI-CacheX/issues/269)、[#266](https://github.com/allen0099/FastAPI-CacheX/issues/266)、[#265](https://github.com/allen0099/FastAPI-CacheX/issues/265)、[#72](https://github.com/allen0099/FastAPI-CacheX/issues/72) | 否 | [快取鍵](#cache-keys) |
 | 有條件的 Session 寫入 | [#128](https://github.com/allen0099/FastAPI-CacheX/issues/128) | 否 | [Session 寫入](#session-writes) |
 
+## Session 與 OAuth state 已棄用 {#session-state-deprecated}
+
+`fastapi_cachex.session` 與 `fastapi_cachex.state` 在 0.4.0 已棄用，並將在 0.5.0 移除（[#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)、[#421](https://github.com/allen0099/FastAPI-CacheX/issues/421)）。FastAPI-CacheX 的範圍將收斂到 HTTP 快取與應用層快取。Session 處理與 OAuth state 都牽涉安全性，由專門的函式庫維護會更好。由於 0.3.9 沒有預告這項變更，兩個套件在整個 0.4.x 期間都能繼續使用，但只會收到安全性修正。
+
+匯入其中任一個套件，或從 `fastapi_cachex` 讀取它們的名稱（例如 `fastapi_cachex.SessionConfig`），都會發出 `FutureWarning`，並指向匯入的那一行。單純 `import fastapi_cachex` 不會發出警告，`@cache`、`CacheManager`、`CacheLock` 與各後端也不會。Session 與 state 的名稱已不在 `fastapi_cachex.__all__` 中，因此 `from fastapi_cachex import *` 不再提供它們。遷移完成前，請以名稱個別匯入。
+
+遷移方向：
+
+| 目前使用 | 改用 |
+|----------|------|
+| 搭配 Cookie Session 的 `FastAPICacheXSessionMiddleware` | Starlette 的 `SessionMiddleware` 會把少量的 Session 資料存放在簽署過的 Cookie 中。若 Session 必須存放在伺服器端（資料量大，或需要在伺服器端撤銷），請改用伺服器端 Session 函式庫，例如 `starsessions`。 |
+| API 以標頭或 `Authorization: Bearer` 傳遞 Session 權杖 | 改用驗證機制本身的存取權杖，例如以 JWT 函式庫驗證的 OAuth 2 Bearer 權杖。 |
+| 以 `StateManager` 處理 OAuth/OIDC 的 `state` | 改用 OAuth 用戶端函式庫。例如 Authlib 的 Starlette 整合會替你產生並檢查 `state` 與 `nonce`。 |
+| `CacheManager`、`CacheLock`、`@cache` | 不需處理，這些並未棄用。 |
+
+後端中已存在的 Session 與 state 不需要清理，會依各自的 TTL 自行過期。
+
+遷移期間若要隱藏警告，請在第一次匯入之前加上篩選：
+
+```python
+import warnings
+
+warnings.filterwarnings(
+    "ignore", message="fastapi_cachex.session is deprecated", category=FutureWarning
+)
+```
+
 ## Session {#sessions}
+
+若在 0.4.x 期間繼續使用 Session，下列變更仍然適用。
 
 ### Session Cookie 預設值 {#session-cookie}
 

@@ -14,7 +14,7 @@
 
 [English](https://fastapi-cachex.readthedocs.io/en/latest/) | [繁體中文](https://fastapi-cachex.readthedocs.io/zh-tw/latest/)
 
-A high-performance caching extension for FastAPI: a server-side response cache with `Cache-Control` and `ETag` support, application-level caching, and optional session management.
+A high-performance caching extension for FastAPI: a server-side response cache with `Cache-Control` and `ETag` support, and application-level caching.
 
 **Documentation:** <https://fastapi-cachex.readthedocs.io/en/latest/> — guides and the full API reference.
 
@@ -26,9 +26,9 @@ A high-performance caching extension for FastAPI: a server-side response cache w
   your own code, with compute-on-miss `get_or_set()` and atomic store-if-absent `add()`.
 - **Backends** — in-memory, Redis and Memcached, with atomic counters,
   one-shot values and locks.
-- **Sessions (optional)** — HMAC-signed or JWT session tokens over headers,
-  bearer tokens or cookies, with sliding expiration and IP/User-Agent binding.
-- **OAuth state** — one-time state tokens for CSRF protection in OAuth/OIDC flows.
+- **Sessions and OAuth state (deprecated)**: signed session tokens and one-time
+  OAuth state tokens. Both are deprecated in 0.4.0 and removed in 0.5.0; see
+  [where to move](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/#session-state-deprecated).
 
 ## Installation
 
@@ -105,7 +105,7 @@ async def report(cache: AppCache):
 - [Application cache](https://fastapi-cachex.readthedocs.io/en/latest/APP_CACHE/) — `CacheManager`
 - [Backends](https://fastapi-cachex.readthedocs.io/en/latest/BACKENDS/) — choosing and configuring a backend, atomic primitives
 - [Distributed lock](https://fastapi-cachex.readthedocs.io/en/latest/LOCK/) — `CacheLock` for multi-process mutual exclusion
-- [Session management](https://fastapi-cachex.readthedocs.io/en/latest/SESSION/), [OAuth state](https://fastapi-cachex.readthedocs.io/en/latest/STATE/) (one-shot OAuth/CSRF state tokens) and [JWT claims](https://fastapi-cachex.readthedocs.io/en/latest/JWT_CLAIMS/)
+- Deprecated, removed in 0.5.0: [Session management](https://fastapi-cachex.readthedocs.io/en/latest/SESSION/), [OAuth state](https://fastapi-cachex.readthedocs.io/en/latest/STATE/) (one-shot OAuth/CSRF state tokens) and [JWT claims](https://fastapi-cachex.readthedocs.io/en/latest/JWT_CLAIMS/)
 - [Cache flow](https://fastapi-cachex.readthedocs.io/en/latest/CACHE_FLOW/) — what happens inside a cached request
 - [Runnable examples](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples) — one complete app per feature, each covered by the test suite
 - [API reference](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)

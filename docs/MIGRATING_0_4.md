@@ -26,6 +26,7 @@ Every warning below names the setting to change and links to its issue. `FutureW
 
 | Change | Issue | Warned in 0.3.9 | Section |
 |--------|-------|-----------------|---------|
+| Sessions and OAuth state deprecated, removed in 0.5.0 | [#420](https://github.com/allen0099/FastAPI-CacheX/issues/420) | No (0.4.0 warns: `FutureWarning`) | [Sessions and OAuth state are deprecated](#session-state-deprecated) |
 | Session cookie defaults to `__Host-session` with `Secure` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `FutureWarning` | [Session cookie](#session-cookie) |
 | Contradictory `__Host-` / `__Secure-` cookie settings are rejected | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | `UserWarning` (`FutureWarning` when `cookie_name` is left at its default, under the middleware only) | [Session cookie](#session-cookie) |
 | Explicit `login()` / `logout()`, read-only `Session.user` | [#256](https://github.com/allen0099/FastAPI-CacheX/issues/256) | No | [Login and logout](#login-logout) |
@@ -47,7 +48,36 @@ Every warning below names the setting to change and links to its issue. `FutureW
 | HTTP cache key format | [#271](https://github.com/allen0099/FastAPI-CacheX/issues/271), [#270](https://github.com/allen0099/FastAPI-CacheX/issues/270), [#269](https://github.com/allen0099/FastAPI-CacheX/issues/269), [#266](https://github.com/allen0099/FastAPI-CacheX/issues/266), [#265](https://github.com/allen0099/FastAPI-CacheX/issues/265), [#72](https://github.com/allen0099/FastAPI-CacheX/issues/72) | No | [Cache keys](#cache-keys) |
 | Conditional session writes | [#128](https://github.com/allen0099/FastAPI-CacheX/issues/128) | No | [Session writes](#session-writes) |
 
+## Sessions and OAuth state are deprecated {#session-state-deprecated}
+
+`fastapi_cachex.session` and `fastapi_cachex.state` are deprecated in 0.4.0 and removed in 0.5.0 ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420), [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421)). FastAPI-CacheX is narrowing to HTTP and application caching. Session handling and OAuth state are security-sensitive, and libraries built for them maintain them better. 0.3.9 did not announce this, so both packages keep working throughout 0.4.x and get security fixes only.
+
+Importing either package, or reading one of their names from `fastapi_cachex` (such as `fastapi_cachex.SessionConfig`), emits a `FutureWarning` that points at the importing line. `import fastapi_cachex` on its own does not warn, and neither do `@cache`, `CacheManager`, `CacheLock` or the backends. The session and state names are no longer in `fastapi_cachex.__all__`, so `from fastapi_cachex import *` stops providing them. Until you migrate, import them by name.
+
+Where to move:
+
+| You use | Move to |
+|---------|---------|
+| `FastAPICacheXSessionMiddleware` with cookie sessions | Starlette's `SessionMiddleware` keeps small session data in a signed cookie. If sessions must live on the server (large data, server-side revocation), use a server-side session library, for example `starsessions`. |
+| Session tokens in a header or `Authorization: Bearer` for an API | The access tokens of your authentication stack, for example OAuth 2 bearer tokens verified with a JWT library. |
+| `StateManager` for the OAuth/OIDC `state` | Your OAuth client library. Authlib's Starlette integration, for example, creates and checks `state` and `nonce` for you. |
+| `CacheManager`, `CacheLock`, `@cache` | Nothing to do: they are not deprecated. |
+
+Sessions and states already in the backend need no cleanup; they expire on their own TTL.
+
+To silence the warning while you migrate, filter it before the first import:
+
+```python
+import warnings
+
+warnings.filterwarnings(
+    "ignore", message="fastapi_cachex.session is deprecated", category=FutureWarning
+)
+```
+
 ## Sessions {#sessions}
+
+These changes still apply if you keep using sessions during 0.4.x.
 
 ### Session cookie defaults {#session-cookie}
 

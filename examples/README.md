@@ -4,6 +4,10 @@ Each file here is a complete FastAPI app that shows one feature of
 FastAPI-CacheX. They use only the public API and the in-memory backend (except
 `redis_backend.py` and `session_redis.py`), so they run without any server.
 
+The `session_*.py` and `oauth_state.py` examples use `fastapi_cachex.session`
+and `fastapi_cachex.state`, which are deprecated in 0.4.0 and removed in 0.5.0
+([where to move](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/#session-state-deprecated)).
+
 | Example | What it shows | Needs |
 |---------|---------------|-------|
 | [`http_cache.py`](http_cache.py) | `@cache` with a TTL, ETag and `304 Not Modified`, `no_cache` and `private` routes, `clear_path()` after an update, the monitoring routes behind an admin check | — |

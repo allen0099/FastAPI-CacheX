@@ -45,7 +45,6 @@ from .exceptions import RequestNotFoundError
 from .headers import add_vary
 from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
-from .session.config import DEFAULT_SESSION_HEADER_NAME
 from .types import CACHE_KEY_SEPARATOR
 from .types import CacheEntry
 from .types import CacheKeyBuilder
@@ -195,7 +194,9 @@ _HASHED_VARY_HEADERS = frozenset(
         "authorization",
         "proxy-authorization",
         "cookie",
-        DEFAULT_SESSION_HEADER_NAME.lower(),
+        # The session token header (`SessionConfig.header_name`'s default).
+        # Inlined, so @cache does not import the deprecated session package.
+        "x-session-token",
     }
 )
 _HASHED_VARY_MARKER = "sha256:"

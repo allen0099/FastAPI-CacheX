@@ -1,5 +1,8 @@
 # State 管理擴充 {#state-management-extension}
 
+> [!WARNING]
+> **已棄用。** `fastapi_cachex.state` 在 0.4.0 已棄用，並將在 0.5.0 移除（[#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)）。匯入時會發出 `FutureWarning`。遷移方向請見[遷移至 0.4.0](MIGRATING_0_4.md#session-state-deprecated)。
+
 `fastapi_cachex.state` 為 OAuth / OIDC 授權流程提供**一次性 state 權杖**。開始授權之前，先產生一個隨機 state 並存入快取後端；回呼（callback）回來時，再將它**消耗**掉。已消耗的 state 無法再使用第二次。
 
 只有當 state **綁定到發起流程的瀏覽器**時，它才能保護流程免於 CSRF 攻擊（RFC 6749 §10.12）。光是儲存並不夠：攻擊者可以在自己的瀏覽器中發起流程，再把受害者導向帶有攻擊者 state 與 code 的回呼，使受害者登入攻擊者的帳號。請在建立 state 時傳入 `binding`（一個同時設為 Cookie 的隨機 nonce），並在消耗時傳入相同的值，如下方快速開始所示。

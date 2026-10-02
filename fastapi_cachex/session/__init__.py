@@ -1,4 +1,11 @@
-"""Session management extension for FastAPI-CacheX."""
+"""Session management extension for FastAPI-CacheX.
+
+Deprecated in 0.4.0 and removed in 0.5.0 (#420): importing this package
+emits a ``FutureWarning``.
+"""
+
+from fastapi_cachex._deprecation import SESSION_DEPRECATION
+from fastapi_cachex._deprecation import warn_deprecated
 
 from .config import SessionConfig
 from .dependencies import get_optional_session
@@ -16,6 +23,8 @@ from .middleware import get_client_ip
 from .models import Session
 from .models import SessionUser
 from .proxy import SessionManagerProxy
+
+warn_deprecated(SESSION_DEPRECATION)
 
 __all__ = [
     "FastAPICacheXSessionMiddleware",

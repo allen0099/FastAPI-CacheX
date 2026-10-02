@@ -1,5 +1,8 @@
 # State Management Extension
 
+> [!WARNING]
+> **Deprecated.** `fastapi_cachex.state` is deprecated in 0.4.0 and removed in 0.5.0 ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)). Importing it emits a `FutureWarning`. [Migrating to 0.4.0](MIGRATING_0_4.md#session-state-deprecated) says where to move.
+
 `fastapi_cachex.state` provides **one-time state tokens** for OAuth / OIDC authorization
 flows. Before starting the authorization, generate a random state and store it in the cache
 backend. When the callback comes back, **consume** it. A consumed state cannot be used a

@@ -1,5 +1,8 @@
 # Session 管理擴充 {#session-management-extension}
 
+> [!WARNING]
+> **已棄用。** `fastapi_cachex.session` 在 0.4.0 已棄用，並將在 0.5.0 移除（[#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)）。匯入時會發出 `FutureWarning`。遷移方向請見[遷移至 0.4.0](MIGRATING_0_4.md#session-state-deprecated)。
+
 FastAPI-CacheX 的 Session 管理提供完整的使用者 Session 處理，包括簽署過的權杖、滑動過期，以及可選的 IP / User-Agent 綁定。Session 內容一律存放在快取後端；用戶端只持有一個簽署過的權杖。
 
 **`FastAPICacheXSessionMiddleware` 如何傳遞權杖：**
