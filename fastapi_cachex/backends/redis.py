@@ -35,13 +35,15 @@ _BATCH_SIZE = 100
 
 # INCRBY that attaches a TTL only when it creates the key, so a counter lives in
 # a fixed window. KEYS[1] = key, ARGV[1] = delta, ARGV[2] = ttl (0 = none).
+# The value is returned as the stored string: Lua turns an integer reply into
+# a double, which rounds anything past 2**53 (#364).
 _INCREMENT_SCRIPT = """
 local created = redis.call('EXISTS', KEYS[1]) == 0
-local value = redis.call('INCRBY', KEYS[1], ARGV[1])
+redis.call('INCRBY', KEYS[1], ARGV[1])
 if created and tonumber(ARGV[2]) > 0 then
     redis.call('EXPIRE', KEYS[1], ARGV[2])
 end
-return value
+return redis.call('GET', KEYS[1])
 """
 
 # DEL that only fires while the key still holds the exact bytes the caller read,
@@ -436,6 +438,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 keys=[self._make_key(key)], args=[delta, ttl or 0]
             )
         except ResponseError as e:
+            if "would overflow" in str(e):
+                msg = "Counter increment would overflow a signed 64-bit integer"
+                raise CacheXError(msg) from e
             if "not an integer" not in str(e):
                 raise
             msg = "Cache key holds a value that is not a counter"

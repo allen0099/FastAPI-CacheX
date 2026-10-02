@@ -303,7 +303,14 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   `n` fits the server's counters: Redis counters are signed 64-bit, so there `n`
   must be from -2**63 to 2**63 - 1, and Memcached counters are unsigned, so there
   `n` must be from 0 to 2**64 - 1. Incrementing a counter outside that range
-  raises `CacheXError`. `delta`
+  raises `CacheXError`. The memory backend and the base fallback use the signed
+  64-bit range too. An increment whose result would leave the range raises
+  `CacheXError` and leaves the counter unchanged on every backend (before
+  0.4.1, Redis raised its own `ResponseError`, Memcached wrapped around to a
+  small number and memory grew without limit). On Memcached the wrap is
+  detected after the `INCR` and then undone with a second `INCR`, so an
+  increment or decrement on the same key that lands between the two can see
+  the wrapped value. `delta`
   must be an `int` within the signed 64-bit range; anything else raises
   `TypeError` or `ValueError` before the backend is touched.
 - `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis

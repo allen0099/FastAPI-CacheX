@@ -129,3 +129,37 @@ def test_counter_value_requires_the_counter_fingerprint_and_a_plain_integer(
 ) -> None:
     with pytest.raises(CacheXError, match="not a counter"):
         counter_value(entry)
+
+
+# The top of each backend's counter range (#364).
+COUNTER_MAX = {"memcached": 2**64 - 1}
+
+
+async def test_incrementing_past_the_range_raises_and_keeps_the_counter(
+    backend: BaseCacheBackend, request: pytest.FixtureRequest
+) -> None:
+    """Redis raised a raw ResponseError, Memcached wrapped to 0 and memory grew."""
+    top = COUNTER_MAX.get(request.node.callspec.params["backend"], 2**63 - 1)
+    await backend.set(KEYS[1], counter_entry(top - 1))
+
+    assert await backend.increment(KEYS[1]) == top
+    with pytest.raises(CacheXError, match="overflow"):
+        await backend.increment(KEYS[1])
+    with pytest.raises(CacheXError, match="overflow"):
+        await backend.increment(KEYS[1], 2**63 - 1)
+
+    assert await backend.get(KEYS[1]) == counter_entry(top)
+    assert await backend.increment(KEYS[1], -1) == top - 1
+
+
+async def test_a_signed_counter_raises_below_its_range(
+    backend: BaseCacheBackend, request: pytest.FixtureRequest
+) -> None:
+    if request.node.callspec.params["backend"] == "memcached":
+        pytest.skip("Memcached counters are unsigned; DECR stops at 0")
+    await backend.set(KEYS[1], counter_entry(-(2**63)))
+
+    with pytest.raises(CacheXError, match="overflow"):
+        await backend.increment(KEYS[1], -1)
+
+    assert await backend.get(KEYS[1]) == counter_entry(-(2**63))

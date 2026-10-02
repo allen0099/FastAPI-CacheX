@@ -15,6 +15,7 @@ from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
 
 from .base import BaseCacheBackend
+from .base import check_counter_range
 from .base import validate_delta
 from .base import validate_ttl
 from .base import warn_if_path_shaped
@@ -270,7 +271,13 @@ class MemoryBackend(BaseCacheBackend):
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 
         The read-modify-write happens under the backend lock, so concurrent
-        callers on the same event loop never lose an increment.
+        callers on the same event loop never lose an increment. Counters are
+        signed 64-bit, as on Redis.
+
+        Raises:
+            CacheXError: If the key holds a value that is not a counter, or
+                the result would leave the signed 64-bit range (the counter
+                is left unchanged).
         """
         validate_delta(delta)
         validate_ttl(ttl)
@@ -280,7 +287,7 @@ class MemoryBackend(BaseCacheBackend):
             now = time.time()
             item = self.cache.get(key)
             if item is not None and _is_live(item, now):
-                value = counter_value(item.value) + delta
+                value = check_counter_range(counter_value(item.value) + delta)
                 item.value = counter_entry(value)
             else:
                 value = delta
