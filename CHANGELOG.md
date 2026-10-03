@@ -20,6 +20,80 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-03
+
+### Changed
+
+- **A dependency that sets a cookie keeps `@cache` routes out of the backend.**
+  Before 0.4.1, a handler that did not declare `response: Response` dropped the
+  cookie and the response was stored; now the cookie is sent and the response is
+  `private` and not stored. An app-wide dependency that sets a cookie on every
+  request therefore turns storage off for every `@cache` route it applies to, and
+  so does one that sets the status code. `@cache` also adds the dependencies'
+  headers to a `Response` the handler returns itself, which FastAPI does not do.
+  Entries stored before the upgrade may still replay dependency headers until
+  their TTL ends. ([#233](https://github.com/allen0099/FastAPI-CacheX/issues/233))
+- **`@cache(no_store=True)` warns about the arguments it overrides.** A
+  `UserWarning` naming them is emitted when the decorator is applied with
+  `no_store=True` and `ttl`, `stale`, `no_cache`, `public`, `private`,
+  `immutable` or `must_revalidate`. The response is unchanged: `no-store` only. ([#328](https://github.com/allen0099/FastAPI-CacheX/issues/328))
+
+### Fixed
+
+- **Headers and cookies a dependency sets on the shared `Response` reach the
+  client on every `@cache` response, with this request's values.** A handler that
+  did not declare `response: Response` lost them, and one that did stored the
+  dependency's headers with the entry and replayed the values of the request that
+  filled the cache (a rate-limit countdown answered 10, 10, 10). They are now
+  added to every miss, hit and 304 and never stored. A response with a cookie a
+  dependency set, or with a dependency's `private` or `no-store` `Cache-Control`,
+  is treated like one where the handler set it: it is not stored, and it is sent
+  with that header or with `private`. A dependency's other `Cache-Control` and a
+  header the handler sets over a dependency's are handled as the handler's own,
+  on a hit too. A status code a dependency sets is sent, and keeps the response
+  out of the backend. ([#233](https://github.com/allen0099/FastAPI-CacheX/issues/233))
+- **A cancelled `CacheLock.acquire()` no longer leaves the lock held by nobody.**
+  When `acquire()` was cancelled (a request timeout, a client disconnect) or
+  failed while its claim was in flight, the backend could already have stored
+  it, and every other caller was blocked until the lock's `ttl` ran out. The
+  claim is now withdrawn with `delete_if_equals` before the exception
+  propagates. ([#234](https://github.com/allen0099/FastAPI-CacheX/issues/234))
+- **A cache miss answers a matching `If-None-Match` with 304.** When the entry
+  had expired, been cleared or evicted, or was never stored (or is held by
+  another worker), a client revalidating its copy got a full 200 with the same
+  ETag; it now gets a 304, as on a hit. The handler still runs and the entry is
+  stored again. Every 304 for a response the handler just rendered (a miss, a
+  bypassed request, a `no_cache` route) now repeats the handler's `Set-Cookie`
+  lines and runs its background task; both used to be dropped (#233). ([#237](https://github.com/allen0099/FastAPI-CacheX/issues/237))
+- **`MemoryBackend` no longer lets callers change cached entries in place.** It
+  stores and returns copies of each `CacheEntry`, so assigning to an entry read
+  with `get()` or `get_cache_data()`, or to one after passing it to `set()`,
+  `set_if_absent()` or `set_if_equals()`, no longer changes what later reads
+  see. Redis and Memcached already behaved this way. ([#238](https://github.com/allen0099/FastAPI-CacheX/issues/238))
+- **`MemcachedBackend` checks `key_prefix` when it is built.** A prefix with
+  whitespace, control characters or non-ASCII, or one of 250 bytes or more,
+  made every call fail with `MemcacheIllegalInputError`, because the prefix stays
+  in front of the digest of a hashed key. Such a prefix now raises `ValueError`,
+  and one over 186 bytes, which leaves no room for the digest, warns. ([#239](https://github.com/allen0099/FastAPI-CacheX/issues/239))
+- **Warnings raised through `CacheManager` or a base-class fallback name your
+  code.** The `FutureWarning` for a third-party backend whose `delete()` returns
+  `None` pointed at `manager.py` or `base.py` when it was raised through
+  `CacheManager` or a fallback such as `get_and_delete()`; it now names the line
+  in your application, as the Memcached `RuntimeWarning`s already did. ([#333](https://github.com/allen0099/FastAPI-CacheX/issues/333))
+- **A bare `@cache()` no longer sends an empty `Cache-Control` header.** With
+  neither `ttl` nor a directive, the decorator has no directive of its own: it
+  keeps the handler's `Cache-Control`, or sends none, and adds only the ETag. A
+  response that sets a cookie or answers a request with credentials is still
+  sent with `private`. ([#363](https://github.com/allen0099/FastAPI-CacheX/issues/363))
+- **A counter that would overflow raises `CacheXError` on every backend.**
+  Incrementing past the counter's range raised a raw `redis.exceptions.ResponseError`
+  on Redis, wrapped around silently on Memcached and grew past 64 bits on the
+  memory backend. Each backend now raises `CacheXError` and leaves the counter
+  unchanged (Memcached undoes the wrap with a second `INCR`, so a concurrent
+  increment on the same key can still see the wrapped value); memory and the base fallback use Redis's signed 64-bit range. Redis
+  also returned values past 2**53 rounded, because its increment script passed
+  them through a Lua number; it now returns them exactly. ([#364](https://github.com/allen0099/FastAPI-CacheX/issues/364))
+
 ## [0.4.0] - 2026-10-02
 
 0.4.0 contains breaking changes; read
@@ -1242,7 +1316,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.7...v0.3.8
