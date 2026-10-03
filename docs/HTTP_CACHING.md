@@ -1,8 +1,9 @@
 # HTTP Caching
 
-The `@cache` decorator caches the responses of FastAPI GET routes and handles
-`Cache-Control`, `ETag` and `If-None-Match` for you. This page covers how to use
-it; [Cache flow](CACHE_FLOW.md) explains what happens inside a request.
+The `@cache` decorator caches the responses of FastAPI GET routes (and answers
+HEAD from them) and handles `Cache-Control`, `ETag` and `If-None-Match` for
+you. This page covers how to use it; [Cache flow](CACHE_FLOW.md) explains what
+happens inside a request.
 
 Complete runnable example: [`examples/http_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/http_cache.py).
 
@@ -19,7 +20,8 @@ revalidate every time, and `private=True` keeps a response out of the shared
 backend. `no_store=True` keeps it out of every cache; all options are listed
 under [Cache-Control directives](#cache-control-directives).
 
-Only GET requests are cached; other methods run the handler as usual. The
+Only GET requests are cached, and HEAD is answered from the GET entry (see
+[HEAD requests](#head-requests)); other methods run the handler as usual. The
 handler does not need to declare a `Request` parameter — the decorator adds one
 when it is missing. If no backend has been configured, `@cache` falls back to a
 `MemoryBackend` and logs a warning once per process (see
@@ -213,6 +215,34 @@ replayed the headers of the request that filled the cache (#233).
 > session-refresh dependency, therefore keeps every `@cache` route it applies to
 > out of the backend. Limit it to the routes that need it, or set the cookie
 > only when it changes.
+
+### HEAD requests
+
+A route that accepts HEAD gets the same treatment as GET (#253). `@app.get`
+registers GET only, so list both methods:
+
+```python
+@app.api_route("/items", methods=["GET", "HEAD"])
+@cache(ttl=60)
+async def list_items() -> list[str]: ...
+```
+
+A HEAD request reads the entry a GET stored under the same key, as RFC 9110
+§9.3.2 allows: on a hit it gets the stored status and headers, `ETag`, `Age`
+and the `Content-Length` of the stored body, without running the handler, and a
+matching `If-None-Match` gets a 304. The key is the one a GET would get: a
+custom `key_builder` is called with the request's method set to `GET`. `vary`,
+credentials, `private`, `no_store` and dependency headers apply as for GET.
+
+On a miss the handler runs and its response gets the same `Cache-Control` and
+`Vary` handling as a GET, with an `ETag` and `Content-Length` computed from what
+it rendered: a handler that skips the body for HEAD sends those of the empty
+body. That response is not stored, since a later GET would then be served the
+empty body. The server drops the body of every HEAD response.
+`invalidate()` builds the GET key, so it clears what HEAD reads as well.
+
+A route that already accepted HEAD ran the handler on every HEAD request before
+0.4.2 and added none of these headers; it now skips the handler on a hit.
 
 ### Requests with credentials
 
@@ -497,7 +527,7 @@ and a custom key builder compose:
 `key_builder` returning `build_cache_key(request, "tenant-1")`. Routes without
 `vary` keep their keys.
 
-The names are also added to the `Vary` header of every response to a GET
+The names are also added to the `Vary` header of every response to a GET or HEAD
 request on the route, on a 200 or a 304, served from the backend or not
 (`private`, `no_store`, a bypassed `Authorization` request or a response that
 is not stored), so a shared cache in front of the app keys on them too. A name
