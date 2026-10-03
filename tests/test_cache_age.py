@@ -4,11 +4,10 @@ Without it a downstream cache reading ``max-age=<ttl>`` on a hit restarts the
 freshness clock, so a response could be reused for up to twice the ttl. With
 ``Age`` it computes ``max-age - Age`` (RFC 9111 §4.2.3).
 
-Time is moved by patching ``fastapi_cachex.cache._now``; the memory backend
-keeps real time, so entries do not expire while the patched clock runs ahead.
+Time is moved by patching ``fastapi_cachex._stored_response._now``; the memory
+backend keeps real time, so entries do not expire while the patched clock runs ahead.
 """
 
-import importlib
 import json
 import math
 import uuid
@@ -19,6 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi import Response
 
+from fastapi_cachex import _stored_response as stored_response
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.backends import codec
 from fastapi_cachex.backends.base import BaseCacheBackend
@@ -39,8 +39,6 @@ try:  # Starlette's TestClient moved to httpx2; the `lowest` env still has httpx
 except ImportError:  # pragma: no cover - depends on the environment
     import httpx  # type: ignore[no-redef, import-not-found, unused-ignore]
 
-# `fastapi_cachex.cache` is shadowed by the `cache` decorator on the package.
-cache_module = importlib.import_module("fastapi_cachex.cache")
 
 TTL = 60
 START = 1_800_000_000.0
@@ -58,7 +56,7 @@ class _Clock:
 @pytest.fixture
 def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     clock = _Clock()
-    monkeypatch.setattr(cache_module, "_now", clock)
+    monkeypatch.setattr(stored_response, "_now", clock)
     return clock
 
 
@@ -246,8 +244,8 @@ def test_age_headers_without_a_ttl_is_not_clamped(clock):
     entry = CacheEntry(fingerprint="f", content=b"", stored_at=START)
     clock.now = START + 10_000.5
 
-    assert cache_module._age_headers(entry, None) == {"age": "10000"}
-    assert cache_module._age_headers(entry, 60) == {"age": "60"}
+    assert stored_response._age_headers(entry, None) == {"age": "10000"}
+    assert stored_response._age_headers(entry, 60) == {"age": "60"}
 
 
 # --- codec -------------------------------------------------------------------

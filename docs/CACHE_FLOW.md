@@ -1,9 +1,17 @@
 # FastAPI-CacheX Cache Flow
 
 This document explains in detail how FastAPI-CacheX applies its caching logic to
-HTTP requests. All behaviour described here lives in
-[`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py)
-unless stated otherwise.
+HTTP requests. The decorator lives in
+[`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py), and the
+parts it calls in private modules beside it:
+[`_key_builders.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_key_builders.py) (cache
+keys), [`_vary.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_vary.py) (`vary=`),
+[`_cache_control.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_cache_control.py)
+(`Cache-Control`),
+[`_stored_response.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_stored_response.py)
+(storing and replaying a response, ETags and 304s) and
+[`_rendering.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_rendering.py) (running the
+handler and adding its dependencies' headers).
 
 ## Overall flow
 

@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi.testclient import TestClient
 
-from fastapi_cachex.cache import _build_cache_control
+from fastapi_cachex._cache_control import _build_cache_control
 from fastapi_cachex.cache import cache
 from fastapi_cachex.cache import default_key_builder
 

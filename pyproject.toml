@@ -154,6 +154,8 @@ keep-runtime-typing = true
     "PLR0913", "PLR0915", "PLR0911", "PLR0912", # Many arguments/statements/returns/branches needed for flexible caching logic
     "S101", # Internal invariant guard, not a validation shortcut
 ]
+"fastapi_cachex/_cache_control.py" = ["PLR0913"]  # One keyword per @cache option
+"fastapi_cachex/_rendering.py" = ["PLR0913"]  # The handler call and its sub-response
 "fastapi_cachex/backends/memcached.py" = ["PLC0415"]  # Optional dependency
 # PLR0917: these constructors take many positional options; making them
 # keyword-only would break the public API.

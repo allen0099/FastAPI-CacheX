@@ -14,7 +14,7 @@ from fastapi_cachex import SessionConfig
 from fastapi_cachex import add_routes
 from fastapi_cachex import build_cache_key
 from fastapi_cachex import invalidate
-from fastapi_cachex.cache import _HASHED_VARY_HEADERS
+from fastapi_cachex._vary import _HASHED_VARY_HEADERS
 from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy

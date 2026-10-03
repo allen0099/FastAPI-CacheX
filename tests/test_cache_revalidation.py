@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi import Response
 from fastapi.testclient import TestClient
 
-from fastapi_cachex.cache import _etag_matches
+from fastapi_cachex._stored_response import _etag_matches
 from fastapi_cachex.cache import cache
 
 
