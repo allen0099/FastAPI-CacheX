@@ -7,8 +7,9 @@
 ```
 HTTP 請求抵達
     ↓
-@cache 裝飾器攔截請求（只有 GET 會經過快取；其他所有
-方法直接執行 handler，也不會帶上 Cache-Control 標頭）
+@cache 裝飾器攔截請求（只有 GET 與 HEAD 會經過快取，HEAD
+讀取 GET 的項目；其他所有方法直接執行 handler，也不會帶上
+Cache-Control 標頭）
     ↓
 no-store？ ── 是 → 執行 handler，既不讀取也不寫入快取，
     │              回應帶上 Cache-Control: no-store
@@ -52,7 +53,7 @@ private、沒有正數的 ttl，或帶有 Authorization／Session 且未設定 p
 在回應中附加 Cache-Control（非 2xx 回應回傳時不帶此標頭，
 handler 自己送出的 private／no-store Cache-Control 永遠不會被取代，
 設定 Set-Cookie 的回應則以 private 取代 public）；設定 vary 時，
-會把這些名稱加入每個 GET 回應的 Vary
+會把這些名稱加入每個 GET 或 HEAD 回應的 Vary
 ```
 
 ## 詳細步驟 {#detailed-steps}
@@ -94,7 +95,7 @@ cache_key = "|".join(
 
 這個快取鍵格式讓每個維度各自獨立快取：
 
-- **方法隔離**：GET 與 POST 不共用快取（而且目前只有 GET 會進入快取流程）
+- **方法隔離**：GET 與 POST 不共用快取（而且只有 GET 與 HEAD 會進入快取流程；HEAD 使用 GET 的快取鍵，且永遠不會儲存）
 - **Host 隔離**：`example.com` 與 `api.example.com` 分開快取；`Example.com` 與（在 http 上的）`example.com:80` 都是 `example.com`
 - **路徑隔離**：每個端點有各自的項目
 - **查詢參數隔離**：同一端點上不同的查詢參數分開快取
@@ -172,7 +173,7 @@ TTL 不儲存在 `CacheEntry` 中：過期由後端負責（`MemoryBackend` 將�
 **判斷邏輯**（`cache.py` 的包裝函式，依序執行）：
 
 ```python
-if request.method != "GET":
+if request.method not in ("GET", "HEAD"):
     return await handler()  # 不快取，不帶 Cache-Control
 
 if no_store:
@@ -186,6 +187,7 @@ if bypass or (credential and not cache_authorized):
     response, etag = await render()  # 既不讀取也不寫入後端
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
+# HEAD：key_builder 拿到的請求方法是 GET
 cache_key = key_builder(request) + vary_components(request)  # 只在這裡建立
 entry = await backend.get(cache_key)  # 過期的項目已在此略過
 
@@ -214,8 +216,10 @@ if not is_cacheable_status(response.status_code):
 if etag is None:
     return response  # 串流／檔案：沒有 ETag，不寫入
 shareable = not (
-    marked_private_or_no_store(response) or "set-cookie" in response.headers
-)  # 屬於單一呼叫者的回應不寫入
+    marked_private_or_no_store(response)
+    or "set-cookie" in response.headers
+    or request.method == "HEAD"
+)  # 屬於單一呼叫者的回應與 HEAD 的回應不寫入
 if shareable and (not entry or entry.fingerprint != etag):
     await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
 if etag_matches(client_etag, etag):
@@ -441,7 +445,7 @@ handler 不必自行宣告 `Request`：`@cache` 會在函式簽名中注入一�
 
 **Q：為什麼快取命中不一定回傳 200？** A：視情況而定。若請求帶有 `If-None-Match` 標頭且其 ETag 相符，會回傳 304 以節省頻寬。沒有此標頭時，則回傳帶有內容的 200。
 
-**Q：為什麼 POST／PUT 的回應不會被快取？** A：`@cache` 只適用於 GET。其他所有方法都直接執行 handler，不讀取或寫入快取，也不會加上 `Cache-Control` 標頭。
+**Q：為什麼 POST／PUT 的回應不會被快取？** A：`@cache` 只適用於 GET（以及以 GET 的項目回應的 HEAD）。其他所有方法都直接執行 handler，不讀取或寫入快取，也不會加上 `Cache-Control` 標頭。
 
 **Q：為什麼同一個端點有好幾個快取項目？** A：因為快取鍵包含查詢參數。`/users?page=1` 與 `/users?page=2` 是不同的項目；若路由設定了 `sort_query=False`，`?a=1&b=2` 與 `?b=2&a=1` 也是。
 
