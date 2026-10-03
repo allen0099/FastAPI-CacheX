@@ -1,6 +1,6 @@
 # FastAPI-CacheX 快取流程 {#fastapi-cachex-cache-flow}
 
-本文件詳細說明 FastAPI-CacheX 如何將快取邏輯套用到 HTTP 請求上。除非另有說明，這裡描述的所有行為都位於 [`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py)。
+本文件詳細說明 FastAPI-CacheX 如何將快取邏輯套用到 HTTP 請求上。裝飾器位於 [`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py)，它呼叫的各部分則位於同一目錄的私有模組：[`_key_builders.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_key_builders.py)（快取鍵）、[`_vary.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_vary.py)（`vary=`）、[`_cache_control.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_cache_control.py)（`Cache-Control`）、[`_stored_response.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_stored_response.py)（儲存與重播回應、ETag 與 304），以及 [`_rendering.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_rendering.py)（執行 handler 並加上依賴項的標頭）。
 
 ## 整體流程 {#overall-flow}
 

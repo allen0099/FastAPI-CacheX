@@ -1,45 +1,55 @@
 """Core caching functionality and decorators."""
 
-import hashlib
 import inspect
 import logging
 import threading
-import time
 import warnings
-from collections import Counter
-from collections.abc import Awaitable
 from collections.abc import Callable
-from collections.abc import Iterable
-from collections.abc import Mapping
 from collections.abc import Sequence
-from functools import partial
 from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
 from inspect import Signature
-from typing import TYPE_CHECKING
 from typing import Annotated
 from typing import Any
 from typing import Literal
-from typing import cast
 from typing import get_args
 from typing import get_origin
 from typing import get_type_hints
 
 from fastapi import Request
 from fastapi import Response
-from fastapi.encoders import jsonable_encoder
 from fastapi.params import Depends as DependsParam
-from fastapi.utils import is_body_allowed_for_status_code
-from pydantic import TypeAdapter
-from starlette.concurrency import run_in_threadpool
-from starlette.status import HTTP_200_OK
-from starlette.status import HTTP_206_PARTIAL_CONTENT
-from starlette.status import HTTP_300_MULTIPLE_CHOICES
-from starlette.status import HTTP_304_NOT_MODIFIED
 
+from ._cache_control import _NO_STORE
+from ._cache_control import CacheControl
+from ._cache_control import _build_cache_control
+from ._cache_control import _cache_control_for
+from ._cache_control import _unshareable_reason
+from ._cache_control import _with_cache_control
+from ._key_builders import _append_key_components
+from ._key_builders import _build_key
+from ._key_builders import _resolve_key_builder
+from ._key_builders import build_cache_key
+from ._key_builders import default_key_builder
+from ._rendering import AsyncResponseCallable
+from ._rendering import HandlerCallable
+from ._rendering import _dependency_unshareable_reason
+from ._rendering import _render
+from ._rendering import _respond
+from ._rendering import _with_dependency_headers
+from ._rendering import get_response
+from ._stored_response import _UNCACHEABLE_HEADERS
+from ._stored_response import _age_headers
+from ._stored_response import _append_headers
+from ._stored_response import _entry_for
+from ._stored_response import _etag_matches
+from ._stored_response import _fresh_not_modified
+from ._stored_response import _is_cacheable_status
+from ._stored_response import _not_modified
+from ._vary import _validate_vary
+from ._vary import _vary_components
 from .backends.base import MAX_TTL
-from .cache_key import CacheKey
 from .directives import DirectiveType
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
@@ -47,82 +57,23 @@ from .exceptions import RequestNotFoundError
 from .headers import add_vary
 from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
-from .types import CACHE_KEY_SEPARATOR
-from .types import CacheEntry
 from .types import CacheKeyBuilder
-from .types import HeaderPairs
-from .types import escape_key_component
 from .types import log_ref
 
-if TYPE_CHECKING:
-    from fastapi.routing import APIRoute
-
-# Handler callable accepted by @cache: can return any type (sync or async).
-HandlerCallable = Callable[..., Awaitable[object]] | Callable[..., object]
-
-# Wrapper callable produced by @cache: always async and returns Response.
-AsyncResponseCallable = Callable[..., Awaitable[Response]]
+# The public names of this module, kept when #422 split it into smaller ones.
+__all__ = [
+    "AsyncResponseCallable",
+    "CacheControl",
+    "HandlerCallable",
+    "build_cache_key",
+    "cache",
+    "default_key_builder",
+    "get_response",
+    "invalidate",
+    "logger",
+]
 
 logger = logging.getLogger(__name__)
-
-_NO_STORE = DirectiveType.NO_STORE.value
-
-# Wall clock behind ``CacheEntry.stored_at`` and the ``Age`` header. Wall time,
-# not monotonic, because an entry stored by one process or host is served by
-# another. A module attribute so tests can move time without sleeping.
-_now = time.time
-
-
-def build_cache_key(
-    request: Request, *components: str | int, sort_query: bool = True
-) -> str:
-    """Build the default cache key for ``request``, plus extra components.
-
-    With no ``components`` the key is ``http:v2|method|host|path|query``,
-    exactly what ``@cache`` uses by default. Each extra component is appended
-    after another separator, so a custom ``key_builder`` can add a dimension
-    (user ID, tenant, locale) without rebuilding the default key by hand::
-
-        def per_user_key(request: Request) -> str:
-            return build_cache_key(request, request.state.user_id)
-
-    The host is the ``Host`` header lower-cased, without an empty or default
-    port (``:80`` on http, ``:443`` on https), or ``unknown`` when there is
-    none. ``|`` and ``%`` in the host, the path and every extra component are
-    percent-encoded (see ``escape_key_component``), so none of them can
-    contain the separator and make one request's key equal another's. The
-    query string is already URL-encoded and never contains ``|``.
-
-    Keys built this way keep the tag, method, host and path in front, so
-    ``clear_path()`` still finds them and the monitoring routes still show
-    their method, host, path and query. This is
-    ``CacheKey.from_request(...).to_str()``; ``CacheKey.parse()`` decodes the
-    key again.
-
-    Args:
-        request: The FastAPI Request object
-        *components: Extra key components, appended in order. A ``str`` is
-            used as is and an ``int`` is written in decimal, so ``1`` and
-            ``"1"`` give the same key. An empty string is a component of its
-            own: ``build_cache_key(request, "")`` differs from
-            ``build_cache_key(request)``.
-        sort_query: Order the query parameters by name (a stable sort, so
-            ``?tag=b&tag=a`` stays distinct from ``?tag=a&tag=b``), so that
-            ``?a=1&b=2`` and ``?b=2&a=1`` give the same key. On by default,
-            as in ``@cache``; ``False`` keeps the order the client sent, as
-            ``@cache(sort_query=False)`` does.
-
-    Returns:
-        Generated cache key string
-
-    Raises:
-        TypeError: If a component is not a ``str`` or ``int`` (``bool`` is
-            rejected too), e.g. ``None`` from a missing user ID, which would
-            otherwise put every such caller under one ``"None"`` key.
-    """
-    key = CacheKey.from_request(request, *components, sort_query=sort_query).to_str()
-    logger.debug("Built cache key: %s", key)
-    return key
 
 
 def _log_backend_failure(
@@ -146,84 +97,6 @@ def _log_backend_failure(
         error,
     )
     logger.debug("Cache backend %s; key_ref=%s key=%s", what, key_ref, cache_key)
-
-
-def _append_key_components(key: str, components: Sequence[str]) -> str:
-    """Append each component to ``key``, escaped, after another separator."""
-    return CACHE_KEY_SEPARATOR.join(
-        [key, *(escape_key_component(component) for component in components)]
-    )
-
-
-# RFC 9110 §5.1: a field name is a token.
-_FIELD_NAME_CHARS = frozenset(
-    "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-)
-
-
-def _validate_vary(vary: Sequence[str] | None) -> list[str]:
-    """Check ``@cache(vary=...)`` and return the names, first spelling of each.
-
-    Raises:
-        CacheXError: If ``vary`` is a single string instead of a sequence of
-            names, or a name is not a non-empty header field name, or is ``*``.
-    """
-    if vary is None:
-        return []
-    if isinstance(vary, (str, bytes)) or not isinstance(vary, Sequence):
-        msg = (
-            "vary must be a list of header names, e.g. vary=['Accept-Language'], "
-            f"got {type(vary).__name__}"
-        )
-        raise CacheXError(msg)
-    names: dict[str, str] = {}
-    for name in vary:
-        if not isinstance(name, str) or not name or not set(name) <= _FIELD_NAME_CHARS:
-            msg = f"vary entries must be header field names, got {name!r}"
-            raise CacheXError(msg)
-        if name == "*":
-            msg = "vary cannot contain '*': the key can only vary on named headers"
-            raise CacheXError(msg)
-        names.setdefault(name.lower(), name)
-    return list(names.values())
-
-
-# Request headers whose values are credentials: ``vary`` keys on a digest of
-# the value instead of the value, so the key (shown by ``get_all_keys()``, the
-# monitoring routes and the Redis/Memcached keyspace) never holds a token.
-_HASHED_VARY_HEADERS = frozenset(
-    {
-        "authorization",
-        "proxy-authorization",
-        "cookie",
-        # The session token header (`SessionConfig.header_name`'s default).
-        # Inlined, so @cache does not import the deprecated session package.
-        "x-session-token",
-    }
-)
-_HASHED_VARY_MARKER = "sha256:"
-
-
-def _vary_components(request: Request, names: Sequence[str]) -> list[str]:
-    """The key components for ``@cache(vary=names)``: ``name=value`` each.
-
-    The name is lower-cased and the value trimmed; repeated header lines are
-    joined with ``,`` as RFC 9110 §5.3 allows, and a missing header gives an
-    empty value, the same as an empty one. For a credential header
-    (``Authorization``, ``Proxy-Authorization``, ``Cookie`` and the session
-    subsystem's ``X-Session-Token``) a non-empty value is replaced by
-    ``sha256:`` and the full hex SHA-256 of the joined value; an empty or
-    missing one stays ``name=``, so anonymous requests share one entry.
-    """
-    components = []
-    for name in names:
-        lowered = name.lower()
-        value = ",".join(line.strip() for line in request.headers.getlist(name))
-        if value and lowered in _HASHED_VARY_HEADERS:
-            digest = hashlib.sha256(value.encode("utf-8", "surrogatepass"))
-            value = _HASHED_VARY_MARKER + digest.hexdigest()
-        components.append(f"{lowered}={value}")
-    return components
 
 
 # Where `FastAPICacheXSessionMiddleware` puts the session it loaded;
@@ -329,103 +202,6 @@ class _BypassWarner:
         )
 
 
-def default_key_builder(request: Request) -> str:
-    """Default cache key builder function: ``build_cache_key(request)``.
-
-    Generates cache key in format: http:v2|method|host|path|query, with the
-    query parameters sorted by name.
-
-    Kept as the name ``@cache`` and ``invalidate()`` fall back to. To add
-    components to the default key, call ``build_cache_key`` instead.
-
-    Args:
-        request: The FastAPI Request object
-
-    Returns:
-        Generated cache key string
-    """
-    return build_cache_key(request)
-
-
-def _unsorted_query_key_builder(request: Request) -> str:
-    """The key builder of ``@cache(sort_query=False)``."""
-    return build_cache_key(request, sort_query=False)
-
-
-_SORT_QUERY_WITH_KEY_BUILDER_MSG = (
-    "sort_query only applies to the default key builder; a custom key_builder "
-    "builds its own key, so pass sort_query to build_cache_key() in it instead "
-    "(it sorts unless told otherwise)"
-)
-
-
-def _resolve_key_builder(
-    key_builder: CacheKeyBuilder | None, sort_query: object
-) -> CacheKeyBuilder:
-    """Pick the key builder for ``key_builder`` and ``sort_query``.
-
-    ``sort_query=None`` means it was not passed: the default key builder
-    sorts, and a custom one is used as is.
-
-    Raises:
-        CacheXError: If ``sort_query`` is not a ``bool`` or ``None``, if it
-            is passed with a custom ``key_builder`` (the flag would silently
-            do nothing), or if ``key_builder`` is an ``async`` callable.
-    """
-    if sort_query is not None and not isinstance(sort_query, bool):
-        msg = f"sort_query must be a bool, got {type(sort_query).__name__}"
-        raise CacheXError(msg)
-    if key_builder is not None:
-        if sort_query is not None:
-            raise CacheXError(_SORT_QUERY_WITH_KEY_BUILDER_MSG)
-        _validate_key_builder(key_builder)
-        return key_builder
-    return _unsorted_query_key_builder if sort_query is False else default_key_builder
-
-
-_ASYNC_KEY_BUILDER_MSG = (
-    "key_builder must be a sync function returning str; async key builders "
-    "are not supported (the key is built without awaiting)"
-)
-
-
-def _validate_key_builder(builder: Callable[..., object]) -> None:
-    """Reject a key builder whose call returns a coroutine.
-
-    ``functools.partial`` layers are unwrapped first, so a partial of an async
-    callable object is caught as well. A builder this cannot see through
-    (say a sync wrapper returning a coroutine) is caught by ``_build_key``.
-
-    Raises:
-        CacheXError: If calling ``builder`` would return a coroutine.
-    """
-    target = builder
-    while isinstance(target, partial):
-        target = target.func
-    if _is_coroutine_callable(target):
-        raise CacheXError(_ASYNC_KEY_BUILDER_MSG)
-
-
-def _build_key(builder: CacheKeyBuilder, request: Request) -> str:
-    """Call ``builder`` and check that it returned a ``str``.
-
-    A returned coroutine is closed, so it does not also trigger a "never
-    awaited" ``RuntimeWarning``. ``fail_open`` does not cover this: it is a
-    programming error in the route, not a backend failure.
-
-    Raises:
-        CacheXError: If ``builder`` returns anything but a ``str``.
-    """
-    key: object = builder(request)
-    if isinstance(key, str):
-        return key
-    if inspect.iscoroutine(key):
-        key.close()
-        raise CacheXError(_ASYNC_KEY_BUILDER_MSG)
-    msg = f"key_builder must return a str, got {type(key).__name__}"
-    raise CacheXError(msg)
-
-
 async def invalidate(
     request: Request,
     key_builder: CacheKeyBuilder | None = None,
@@ -484,176 +260,6 @@ async def invalidate(
         return False
     logger.debug("Cache INVALIDATE; key=%s", cache_key)
     return True
-
-
-class CacheControl:
-    """Manages Cache-Control header directives."""
-
-    def __init__(self) -> None:
-        """Initialize an empty CacheControl instance."""
-        self.directives: list[str] = []
-
-    def add(self, directive: DirectiveType, value: int | None = None) -> None:
-        """Add a Cache-Control directive.
-
-        Args:
-            directive: The directive type to add
-            value: Optional value for the directive
-        """
-        if value is not None:
-            self.directives.append(f"{directive.value}={value}")
-        else:
-            self.directives.append(directive.value)
-
-    def __str__(self) -> str:
-        """Return the Cache-Control header value as a string."""
-        return ", ".join(self.directives)
-
-
-# Headers that must never be replayed from cache. ``set-cookie`` carries
-# per-user state, ``content-type`` is already held by ``CacheEntry.media_type``
-# (storing both would emit the header twice), and the rest are either
-# connection-scoped or rebuilt for every response.
-_UNCACHEABLE_HEADERS = frozenset(
-    {
-        "set-cookie",
-        "content-length",
-        "transfer-encoding",
-        "connection",
-        "date",
-        "etag",
-        "cache-control",
-        "content-type",
-        "age",
-    }
-)
-
-
-def _is_cacheable_status(status_code: int) -> bool:
-    """Whether a response with this status may be stored and replayed.
-
-    Only successful responses are cacheable here. ``206 Partial Content`` is
-    excluded because its body is meaningful only for the ``Range`` request that
-    produced it, so replaying it to another request would corrupt the response.
-    """
-    return (
-        HTTP_200_OK <= status_code < HTTP_300_MULTIPLE_CHOICES
-        and status_code != HTTP_206_PARTIAL_CONTENT
-    )
-
-
-def _cacheable_headers(response: Response) -> HeaderPairs:
-    """The handler's own header lines worth storing, in the order sent.
-
-    Every line is kept, so a header sent more than once (several ``Link``
-    lines) is replayed line by line rather than as its last value.
-    """
-    return tuple(
-        (name, value)
-        for name, value in response.headers.items()
-        if name.lower() not in _UNCACHEABLE_HEADERS
-    )
-
-
-def _append_headers(response: Response, headers: Iterable[tuple[str, str]]) -> None:
-    """Add every ``(name, value)`` line to ``response``, duplicates included."""
-    for name, value in headers:
-        response.headers.append(name, value)
-
-
-# Fields RFC 9110 §15.4.5 asks a 304 to repeat from the 200 it stands in for.
-# ``Date`` comes from Starlette, ``ETag`` and ``Cache-Control`` are set on the
-# 304 directly, which leaves these three to be carried over.
-_REVALIDATION_HEADERS = frozenset({"content-location", "expires", "vary"})
-
-
-def _age_headers(entry: CacheEntry, ttl: int | None) -> dict[str, str]:
-    """The ``Age`` header for a response served from a stored ``entry``.
-
-    ``Cache-Control`` keeps ``max-age=<ttl>`` on a hit: RFC 9111 §4.2.3 has a
-    downstream cache compute the remaining freshness as ``max-age`` minus
-    ``Age``, so a copy stored here N seconds ago is fresh downstream for
-    ``ttl - N`` more seconds, and the total never reaches twice the ttl.
-
-    ``Age`` is a non-negative integer number of seconds (RFC 9111 §5.1). The
-    value is clamped to ``[0, ttl]``: ``stored_at`` may come from another
-    host's clock, and the backend never keeps an entry longer than ``ttl``, so
-    anything outside that range is clock skew. An entry without ``stored_at``
-    (written by an older release) gets no ``Age`` at all.
-    """
-    if entry.stored_at is None:
-        return {}
-    age = max(0.0, _now() - entry.stored_at)
-    if ttl is not None:
-        age = min(age, ttl)
-    return {"age": str(int(age))}
-
-
-def _revalidation_headers(headers: Iterable[tuple[str, str]]) -> HeaderPairs:
-    """The lines of a response's headers that a 304 must repeat."""
-    return tuple(
-        (name, value)
-        for name, value in headers
-        if name.lower() in _REVALIDATION_HEADERS
-    )
-
-
-def _media_type_of(response: Response) -> str | None:
-    """The response media type, falling back to a directly-set Content-Type."""
-    if response.media_type is not None:
-        return response.media_type
-    return response.headers.get("content-type")
-
-
-def _build_cache_control(
-    *,
-    ttl: int | None,
-    stale: Literal["error", "revalidate"] | None,
-    stale_ttl: int | None,
-    no_cache: bool,
-    public: bool,
-    private: bool,
-    immutable: bool,
-    must_revalidate: bool,
-) -> str:
-    """The ``Cache-Control`` value for a ``@cache`` route's arguments.
-
-    ``no_cache`` sends only ``no-cache`` (plus ``must-revalidate``); otherwise
-    the directives follow in a fixed order: scope, ``max-age``,
-    ``must-revalidate``, the stale directive, ``immutable``.
-    """
-    cache_control = CacheControl()
-    if no_cache:
-        cache_control.add(DirectiveType.NO_CACHE)
-        if must_revalidate:
-            cache_control.add(DirectiveType.MUST_REVALIDATE)
-        return str(cache_control)
-
-    # 1. Access scope (public/private)
-    if public:
-        cache_control.add(DirectiveType.PUBLIC)
-    elif private:
-        cache_control.add(DirectiveType.PRIVATE)
-
-    # 2. Cache time settings
-    if ttl is not None:
-        cache_control.add(DirectiveType.MAX_AGE, ttl)
-
-    # 3. Validation related
-    if must_revalidate:
-        cache_control.add(DirectiveType.MUST_REVALIDATE)
-
-    # 4. Stale response handling (stale_ttl is validated at decoration time)
-    if stale == "revalidate":
-        cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
-    elif stale == "error":
-        cache_control.add(DirectiveType.STALE_IF_ERROR, stale_ttl)
-
-    # 5. Special flags
-    if immutable:
-        cache_control.add(DirectiveType.IMMUTABLE)
-
-    return str(cache_control)
 
 
 def _is_request_annotation(annotation: Any) -> bool:
@@ -721,414 +327,6 @@ def _find_param(
         (param for param in params if matches(hints.get(param.name, param.annotation))),
         None,
     )
-
-
-def _split_header_lines(
-    lines: Iterable[tuple[bytes, bytes]], before: Iterable[tuple[bytes, bytes]]
-) -> tuple[list[tuple[bytes, bytes]], list[tuple[bytes, bytes]]]:
-    """Split a sub-response's header lines into those of ``before`` and the rest.
-
-    FastAPI resolves the dependencies before it calls the handler, so the
-    sub-response's lines when the wrapper starts (``before``) are the
-    dependencies' and the lines added since are the handler's. Lines are
-    matched as a multiset, so a repeated line is counted once per copy.
-    """
-    remaining = Counter(before)
-    kept: list[tuple[bytes, bytes]] = []
-    added: list[tuple[bytes, bytes]] = []
-    for line in lines:
-        if remaining[line] > 0:
-            remaining[line] -= 1
-            kept.append(line)
-        else:
-            added.append(line)
-    return kept, added
-
-
-def _sets_cookie(lines: Iterable[tuple[bytes, bytes]]) -> bool:
-    return any(name.lower() == b"set-cookie" for name, _ in lines)
-
-
-def _cache_control_values(lines: Iterable[tuple[bytes, bytes]]) -> list[str]:
-    return [
-        value.decode("latin-1")
-        for name, value in lines
-        if name.lower() == b"cache-control"
-    ]
-
-
-def _dependency_unshareable_reason(
-    dependency_lines: Iterable[tuple[bytes, bytes]],
-) -> str | None:
-    """Why the dependencies' lines keep a response out of the backend, if they do."""
-    lines = list(dependency_lines)
-    if _has_unshareable_directive(_cache_control_values(lines)):
-        return "a dependency's Cache-Control is private or no-store"
-    if _sets_cookie(lines):
-        return "a dependency sets a cookie"
-    return None
-
-
-def _with_dependency_headers(
-    response: Response,
-    sub_response: Response | None,
-    dependency_lines: Sequence[tuple[bytes, bytes]],
-    private_cache_control: str,
-    *,
-    cacheable_get: bool,
-) -> Response:
-    """Add the header lines the dependencies set on this request (#233).
-
-    FastAPI merges the sub-response into the response only when the handler
-    returns plain data, and the wrapper always returns a ``Response``, so it
-    merges them itself: on a miss, a hit and a 304 alike, with the values of
-    this request rather than those stored with the entry.
-
-    On a cacheable GET response, ``Cache-Control`` is decided as for the
-    handler's own lines: a handler's ``private`` or ``no-store`` header (or
-    ``no_store=True``) is kept; otherwise a dependency's ``private`` or
-    ``no-store`` header replaces the decorator's, and a ``Set-Cookie`` makes it
-    ``private``. Any header the response already carries (other than
-    ``Set-Cookie``) is not added, the decorator's ``Cache-Control`` included:
-    the handler set it over the dependency's, which on a hit is the stored
-    value.
-    Any other response gets every line, as FastAPI would send them.
-    """
-    if sub_response is None or not dependency_lines:
-        return response
-    current, _ = _split_header_lines(sub_response.headers.raw, dependency_lines)
-    if not cacheable_get or not (
-        response.status_code == HTTP_304_NOT_MODIFIED
-        or _is_cacheable_status(response.status_code)
-    ):
-        response.headers.raw.extend(current)
-        return response
-    own = {name.lower() for name, _ in response.headers.raw}
-    response.headers.raw.extend(
-        (name, value)
-        for name, value in current
-        if name.lower() == b"set-cookie" or name.lower() not in own
-    )
-    if _marked_unshareable(response):
-        return response
-    dependency_cache_control = _cache_control_values(current)
-    if _has_unshareable_directive(dependency_cache_control):
-        response.headers["Cache-Control"] = ", ".join(dependency_cache_control)
-    elif _sets_cookie(current):
-        response.headers["Cache-Control"] = private_cache_control
-    return response
-
-
-def _get_response_body(response: Response) -> bytes | None:
-    """Return response body bytes, or None for streaming/file responses."""
-    return getattr(response, "body", None)
-
-
-def _etag_for(body: bytes) -> str:
-    return f'W/"{hashlib.md5(body).hexdigest()}"'  # noqa: S324
-
-
-def _weak_etag(etag: str) -> str:
-    """An ETag reduced to its opaque tag, so weak and strong forms compare equal."""
-    tag = etag.strip()
-    if tag[:2].upper() == "W/":
-        tag = tag[2:]
-    return tag.strip('"')
-
-
-def _etag_matches(if_none_match: str | None, etag: str) -> bool:
-    """Whether an ``If-None-Match`` header selects ``etag`` (RFC 9110 §8.8.3.2).
-
-    If-None-Match uses the weak comparison function, so the ``W/`` prefix is
-    ignored on both sides, and it may list several validators. ``*`` matches
-    whenever the resource exists, which every caller has already established
-    before asking.
-
-    Candidates are split on commas. That misreads an opaque-tag containing a
-    literal comma, which this library never generates and RFC 9110 treats as
-    pathological; the simpler split is worth the edge case.
-    """
-    if not if_none_match:
-        return False
-
-    header = if_none_match.strip()
-    if header == "*":
-        return True
-
-    target = _weak_etag(etag)
-    return any(_weak_etag(candidate) == target for candidate in header.split(","))
-
-
-def _not_modified(
-    etag: str,
-    cache_control: str,
-    headers: Iterable[tuple[str, str]] = (),
-    age: Mapping[str, str] | None = None,
-) -> Response:
-    """Build the 304 for a successful revalidation.
-
-    ``headers`` is the header lines the 200 for this resource would have
-    carried, every line of a repeated field included; RFC 9110
-    §15.4.5 requires the fields that steer caching to be repeated on the 304,
-    otherwise a cache that stored the 200 would drop them on refresh. ``Date``
-    is added by Starlette and the other two are set here. ``age`` is the
-    ``Age`` header (see ``_age_headers``) when the 304 is answered from a
-    stored entry.
-    """
-    response = Response(status_code=HTTP_304_NOT_MODIFIED)
-    _append_headers(response, _revalidation_headers(headers))
-    response.headers["ETag"] = etag
-    if cache_control:
-        response.headers["Cache-Control"] = cache_control
-    response.headers.update(age or {})
-    return response
-
-
-def _fresh_not_modified(
-    response: Response, etag: str, client_etag: str | None, cache_control: str
-) -> Response | None:
-    """The 304 for a response the handler just rendered, or None to send it.
-
-    None unless ``client_etag`` matches. The handler ran, so what it did
-    beyond the body still reaches the client: its ``Set-Cookie`` lines are
-    repeated on the 304 (such a response is never stored, and
-    ``_cache_control_for`` marks it ``private``), and its ``background`` task
-    moves onto the 304 (#233).
-    """
-    if not _etag_matches(client_etag, etag):
-        return None
-    not_modified = _not_modified(etag, cache_control, response.headers.items())
-    _append_headers(
-        not_modified,
-        [(k, v) for k, v in response.headers.items() if k.lower() == "set-cookie"],
-    )
-    not_modified.background = response.background
-    return not_modified
-
-
-# Response directives by which the handler says its response belongs to one
-# caller (``private``) or must not be kept at all (``no-store``).
-_UNSHAREABLE_DIRECTIVES = frozenset(
-    {DirectiveType.PRIVATE.value, DirectiveType.NO_STORE.value}
-)
-
-
-def _marked_unshareable(response: Response) -> bool:
-    """Whether the handler's own ``Cache-Control`` has ``private`` or ``no-store``.
-
-    Directive names are matched as whole tokens, case-insensitively, across
-    every ``Cache-Control`` field the response carries.
-    """
-    return _has_unshareable_directive(response.headers.getlist("cache-control"))
-
-
-def _has_unshareable_directive(cache_control: Iterable[str]) -> bool:
-    """Whether any of these ``Cache-Control`` values has ``private`` or ``no-store``."""
-    return any(
-        directive.split("=", 1)[0].strip().lower() in _UNSHAREABLE_DIRECTIVES
-        for value in cache_control
-        for directive in value.split(",")
-    )
-
-
-def _unshareable_reason(response: Response) -> str | None:
-    """Why a rendered response must not be stored, or None when it may be."""
-    if _marked_unshareable(response):
-        return "response Cache-Control is private or no-store"
-    if "set-cookie" in response.headers:
-        return "response sets a cookie"
-    return None
-
-
-def _cache_control_for(
-    response: Response, cache_control: str, private_cache_control: str
-) -> str:
-    """The ``Cache-Control`` to send for a response the handler just rendered.
-
-    A handler that marked its response ``private`` or ``no-store`` keeps its own
-    header; the decorator's would widen what the handler allowed. A response
-    that sets a cookie gets ``private_cache_control``, so a shared cache in
-    front of the app does not store it either. When the decorator has no
-    directive to send (a bare ``@cache()``), the handler's own header is kept,
-    or none is sent (#363); a cookie still gets ``private_cache_control``.
-    """
-    if _marked_unshareable(response):
-        return ", ".join(response.headers.getlist("cache-control"))
-    if "set-cookie" in response.headers:
-        return private_cache_control
-    if not cache_control:
-        return ", ".join(response.headers.getlist("cache-control"))
-    return cache_control
-
-
-def _with_cache_control(
-    response: Response, cache_control: str, private_cache_control: str
-) -> Response:
-    if not _marked_unshareable(response):
-        value = _cache_control_for(response, cache_control, private_cache_control)
-        if value:
-            response.headers["Cache-Control"] = value
-    return response
-
-
-async def _render(
-    func: HandlerCallable,
-    request: Request,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    *,
-    sub_response: Response | None,
-    dependency_lines: Sequence[tuple[bytes, bytes]],
-) -> tuple[Response, bytes | None, str | None]:
-    """Run the handler; the body and ETag are None for streaming/file responses."""
-    response = await _respond(
-        func,
-        request,
-        args,
-        kwargs,
-        sub_response=sub_response,
-        dependency_lines=dependency_lines,
-    )
-    body = _get_response_body(response)
-    return response, body, None if body is None else _etag_for(body)
-
-
-# Attribute a route's response-model TypeAdapter is kept under, so it is built
-# once per route rather than on every cache miss.
-_ADAPTER_ATTR = "_cachex_response_adapter"
-
-
-def _serialize_result(route: "APIRoute", result: object) -> object:
-    """JSON-compatible content for a handler's non-Response return value.
-
-    With a response model (declared, or inferred from the return annotation)
-    the result is validated against it and dumped with the route's
-    ``response_model_*`` options, so fields the model leaves out are dropped.
-    Otherwise it goes through ``jsonable_encoder``, as FastAPI does.
-    """
-    if route.response_model is None:
-        return jsonable_encoder(result)
-    adapter: TypeAdapter[Any] | None = getattr(route, _ADAPTER_ATTR, None)
-    if adapter is None:
-        adapter = TypeAdapter(route.response_model)
-        setattr(route, _ADAPTER_ATTR, adapter)
-    validated = adapter.validate_python(result, from_attributes=True)
-    return adapter.dump_python(
-        validated,
-        mode="json",
-        include=route.response_model_include,
-        exclude=route.response_model_exclude,
-        by_alias=route.response_model_by_alias,
-        exclude_unset=route.response_model_exclude_unset,
-        exclude_defaults=route.response_model_exclude_defaults,
-        exclude_none=route.response_model_exclude_none,
-    )
-
-
-def _is_coroutine_callable(func: Callable[..., object]) -> bool:
-    """Report whether calling `func` returns a coroutine.
-
-    `inspect.iscoroutinefunction` already sees through `functools.partial`;
-    an instance with an ``async def __call__`` needs its method checked. The
-    method is looked up on the type, as the call itself does, so a class
-    (whose type is ``type``) counts as sync.
-    """
-    return inspect.iscoroutinefunction(func) or inspect.iscoroutinefunction(
-        type(func).__call__
-    )
-
-
-async def get_response(
-    __func: HandlerCallable,
-    __request: Request,
-    /,
-    *args: Any,
-    **kwargs: Any,
-) -> Response:
-    """Get the response from the function.
-
-    Coroutine handlers are awaited. Sync handlers run in the threadpool, as
-    FastAPI would run them without the (async) cache wrapper, so blocking I/O
-    in a ``def`` handler does not stall the event loop. Every header line of a
-    ``Response`` among ``kwargs`` is carried over onto a plain-data result.
-    """
-    sub_response = next(
-        (value for value in kwargs.values() if isinstance(value, Response)), None
-    )
-    return await _respond(
-        __func, __request, args, kwargs, sub_response=sub_response, dependency_lines=()
-    )
-
-
-async def _respond(
-    func: HandlerCallable,
-    request: Request,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    *,
-    sub_response: Response | None,
-    dependency_lines: Sequence[tuple[bytes, bytes]],
-) -> Response:
-    """Run the handler and build its response, as ``get_response`` describes.
-
-    Only the lines added to ``sub_response`` beyond ``dependency_lines`` are
-    carried over here: the dependencies' own lines are added to every
-    response the wrapper sends (``_with_dependency_headers``), and must not be
-    stored with the entry.
-    """
-    if _is_coroutine_callable(func):
-        result = await cast("Callable[..., Awaitable[object]]", func)(*args, **kwargs)
-    else:
-        result = await run_in_threadpool(func, *args, **kwargs)
-    # A sync callable can still hand back an awaitable (a lambda wrapping a
-    # coroutine function, say); await it rather than try to encode it.
-    if inspect.isawaitable(result):
-        result = await result
-
-    # If already a Response object, return it directly
-    if isinstance(result, Response):
-        return result
-
-    # Get response_class from route if available
-    route: APIRoute | None = request.scope.get("route")
-    if route is None:
-        msg = "Route not found in request scope"
-        raise CacheXError(msg)
-
-    # A placeholder means this route uses the application default. Unwrap the
-    # application value instead of calling the route's DefaultPlaceholder.
-    route_response_class = route.response_class
-    application_default_response_class = request.app.router.default_response_class
-    response_class: type[Response] = cast(
-        "type[Response]",
-        (
-            getattr(
-                application_default_response_class,
-                "value",
-                application_default_response_class,
-            )
-            if hasattr(route_response_class, "value")
-            else route_response_class
-        ),
-    )
-
-    # Build the response the way FastAPI would have without the cache wrapper:
-    # serialize through the response model, apply the route's status code and
-    # carry over what the handler set on the injected `response: Response`.
-    status_code = route.status_code
-    if sub_response is not None and sub_response.status_code:
-        status_code = sub_response.status_code
-    response_args: dict[str, Any] = {}
-    if status_code is not None:
-        response_args["status_code"] = status_code
-
-    response = response_class(_serialize_result(route, result), **response_args)
-    if not is_body_allowed_for_status_code(response.status_code):
-        response.body = b""
-    if sub_response is not None:
-        _, added = _split_header_lines(sub_response.headers.raw, dependency_lines)
-        response.headers.raw.extend(added)
-    return response
 
 
 def cache(
@@ -1696,14 +894,7 @@ def cache(
                 try:
                     await cache_backend.set(
                         cache_key,
-                        CacheEntry(
-                            fingerprint=current_etag,
-                            content=current_body,
-                            media_type=_media_type_of(current_response),
-                            status_code=current_response.status_code,
-                            headers=_cacheable_headers(current_response),
-                            stored_at=_now(),
-                        ),
+                        _entry_for(current_response, current_etag, current_body),
                         ttl=ttl,
                     )
                 except Exception as e:
