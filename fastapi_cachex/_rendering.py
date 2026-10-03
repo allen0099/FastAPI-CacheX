@@ -88,7 +88,7 @@ def _with_dependency_headers(
     dependency_lines: Sequence[tuple[bytes, bytes]],
     private_cache_control: str,
     *,
-    cacheable_get: bool,
+    cacheable_request: bool,
 ) -> Response:
     """Add the header lines the dependencies set on this request (#233).
 
@@ -97,7 +97,7 @@ def _with_dependency_headers(
     merges them itself: on a miss, a hit and a 304 alike, with the values of
     this request rather than those stored with the entry.
 
-    On a cacheable GET response, ``Cache-Control`` is decided as for the
+    On a cacheable GET or HEAD response, ``Cache-Control`` is decided as for the
     handler's own lines: a handler's ``private`` or ``no-store`` header (or
     ``no_store=True``) is kept; otherwise a dependency's ``private`` or
     ``no-store`` header replaces the decorator's, and a ``Set-Cookie`` makes it
@@ -110,7 +110,7 @@ def _with_dependency_headers(
     if sub_response is None or not dependency_lines:
         return response
     current, _ = _split_header_lines(sub_response.headers.raw, dependency_lines)
-    if not cacheable_get or not (
+    if not cacheable_request or not (
         response.status_code == HTTP_304_NOT_MODIFIED
         or _is_cacheable_status(response.status_code)
     ):

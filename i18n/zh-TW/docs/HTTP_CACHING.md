@@ -1,6 +1,6 @@
 # HTTP 快取 {#http-caching}
 
-`@cache` 裝飾器會快取 FastAPI GET 路由的回應，並替你處理 `Cache-Control`、`ETag` 與 `If-None-Match`。本頁說明如何使用它；[快取流程](CACHE_FLOW.md)則說明請求內部發生了什麼。
+`@cache` 裝飾器會快取 FastAPI GET 路由的回應（並以它們回應 HEAD），並替你處理 `Cache-Control`、`ETag` 與 `If-None-Match`。本頁說明如何使用它；[快取流程](CACHE_FLOW.md)則說明請求內部發生了什麼。
 
 完整可執行範例（英文）：[`examples/http_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/http_cache.py)。
 
@@ -14,7 +14,7 @@
 
 `ttl=60` 會在 60 秒內提供儲存的回應，`no_cache=True` 讓用戶端每次都重新驗證，`private=True` 則讓回應不存入共用的後端。`no_store=True` 讓回應不存入任何快取；所有選項列在 [Cache-Control 指令](#cache-control-directives)。
 
-只有 GET 請求會被快取；其他方法照常執行 handler。handler 不需要宣告 `Request` 參數：缺少時裝飾器會自動加上。如果尚未設定任何後端，`@cache` 會改用 `MemoryBackend`，並在每個行程記錄一次警告（見[後端](BACKENDS.md#in-memory-default)）。
+只有 GET 請求會被快取，HEAD 則以 GET 的項目回應（見 [HEAD 請求](#head-requests)）；其他方法照常執行 handler。handler 不需要宣告 `Request` 參數：缺少時裝飾器會自動加上。如果尚未設定任何後端，`@cache` 會改用 `MemoryBackend`，並在每個行程記錄一次警告（見[後端](BACKENDS.md#in-memory-default)）。
 
 ### 裝飾器順序 {#decorator-order}
 
@@ -103,6 +103,22 @@ handler 回傳一般資料而非 `Response` 時，得到的處理與沒有 `@cac
 
 > [!NOTE]
 > 因此，每次請求都設定 cookie 的依賴項（例如套用到整個應用程式的 CSRF 或 session 更新依賴項），會讓它套用到的每個 `@cache` 路由都不寫入後端。請只把它套用到需要的路由，或只在 cookie 改變時才設定。
+
+### HEAD 請求 {#head-requests}
+
+接受 HEAD 的路由會得到與 GET 相同的處理（#253）。`@app.get` 只註冊 GET，因此要列出兩個方法：
+
+```python
+@app.api_route("/items", methods=["GET", "HEAD"])
+@cache(ttl=60)
+async def list_items() -> list[str]: ...
+```
+
+HEAD 請求會讀取 GET 以同一個快取鍵儲存的項目，這是 RFC 9110 §9.3.2 所允許的：命中時它會得到儲存的狀態碼與標頭、`ETag`、`Age` 以及儲存的本文的 `Content-Length`，不會執行 handler；相符的 `If-None-Match` 則得到 304。快取鍵與 GET 會得到的相同：自訂的 `key_builder` 被呼叫時，請求的方法會是 `GET`。`vary`、憑證、`private`、`no_store` 與依賴項的標頭都與 GET 相同。
+
+未命中時 handler 會執行，它的回應得到與 GET 相同的 `Cache-Control` 與 `Vary` 處理，`ETag` 與 `Content-Length` 則依它實際產生的內容計算：對 HEAD 省略本文的 handler，送出的是空本文的值。這個回應不會儲存，否則之後的 GET 會拿到空的本文。伺服器會丟棄每個 HEAD 回應的本文。`invalidate()` 建立的是 GET 的快取鍵，因此也會清除 HEAD 讀取的項目。
+
+0.4.2 之前，已接受 HEAD 的路由每次收到 HEAD 請求都會執行 handler，也不會加上這些標頭；現在命中時不會執行 handler。
 
 ### 帶有憑證的請求 {#requests-with-credentials}
 
@@ -263,7 +279,7 @@ async def greeting(request: Request):
 
 每個列出的標頭都會在鍵中加入一個 `name=value` 段：名稱轉為小寫，值去除前後空白（重複的標頭行以 `,` 串接），缺少的標頭視同空值。這些段與鍵的其他部分一樣經過編碼，並接在 `key_builder` 回傳的鍵之後，因此 `vary` 可以與自訂的 key builder 一起使用：`key_builder` 回傳 `build_cache_key(request, "tenant-1")` 時，鍵為 `http:v2|GET|example.com|/greeting||tenant-1|accept-language=de`。沒有設定 `vary` 的路由，鍵維持不變。
 
-這些名稱也會加入該路由對 GET 請求的每個回應的 `Vary` 標頭，不論是 200 或 304，也不論是否由後端提供（`private`、`no_store`、繞過後端的 `Authorization` 請求，或未儲存的回應），讓應用程式前方的共用快取也依它們區分。回應已列出的名稱（不分大小寫）不會重複加入，帶有 `Vary: *` 的回應則維持原樣。
+這些名稱也會加入該路由對 GET 或 HEAD 請求的每個回應的 `Vary` 標頭，不論是 200 或 304，也不論是否由後端提供（`private`、`no_store`、繞過後端的 `Authorization` 請求，或未儲存的回應），讓應用程式前方的共用快取也依它們區分。回應已列出的名稱（不分大小寫）不會重複加入，帶有 `Vary: *` 的回應則維持原樣。
 
 `vary` 必須是由標頭欄位名稱組成的 list（或 tuple）。套用裝飾器時，會拒絕 `vary="Accept"` 這類單一字串，以及空名稱、`*` 與任何不是有效欄位名稱的值。
 

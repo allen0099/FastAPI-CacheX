@@ -75,6 +75,18 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+# Methods `@cache` answers; HEAD shares the GET entry (#253).
+_CACHED_METHODS = frozenset({"GET", "HEAD"})
+
+
+def _as_get(request: Request) -> Request:
+    """The same request with method GET, to build the key a GET would get.
+
+    ``state`` and the session live in the scope, so a key builder that reads
+    them sees what the HEAD request carries.
+    """
+    return Request({**request.scope, "method": "GET"}, request.receive)
+
 
 def _log_backend_failure(
     what: str, request: Request, cache_key: str, error: Exception
@@ -348,8 +360,13 @@ def cache(
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
-    Only GET requests go through the cache; other methods run the handler
-    unchanged.
+    Only GET and HEAD requests go through the cache; other methods run the
+    handler unchanged. A HEAD request is answered like a GET: from the entry
+    a GET stored under the same key (RFC 9110 §9.3.2), and with the same
+    headers when the handler runs. Its own response is never stored, since a
+    handler may render HEAD differently. The route must accept HEAD:
+    ``@app.get`` does not, ``@app.api_route(..., methods=["GET", "HEAD"])``
+    does.
 
     A response is never stored when the handler marks it ``private`` or
     ``no-store`` in its own ``Cache-Control`` (that header is then sent
@@ -429,7 +446,7 @@ def cache(
             missing) is appended to the key, after whatever ``key_builder``
             returns, as a ``name=value`` component, so every distinct value
             gets its own entry. The names are also added to the ``Vary``
-            header of every response to a GET request, unless it already
+            header of every response to a GET or HEAD request, unless it already
             lists them or ``*``. Values are client-controlled: each listed
             header multiplies the number of entries, so normalise them in a
             ``key_builder`` when only a few values matter. The credential
@@ -638,10 +655,9 @@ def cache(
                 # is the only caller that supplies the request parameter.
                 raise RequestNotFoundError
 
-            # Only cache GET requests
-            if req.method != "GET":
+            if req.method not in _CACHED_METHODS:
                 logger.debug(
-                    "Non-GET request; bypassing cache for method=%s", req.method
+                    "Not GET or HEAD; bypassing cache for method=%s", req.method
                 )
                 return await _respond(
                     func,
@@ -745,8 +761,11 @@ def cache(
 
             # Built only here: the branches above never touch the backend, so a
             # custom key builder would run for nothing.
+            # HEAD reads the entry of the GET (#253), whichever builder made
+            # the key.
             cache_key = _append_key_components(
-                _build_key(builder, req), _vary_components(req, vary_names)
+                _build_key(builder, _as_get(req) if req.method == "HEAD" else req),
+                _vary_components(req, vary_names),
             )
 
             try:
@@ -883,6 +902,10 @@ def cache(
             if skip_reason is None and dependency_status is not None:
                 # It may hold for this request only, and a hit would replay it.
                 skip_reason = "a dependency set the status code"
+            if skip_reason is None and req.method == "HEAD":
+                # A handler may skip the body for HEAD; a GET hit would then
+                # replay the empty one.
+                skip_reason = "only a GET response is stored"
             if skip_reason is not None:
                 logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
 
@@ -949,7 +972,7 @@ def cache(
                 sub_response,
                 dependency_lines,
                 private_cache_control,
-                cacheable_get=req is not None and req.method == "GET",
+                cacheable_request=req is not None and req.method in _CACHED_METHODS,
             )
 
         wrapper: AsyncResponseCallable = serve
@@ -960,8 +983,8 @@ def cache(
                 # Read before `serve` pops an injected request parameter.
                 req: Request | None = kwargs.get(request_name)
                 response = await serve(*args, **kwargs)
-                if req is not None and req.method == "GET":
-                    # Every GET answer, served from the backend or not: a
+                if req is not None and req.method in _CACHED_METHODS:
+                    # Every GET or HEAD answer, served from the backend or not: a
                     # shared cache downstream keys on these headers too.
                     add_vary(response.headers, vary_names)
                 return response

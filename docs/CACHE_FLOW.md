@@ -18,8 +18,9 @@ handler and adding its dependencies' headers).
 ```
 HTTP request arrives
     ↓
-@cache decorator intercepts it (only GET goes through the cache; every other
-method runs the handler directly and gets no Cache-Control header)
+@cache decorator intercepts it (only GET and HEAD go through the cache, HEAD
+reading the GET entry; every other method runs the handler directly and gets
+no Cache-Control header)
     ↓
 no-store? ── yes → run the handler, neither read nor write the cache,
     │              respond with Cache-Control: no-store
@@ -65,7 +66,7 @@ Cached entry exists and no-cache is off?
 Attach Cache-Control to the response (non-2xx responses are returned without it,
 a handler's own private/no-store Cache-Control is never replaced, and a
 Set-Cookie response gets private instead of public); with vary, add the
-names to Vary on every GET response
+names to Vary on every GET or HEAD response
 ```
 
 ## Detailed steps
@@ -131,8 +132,8 @@ the key stays bounded.
 
 The key format keeps each dimension cached independently:
 
-- **Method isolation**: GET and POST do not share a cache (and currently only GET
-  enters the cache flow at all)
+- **Method isolation**: GET and POST do not share a cache (and only GET and HEAD
+  enter the cache flow at all; HEAD uses the GET key and is never stored)
 - **Host isolation**: `example.com` and `api.example.com` are cached separately;
   `Example.com` and `example.com:80` (on http) are `example.com`
 - **Path isolation**: each endpoint has its own entries
@@ -241,7 +242,7 @@ warning that the cache is per process.
 **Decision logic** (the `cache.py` wrapper, in order):
 
 ```python
-if request.method != "GET":
+if request.method not in ("GET", "HEAD"):
     return await handler()  # no cache, no Cache-Control
 
 if no_store:
@@ -255,6 +256,7 @@ if bypass or (credential and not cache_authorized):
     response, etag = await render()  # backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
+# HEAD: key_builder sees the request with method GET
 cache_key = key_builder(request) + vary_components(request)  # built only here
 entry = await backend.get(cache_key)  # expired entries are already skipped here
 
@@ -283,8 +285,10 @@ if not is_cacheable_status(response.status_code):
 if etag is None:
     return response  # streaming/file: no ETag, not written
 shareable = not (
-    marked_private_or_no_store(response) or "set-cookie" in response.headers
-)  # one caller's response is not written
+    marked_private_or_no_store(response)
+    or "set-cookie" in response.headers
+    or request.method == "HEAD"
+)  # one caller's response, or a HEAD one, is not written
 if shareable and (not entry or entry.fingerprint != etag):
     await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
 if etag_matches(client_etag, etag):
@@ -576,9 +580,9 @@ matches, a 304 is returned to save bandwidth. Without the header, a 200 with the
 content is returned.
 
 **Q: Why aren't POST/PUT responses cached?**
-A: `@cache` only applies to GET. Every other method runs the handler directly,
-without reading or writing the cache and without adding a `Cache-Control`
-header.
+A: `@cache` only applies to GET (and HEAD, answered from the GET entry). Every
+other method runs the handler directly, without reading or writing the cache
+and without adding a `Cache-Control` header.
 
 **Q: Why are there several cache entries for the same endpoint?**
 A: Because the cache key includes the query parameters. `/users?page=1` and
