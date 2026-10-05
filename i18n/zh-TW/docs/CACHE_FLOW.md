@@ -1,6 +1,6 @@
 # FastAPI-CacheX 快取流程 {#fastapi-cachex-cache-flow}
 
-本文件詳細說明 FastAPI-CacheX 如何將快取邏輯套用到 HTTP 請求上。裝飾器位於 [`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py)，它呼叫的各部分則位於同一目錄的私有模組：[`_key_builders.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_key_builders.py)（快取鍵）、[`_vary.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_vary.py)（`vary=`）、[`_cache_control.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_cache_control.py)（`Cache-Control`）、[`_stored_response.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_stored_response.py)（儲存與重播回應、ETag 與 304），以及 [`_rendering.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_rendering.py)（執行 handler 並加上依賴項的標頭）。
+本文件詳細說明 FastAPI-CacheX 如何將快取邏輯套用到 HTTP 請求上。裝飾器位於 [`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py)，它呼叫的各部分則位於同一目錄的私有模組：[`_key_builders.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_key_builders.py)（快取鍵）、[`_vary.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_vary.py)（`vary=`）、[`_cache_control.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_cache_control.py)（`Cache-Control`）、[`_stored_response.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_stored_response.py)（儲存與重播回應、ETag 與 304）、[`_rendering.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_rendering.py)（執行 handler 並加上依賴項的標頭），以及 [`_coalesce.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_coalesce.py)（`coalesce=`）。
 
 ## 整體流程 {#overall-flow}
 
@@ -122,7 +122,7 @@ cache_key = "|".join(
 @cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
 ```
 
-參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 不是 `int`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起傳入，或 `key_builder` 是 `async` 可呼叫物件，會拋出 `CacheXError`。
+參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 不是 `int`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起傳入，`key_builder` 是 `async` 可呼叫物件，或 `coalesce` 不是 `bool`、未搭配正的 `ttl` 或與 `private`、`no_cache` 一起設定，會拋出 `CacheXError`。
 
 標頭值在每個被裝飾的路由上只建立一次：
 
@@ -190,6 +190,9 @@ if bypass or (credential and not cache_authorized):
 # HEAD：key_builder 拿到的請求方法是 GET
 cache_key = key_builder(request) + vary_components(request)  # 只在這裡建立
 entry = await backend.get(cache_key)  # 過期的項目已在此略過
+if coalesce and entry is None and (leader := running_miss(cache_key)):
+    await leader  # 只有 GET 會帶頭；HEAD 只會等待
+    entry = await backend.get(cache_key)  # None：在下方自行產生，不再等待
 
 if client_etag and no_cache:
     fresh = await render()  # no-cache：一律先重新產生

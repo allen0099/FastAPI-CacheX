@@ -9,9 +9,10 @@ keys), [`_vary.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fast
 [`_cache_control.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_cache_control.py)
 (`Cache-Control`),
 [`_stored_response.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_stored_response.py)
-(storing and replaying a response, ETags and 304s) and
+(storing and replaying a response, ETags and 304s),
 [`_rendering.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_rendering.py) (running the
-handler and adding its dependencies' headers).
+handler and adding its dependencies' headers) and
+[`_coalesce.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_coalesce.py) (`coalesce=`).
 
 ## Overall flow
 
@@ -167,8 +168,9 @@ Arguments are validated when the decorator is applied, and a `CacheXError` is
 raised if `public` and `private` are both set, if only one of `stale` /
 `stale_ttl` is given, if `ttl` is not an `int`, is negative or is larger than
 `MAX_TTL`, if `vary` is not a list of header field names, if `sort_query` is
-not a `bool` or is passed with a custom `key_builder`, or if `key_builder` is
-an `async` callable.
+not a `bool` or is passed with a custom `key_builder`, if `key_builder` is
+an `async` callable, or if `coalesce` is not a `bool`, or is set without a
+positive `ttl` or together with `private` or `no_cache`.
 
 The header value is built once per decorated route:
 
@@ -259,6 +261,9 @@ if bypass or (credential and not cache_authorized):
 # HEAD: key_builder sees the request with method GET
 cache_key = key_builder(request) + vary_components(request)  # built only here
 entry = await backend.get(cache_key)  # expired entries are already skipped here
+if coalesce and entry is None and (leader := running_miss(cache_key)):
+    await leader  # GET only leads; HEAD only waits
+    entry = await backend.get(cache_key)  # None: render below, without waiting
 
 if client_etag and no_cache:
     fresh = await render()  # no-cache: always re-render first

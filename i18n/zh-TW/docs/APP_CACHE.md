@@ -57,7 +57,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 ## Cache stampede 保護 {#stampede-protection}
 
-當 `factory` 的運算成本很高（例如慢速資料庫查詢、受速率限制的外部 API）且該鍵又是熱門鍵時，快取過期會導致多個請求同時重新計算。以 `CacheLock` 實作的分散式 cache stampede 保護預設開啟；你可以在單次呼叫或 manager 全域調整或關閉它：
+當 `factory` 的運算成本很高（例如慢速資料庫查詢、受速率限制的外部 API）且該鍵又是熱門鍵時，快取過期會導致多個請求同時重新計算。以 `CacheLock` 實作的分散式 cache stampede 保護預設開啟；你可以在單次呼叫或 manager 全域調整或關閉它（`@cache` 路由請見[同時發生的未命中](HTTP_CACHING.md#concurrent-misses)）：
 
 ```python
 # 單次呼叫保護：

@@ -27,6 +27,8 @@ from ._cache_control import _build_cache_control
 from ._cache_control import _cache_control_for
 from ._cache_control import _unshareable_reason
 from ._cache_control import _with_cache_control
+from ._coalesce import _Flight
+from ._coalesce import _wait_for
 from ._key_builders import _append_key_components
 from ._key_builders import _build_key
 from ._key_builders import _resolve_key_builder
@@ -50,6 +52,7 @@ from ._stored_response import _not_modified
 from ._vary import _validate_vary
 from ._vary import _vary_components
 from .backends.base import MAX_TTL
+from .backends.base import BaseCacheBackend
 from .directives import DirectiveType
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
@@ -57,6 +60,7 @@ from .exceptions import RequestNotFoundError
 from .headers import add_vary
 from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
+from .types import CacheEntry
 from .types import CacheKeyBuilder
 from .types import log_ref
 
@@ -109,6 +113,22 @@ def _log_backend_failure(
         error,
     )
     logger.debug("Cache backend %s; key_ref=%s key=%s", what, key_ref, cache_key)
+
+
+async def _read_entry(
+    backend: BaseCacheBackend, cache_key: str, request: Request, *, fail_open: bool
+) -> tuple[CacheEntry | None, bool]:
+    """Read the entry under ``cache_key`` and whether the read worked.
+
+    A failed read is a miss if failing open.
+    """
+    try:
+        return await backend.get(cache_key), True
+    except Exception as e:
+        if not fail_open:
+            raise
+        _log_backend_failure("read failed; serving uncached", request, cache_key, e)
+        return None, False
 
 
 # Where `FastAPICacheXSessionMiddleware` puts the session it loaded;
@@ -357,6 +377,7 @@ def cache(
     cache_authorized: bool = False,
     vary: Sequence[str] | None = None,
     sort_query: bool | None = None,
+    coalesce: bool = False,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -470,6 +491,19 @@ def cache(
             is (``build_cache_key()`` sorts unless told otherwise), and
             passing ``sort_query`` with one is rejected. Pass the same value
             to ``invalidate()``.
+        coalesce: Run the handler once for concurrent misses of one key in
+            this process. The first request to miss renders as usual; requests
+            that miss the same key meanwhile wait for it to answer, then read
+            the backend again and are served the stored entry. If the first
+            response was not stored (it set a cookie, was ``private``, had an
+            error status, was streamed, or the handler raised), each of them
+            runs the handler itself, at once. A request whose backend read
+            fails does not wait. Each worker process still runs
+            the handler once per cold key, and a waiting request waits as
+            long as the first one's handler takes. A HEAD request waits for a
+            running GET but never makes others wait. Requires a positive
+            ``ttl`` and is rejected with ``private`` or ``no_cache``, which
+            never serve a stored entry.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -481,7 +515,9 @@ def cache(
             negative or is larger than ``MAX_TTL``, or if ``vary`` is not a
             list of header field names (a single string is rejected), if
             ``sort_query`` is not a ``bool`` or is passed with
-            ``key_builder``, or if ``key_builder`` is an ``async`` callable.
+            ``key_builder``, if ``key_builder`` is an ``async`` callable, or
+            if ``coalesce`` is not a ``bool`` or is set without a positive
+            ``ttl`` or with ``private`` or ``no_cache``.
             At request time, if
             ``key_builder`` returns anything but a ``str``.
 
@@ -519,6 +555,18 @@ def cache(
         if ttl is not None and ttl > MAX_TTL:
             msg = f"ttl must be at most {MAX_TTL} seconds"
             raise CacheXError(msg)
+        if not isinstance(coalesce, bool):
+            # Unreachable for type checkers; guards untyped callers.
+            msg = f"coalesce must be a bool, got {type(coalesce).__name__}"  # type: ignore[unreachable]
+            raise CacheXError(msg)
+        if coalesce and not no_store and (private or no_cache or not ttl):
+            # Such a route never serves a stored entry, so there would be
+            # nothing to wait for.
+            msg = (
+                "coalesce needs a positive ttl and cannot be combined with "
+                "private or no_cache, which never serve a stored entry"
+            )
+            raise CacheXError(msg)
         vary_names = _validate_vary(vary)
         builder = _resolve_key_builder(key_builder, sort_query)
         if any(name.lower() == "cookie" for name in vary_names):
@@ -539,6 +587,7 @@ def cache(
                     ("private", private),
                     ("immutable", immutable),
                     ("must_revalidate", must_revalidate),
+                    ("coalesce", coalesce),
                 )
                 if value is not None and value is not False
             ]
@@ -635,6 +684,7 @@ def cache(
         )
 
         async def respond(
+            flight: _Flight,
             sub_response: Response | None,
             dependency_lines: Sequence[tuple[bytes, bytes]],
             dependency_status: int | None,
@@ -768,13 +818,23 @@ def cache(
                 _vary_components(req, vary_names),
             )
 
-            try:
-                cached_data = await cache_backend.get(cache_key)
-            except Exception as e:
-                if not fail_open:
-                    raise
-                _log_backend_failure("read failed; serving uncached", req, cache_key, e)
-                cached_data = None
+            cached_data, read_ok = await _read_entry(
+                cache_backend, cache_key, req, fail_open=fail_open
+            )
+            # A failed read does not wait: the backend is likely down, so the
+            # leader could not store its response either. A miss read just
+            # before a leader stores may still lead a second render; that
+            # window is one backend round trip.
+            if coalesce and read_ok and cached_data is None:
+                leader = flight.join(
+                    cache_backend, cache_key, may_lead=req.method == "GET"
+                )
+                if leader is not None:
+                    logger.debug("Waiting for a running miss; key=%s", cache_key)
+                    await _wait_for(leader)
+                    cached_data, _ = await _read_entry(
+                        cache_backend, cache_key, req, fail_open=fail_open
+                    )
 
             current_response: Response | None = None
             current_body: bytes | None = None
@@ -964,9 +1024,19 @@ def cache(
                 None if sub_response is None else sub_response.status_code
             )
             req: Request | None = kwargs.get(request_name)
-            response = await respond(
-                sub_response, dependency_lines, dependency_status, *args, **kwargs
-            )
+            flight = _Flight()
+            try:
+                response = await respond(
+                    flight,
+                    sub_response,
+                    dependency_lines,
+                    dependency_status,
+                    *args,
+                    **kwargs,
+                )
+            finally:
+                # Releases the requests waiting on this one (#252).
+                flight.finish()
             return _with_dependency_headers(
                 response,
                 sub_response,

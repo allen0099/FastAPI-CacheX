@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex import manager
+from fastapi_cachex._coalesce import _IN_FLIGHT
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends import memory
 from fastapi_cachex.backends.base import BaseCacheBackend
@@ -106,6 +107,9 @@ async def setup_default_backend() -> AsyncGenerator[None, None]:
     BackendProxy.set(backend)
     yield
     await backend.aclose()
+    # A leader that never finished (a test that failed midway) must not leave
+    # a future of this loop for a later test to wait on.
+    _IN_FLIGHT.clear()
 
 
 @pytest.fixture(autouse=True)
