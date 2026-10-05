@@ -99,7 +99,8 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
 When the factory is expensive (a slow database query, a rate-limited upstream
 API) and the key is hot, cache expiry turns into simultaneous recomputations.
 Distributed stampede protection built on `CacheLock` is on by default; you can
-tune or turn it off per call or manager-wide:
+tune or turn it off per call or manager-wide (for `@cache` routes, see
+[Concurrent misses](HTTP_CACHING.md#concurrent-misses)):
 
 ```python
 # Per-call protection:

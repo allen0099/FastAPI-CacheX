@@ -244,6 +244,40 @@ empty body. The server drops the body of every HEAD response.
 A route that already accepted HEAD ran the handler on every HEAD request before
 0.4.2 and added none of these headers; it now skips the handler on a hit.
 
+### Concurrent misses
+
+By default every request that misses runs the handler: 20 concurrent requests
+to a cold key, or arriving just after its entry expired, run it 20 times.
+`coalesce=True` runs it once per key in each process:
+
+```python
+@app.get("/report")
+@cache(ttl=60, coalesce=True)
+async def report() -> dict[str, int]: ...
+```
+
+The first request to miss renders as usual. Requests that miss the same key
+while it runs wait for it to answer, then read the backend again and are served
+the stored entry, with an `ETag`, `Age` and 304 handling like any hit (#252).
+When the first response was not stored (it set a cookie, was `private` or
+`no-store`, had an error status or a status a dependency set, was streamed, or
+the handler raised), each waiting request runs the handler itself, all at once
+rather than one after another.
+
+- Only requests in one process are coalesced, without a lock in the backend:
+  each worker still runs the handler once per cold key. For one run across
+  workers, cache the expensive part with `get_or_set()`, whose
+  [stampede protection](APP_CACHE.md#stampede-protection) uses a distributed
+  lock.
+- A waiting request waits as long as the first one's handler takes; there is
+  no separate timeout. A request whose backend read fails does not wait.
+- A HEAD request waits for a running GET of the same key but never makes
+  others wait, since its response is not stored.
+- It needs a positive `ttl`. With `private=True` or `no_cache=True`, which
+  never serve a stored entry, the decorator raises `CacheXError`; with
+  `no_store=True` it is ignored with the usual warning. Requests with
+  credentials that bypass the backend are not coalesced.
+
 ### Requests with credentials
 
 A single-page app that sends `Authorization` on every request, or a site where

@@ -120,6 +120,23 @@ HEAD 請求會讀取 GET 以同一個快取鍵儲存的項目，這是 RFC 9110 
 
 0.4.2 之前，已接受 HEAD 的路由每次收到 HEAD 請求都會執行 handler，也不會加上這些標頭；現在命中時不會執行 handler。
 
+### 同時發生的未命中 {#concurrent-misses}
+
+預設情況下，每個未命中的請求都會執行 handler：20 個同時送到冷鍵的請求，或在項目剛過期時抵達的請求，會執行 20 次。`coalesce=True` 讓每個行程對每個快取鍵只執行一次：
+
+```python
+@app.get("/report")
+@cache(ttl=60, coalesce=True)
+async def report() -> dict[str, int]: ...
+```
+
+第一個未命中的請求照常產生回應。在它執行期間未命中同一個快取鍵的請求，會等它回應後再讀取一次後端，並以儲存的項目回應，`ETag`、`Age` 與 304 的處理與一般命中相同（#252）。若第一個回應沒有儲存（它設定了 cookie、是 `private` 或 `no-store`、狀態碼是錯誤或由依賴項設定、是串流回應，或 handler 拋出例外），每個等待中的請求會自己執行 handler，而且是同時執行，不會一個接一個排隊。
+
+- 只會合併同一個行程內的請求，不會在後端加鎖：每個 worker 對每個冷鍵仍會執行一次 handler。若要讓所有 worker 合計只執行一次，請以 `get_or_set()` 快取成本高的部分，它的 [cache stampede 保護](APP_CACHE.md#stampede-protection)使用分散式鎖。
+- 等待中的請求會等到第一個請求的 handler 結束，沒有另外的逾時。讀取後端失敗的請求不會等待。
+- HEAD 請求會等待同一個快取鍵正在執行的 GET，但永遠不會讓其他請求等它，因為它的回應不會儲存。
+- 它需要正的 `ttl`。搭配永遠不會以儲存的項目回應的 `private=True` 或 `no_cache=True` 時，裝飾器會拋出 `CacheXError`；搭配 `no_store=True` 時則會被忽略，並發出一般的警告。帶有憑證而繞過後端的請求不會被合併。
+
 ### 帶有憑證的請求 {#requests-with-credentials}
 
 每個請求都送出 `Authorization` 的單頁應用程式，或每位訪客都有 Session 的網站，在只加上 `@cache` 的路由上完全不會命中快取：每個請求都會繞過後端（見上文）。請依 handler 回傳的內容選擇：
