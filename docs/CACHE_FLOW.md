@@ -506,8 +506,11 @@ async def cleanup_task():
 
 ## Performance
 
-On a cache hit the endpoint handler does not run at all: the cost is one backend
-lookup. Which backend to pick is covered in [Backends](BACKENDS.md#choosing-a-backend).
+On a cache hit the route function does not run: the cost is one backend
+lookup, plus the route's dependencies, which FastAPI resolves before the
+`@cache` wrapper is called and which therefore run on every request (see
+[What still runs on a hit](HTTP_CACHING.md#what-still-runs-on-a-hit)).
+Which backend to pick is covered in [Backends](BACKENDS.md#choosing-a-backend).
 
 ## Cache invalidation scenarios
 

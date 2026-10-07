@@ -113,6 +113,29 @@ When a cached entry is valid (within TTL):
 - **With `ttl=0`**: Sends `max-age=0` and otherwise behaves like `ttl=None`. A negative `ttl`, a non-`int` one (such as `1.5` or `True`) and one above `MAX_TTL` (see [TTL values](BACKENDS.md#ttl-values)) are rejected with `CacheXError` when the decorator is applied
 - **With a `timedelta`**: `ttl=timedelta(minutes=5)` is the same as `ttl=300`, and so is `stale_ttl`; a `timedelta` with a fraction of a second is rejected like a `float`
 
+### What still runs on a hit
+
+"Without running the handler" covers the route function only:
+
+- **Dependencies run on every request, hit or miss.** FastAPI resolves them
+  before it calls the route function, and `@cache` wraps only that function.
+  A database session opened in a dependency is opened on a hit too, and a
+  dependency that counts or rate-limits requests counts the hit. Per-user key
+  builders rely on this: they read what a dependency put into `request.state`.
+  The headers and cookies a dependency sets are sent with the hit as well
+  (see [Requests with credentials](#requests-with-credentials) for how they
+  affect storage).
+- **Background tasks added by the handler run only on a miss.** On a hit the
+  route function never runs, so nothing is added to its `BackgroundTasks`, and
+  a `Response.background` the handler returned is not stored with the entry.
+  A task that a dependency adds through its own `BackgroundTasks` parameter
+  runs on a hit too, since the dependency ran.
+- **Middleware** runs as for any request, around the whole thing.
+
+So put work that must happen on every request (auditing, rate limiting,
+authentication) in a dependency or middleware, and work that belongs to
+producing the response (sending the e-mail about it) in the handler.
+
 ### The `Age` header
 
 A response served from a stored entry carries an `Age` header: the whole
