@@ -889,6 +889,37 @@ variant selected by the request's own header values is deleted, and
 as `@cache` sorts it, so `?b=2&a=1` deletes the entry stored for `?a=1&b=2`;
 for a route with `sort_query=False` pass `sort_query=False` here too.
 
+### After a write: `invalidate()` or `clear_path()`
+
+`invalidate()` deletes exactly one key, the one built from the request you
+pass. After `PUT /items/42` that is the entry for `GET /items/42` with no
+query string and, on a route with `vary`, the one variant the request's
+headers select. Entries that show the same item under another key keep
+serving the old data until they expire: `/items/42?fields=name`, a list at
+`/items?page=2` that includes it, and the `Accept-Language: fr` variant when
+you invalidated with `en`.
+
+- `invalidate(request)` when the resource has one entry, or you want to drop
+  just that one. One backend operation, and it works on Memcached.
+- `clear_path(path, include_params=True)` when the resource has several
+  entries: it removes every entry stored for the path, across query strings,
+  `vary` variants, hosts and methods. Call it for the item and for the lists
+  that include it. Redis and memory only: Memcached cannot enumerate keys, so
+  there you either name every key for `invalidate()` or change what the key
+  contains (see the [generation-counter recipe](APP_CACHE.md#group-invalidation-on-memcached)).
+
+```python
+from fastapi_cachex import CacheBackend
+
+
+@app.put("/items/{item_id}")
+async def update_item(item_id: int, cache: CacheBackend):
+    await save(item_id)
+    # Every variant of the item, then every page of the list.
+    await cache.clear_path(f"/items/{item_id}", include_params=True)
+    await cache.clear_path("/items", include_params=True)
+```
+
 ## Monitoring routes
 
 `add_routes()` mounts two read-only endpoints that report what is currently in
