@@ -507,6 +507,25 @@ async def update_item(item_id: int, request: Request):
 
 `invalidate(request, key_builder=None, vary=None, *, sort_query=None)` 在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳入的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder`、`vary` 或 `sort_query`，這裡也要傳入相同的值，否則鍵不會相符：`invalidate()` 無法從路由讀取這些設定。使用 `vary` 時，只會刪除請求本身的標頭值所選中的變體，`clear_path()` 則會移除所有變體。預設情況下，請求的查詢會以 `@cache` 相同的方式排序，因此 `?b=2&a=1` 會刪除為 `?a=1&b=2` 儲存的項目；對設定了 `sort_query=False` 的路由，這裡也要傳入 `sort_query=False`。
 
+### 寫入之後：`invalidate()` 還是 `clear_path()` {#after-a-write-invalidate-or-clear_path}
+
+`invalidate()` 只刪除一個鍵：由你傳入的請求組出的那一個。`PUT /items/42` 之後，它刪的是 `GET /items/42` 不帶查詢字串的項目；在設定了 `vary` 的路由上，則是請求標頭所選中的那一個變體。以其他鍵呈現同一筆資料的項目會繼續提供舊資料，直到過期為止：`/items/42?fields=name`、包含它的 `/items?page=2` 清單，以及你用 `en` 失效時的 `Accept-Language: fr` 變體。
+
+- 資源只有一個項目，或你只想刪掉那一個時，用 `invalidate(request)`。只需一次後端操作，而且在 Memcached 上也可用。
+- 資源有多個項目時，用 `clear_path(path, include_params=True)`：它會移除該路徑儲存的所有項目，不論查詢字串、`vary` 變體、主機與方法。請對該筆資料本身與包含它的清單都呼叫一次。只支援 Redis 與記憶體後端：Memcached 無法列舉鍵，在它上面只能把每個鍵都交給 `invalidate()`，或改變鍵的組成（見[世代計數器的做法](APP_CACHE.md#group-invalidation-on-memcached)）。
+
+```python
+from fastapi_cachex import CacheBackend
+
+
+@app.put("/items/{item_id}")
+async def update_item(item_id: int, cache: CacheBackend):
+    await save(item_id)
+    # 先清該筆資料的所有變體，再清清單的每一頁。
+    await cache.clear_path(f"/items/{item_id}", include_params=True)
+    await cache.clear_path("/items", include_params=True)
+```
+
 ## 監控路由 {#monitoring-routes}
 
 `add_routes()` 會掛載兩個唯讀端點，回報後端目前的內容：
