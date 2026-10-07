@@ -242,7 +242,7 @@ answers again.
 ## Closing a backend
 
 Every backend has `aclose()`, which releases what it holds open. Call it on
-shutdown, at the end of the FastAPI lifespan:
+shutdown, at the end of the FastAPI lifespan, as [`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py) does:
 
 <!-- fmt:off -->
 ```python

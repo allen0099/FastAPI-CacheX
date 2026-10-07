@@ -15,6 +15,8 @@ State 與 HTTP 快取存放在同一個後端，但使用自己的鍵前綴（�
 
 ## 快速開始 {#quick-start}
 
+以下是 [`examples/oauth_state.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/oauth_state.py)（程式碼註解為英文）：
+
 <!-- fmt:off -->
 ```python
 --8<-- "examples/oauth_state.py"

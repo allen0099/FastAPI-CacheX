@@ -44,7 +44,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 ## 快取一個函式 {#caching-a-function}
 
-`@cached` 對一般函式做的事與 `get_or_set()` 相同，以函式的引數作為鍵，因此載入資料或呼叫其他服務的函式只要寫一次，在任何地方呼叫都會被快取：
+`@cached` 對一般函式做的事與 `get_or_set()` 相同，以函式的引數作為鍵，因此載入資料或呼叫其他服務的函式只要寫一次，在任何地方呼叫都會被快取。以下取自 [`examples/app_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/app_cache.py)（程式碼註解為英文）：
 
 <!-- fmt:off -->
 ```python

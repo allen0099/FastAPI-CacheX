@@ -178,7 +178,7 @@ await session_manager.delete_session("session-abc123")
 
 如果你的應用程式需要額外的 JWT claim，請撰寫自己的序列化器，並透過 `SessionManager` 的 `token_serializer` 參數傳入實例。任何具有 `to_string(token) -> str` 與 `from_string(token_str) -> SessionToken` 方法的物件（即 `TokenSerializer` 協定）都可以；`from_string()` 遇到無效權杖時應拋出 `ValueError`，`SessionManager` 會將它轉換為 `SessionTokenError`。
 
-下面的基底類別做的事與內建的 `JWTTokenSerializer` 相同，並為額外的 claim 留下兩個掛鉤。它從 `SessionConfig` 的公開欄位讀取設定並自行保存，而不是存取 `JWTTokenSerializer` 的私有屬性，因為那些屬性在任何版本都可能改變。它與內建序列化器一樣，在 `to_string()` 中採用 `token.expires_at`，讓 `exp` 持續跟著滑動過期。
+下面的基底類別做的事與內建的 `JWTTokenSerializer` 相同，並為額外的 claim 留下兩個掛鉤。它從 `SessionConfig` 的公開欄位讀取設定並自行保存，而不是存取 `JWTTokenSerializer` 的私有屬性，因為那些屬性在任何版本都可能改變。它與內建序列化器一樣，在 `to_string()` 中採用 `token.expires_at`，讓 `exp` 持續跟著滑動過期。它是 [`examples/session_jwt_claims.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt_claims.py) 的 `serializer` 部分（程式碼註解為英文）。
 
 <!-- fmt:off -->
 ```python
@@ -211,6 +211,8 @@ class ExtendedJWTSerializer(CustomClaimsJWTSerializer):
 
 ### 範例 2：加入多租戶的自訂 claim {#example-2-adding-multi-tenant-custom-claims}
 
+以下取自 [`examples/session_jwt_claims.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt_claims.py)（程式碼註解為英文）：
+
 <!-- fmt:off -->
 ```python
 --8<-- "examples/session_jwt_claims.py:multi-tenant"
@@ -220,6 +222,8 @@ class ExtendedJWTSerializer(CustomClaimsJWTSerializer):
 ### 使用自訂序列化器 {#using-a-custom-serializer}
 
 #### 做法 1：傳給 `SessionManager`（建議） {#option-1-pass-it-to-sessionmanager-recommended}
+
+以下取自 [`examples/session_jwt_claims.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt_claims.py)（程式碼註解為英文）：
 
 <!-- fmt:off -->
 ```python

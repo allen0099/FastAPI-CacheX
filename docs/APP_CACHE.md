@@ -48,7 +48,7 @@ Complete runnable example: [`examples/app_cache.py`](https://github.com/allen009
 
 `@cached` does what `get_or_set()` does for a plain function, keyed on its
 arguments, so a loader or a call to another service is written once and
-cached wherever it is called:
+cached wherever it is called. From [`examples/app_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/app_cache.py):
 
 <!-- fmt:off -->
 ```python
