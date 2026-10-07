@@ -59,7 +59,14 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 ## 行為 {#behavior}
 
-- `get()` 在快取未命中時回傳 `None`（或你提供的 `default=`），遇到不存在或損毀的項目也絕不會拋出例外。
+- `get()` 在快取未命中時回傳 `None`（或你提供的 `default=`），遇到不存在或損毀的項目也絕不會拋出例外。存入的 `None`（JSON 的 `null`）讀回來也是 `None`，因此光靠 `get()` 無法分辨「快取了沒有結果」與「沒有快取」，用這種方式快取否定結果的程式碼每次呼叫都會重新計算。要分辨兩者，可以傳入一個哨兵值作為預設值、先用 `has()` 檢查，或改用 `get_or_set()`，它只在真正未命中時執行 `factory`，否則回傳存入的 `None`：
+
+  ```python
+  missing = object()
+  value = await cache.get("user:42", default=missing)
+  if value is missing:
+      ...  # 沒有快取；快取的 None 會以 None 回傳
+  ```
 - `set()` 遇到無法 JSON 序列化的值時，會讓 `TypeError` 直接往外拋出。
 - `get_or_set()` 預設使用 cache stampede 保護（`lock=True`，可針對單次呼叫或以 `CacheManager(lock=...)` 全域設定），避免多次並行未命中時同時執行 `factory`，若等待超時則具備直接計算的優雅降級回退。分散式鎖的鍵名格式為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
 - `get_or_set()` 在未命中與命中時都回傳經 JSON 解碼後的值（見 [JSON 往返](#json-round-trip)），因此兩條路徑的結果相同。

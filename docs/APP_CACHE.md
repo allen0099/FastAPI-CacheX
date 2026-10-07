@@ -84,7 +84,19 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
 ## Behavior
 
 - `get()` returns `None` (or a supplied `default=`) on a cache miss — it never
-  raises for missing or corrupted entries.
+  raises for missing or corrupted entries. A stored `None` (JSON `null`) reads
+  back as `None` too, so `get()` alone cannot tell "cached as nothing" from
+  "not cached", and code that caches a negative result this way recomputes it
+  on every call. To tell them apart, pass a sentinel as the default, check
+  `has()` first, or use `get_or_set()`, which runs `factory` only on a real
+  miss and returns the stored `None` otherwise:
+
+  ```python
+  missing = object()
+  value = await cache.get("user:42", default=missing)
+  if value is missing:
+      ...  # not cached; a cached None comes back as None
+  ```
 - `set()` lets `TypeError` propagate for values that are not JSON-serializable.
 - `get_or_set()` uses stampede protection by default (`lock=True`, per call
   or manager-wide with `CacheManager(lock=...)`), preventing concurrent misses
