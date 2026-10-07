@@ -195,7 +195,10 @@ The hooks cover the standard pre-commit-hooks checks, `ruff` (with `--fix`) and
 `docs/` and `scripts/`). They run automatically on `git commit`. If any checks fail, fix the issues and try committing again.
 `uv-lock` only re-resolves the lockfile when `pyproject.toml` changed; it does not
 upgrade pinned versions. Upgrades come from Renovate or an explicit
-`uv lock --upgrade`.
+`uv lock --upgrade`. Every CI workflow installs with `uv sync --locked`, which
+fails when `uv.lock` does not match `pyproject.toml`, so a pull request that
+changes a dependency without committing the relocked `uv.lock` goes red
+instead of quietly re-resolving on the runner.
 
 pre-commit only sees the files you touched. The **Lint** workflow checks the
 whole tree; run the same commands before pushing:
