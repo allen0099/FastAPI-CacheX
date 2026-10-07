@@ -1028,3 +1028,138 @@ async def test_mutating_a_written_entry_does_not_change_the_cache() -> None:
 
     for key, n in (("set", 0), ("absent", 1), ("equals", 2)):
         assert await backend.get(key) == CacheEntry(fingerprint=f"v{n}", content=b"x")
+
+
+# --- max_entries: LRU eviction (#242) ---
+
+
+def _entry(name: str) -> CacheEntry:
+    return CacheEntry(fingerprint=name, content=name.encode())
+
+
+@pytest.mark.parametrize("max_entries", [0, -1])
+def test_max_entries_must_be_positive(max_entries: int) -> None:
+    with pytest.raises(ValueError, match="max_entries must be positive"):
+        MemoryBackend(max_entries=max_entries)
+
+
+@pytest.mark.parametrize("max_entries", [1.5, True, "3"])
+def test_max_entries_must_be_an_int(max_entries: object) -> None:
+    with pytest.raises(TypeError, match="max_entries must be an int or None"):
+        MemoryBackend(max_entries=max_entries)  # type: ignore[arg-type]
+
+
+async def test_without_max_entries_nothing_is_evicted() -> None:
+    backend = MemoryBackend()
+    assert backend.max_entries is None
+    for n in range(50):
+        await backend.set(f"k{n}", _entry(str(n)))
+
+    assert len(backend.cache) == 50
+
+
+async def test_storing_past_max_entries_evicts_the_least_recently_used() -> None:
+    backend = MemoryBackend(max_entries=2)
+    await backend.set("a", _entry("a"))
+    await backend.set("b", _entry("b"))
+    await backend.set("c", _entry("c"))
+
+    assert list(backend.cache) == ["b", "c"]
+    assert await backend.get("a") is None
+    assert await backend.delete("a") is False
+    assert await backend.get("b") == _entry("b")
+    assert await backend.get("c") == _entry("c")
+
+
+async def test_a_read_hit_counts_as_a_use() -> None:
+    backend = MemoryBackend(max_entries=2)
+    await backend.set("a", _entry("a"))
+    await backend.set("b", _entry("b"))
+    assert await backend.get("a") == _entry("a")
+    await backend.set("c", _entry("c"))
+
+    assert list(backend.cache) == ["a", "c"]
+
+
+async def test_an_expired_entry_is_evicted_like_any_other(clock: Clock) -> None:
+    """An expired read is a miss, so it does not keep the entry in place."""
+    backend = MemoryBackend(max_entries=2)
+    await backend.set("a", _entry("a"), ttl=1)
+    await backend.set("b", _entry("b"))
+    clock.advance(2)
+    await backend.set("c", _entry("c"))
+
+    assert list(backend.cache) == ["b", "c"]
+
+
+async def test_replacing_a_key_does_not_evict() -> None:
+    backend = MemoryBackend(max_entries=2)
+    await backend.set("a", _entry("a"))
+    await backend.set("b", _entry("b"))
+    await backend.set("a", _entry("a2"))
+
+    assert list(backend.cache) == ["b", "a"]
+    assert await backend.get("a") == _entry("a2")
+
+
+async def test_every_write_that_adds_a_key_counts_towards_the_limit() -> None:
+    backend = MemoryBackend(max_entries=2)
+    await backend.set("a", _entry("a"))
+    assert await backend.set_if_absent("b", _entry("b"))
+    assert list(backend.cache) == ["a", "b"]
+
+    assert await backend.increment("counter") == 1
+    assert list(backend.cache) == ["b", "counter"]
+
+    assert await backend.set_if_absent("c", _entry("c"))
+    assert list(backend.cache) == ["counter", "c"]
+
+
+async def test_a_write_to_an_existing_key_refreshes_it() -> None:
+    backend = MemoryBackend(max_entries=2)
+    await backend.set("counter", counter_entry(1))
+    await backend.set("a", _entry("a"))
+    assert await backend.increment("counter") == 2
+    await backend.set("b", _entry("b"))
+    assert list(backend.cache) == ["counter", "b"]
+
+    assert await backend.set_if_equals("counter", counter_entry(2), _entry("x"))
+    await backend.set("c", _entry("c"))
+    assert list(backend.cache) == ["counter", "c"]
+
+    assert await backend.expire_if_equals("counter", _entry("x"), ttl=60)
+    await backend.set("d", _entry("d"))
+    assert list(backend.cache) == ["counter", "d"]
+
+
+async def test_a_rejected_conditional_write_is_not_a_use() -> None:
+    backend = MemoryBackend(max_entries=2)
+    await backend.set("a", _entry("a"))
+    await backend.set("b", _entry("b"))
+    assert not await backend.set_if_absent("a", _entry("a2"))
+    assert not await backend.set_if_equals("a", _entry("other"), _entry("a2"))
+    assert not await backend.expire_if_equals("a", _entry("other"), ttl=60)
+    await backend.set("c", _entry("c"))
+
+    assert list(backend.cache) == ["b", "c"]
+
+
+async def test_monitoring_reads_are_not_a_use() -> None:
+    backend = MemoryBackend(max_entries=2)
+    await backend.set("a", _entry("a"))
+    await backend.set("b", _entry("b"))
+    assert await backend.get_all_keys() == ["a", "b"]
+    assert set(await backend.get_cache_data()) == {"a", "b"}
+    await backend.set("c", _entry("c"))
+
+    assert list(backend.cache) == ["b", "c"]
+
+
+async def test_the_limit_survives_clear() -> None:
+    backend = MemoryBackend(max_entries=1)
+    await backend.set("a", _entry("a"))
+    await backend.clear()
+    await backend.set("b", _entry("b"))
+    await backend.set("c", _entry("c"))
+
+    assert list(backend.cache) == ["c"]

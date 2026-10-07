@@ -32,6 +32,12 @@ BackendProxy.set(backend)
 
 清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束（參見[關閉後端](#closing-a-backend)）；`stop_cleanup()` 只會要求取消。
 
+預設沒有容量上限：項目只會在過期時離開，因此記憶體用量會隨「請求速率 × `ttl` × 回應大小」成長，而且每個 worker 各自一份；用戶端也可以刻意變換快取路由的查詢字串來撐大它。`MemoryBackend(max_entries=10_000)` 限制項目數量：再多存一筆時，會淘汰最久未使用的項目，不論它是否已過期（讀取命中與每一次寫入都算使用）。請依預期的項目數乘以 worker 數來決定上限，因為每個 worker 各有一份快取；上限計算的是項目數，不是位元組數。
+
+```python
+backend = MemoryBackend(max_entries=10_000)
+```
+
 `clear_pattern()` 在所有平台上都以區分大小寫的方式比對完整的鍵，與 Redis 相同。萬用字元語法採用 Python 的 `fnmatch`，與 Redis 有兩處不同：否定字元類別要寫 `[!...]`（Redis 為 `[^...]`）；跳脫特殊字元要放進中括號，例如 `[*]`（Redis 另外也接受 `\*`）。`*`、`?` 與 `[abc]` 在兩者上的行為相同。
 
 ## Redis {#redis}

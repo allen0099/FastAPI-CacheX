@@ -5,6 +5,7 @@ import copy
 import fnmatch
 import logging
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from collections.abc import Iterable
 
@@ -44,6 +45,24 @@ def _cancel(task: "asyncio.Task[None]") -> None:
         loop.call_soon_threadsafe(task.cancel)
 
 
+def _validate_max_entries(max_entries: int | None) -> int | None:
+    """Return ``max_entries`` if it is ``None`` or a positive ``int``.
+
+    Raises:
+        TypeError: If ``max_entries`` is not an ``int`` (``bool`` included)
+        ValueError: If ``max_entries`` is zero or negative
+    """
+    if max_entries is None:
+        return None
+    if isinstance(max_entries, bool) or not isinstance(max_entries, int):
+        msg = f"max_entries must be an int or None, got {type(max_entries).__name__}"
+        raise TypeError(msg)
+    if max_entries <= 0:
+        msg = f"max_entries must be positive, got {max_entries!r}"
+        raise ValueError(msg)
+    return max_entries
+
+
 class MemoryBackend(BaseCacheBackend):
     """In-memory cache backend implementation.
 
@@ -51,26 +70,60 @@ class MemoryBackend(BaseCacheBackend):
     Cleanup runs in a background task that periodically removes expired entries.
     Cleanup is lazily initialized on first cache operation to ensure proper
     async context.
+
+    Without ``max_entries`` the cache grows until entries expire, by request
+    rate times TTL times body size, and a client choosing query strings can
+    grow it on purpose. With ``max_entries`` the cache holds at most that
+    many entries: storing one more evicts the least recently used entry,
+    expired or not. A read hit or any write counts as a use.
     """
 
-    def __init__(self, cleanup_interval: int = 60) -> None:
+    def __init__(
+        self, cleanup_interval: int = 60, *, max_entries: int | None = None
+    ) -> None:
         """Initialize in-memory cache backend.
 
         Args:
             cleanup_interval: Interval in seconds between cleanup runs (default: 60)
+            max_entries: How many entries the cache holds at most (default:
+                no limit). When full, the least recently used entry is
+                evicted to make room.
 
         Raises:
-            ValueError: If ``cleanup_interval`` is not positive
+            TypeError: If ``max_entries`` is not an ``int`` or ``None``
+            ValueError: If ``cleanup_interval`` or ``max_entries`` is not
+                positive
         """
         if cleanup_interval <= 0:
             # asyncio.sleep() returns at once for these, so the cleanup loop
             # would spin, taking the cache lock on every pass.
             msg = f"cleanup_interval must be positive, got {cleanup_interval!r}"
             raise ValueError(msg)
-        self.cache: dict[str, CacheItem] = {}
+        # Ordered from least to most recently used; a plain `dict` for callers
+        # (`OrderedDict` is one), with `move_to_end` for the LRU bookkeeping.
+        self.cache: OrderedDict[str, CacheItem] = OrderedDict()
         self.lock = asyncio.Lock()
         self.cleanup_interval = cleanup_interval
+        self.max_entries = _validate_max_entries(max_entries)
         self._cleanup_task: asyncio.Task[None] | None = None
+
+    def _touch(self, key: str) -> None:
+        """Mark ``key`` as the most recently used entry. Call under the lock."""
+        self.cache.move_to_end(key)
+
+    def _store(self, key: str, item: CacheItem) -> None:
+        """Put ``item`` under ``key`` as the most recently used entry.
+
+        Evicts the least recently used entry when that leaves the cache over
+        ``max_entries``. Call under the lock.
+        """
+        self.cache[key] = item
+        self.cache.move_to_end(key)
+        if self.max_entries is not None and len(self.cache) > self.max_entries:
+            evicted, _ = self.cache.popitem(last=False)
+            logger.debug(
+                "Memory cache EVICT; key=%s max_entries=%s", evicted, self.max_entries
+            )
 
     def _ensure_cleanup_started(self) -> None:
         """Ensure a cleanup task runs on the current event loop.
@@ -144,6 +197,7 @@ class MemoryBackend(BaseCacheBackend):
                 del self.cache[key]
                 logger.debug("Memory cache EXPIRED; key=%s removed", key)
                 return None
+            self._touch(key)
             logger.debug("Memory cache HIT; key=%s", key)
             return copy.copy(cached_item.value)
 
@@ -165,7 +219,7 @@ class MemoryBackend(BaseCacheBackend):
 
         async with self.lock:
             expiry = time.time() + ttl if ttl is not None else None
-            self.cache[key] = CacheItem(value=copy.copy(value), expiry=expiry)
+            self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
             logger.debug("Memory cache SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> bool:
@@ -211,7 +265,7 @@ class MemoryBackend(BaseCacheBackend):
                 logger.debug("Memory cache SET_IF_ABSENT EXISTS; key=%s", key)
                 return False
             expiry = now + ttl if ttl is not None else None
-            self.cache[key] = CacheItem(value=copy.copy(value), expiry=expiry)
+            self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
             logger.debug("Memory cache SET_IF_ABSENT STORED; key=%s ttl=%s", key, ttl)
             return True
 
@@ -241,6 +295,7 @@ class MemoryBackend(BaseCacheBackend):
                 logger.debug("Memory cache EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
                 return False
             item.expiry = time.time() + ttl
+            self._touch(key)
             logger.debug("Memory cache EXPIRE_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
             return True
 
@@ -263,7 +318,7 @@ class MemoryBackend(BaseCacheBackend):
                 logger.debug("Memory cache SET_IF_EQUALS MISMATCH; key=%s", key)
                 return False
             expiry = now + ttl if ttl is not None else None
-            self.cache[key] = CacheItem(value=copy.copy(value), expiry=expiry)
+            self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
             logger.debug("Memory cache SET_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
             return True
 
@@ -289,10 +344,11 @@ class MemoryBackend(BaseCacheBackend):
             if item is not None and _is_live(item, now):
                 value = check_counter_range(counter_value(item.value) + delta)
                 item.value = counter_entry(value)
+                self._touch(key)
             else:
                 value = delta
                 expiry = now + ttl if ttl is not None else None
-                self.cache[key] = CacheItem(value=counter_entry(value), expiry=expiry)
+                self._store(key, CacheItem(value=counter_entry(value), expiry=expiry))
             logger.debug("Memory cache INCREMENT; key=%s value=%s", key, value)
             return value
 
