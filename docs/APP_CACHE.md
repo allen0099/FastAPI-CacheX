@@ -145,6 +145,48 @@ cached wherever it is called:
 > on Memcached: `MemcachedBackend.clear()` issues `flush_all` and wipes the whole
 > server, HTTP responses, sessions, locks and other applications' keys included.
 
+### Group invalidation on Memcached {#group-invalidation-on-memcached}
+
+Without key enumeration, the way to drop a group of keys at once is to stop
+looking for them: keep a generation number for the group, put it into every
+key of the group, and bump it to invalidate. The old entries are never read
+again and leave through their TTL.
+
+```python
+from fastapi_cachex import AppCache, CacheBackend
+from fastapi_cachex.backends.base import BaseCacheBackend
+
+# A counter in the backend. It is read through the backend, not the manager,
+# so it carries no "cache:" prefix.
+USERS_GENERATION = "gen:users"
+
+
+async def user_key(backend: BaseCacheBackend, user_id: int) -> str:
+    # increment(..., 0) reads the counter atomically, creating it at 0.
+    generation = await backend.increment(USERS_GENERATION, 0)
+    return f"user:{generation}:{user_id}"
+
+
+@app.get("/users/{user_id}")
+async def read_user(user_id: int, cache: AppCache, backend: CacheBackend):
+    key = await user_key(backend, user_id)
+    return await cache.get_or_set(key, lambda: load_user(user_id), ttl=300)
+
+
+@app.post("/users/import")
+async def import_users(backend: CacheBackend):
+    await run_import()
+    # Every user:<old generation>:* entry is unreachable from now on.
+    await backend.increment(USERS_GENERATION)
+```
+
+This works on every backend and costs one extra backend read per lookup.
+Give the entries a TTL, since nothing deletes them. The counter itself has
+none; if the backend can lose it (Memcached evicts under memory pressure,
+and `flush_all` clears everything), bump it by a large step instead,
+`increment(USERS_GENERATION, int(time.time()))`, so a counter that restarts
+at 0 never reuses a generation that live entries may still carry.
+
 ## Stampede protection
 
 When the factory is expensive (a slow database query, a rate-limited upstream

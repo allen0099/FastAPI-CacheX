@@ -79,6 +79,39 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 > [!NOTE]
 > `CacheManager.clear()`／`clear_prefix()` 是以後端的 `get_all_keys()` 與 `delete_many()` 實作（在 Redis 上是每批 100 個鍵的 `DEL`）。由於 Memcached 不支援列舉鍵（見[後端](BACKENDS.md#memcached)），這些方法以及 `CacheManager.clear_pattern()` 在 Memcached 後端上不會有任何作用，只會回傳 0 並發出 `RuntimeWarning`；`get()`／`set()`／`add()`／`delete()`／`has()` 則照常運作。若需要大量清除，請使用 Redis 或記憶體後端。不要在 Memcached 上改用後端本身的 `clear()`：`MemcachedBackend.clear()` 會發出 `flush_all`，清空整台伺服器，包括 HTTP 回應、Session、鎖以及其他應用程式的鍵。
 
+### 在 Memcached 上讓一組鍵失效 {#group-invalidation-on-memcached}
+
+無法列舉鍵時，一次讓一組鍵失效的方法是不再去找它們：為這一組保留一個世代（generation）編號，把它放進這一組的每個鍵裡，要失效時就把編號加一。舊項目從此不會再被讀到，並隨 TTL 自然消失。
+
+```python
+from fastapi_cachex import AppCache, CacheBackend
+from fastapi_cachex.backends.base import BaseCacheBackend
+
+# 存放在後端的計數器。它透過後端而非 manager 讀取，所以沒有 "cache:" 前綴。
+USERS_GENERATION = "gen:users"
+
+
+async def user_key(backend: BaseCacheBackend, user_id: int) -> str:
+    # increment(..., 0) 以原子操作讀取計數器，不存在時從 0 建立。
+    generation = await backend.increment(USERS_GENERATION, 0)
+    return f"user:{generation}:{user_id}"
+
+
+@app.get("/users/{user_id}")
+async def read_user(user_id: int, cache: AppCache, backend: CacheBackend):
+    key = await user_key(backend, user_id)
+    return await cache.get_or_set(key, lambda: load_user(user_id), ttl=300)
+
+
+@app.post("/users/import")
+async def import_users(backend: CacheBackend):
+    await run_import()
+    # 從此之後，所有 user:<舊世代>:* 的項目都讀不到了。
+    await backend.increment(USERS_GENERATION)
+```
+
+這在每個後端上都可行，代價是每次查詢多一次後端讀取。請為項目設定 TTL，因為不會有任何東西刪除它們。計數器本身沒有 TTL；若後端可能弄丟它（Memcached 在記憶體不足時會淘汰項目，`flush_all` 則會清空一切），請改以較大的步幅遞增，例如 `increment(USERS_GENERATION, int(time.time()))`，這樣從 0 重新開始的計數器就不會重複用到仍有存活項目的世代。
+
 ## Cache stampede 保護 {#stampede-protection}
 
 當 `factory` 的運算成本很高（例如慢速資料庫查詢、受速率限制的外部 API）且該鍵又是熱門鍵時，快取過期會導致多個請求同時重新計算。以 `CacheLock` 實作的分散式 cache stampede 保護預設開啟；你可以在單次呼叫或 manager 全域調整或關閉它（`@cache` 路由請見[同時發生的未命中](HTTP_CACHING.md#concurrent-misses)）：
