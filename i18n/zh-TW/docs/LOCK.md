@@ -10,15 +10,21 @@ from fastapi_cachex import CacheLock, LockTimeoutError
 async with CacheLock(f"report:{report_id}", ttl=30):
     ...  # 同一時間只有一個持有者，前提是工作在 ttl 內完成
 
-# 明確呼叫 acquire 與 release：
-lock = CacheLock(f"stream:{user_id}", ttl=60)  # 或 ttl=timedelta(minutes=1)
-if not await lock.acquire(blocking=False):
+# 明確呼叫 acquire 與 release。blocking、timeout 與 poll_interval 是建構子的
+# 參數；acquire() 可以在每次呼叫時個別覆寫。ttl 也接受 timedelta。
+lock = CacheLock(f"stream:{user_id}", ttl=60, blocking=False)
+if not await lock.acquire():
     raise HTTPException(409, detail="Lock already held")
 try:
     ...
     await lock.extend(60)  # 長時間執行的工作在過期前續約
 finally:
     await lock.release()
+
+# 最多等 5 秒，每 100 毫秒檢查一次，之後放棄：
+lock = CacheLock(f"report:{report_id}", ttl=30, timeout=5, poll_interval=0.1)
+if not await lock.acquire():
+    raise HTTPException(503, detail="Try again later")
 ```
 
 完整可執行範例（英文）：[`examples/cache_lock.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/cache_lock.py)。
@@ -39,5 +45,24 @@ finally:
 
 > [!NOTE]
 > `CacheLock` 可用於所有內建後端（`MemoryBackend`、`AsyncRedisCacheBackend`、`MemcachedBackend`）。Redis 使用 `SET NX EX` 與 Lua 腳本，Memcached 使用 `ADD` 與 `CAS`，記憶體後端則在其內部鎖之內操作。
+
+## 跨 worker 每個週期只執行一次 {#once-per-period-across-workers}
+
+「這個工作每小時只跑一次，哪個 worker 先到就由它跑」不適合用鎖：工作結束時鎖就會釋放，下一個走到同一處的 worker 會取得鎖並再跑一次。請改用 [`CacheManager.add()`](APP_CACHE.md) 來認領這個週期，它只在鍵不存在時才以原子操作寫入，再讓鍵隨週期過期：
+
+```python
+from datetime import datetime, timezone
+
+from fastapi_cachex import AppCache
+
+
+async def send_digest_once_per_hour(cache: AppCache) -> None:
+    hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+    if await cache.add(f"digest:{hour}", True, ttl=3600):
+        # 不論有多少 worker 呼叫，這一小時只有一個會得到 True。
+        await send_digest()
+```
+
+鍵的名稱就是週期，因此在該小時較晚才啟動的 worker 會發現它已被認領，而 TTL 只要比週期長即可。若工作可能失敗，請在失敗時刪除這個鍵（`await cache.delete(f"digest:{hour}")`），讓其他 worker 可以重試；否則這個週期就會直接略過。只有在工作不能同時執行、但前一次結束後應該立刻可以再跑時，才使用 `CacheLock`。
 
 完整的類別簽章與選項請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/lock/)（英文）。
