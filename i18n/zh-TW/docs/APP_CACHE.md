@@ -20,6 +20,8 @@ async def expensive_operation(cache: AppCache):
 # （見「Cache stampede 保護」）。
 manager = CacheManager(key_prefix="myapp:", default_ttl=60)
 await manager.set("user:42", {"name": "Alice"})
+# 每個 ttl 都接受 int 秒數，或整數秒的 timedelta。
+await manager.set("user:43", {"name": "Bob"}, ttl=timedelta(minutes=5))
 user = await manager.get("user:42")  # {"name": "Alice"}
 await manager.delete("user:42")
 await manager.clear_prefix()  # 清除 "myapp:" 底下的所有項目

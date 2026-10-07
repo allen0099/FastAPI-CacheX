@@ -211,12 +211,12 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 
 ## TTL 值 {#ttl-values}
 
-每個 `ttl` 參數（`set`、`set_if_absent`、`set_if_equals`、`increment`，以及建立在它們之上的 `CacheManager` 與 `StateManager` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的 `int` 秒數。這些檢查都在存取後端之前進行：
+每個 `ttl` 參數（`set`、`set_if_absent`、`set_if_equals`、`increment`，以及建立在它們之上的 `CacheManager`、`CacheLock` 與 `StateManager` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的秒數，型別可以是 `int` 或整數秒的 `datetime.timedelta`（`timedelta(minutes=5)` 會存成 `300`）。這些檢查都在存取後端之前進行：
 
 - 零、負值與更大的值會拋出 `ValueError`。底層儲存對 `0` 的解讀各不相同：Memcached 把 exptime `0` 視為「永不過期」，Redis 拒絕 `EX 0`，而行程內的 dict 則會立即讓項目過期。
-- `float`、`bool` 或其他型別會拋出 `TypeError`。float 過去只在記憶體後端上有效，而 `True` 會被當成一秒。`timedelta` 請以 `int(td.total_seconds())` 轉換。
+- `float`、`bool` 或其他型別會拋出 `TypeError`。float 過去只在記憶體後端上有效，而 `True` 會被當成一秒。帶有小數秒的 `timedelta`（`timedelta(seconds=1.5)`）會拋出 `ValueError`，因為每個後端都以整秒計時。
 - Memcached 無法儲存 2038-01-19 之後的過期時間（它的 exptime 是 signed 32 位元時間戳），因此 Memcached 後端遇到超過這個時間點的 `ttl` 會拋出 `ValueError`，而不是接受一筆會立即被丟棄的寫入。
 
-第三方後端應在其 `set` 中呼叫 `fastapi_cachex.backends.base.validate_ttl(ttl)`，並在 `increment` 中呼叫 `validate_delta(delta)`，以遵循相同規則。（`@cache(ttl=0)` 是另一回事：它會送出 `max-age=0`，且絕不會把 `0` 傳給後端；見 [HTTP 快取](HTTP_CACHING.md)。）
+第三方後端應在其 `set` 中呼叫 `fastapi_cachex.backends.base.validate_ttl(ttl)` 並儲存它回傳的 `int`，以遵循相同規則並接受 `timedelta`；並在 `increment` 中呼叫 `validate_delta(delta)`。（`@cache(ttl=0)` 是另一回事：它會送出 `max-age=0`，且絕不會把 `0` 傳給後端；見 [HTTP 快取](HTTP_CACHING.md)。）
 
 各後端如何儲存項目，請見[快取流程](CACHE_FLOW.md#backend-storage-formats)；類別本身請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/backends/)（英文）。

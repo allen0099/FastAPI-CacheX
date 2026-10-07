@@ -166,8 +166,9 @@ The decorator arguments control both the server-side behaviour and the
 
 Arguments are validated when the decorator is applied, and a `CacheXError` is
 raised if `public` and `private` are both set, if only one of `stale` /
-`stale_ttl` is given, if `ttl` is not an `int`, is negative or is larger than
-`MAX_TTL`, if `vary` is not a list of header field names, if `sort_query` is
+`stale_ttl` is given, if `ttl` or `stale_ttl` is not an `int` or a `timedelta`
+of whole seconds, is negative or is larger than `MAX_TTL`, if `vary` is not a
+list of header field names, if `sort_query` is
 not a `bool` or is passed with a custom `key_builder`, if `key_builder` is
 an `async` callable, or if `coalesce` is not a `bool`, or is set without a
 positive `ttl` or together with `private` or `no_cache`.

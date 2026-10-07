@@ -6,6 +6,7 @@ uncached instead of turning every cached route into a 500.
 
 import hashlib
 import logging
+from datetime import timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -37,7 +38,9 @@ class FailingBackend(MemoryBackend):
             raise ConnectionError(msg)
         return await super().get(key)
 
-    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
+    async def set(
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
+    ) -> None:
         if self.fail_set:
             msg = "backend unreachable"
             raise ConnectionError(msg)

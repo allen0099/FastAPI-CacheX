@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import Callable
 from collections.abc import Iterable
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from typing import Any
 
@@ -305,9 +306,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         logger.debug("Redis %s; key=%s", "HIT" if value else "MISS", key)
         return value
 
-    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
+    async def set(
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
+    ) -> None:
         """Store a response in the cache."""
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         await self.client.set(self._make_key(key), encode_entry(value), ex=ttl)
         logger.debug("Redis SET; key=%s ttl=%s", key, ttl)
 
@@ -333,13 +336,13 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         return value
 
     async def set_if_absent(
-        self, key: str, value: CacheEntry, ttl: int | None = None
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> bool:
         """Atomically store ``value`` unless ``key`` exists (see base class).
 
         A single ``SET ... NX EX``.
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         stored = await self.client.set(
             self._make_key(key), encode_entry(value), ex=ttl, nx=True
         )
@@ -369,14 +372,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return bool(deleted)
 
-    async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
+    async def expire_if_equals(
+        self, key: str, expected: CacheEntry, ttl: int | timedelta
+    ) -> bool:
         """Atomically update expiry on ``key`` while it holds ``expected`` (see base class).
 
         The stored value is decoded and compared here, then a Lua script
         updates the expiry on the key only if it still holds the bytes that
         were compared, so a value written in between is never overwritten.
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         prefixed_key = self._make_key(key)
         raw = await self.client.get(prefixed_key)
         if raw is None or decode_entry(raw) != expected:
@@ -398,7 +403,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         key: str,
         expected: CacheEntry,
         value: CacheEntry,
-        ttl: int | None = None,
+        ttl: int | timedelta | None = None,
     ) -> bool:
         """Atomically store ``value`` while ``key`` holds ``expected`` (see base class).
 
@@ -406,7 +411,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         writes the key only if it still holds the bytes that were compared,
         so a value written or deleted in between is never overwritten.
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         prefixed_key = self._make_key(key)
         raw = await self.client.get(prefixed_key)
         if raw is None or decode_entry(raw) != expected:
@@ -423,14 +428,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return bool(stored)
 
-    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+    async def increment(
+        self, key: str, delta: int = 1, ttl: int | timedelta | None = None
+    ) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 
         A short Lua script makes the increment and the expiry one server-side
         operation; the key is stored as a plain Redis integer.
         """
         validate_delta(delta)
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         from redis.exceptions import ResponseError
 
         try:

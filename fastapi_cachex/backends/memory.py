@@ -8,6 +8,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from collections.abc import Iterable
+from datetime import timedelta
 
 from fastapi_cachex.cache_key import CacheKey
 from fastapi_cachex.types import CacheEntry
@@ -201,7 +202,9 @@ class MemoryBackend(BaseCacheBackend):
             logger.debug("Memory cache HIT; key=%s", key)
             return copy.copy(cached_item.value)
 
-    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
+    async def set(
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
+    ) -> None:
         """Store a response in the cache.
 
         Starting the sweeper here as well as in ``get`` matters for a
@@ -214,7 +217,7 @@ class MemoryBackend(BaseCacheBackend):
             value: Content to cache
             ttl: Time to live in seconds (None = never expires)
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         self._ensure_cleanup_started()
 
         async with self.lock:
@@ -252,10 +255,10 @@ class MemoryBackend(BaseCacheBackend):
             return item.value
 
     async def set_if_absent(
-        self, key: str, value: CacheEntry, ttl: int | None = None
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> bool:
         """Atomically store ``value`` unless ``key`` exists (see base class)."""
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         self._ensure_cleanup_started()
 
         async with self.lock:
@@ -283,9 +286,11 @@ class MemoryBackend(BaseCacheBackend):
             logger.debug("Memory cache DELETE_IF_EQUALS HIT; key=%s", key)
             return True
 
-    async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
+    async def expire_if_equals(
+        self, key: str, expected: CacheEntry, ttl: int | timedelta
+    ) -> bool:
         """Atomically update expiry on ``key`` while it holds ``expected`` (see base class)."""
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         async with self.lock:
             item = self.cache.get(key)
             if item is None or not _is_live(item, time.time()):
@@ -304,10 +309,10 @@ class MemoryBackend(BaseCacheBackend):
         key: str,
         expected: CacheEntry,
         value: CacheEntry,
-        ttl: int | None = None,
+        ttl: int | timedelta | None = None,
     ) -> bool:
         """Atomically store ``value`` while ``key`` holds ``expected`` (see base class)."""
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         async with self.lock:
             now = time.time()
             item = self.cache.get(key)
@@ -322,7 +327,9 @@ class MemoryBackend(BaseCacheBackend):
             logger.debug("Memory cache SET_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
             return True
 
-    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+    async def increment(
+        self, key: str, delta: int = 1, ttl: int | timedelta | None = None
+    ) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 
         The read-modify-write happens under the backend lock, so concurrent
@@ -335,7 +342,7 @@ class MemoryBackend(BaseCacheBackend):
                 is left unchanged).
         """
         validate_delta(delta)
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         self._ensure_cleanup_started()
 
         async with self.lock:

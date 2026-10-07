@@ -11,7 +11,7 @@ async with CacheLock(f"report:{report_id}", ttl=30):
     ...  # one holder at a time, as long as the work fits in the ttl
 
 # Explicit acquire and release calls:
-lock = CacheLock(f"stream:{user_id}", ttl=60)
+lock = CacheLock(f"stream:{user_id}", ttl=60)  # or ttl=timedelta(minutes=1)
 if not await lock.acquire(blocking=False):
     raise HTTPException(409, detail="Lock already held")
 try:

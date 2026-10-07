@@ -75,6 +75,7 @@ async def items(): ...
 - **使用 `private=True`**：不從共用後端讀取，也不寫入；每次都執行 handler，只有 `If-None-Match` 重新驗證有效
 - **未設定 `ttl`**（`ttl=None`）：與 `private=True` 相同，不從後端讀取，也不寫入。每個請求都會執行 handler，只有當 `If-None-Match` 與新產生的回應相符時才回 304，因此內容變更後，舊的 ETag 永遠不會得到 304
 - **使用 `ttl=0`**：送出 `max-age=0`，其餘行為與 `ttl=None` 相同。負數、非 `int`（例如 `1.5` 或 `True`）或超過 `MAX_TTL`（見 [TTL 值](BACKENDS.md#ttl-values)）的 `ttl`，都會在套用裝飾器時以 `CacheXError` 拒絕
+- **使用 `timedelta`**：`ttl=timedelta(minutes=5)` 等同於 `ttl=300`，`stale_ttl` 也一樣；帶有小數秒的 `timedelta` 會像 `float` 一樣被拒絕
 
 ### `Age` 標頭 {#the-age-header}
 

@@ -6,6 +6,7 @@ import logging
 import time
 import warnings
 from collections.abc import Iterable
+from datetime import timedelta
 
 from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.backends.codec import decode_entry
@@ -218,7 +219,9 @@ class MemcachedBackend(BaseCacheBackend):
             logger.debug("Memcached HIT; key=%s", key)
         return value
 
-    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
+    async def set(
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
+    ) -> None:
         """Set value in cache.
 
         Args:
@@ -226,7 +229,7 @@ class MemcachedBackend(BaseCacheBackend):
             value: CacheEntry instance to store
             ttl: Time to live in seconds
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         await asyncio.to_thread(
             self.client.set, self._make_key(key), encode_entry(value), _expiry(ttl)
         )
@@ -271,13 +274,13 @@ class MemcachedBackend(BaseCacheBackend):
         raise CacheXError(msg)
 
     async def set_if_absent(
-        self, key: str, value: CacheEntry, ttl: int | None = None
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> bool:
         """Atomically store ``value`` unless ``key`` exists (see base class).
 
         Memcached's ``ADD`` is exactly this operation.
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         stored = await asyncio.to_thread(
             self.client.add,
             self._make_key(key),
@@ -318,13 +321,15 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return bool(deleted)
 
-    async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
+    async def expire_if_equals(
+        self, key: str, expected: CacheEntry, ttl: int | timedelta
+    ) -> bool:
         """Atomically update expiry on ``key`` while it holds ``expected`` (see base class).
 
         TOUCH in the Memcached protocol takes no CAS token, so the renewal is a
         CAS write with the same bytes read by GETS and the new exptime.
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         # Converted up front so a ttl Memcached cannot store fails before I/O.
         exptime = _expiry(ttl)
         return await asyncio.to_thread(
@@ -354,14 +359,14 @@ class MemcachedBackend(BaseCacheBackend):
         key: str,
         expected: CacheEntry,
         value: CacheEntry,
-        ttl: int | None = None,
+        ttl: int | timedelta | None = None,
     ) -> bool:
         """Atomically store ``value`` while ``key`` holds ``expected`` (see base class).
 
         GETS reads the value to compare along with its CAS token, and the CAS
         write succeeds only if nothing wrote or deleted the key since.
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         # Converted up front so a ttl Memcached cannot store fails before I/O.
         exptime = _expiry(ttl)
         return await asyncio.to_thread(
@@ -444,7 +449,9 @@ class MemcachedBackend(BaseCacheBackend):
             logger.debug("Memcached INCREMENT RETRY; key=%s", prefixed_key)
         return None
 
-    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+    async def increment(
+        self, key: str, delta: int = 1, ttl: int | timedelta | None = None
+    ) -> int:
         """Atomically add ``delta`` to the counter at ``key`` (see base class).
 
         Memcached counters are unsigned, so a negative ``delta`` uses DECR,
@@ -461,7 +468,7 @@ class MemcachedBackend(BaseCacheBackend):
                 the counter vanished after every ADD + INCR attempt.
         """
         validate_delta(delta)
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         from pymemcache.exceptions import MemcacheClientError
 
         prefixed_key = self._make_key(key)
