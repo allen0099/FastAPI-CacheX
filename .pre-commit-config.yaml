@@ -30,7 +30,7 @@ repos:
       - id: ruff-format
         name: Format with ruff
   - repo: https://github.com/crate-ci/typos
-    rev: v1.50.3
+    rev: v1.51.1
     hooks:
       - id: typos
   - repo: https://github.com/astral-sh/uv-pre-commit
