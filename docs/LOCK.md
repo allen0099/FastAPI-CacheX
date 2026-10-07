@@ -10,15 +10,22 @@ from fastapi_cachex import CacheLock, LockTimeoutError
 async with CacheLock(f"report:{report_id}", ttl=30):
     ...  # one holder at a time, as long as the work fits in the ttl
 
-# Explicit acquire and release calls:
-lock = CacheLock(f"stream:{user_id}", ttl=60)  # or ttl=timedelta(minutes=1)
-if not await lock.acquire(blocking=False):
+# Explicit acquire and release calls. blocking, timeout and poll_interval are
+# constructor arguments; acquire() can override each one per call. ttl also
+# takes a timedelta.
+lock = CacheLock(f"stream:{user_id}", ttl=60, blocking=False)
+if not await lock.acquire():
     raise HTTPException(409, detail="Lock already held")
 try:
     ...
     await lock.extend(60)  # long-running tasks renew before expiry
 finally:
     await lock.release()
+
+# Wait up to 5 seconds, checking every 100 ms, then give up:
+lock = CacheLock(f"report:{report_id}", ttl=30, timeout=5, poll_interval=0.1)
+if not await lock.acquire():
+    raise HTTPException(503, detail="Try again later")
 ```
 
 Complete runnable example: [`examples/cache_lock.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/cache_lock.py).
@@ -40,5 +47,33 @@ Complete runnable example: [`examples/cache_lock.py`](https://github.com/allen00
 > [!NOTE]
 > `CacheLock` works on all built-in backends (`MemoryBackend`, `AsyncRedisCacheBackend`, `MemcachedBackend`).
 > Redis uses `SET NX EX` and Lua scripts, Memcached uses `ADD` and `CAS`, and the memory backend operates under its internal lock.
+
+## Once per period across workers
+
+A lock is the wrong tool for "run this job once an hour, whichever worker gets
+there first": the lock is released when the job ends, and the next worker to
+reach the same point takes it and runs the job again. Claim the period instead
+with [`CacheManager.add()`](APP_CACHE.md), which stores a key only if it is
+absent, atomically, and let the key expire with the period:
+
+```python
+from datetime import datetime, timezone
+
+from fastapi_cachex import AppCache
+
+
+async def send_digest_once_per_hour(cache: AppCache) -> None:
+    hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+    if await cache.add(f"digest:{hour}", True, ttl=3600):
+        # Exactly one worker gets True for this hour, however many call this.
+        await send_digest()
+```
+
+The key names the period, so a worker that starts late in the hour finds it
+taken, and the TTL only has to outlive the period. If the job can fail, delete
+the key in that case (`await cache.delete(f"digest:{hour}")`) so another
+worker may retry; otherwise the period is simply skipped. Use a `CacheLock`
+when the job must not run concurrently but should run again as soon as the
+previous run is over.
 
 The full class signature and options are documented in the [API reference](api/lock.md).
