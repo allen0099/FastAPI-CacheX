@@ -83,6 +83,26 @@ logger = logging.getLogger(__name__)
 # Methods `@cache` answers; HEAD shares the GET entry (#253).
 _CACHED_METHODS = frozenset({"GET", "HEAD"})
 
+# Sent as `X-Cache` with `debug_header=True` (#335).
+_DEBUG_HEADER = "X-Cache"
+_HIT = "HIT"
+_MISS = "MISS"
+_BYPASS = "BYPASS"
+
+
+class _Outcome:
+    """How a GET or HEAD request was answered, for the ``X-Cache`` header.
+
+    ``HIT``: served from the stored entry (a 200, or a 304 for its ETag).
+    ``MISS``: the backend was consulted and the handler ran. ``BYPASS``: the
+    backend was neither read nor written. ``None`` until decided.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self) -> None:
+        self.value: str | None = None
+
 
 def _as_get(request: Request) -> Request:
     """The same request with method GET, to build the key a GET would get.
@@ -414,6 +434,7 @@ def cache(
     vary: Sequence[str] | None = None,
     sort_query: bool | None = None,
     coalesce: bool = False,
+    debug_header: bool = False,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -542,6 +563,17 @@ def cache(
             running GET but never makes others wait. Requires a positive
             ``ttl`` and is rejected with ``private`` or ``no_cache``, which
             never serve a stored entry.
+        debug_header: Send ``X-Cache`` on every GET or HEAD response, saying
+            how it was answered: ``HIT`` for a response served from the
+            stored entry (a 200, or a 304 for the entry's ETag), ``MISS``
+            when the backend was consulted and the handler ran (a cold or
+            expired key, ``no_cache``, or a response that was not stored),
+            and ``BYPASS`` when the backend was neither read nor written
+            (``no_store``, ``private``, no positive ``ttl``, or a request
+            with credentials on a route without ``public`` or
+            ``cache_authorized``). Off by default: it tells clients what the
+            server caches. The header is never stored, and a stored
+            ``X-Cache`` the handler set itself is replaced.
 
     Returns:
         Decorator function that wraps route handlers with caching logic
@@ -554,9 +586,10 @@ def cache(
             larger than ``MAX_TTL``, or if ``vary`` is not a
             list of header field names (a single string is rejected), if
             ``sort_query`` is not a ``bool`` or is passed with
-            ``key_builder``, if ``key_builder`` is an ``async`` callable, or
-            if ``coalesce`` is not a ``bool`` or is set without a positive
-            ``ttl`` or with ``private`` or ``no_cache``.
+            ``key_builder``, if ``key_builder`` is an ``async`` callable, if
+            ``coalesce`` is not a ``bool`` or is set without a positive
+            ``ttl`` or with ``private`` or ``no_cache``, or if
+            ``debug_header`` is not a ``bool``.
             At request time, if
             ``key_builder`` returns anything but a ``str``.
 
@@ -590,6 +623,9 @@ def cache(
         if not isinstance(coalesce, bool):
             # Unreachable for type checkers; guards untyped callers.
             msg = f"coalesce must be a bool, got {type(coalesce).__name__}"  # type: ignore[unreachable]
+            raise CacheXError(msg)
+        if not isinstance(debug_header, bool):
+            msg = f"debug_header must be a bool, got {type(debug_header).__name__}"  # type: ignore[unreachable]
             raise CacheXError(msg)
         if coalesce and not no_store and (private or no_cache or not ttl):
             # Such a route never serves a stored entry, so there would be
@@ -717,6 +753,7 @@ def cache(
 
         async def respond(
             flight: _Flight,
+            outcome: _Outcome,
             sub_response: Response | None,
             dependency_lines: Sequence[tuple[bytes, bytes]],
             dependency_status: int | None,
@@ -752,6 +789,7 @@ def cache(
 
             # Handle special case: no-store (highest priority)
             if no_store:
+                outcome.value = _BYPASS
                 response = await _respond(
                     func,
                     req,
@@ -804,6 +842,7 @@ def cache(
             # (see `bypass_backend`). ETag revalidation still works: it
             # compares the client's validator against freshly rendered content.
             if bypass_backend or authorized_bypass:
+                outcome.value = _BYPASS
                 # `response_cache_control` has `private` for a request with
                 # credentials: RFC 9111 §3.5 would still let a downstream shared
                 # cache reuse the answer to an `Authorization` request under
@@ -850,6 +889,9 @@ def cache(
                 _vary_components(req, vary_names),
             )
 
+            # Decided below: a hit is served from the entry, anything else runs
+            # the handler.
+            outcome.value = _MISS
             cached_data, read_ok = await _read_entry(
                 cache_backend, cache_key, req, fail_open=fail_open
             )
@@ -922,6 +964,7 @@ def cache(
                     logger.debug(
                         "304 Not Modified (cached ETag match); key=%s", cache_key
                     )
+                    outcome.value = _HIT
                     # Answered from the stored entry, so the 304 says how old
                     # that entry is: a cache refreshing its copy with this 304
                     # takes the new Age with it (RFC 9111 §4.3.4).
@@ -936,6 +979,7 @@ def cache(
             # valid cached copy directly (cache hit without running the handler)
             if cached_data and not no_cache:
                 logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
+                outcome.value = _HIT
                 hit = Response(
                     content=cached_data.content,
                     status_code=cached_data.status_code,
@@ -1057,9 +1101,11 @@ def cache(
             )
             req: Request | None = kwargs.get(request_name)
             flight = _Flight()
+            outcome = _Outcome()
             try:
                 response = await respond(
                     flight,
+                    outcome,
                     sub_response,
                     dependency_lines,
                     dependency_status,
@@ -1069,6 +1115,9 @@ def cache(
             finally:
                 # Releases the requests waiting on this one (#252).
                 flight.finish()
+            if debug_header and outcome.value is not None:
+                # Set after the entry was built, so it is never stored.
+                response.headers[_DEBUG_HEADER] = outcome.value
             return _with_dependency_headers(
                 response,
                 sub_response,

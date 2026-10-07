@@ -122,7 +122,7 @@ cache_key = "|".join(
 @cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
 ```
 
-參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 或 `stale_ttl` 不是 `int` 或整數秒的 `timedelta`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起傳入，`key_builder` 是 `async` 可呼叫物件，或 `coalesce` 不是 `bool`、未搭配正的 `ttl` 或與 `private`、`no_cache` 一起設定，會拋出 `CacheXError`。
+參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 或 `stale_ttl` 不是 `int` 或整數秒的 `timedelta`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起傳入，`key_builder` 是 `async` 可呼叫物件，`coalesce` 不是 `bool`、未搭配正的 `ttl` 或與 `private`、`no_cache` 一起設定，或 `debug_header` 不是 `bool`，會拋出 `CacheXError`。
 
 標頭值在每個被裝飾的路由上只建立一次：
 

@@ -279,6 +279,28 @@ rather than one after another.
   `no_store=True` it is ignored with the usual warning. Requests with
   credentials that bypass the backend are not coalesced.
 
+### Telling a hit from a miss
+
+Nothing in a response says whether the handler ran, short of adding counters
+to it. `debug_header=True` sends `X-Cache` on every GET or HEAD response:
+
+```python
+@app.get("/items")
+@cache(ttl=60, debug_header=True)
+async def items() -> list[str]: ...
+```
+
+| `X-Cache` | Meaning |
+|-----------|---------|
+| `HIT`     | Served from the stored entry: a 200 without running the handler, or a 304 for the entry's ETag. |
+| `MISS`    | The backend was consulted and the handler ran: a cold or expired key, `no_cache=True`, or a response that was not stored (a cookie, an error status, a streamed body). |
+| `BYPASS`  | The backend was neither read nor written: `no_store=True`, `private=True`, no positive `ttl`, or a request with credentials on a route without `public` or `cache_authorized`. |
+
+It is off by default, since it tells clients what the server caches; turn it
+on while developing or behind an internal route. The header is never stored
+with the entry, and it replaces an `X-Cache` the handler sets itself. Other
+methods get no header, as they get no `Cache-Control`.
+
 ### Requests with credentials
 
 A single-page app that sends `Authorization` on every request, or a site where

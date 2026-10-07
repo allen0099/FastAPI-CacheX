@@ -138,6 +138,24 @@ async def report() -> dict[str, int]: ...
 - HEAD 請求會等待同一個快取鍵正在執行的 GET，但永遠不會讓其他請求等它，因為它的回應不會儲存。
 - 它需要正的 `ttl`。搭配永遠不會以儲存的項目回應的 `private=True` 或 `no_cache=True` 時，裝飾器會拋出 `CacheXError`；搭配 `no_store=True` 時則會被忽略，並發出一般的警告。帶有憑證而繞過後端的請求不會被合併。
 
+### 分辨命中與未命中 {#telling-a-hit-from-a-miss}
+
+回應本身看不出 handler 是否執行過，除非在 handler 裡加計數器。`debug_header=True` 會在每個 GET 或 HEAD 回應送出 `X-Cache`：
+
+```python
+@app.get("/items")
+@cache(ttl=60, debug_header=True)
+async def items() -> list[str]: ...
+```
+
+| `X-Cache` | 意義 |
+|-----------|------|
+| `HIT`     | 以儲存的項目回應：沒有執行 handler 的 200，或對應該項目 ETag 的 304。 |
+| `MISS`    | 查過後端，且 handler 執行了：冷鍵或已過期的鍵、`no_cache=True`，或回應沒有儲存（設定了 cookie、錯誤狀態碼、串流本文）。 |
+| `BYPASS`  | 既沒有讀取也沒有寫入後端：`no_store=True`、`private=True`、沒有正的 `ttl`，或帶有憑證的請求打到沒有 `public` 或 `cache_authorized` 的路由。 |
+
+預設關閉，因為它會向用戶端透露伺服器快取了什麼；請在開發時或內部路由上開啟。這個標頭不會隨項目儲存，並會取代 handler 自己設定的 `X-Cache`。其他方法不會得到這個標頭，就像它們也不會得到 `Cache-Control`。
+
 ### 帶有憑證的請求 {#requests-with-credentials}
 
 每個請求都送出 `Authorization` 的單頁應用程式，或每位訪客都有 Session 的網站，在只加上 `@cache` 的路由上完全不會命中快取：每個請求都會繞過後端（見上文）。請依 handler 回傳的內容選擇：
