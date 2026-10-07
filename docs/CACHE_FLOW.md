@@ -170,8 +170,9 @@ raised if `public` and `private` are both set, if only one of `stale` /
 of whole seconds, is negative or is larger than `MAX_TTL`, if `vary` is not a
 list of header field names, if `sort_query` is
 not a `bool` or is passed with a custom `key_builder`, if `key_builder` is
-an `async` callable, or if `coalesce` is not a `bool`, or is set without a
-positive `ttl` or together with `private` or `no_cache`.
+an `async` callable, if `coalesce` is not a `bool`, or is set without a
+positive `ttl` or together with `private` or `no_cache`, or if `debug_header`
+is not a `bool`.
 
 The header value is built once per decorated route:
 
