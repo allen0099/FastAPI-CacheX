@@ -4,6 +4,10 @@ Application-level caching of arbitrary JSON-serializable values.
 
 ::: fastapi_cachex.manager.CacheManager
 
+::: fastapi_cachex.cached.cached
+
+::: fastapi_cachex.cached.CachedFunction
+
 ::: fastapi_cachex.manager_proxy.CacheManagerProxy
     options:
       inherited_members: true

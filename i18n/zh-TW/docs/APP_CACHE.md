@@ -42,6 +42,21 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 完整可執行範例（英文）：[`examples/app_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/app_cache.py)。
 
+## 快取一個函式 {#caching-a-function}
+
+`@cached` 對一般函式做的事與 `get_or_set()` 相同，以函式的引數作為鍵，因此載入資料或呼叫其他服務的函式只要寫一次，在任何地方呼叫都會被快取：
+
+<!-- fmt:off -->
+```python
+--8<-- "examples/app_cache.py:cached"
+```
+<!-- fmt:on -->
+
+- 被裝飾的函式一律要 `await`，即使它原本是 `def`（同步函式會在事件迴圈上執行，和 `get_or_set()` 的 factory 一樣）。它的結果會經過 manager 的 [JSON 往返](#json-round-trip)，因此必須可 JSON 序列化，拿回來的也是 JSON 解碼後的形式，第一次呼叫也一樣。
+- `ttl` 接受秒數或 `timedelta`；未設定時套用 manager 的 `default_ttl`。`manager=` 指定要透過哪個 `CacheManager` 儲存；未設定時使用應用程式的那一個（也就是 `AppCache` 回傳的），並在每次呼叫時解析，因此在啟動時以 `CacheManagerProxy.set()` 註冊的 manager 也會被採用。`lock=False` 讓這個函式略過 manager 的 [cache stampede 保護](#stampede-protection)。
+- 未設定 `key=` 時，鍵是 `module.qualname:` 加上引數的 SHA-256；引數會先依函式簽章綁定並套用預設值，因此 `load(1)`、`load(user_id=1)` 與 `load(1, locale="en")` 共用同一個項目。引數以 JSON 雜湊，因此必須可 JSON 序列化；帶有無法序列化之引數的呼叫會拋出 `CacheXError`。`key="user:{user_id}"` 是以引數名稱填入的 `str.format` 樣板（不含欄位的字串就是固定的鍵），`key=lambda self, user_id: f"user:{user_id}"` 則會以引數呼叫：方法的 `self` 無法雜湊，或引數是模型時，請用其中一種。manager 的 `key_prefix` 會加在前面，和它儲存的每個鍵一樣。
+- `fn.cache_key(*args, **kwargs)` 是該次呼叫使用的鍵（不含前綴），`await fn.invalidate(*args, **kwargs)` 則丟棄它的值，並回傳原本是否有快取。在方法上，`obj.load.invalidate(1)` 會和呼叫時一樣綁定 `obj`。
+
 ## 行為 {#behavior}
 
 - `get()` 在快取未命中時回傳 `None`（或你提供的 `default=`），遇到不存在或損毀的項目也絕不會拋出例外。

@@ -2,7 +2,8 @@
 
 ``get_or_set`` computes a value once and serves it from the cache until it
 expires; ``add`` stores a key only if it is absent, which makes a simple
-idempotency check. Both come through the ``AppCache`` dependency.
+idempotency check. Both come through the ``AppCache`` dependency. ``@cached``
+does the same for a plain function, keyed on its arguments.
 
 Run it from a checkout (see ``examples/README.md``)::
 
@@ -22,6 +23,7 @@ from fastapi_cachex import AppCache
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import CacheManager
 from fastapi_cachex import CacheManagerProxy
+from fastapi_cachex import cached
 from fastapi_cachex.backends import MemoryBackend
 
 backend = MemoryBackend()
@@ -77,3 +79,28 @@ async def create_order(
 async def forget_rates(app_cache: AppCache) -> dict[str, bool]:
     """Drop the cached rates; the next read calls the upstream again."""
     return {"deleted": await app_cache.delete("rates")}
+
+
+# --8<-- [start:cached]
+# Cache a plain function on its arguments. The value goes through the
+# registered CacheManager, so it gets its prefix, TTL default and lock.
+@cached(ttl=60, key="rate:{currency}")
+async def fetch_rate(currency: str) -> float:
+    """Stand-in for a slow call to another service, once per currency."""
+    upstream_calls["rates"] += 1
+    return {"EUR": 0.92, "JPY": 151.3}.get(currency.upper(), 1.0)
+
+
+@app.get("/rates/{currency}")
+async def read_rate(currency: str) -> dict[str, float]:
+    """``fetch_rate`` runs once per currency until its value expires."""
+    return {currency: await fetch_rate(currency)}
+
+
+@app.delete("/rates/{currency}")
+async def forget_rate(currency: str) -> dict[str, bool]:
+    """Drop the value cached for this currency: ``invalidate`` takes the same arguments."""
+    return {"deleted": await fetch_rate.invalidate(currency)}
+
+
+# --8<-- [end:cached]

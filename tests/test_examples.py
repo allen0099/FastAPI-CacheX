@@ -178,6 +178,14 @@ def test_app_cache() -> None:
         other = client.post("/orders", headers={"Idempotency-Key": "def"})
         assert other.status_code == 201
 
+        calls = example.upstream_calls["rates"]
+        assert client.get("/rates/eur").json() == {"eur": 0.92}
+        assert client.get("/rates/eur").json() == {"eur": 0.92}
+        assert example.upstream_calls["rates"] == calls + 1
+        assert client.delete("/rates/eur").json() == {"deleted": True}
+        client.get("/rates/eur")
+        assert example.upstream_calls["rates"] == calls + 2
+
 
 def _session_cookie(client: TestClient) -> str:
     token = client.cookies.get("session")
