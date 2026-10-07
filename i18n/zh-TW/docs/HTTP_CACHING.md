@@ -77,6 +77,16 @@ async def items(): ...
 - **使用 `ttl=0`**：送出 `max-age=0`，其餘行為與 `ttl=None` 相同。負數、非 `int`（例如 `1.5` 或 `True`）或超過 `MAX_TTL`（見 [TTL 值](BACKENDS.md#ttl-values)）的 `ttl`，都會在套用裝飾器時以 `CacheXError` 拒絕
 - **使用 `timedelta`**：`ttl=timedelta(minutes=5)` 等同於 `ttl=300`，`stale_ttl` 也一樣；帶有小數秒的 `timedelta` 會像 `float` 一樣被拒絕
 
+### 命中時仍會執行的部分 {#what-still-runs-on-a-hit}
+
+「不執行 handler」指的只有路由函式本身：
+
+- **依賴項在每個請求都會執行，不論命中與否。** FastAPI 會先解析依賴項，再呼叫路由函式，而 `@cache` 包的只有那個函式。在依賴項中開啟的資料庫 session 在命中時也會開啟；計數或限流的依賴項也會把命中算進去。每位使用者各自的 key builder 正是依賴這一點：它們讀取依賴項放進 `request.state` 的內容。依賴項設定的標頭與 cookie 也會隨命中的回應送出（它們如何影響儲存，見[帶有憑證的請求](#requests-with-credentials)）。
+- **handler 加入的背景任務只在未命中時執行。** 命中時路由函式不會執行，因此不會有任何東西加進它的 `BackgroundTasks`，handler 回傳的 `Response.background` 也不會隨項目儲存。依賴項透過自己的 `BackgroundTasks` 參數加入的任務則在命中時也會執行，因為依賴項執行了。
+- **中介軟體**與任何請求一樣，包在整個流程外面執行。
+
+因此，每個請求都必須做的事（稽核、限流、驗證身分）請放在依賴項或中介軟體；屬於產生回應的事（寄出相關的電子郵件）請放在 handler。
+
 ### `Age` 標頭 {#the-age-header}
 
 由已儲存項目回應的回應會帶有 `Age` 標頭：從 `@cache` 儲存它起經過的整數秒數（RFC 9111 §5.1）。這包括快取命中，以及依已儲存項目的 ETag 回應的 304。`Cache-Control` 仍然是 `max-age=<ttl>`，瀏覽器或 CDN 會從中扣掉 `Age`（RFC 9111 §4.2.3），因此在 60 秒 ttl 的第 50 秒時送出的回應，下游最多只會再重複使用 10 秒。沒有 `Age` 時，在項目即將過期前的命中會讓下游重新計時，內容最多可能被重複使用到 ttl 的兩倍。

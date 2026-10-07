@@ -384,7 +384,7 @@ async def cleanup_task():
 
 ## 效能 {#performance}
 
-快取命中時，端點的 handler 完全不會執行：成本只有一次後端查詢。該選擇哪個後端，請見[後端](BACKENDS.md#choosing-a-backend)。
+快取命中時，路由函式不會執行：成本是一次後端查詢，加上路由的依賴項，因為 FastAPI 在呼叫 `@cache` 的包裝函式之前就會解析它們，所以每個請求都會執行（見[命中時仍會執行的部分](HTTP_CACHING.md#what-still-runs-on-a-hit)）。該選擇哪個後端，請見[後端](BACKENDS.md#choosing-a-backend)。
 
 ## 快取失效情境 {#cache-invalidation-scenarios}
 
