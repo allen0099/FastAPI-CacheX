@@ -22,6 +22,8 @@ async def expensive_operation(cache: AppCache):
 # (see "Stampede protection").
 manager = CacheManager(key_prefix="myapp:", default_ttl=60)
 await manager.set("user:42", {"name": "Alice"})
+# Every ttl takes an int of seconds or a timedelta of whole seconds.
+await manager.set("user:43", {"name": "Bob"}, ttl=timedelta(minutes=5))
 user = await manager.get("user:42")  # {"name": "Alice"}
 await manager.delete("user:42")
 await manager.clear_prefix()  # clear everything under "myapp:"

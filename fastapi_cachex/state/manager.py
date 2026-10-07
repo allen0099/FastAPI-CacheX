@@ -87,10 +87,9 @@ class StateManager:
             ValueError: If ``default_ttl`` is zero, negative or above
                 ``MAX_TTL``.
         """
-        validate_ttl(default_ttl)
         self.backend = backend if backend is not None else BackendProxy.get()
         self.key_prefix = key_prefix
-        self.default_ttl = default_ttl
+        self.default_ttl = validate_ttl(default_ttl)
 
     def _cache_key(self, state: str) -> str:
         return f"{self.key_prefix}{state}"
@@ -187,8 +186,7 @@ class StateManager:
         state = secrets.token_urlsafe(32)
 
         # Use provided TTL or default
-        effective_ttl = ttl if ttl is not None else self.default_ttl
-        validate_ttl(effective_ttl)
+        effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         if binding == "":
             # A missing cookie read as "" would otherwise bind every such
             # client to the same value.

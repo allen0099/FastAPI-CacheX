@@ -12,6 +12,7 @@ import time
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
 from .backends.base import BaseCacheBackend
@@ -66,14 +67,13 @@ def _validate_lock(lock: Any, *, allow_none: bool = False) -> None:
 
 def _validate_get_or_set_args(
     lock: bool | None,
-    ttl: int | None,
-    lock_ttl: int | None,
+    ttl: int | timedelta | None,
+    lock_ttl: int | timedelta | None,
     wait_timeout: float | None,
-) -> float | None:
+) -> tuple[int | None, int | None, float | None]:
+    """Check ``get_or_set``'s arguments and return them normalised."""
     _validate_lock(lock, allow_none=True)
-    validate_ttl(ttl)
-    if lock_ttl is not None:
-        validate_ttl(lock_ttl)
+    validated_wait_timeout: float | None = None
     if wait_timeout is not None:
         if isinstance(wait_timeout, bool) or not isinstance(wait_timeout, (int, float)):
             msg = (
@@ -84,8 +84,8 @@ def _validate_get_or_set_args(
         if wait_timeout <= 0:
             msg = f"wait_timeout must be greater than zero, got {wait_timeout!r}"
             raise ValueError(msg)
-        return float(wait_timeout)
-    return None
+        validated_wait_timeout = float(wait_timeout)
+    return validate_ttl(ttl), validate_ttl(lock_ttl), validated_wait_timeout
 
 
 class CacheManager:
@@ -101,31 +101,34 @@ class CacheManager:
         self,
         backend: BaseCacheBackend | None = None,
         key_prefix: str = "cache:",
-        default_ttl: int | None = None,
+        default_ttl: int | timedelta | None = None,
         *,
         lock: bool = True,
-        lock_ttl: int = 60,
+        lock_ttl: int | timedelta = 60,
     ) -> None:
         r"""Initialize CacheManager.
 
         Args:
             backend: Cache backend instance. If None, uses BackendProxy.get().
             key_prefix: Prefix prepended to all logical keys in the cache backend.
-            default_ttl: Default TTL (seconds) applied when set() is called
-                without an explicit ttl. None means no expiry by default.
+            default_ttl: Default TTL applied when set() is called without an
+                explicit ttl, in seconds or as a ``timedelta``. None means no
+                expiry by default.
             lock: Whether get_or_set() uses distributed locking by default to
                 prevent cache stampedes (default: True). Pass ``False`` to
                 compute on every concurrent miss without the extra backend
                 round trips.
-            lock_ttl: Default TTL in seconds for stampede protection locks (default: 60).
+            lock_ttl: Default TTL for stampede protection locks, in seconds
+                or as a ``timedelta`` (default: 60).
 
         Raises:
             BackendNotFoundError: If ``backend`` is None and no backend has
                 been set with ``BackendProxy.set()``.
             TypeError: If ``lock`` is not a bool, or ``default_ttl``
-                or ``lock_ttl`` is not an int.
-            ValueError: If ``default_ttl`` or ``lock_ttl`` is zero, negative
-                or larger than ``MAX_TTL``, or ``lock_ttl`` is None.
+                or ``lock_ttl`` is not an int or a ``timedelta``.
+            ValueError: If ``default_ttl`` or ``lock_ttl`` is zero, negative,
+                larger than ``MAX_TTL`` or not a whole number of seconds, or
+                ``lock_ttl`` is None.
 
         Warns:
             UserWarning: If ``key_prefix`` contains a glob metacharacter
@@ -139,12 +142,12 @@ class CacheManager:
 
         _validate_lock(lock)
 
-        effective_lock_ttl = validate_ttl(lock_ttl)
-        if effective_lock_ttl is None:
-            msg = "lock_ttl must be a positive int, got None"
+        if lock_ttl is None:
+            # Unreachable for type checkers; guards untyped callers.
+            msg = "lock_ttl must be a positive int, got None"  # type: ignore[unreachable]
             raise ValueError(msg)
         self.lock: bool = lock
-        self.lock_ttl: int = effective_lock_ttl
+        self.lock_ttl: int = validate_ttl(lock_ttl)
 
         if self._prefix_has_glob:
             warnings.warn(
@@ -193,19 +196,22 @@ class CacheManager:
             logger.debug("Failed to decode cached value; key=%s", key)
             return default
 
-    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+    async def set(
+        self, key: str, value: Any, ttl: int | timedelta | None = None
+    ) -> None:
         """JSON-encode and store a value in the cache.
 
         Args:
             key: Logical cache key (without the manager's prefix).
             value: A JSON-serializable Python value.
-            ttl: Time-to-live in seconds. If None, uses ``self.default_ttl``
-                (which itself defaults to no expiry).
+            ttl: Time-to-live in seconds or as a ``timedelta``. If None, uses
+                ``self.default_ttl`` (which itself defaults to no expiry).
 
         Raises:
             TypeError: If ``value`` is not JSON-serializable, or ``ttl`` is
-                not an int.
-            ValueError: If ``ttl`` is zero, negative or larger than ``MAX_TTL``.
+                not an int or a ``timedelta``.
+            ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
+                or not a whole number of seconds.
         """
         effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         entry = self._encode(value)
@@ -213,7 +219,9 @@ class CacheManager:
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
 
-    async def add(self, key: str, value: Any, ttl: int | None = None) -> bool:
+    async def add(
+        self, key: str, value: Any, ttl: int | timedelta | None = None
+    ) -> bool:
         """Store a value only if the key is not already in the cache.
 
         The check and the write are one atomic backend operation
@@ -228,16 +236,17 @@ class CacheManager:
         Args:
             key: Logical cache key (without the manager's prefix).
             value: A JSON-serializable Python value.
-            ttl: Time-to-live in seconds. If None, uses ``self.default_ttl``
-                (which itself defaults to no expiry).
+            ttl: Time-to-live in seconds or as a ``timedelta``. If None, uses
+                ``self.default_ttl`` (which itself defaults to no expiry).
 
         Returns:
             True if the value was stored, False if the key already existed.
 
         Raises:
             TypeError: If ``value`` is not JSON-serializable, or ``ttl`` is
-                not an int.
-            ValueError: If ``ttl`` is zero, negative or larger than ``MAX_TTL``.
+                not an int or a ``timedelta``.
+            ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
+                or not a whole number of seconds.
         """
         effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         entry = self._encode(value)
@@ -373,10 +382,10 @@ class CacheManager:
         self,
         key: str,
         factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
-        ttl: int | None = None,
+        ttl: int | timedelta | None = None,
         *,
         lock: bool | None = None,
-        lock_ttl: int | None = None,
+        lock_ttl: int | timedelta | None = None,
         wait_timeout: float | None = None,
         raise_on_timeout: bool = False,
     ) -> Any:
@@ -414,12 +423,12 @@ class CacheManager:
                 value to cache on a miss. If it returns an awaitable (an async
                 function, or a lambda or ``functools.partial`` wrapping one),
                 the result is awaited.
-            ttl: Time-to-live in seconds for a newly created value. If None,
-                uses ``self.default_ttl``.
+            ttl: Time-to-live for a newly created value, in seconds or as a
+                ``timedelta``. If None, uses ``self.default_ttl``.
             lock: Whether to use distributed locking for stampede protection.
                 If None, inherits the manager's ``lock`` setting.
-            lock_ttl: Upper bound in seconds for the lock lease. If None,
-                inherits the manager's ``lock_ttl``.
+            lock_ttl: Upper bound for the lock lease, in seconds or as a
+                ``timedelta``. If None, inherits the manager's ``lock_ttl``.
             wait_timeout: Maximum seconds waiting callers poll the cache before
                 timing out. If None, callers wait without a fixed deadline,
                 bounded by the holder's lock lease, and attempt to take over the
@@ -437,10 +446,11 @@ class CacheManager:
                 or if ``lock``, ``ttl``, ``lock_ttl``, or ``wait_timeout``
                 have invalid types.
             ValueError: If ``ttl``, ``lock_ttl``, or ``wait_timeout`` is zero or
-                negative, or ``ttl`` or ``lock_ttl`` is larger than ``MAX_TTL``.
+                negative, or ``ttl`` or ``lock_ttl`` is larger than ``MAX_TTL``
+                or a ``timedelta`` that is not a whole number of seconds.
             LockTimeoutError: If ``raise_on_timeout=True`` and waiting exceeds ``wait_timeout``.
         """
-        validated_wait_timeout = _validate_get_or_set_args(
+        ttl, lock_ttl, validated_wait_timeout = _validate_get_or_set_args(
             lock, ttl, lock_ttl, wait_timeout
         )
         cached = await self.get(key, default=_SENTINEL)

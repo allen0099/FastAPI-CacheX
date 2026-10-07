@@ -30,7 +30,9 @@ class SpyBackend(MemoryBackend):
         super().__init__()
         self.writes: list[str] = []
 
-    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
+    async def set(
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
+    ) -> None:
         self.writes.append(key)
         await super().set(key, value, ttl=ttl)
 
@@ -39,7 +41,7 @@ class SpyBackend(MemoryBackend):
         key: str,
         expected: CacheEntry,
         value: CacheEntry,
-        ttl: int | None = None,
+        ttl: int | timedelta | None = None,
     ) -> bool:
         self.writes.append(key)
         return await super().set_if_equals(key, expected, value, ttl=ttl)

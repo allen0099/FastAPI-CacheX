@@ -6,6 +6,7 @@ import threading
 import warnings
 from collections.abc import Callable
 from collections.abc import Sequence
+from datetime import timedelta
 from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
@@ -361,9 +362,44 @@ def _find_param(
     )
 
 
+def _seconds(name: str, value: int | timedelta | None) -> int | None:
+    """``value`` as a non-negative number of whole seconds, for ``@cache``.
+
+    ``@cache`` allows ``0`` (``max-age=0``), which the backends refuse, so it
+    does not use ``validate_ttl``; the type and range rules are the same.
+
+    Raises:
+        CacheXError: If ``value`` is not an ``int`` or a ``timedelta``, is
+            negative, is larger than ``MAX_TTL`` or is a ``timedelta`` that
+            is not a whole number of seconds
+    """
+    if value is None:
+        return None
+    if isinstance(value, timedelta):
+        if value.microseconds:
+            msg = f"{name} must be a whole number of seconds, got {value!r}"
+            raise CacheXError(msg)
+        value = int(value.total_seconds())
+    elif isinstance(value, bool) or not isinstance(value, int):
+        # Checked here: at request time the backend would reject it, and
+        # failing open would hide that the route never caches.
+        msg = (
+            f"{name} must be an int number of seconds or a timedelta, "
+            f"got {type(value).__name__}"
+        )
+        raise CacheXError(msg)
+    if value < 0:
+        msg = f"{name} must not be negative"
+        raise CacheXError(msg)
+    if value > MAX_TTL:
+        msg = f"{name} must be at most {MAX_TTL} seconds"
+        raise CacheXError(msg)
+    return value
+
+
 def cache(
-    ttl: int | None = None,
-    stale_ttl: int | None = None,
+    ttl: int | timedelta | None = None,
+    stale_ttl: int | timedelta | None = None,
     *,
     stale: Literal["error", "revalidate"] | None = None,
     no_cache: bool = False,
@@ -398,16 +434,18 @@ def cache(
     front of the app does not store it either.
 
     Args:
-        ttl: How long, in seconds, a stored response may be served without
-            running the handler. The same value is sent as ``max-age``.
+        ttl: How long a stored response may be served without running the
+            handler, in seconds or as a ``timedelta`` of whole seconds. The
+            same value is sent as ``max-age``.
             Without a positive ``ttl`` (``None``, or ``0``, which sends
             ``max-age=0``) nothing is read from or written to the backend: the
             handler runs on every request, and ``If-None-Match`` gets a 304
             only when it matches the freshly rendered response. Negative values
             are rejected.
-        stale_ttl: Seconds sent with the directive chosen by ``stale``. It only
-            shapes the ``Cache-Control`` header; the backend entry still
-            expires after ``ttl``. Must be given together with ``stale``.
+        stale_ttl: Seconds (or a ``timedelta``) sent with the directive chosen
+            by ``stale``. It only shapes the ``Cache-Control`` header; the
+            backend entry still expires after ``ttl``. Must be given together
+            with ``stale``.
         stale: ``"revalidate"`` sends ``stale-while-revalidate=<stale_ttl>``,
             ``"error"`` sends ``stale-if-error=<stale_ttl>``.
         no_cache: Run the handler on every request and send ``no-cache``. The
@@ -511,8 +549,9 @@ def cache(
     Raises:
         CacheXError: When the decorator is applied, if ``stale`` and
             ``stale_ttl`` are not given together, if ``public`` and
-            ``private`` are both set, if ``ttl`` is not an ``int``, is
-            negative or is larger than ``MAX_TTL``, or if ``vary`` is not a
+            ``private`` are both set, if ``ttl`` or ``stale_ttl`` is not an
+            ``int`` or a ``timedelta`` of whole seconds, is negative or is
+            larger than ``MAX_TTL``, or if ``vary`` is not a
             list of header field names (a single string is rejected), if
             ``sort_query`` is not a ``bool`` or is passed with
             ``key_builder``, if ``key_builder`` is an ``async`` callable, or
@@ -532,6 +571,10 @@ def cache(
             ``Cookie``, or if ``no_store`` is combined with another caching
             argument it overrides.
     """
+    # Checked when `@cache(...)` is evaluated, which is at decoration time
+    # too; the closure below sees the whole seconds.
+    ttl = _seconds("ttl", ttl)
+    stale_ttl = _seconds("stale_ttl", stale_ttl)
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
         # Validate parameters eagerly at decoration time
@@ -543,17 +586,6 @@ def cache(
             raise CacheXError(msg)
         if public and private:
             msg = "public and private are mutually exclusive"
-            raise CacheXError(msg)
-        if ttl is not None and (isinstance(ttl, bool) or not isinstance(ttl, int)):
-            # Checked here: at request time the backend would reject it, and
-            # failing open would hide that the route never caches.
-            msg = f"ttl must be an int number of seconds, got {type(ttl).__name__}"
-            raise CacheXError(msg)
-        if ttl is not None and ttl < 0:
-            msg = "ttl must not be negative"
-            raise CacheXError(msg)
-        if ttl is not None and ttl > MAX_TTL:
-            msg = f"ttl must be at most {MAX_TTL} seconds"
             raise CacheXError(msg)
         if not isinstance(coalesce, bool):
             # Unreachable for type checkers; guards untyped callers.

@@ -1,6 +1,7 @@
 """The non-abstract helpers on ``BaseCacheBackend`` must work for third-party
 subclasses that only implement the abstract methods."""
 
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -15,13 +16,15 @@ class DictBackend(BaseCacheBackend):
     """Minimal backend implementing only the abstract interface."""
 
     def __init__(self) -> None:
-        self.store: dict[str, tuple[CacheEntry, int | None]] = {}
+        self.store: dict[str, tuple[CacheEntry, int | timedelta | None]] = {}
 
     async def get(self, key: str) -> CacheEntry | None:
         item = self.store.get(key)
         return None if item is None else item[0]
 
-    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
+    async def set(
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
+    ) -> None:
         self.store[key] = (value, ttl)
 
     async def delete(self, key: str) -> bool:

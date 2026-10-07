@@ -5,9 +5,11 @@ import contextlib
 import logging
 import secrets
 import time
+from datetime import timedelta
 from types import TracebackType
 
 from fastapi_cachex.backends.base import BaseCacheBackend
+from fastapi_cachex.backends.base import validate_ttl
 from fastapi_cachex.exceptions import LockTimeoutError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
@@ -38,18 +40,23 @@ class CacheLock:
 
     Args:
         name: Unique lock identifier
-        ttl: Time to live in seconds (default: 60)
+        ttl: Time to live in seconds or as a ``timedelta`` (default: 60)
         blocking: Whether acquire() waits for the lock if unavailable (default: True)
         timeout: Maximum seconds to wait in blocking mode (None = wait indefinitely)
         poll_interval: Seconds between retry attempts in blocking mode (default: 0.1)
         backend: Explicit backend instance to use (default: BackendProxy.get())
         key_prefix: Prefix for lock keys (default: "lock:")
+
+    Raises:
+        TypeError: If ``ttl`` is not an ``int`` or a ``timedelta``
+        ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL`` or
+            not a whole number of seconds
     """
 
     def __init__(
         self,
         name: str,
-        ttl: int = 60,
+        ttl: int | timedelta = 60,
         blocking: bool = True,
         timeout: float | None = None,
         poll_interval: float = 0.1,
@@ -58,7 +65,7 @@ class CacheLock:
     ) -> None:
         """Initialize a CacheLock instance."""
         self.name = name
-        self.ttl = ttl
+        self.ttl: int = validate_ttl(ttl)
         self.blocking = blocking
         self.timeout = timeout
         self.poll_interval = poll_interval
@@ -84,7 +91,7 @@ class CacheLock:
         blocking: bool | None = None,
         timeout: float | None = None,
         poll_interval: float | None = None,
-        ttl: int | None = None,
+        ttl: int | timedelta | None = None,
     ) -> bool:
         """Attempt to acquire the lock.
 
@@ -93,7 +100,7 @@ class CacheLock:
             timeout: Override default timeout (seconds). If timeout=None, the lock will
                 use the instance's default timeout.
             poll_interval: Override default poll interval (seconds)
-            ttl: Override default TTL (seconds)
+            ttl: Override default TTL (seconds or a ``timedelta``)
 
         Returns:
             True if the lock was acquired; False if it is held elsewhere
@@ -120,7 +127,7 @@ class CacheLock:
             is_blocking = self.blocking if blocking is None else blocking
             effective_timeout = self.timeout if timeout is None else timeout
             interval = self.poll_interval if poll_interval is None else poll_interval
-            effective_ttl = self.ttl if ttl is None else ttl
+            effective_ttl = self.ttl if ttl is None else validate_ttl(ttl)
 
             backend = self._get_backend()
 
@@ -207,16 +214,17 @@ class CacheLock:
             )
         return released
 
-    async def extend(self, ttl: int | None = None) -> bool:
+    async def extend(self, ttl: int | timedelta | None = None) -> bool:
         """Renew the TTL on the lock if still held by this instance.
 
         Args:
-            ttl: New TTL in seconds (None = use default instance TTL)
+            ttl: New TTL in seconds or as a ``timedelta`` (None = use default
+                instance TTL)
 
         Returns:
             True if the TTL was updated, False if expired or owned by another caller
         """
-        effective_ttl = self.ttl if ttl is None else ttl
+        effective_ttl = self.ttl if ttl is None else validate_ttl(ttl)
         backend = self._get_backend()
         return await backend.expire_if_equals(self.key, self._entry, ttl=effective_ttl)
 

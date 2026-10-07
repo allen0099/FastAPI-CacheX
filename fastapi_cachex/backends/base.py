@@ -4,9 +4,11 @@ import warnings
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Iterable
+from datetime import timedelta
 from types import TracebackType
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import overload
 
 from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.exceptions import CacheXError
@@ -50,25 +52,44 @@ def warn_if_path_shaped(pattern: str, cleared: int) -> None:
 MAX_TTL = 2**31 - 1
 
 
-def validate_ttl(ttl: int | None) -> int | None:
-    """Return ``ttl`` if it is ``None`` or a positive number of seconds.
+@overload
+def validate_ttl(ttl: None) -> None: ...
+@overload
+def validate_ttl(ttl: int | timedelta) -> int: ...
+@overload
+def validate_ttl(ttl: int | timedelta | None) -> int | None: ...
+
+
+def validate_ttl(ttl: int | timedelta | None) -> int | None:
+    """Return ``ttl`` as ``None`` or a positive number of whole seconds.
 
     Every backend reads ``0`` or a negative TTL differently (Memcached treats
     ``0`` as "never expires", Redis rejects it, the memory backend expires the
     entry at once), so the library refuses them instead of letting the
     meaning depend on the backend. ``None`` is the way to say "no expiry".
 
-    Only an ``int`` is a TTL. A ``float`` worked on the memory backend and
-    failed on Redis and Memcached, and ``True`` passed as one second.
+    Only an ``int`` or a ``datetime.timedelta`` is a TTL. A ``float`` worked on
+    the memory backend and failed on Redis and Memcached, and ``True`` passed
+    as one second. A ``timedelta`` is returned as its whole number of seconds
+    (#334); one with a fraction of a second is rejected, since every backend
+    keeps time in whole seconds. Use the return value: it is the ``int`` the
+    backend stores.
 
     Raises:
-        TypeError: If ``ttl`` is not an ``int`` (``bool`` included)
-        ValueError: If ``ttl`` is zero, negative or larger than ``MAX_TTL``
+        TypeError: If ``ttl`` is not an ``int`` or a ``timedelta`` (``bool``
+            included)
+        ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL`` or
+            a ``timedelta`` that is not a whole number of seconds
     """
     if ttl is None:
         return None
-    if isinstance(ttl, bool) or not isinstance(ttl, int):
-        msg = f"ttl must be an int number of seconds or None, got {type(ttl).__name__}"
+    if isinstance(ttl, timedelta):
+        ttl = _whole_seconds(ttl, "ttl")
+    elif isinstance(ttl, bool) or not isinstance(ttl, int):
+        msg = (
+            "ttl must be an int number of seconds, a timedelta or None, "
+            f"got {type(ttl).__name__}"
+        )
         raise TypeError(msg)
     if ttl <= 0:
         msg = f"ttl must be a positive number of seconds or None, got {ttl!r}"
@@ -77,6 +98,18 @@ def validate_ttl(ttl: int | None) -> int | None:
         msg = f"ttl must be at most {MAX_TTL} seconds (about 68 years)"
         raise ValueError(msg)
     return ttl
+
+
+def _whole_seconds(value: timedelta, name: str) -> int:
+    """The whole number of seconds in ``value``.
+
+    Raises:
+        ValueError: If ``value`` has a fraction of a second
+    """
+    if value.microseconds:
+        msg = f"{name} must be a whole number of seconds, got {value!r}"
+        raise ValueError(msg)
+    return int(value.total_seconds())
 
 
 def validate_delta(delta: int) -> int:
@@ -145,12 +178,16 @@ class BaseCacheBackend(ABC):
         """Retrieve a cached response."""
 
     @abstractmethod
-    async def set(self, key: str, value: CacheEntry, ttl: int | None = None) -> None:
+    async def set(
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
+    ) -> None:
         """Store a response in the cache.
 
-        ``ttl`` is ``None`` (never expires) or a positive number of seconds;
-        implementations should pass it through ``validate_ttl`` so zero and
-        negative values are rejected the same way on every backend.
+        ``ttl`` is ``None`` (never expires) or a positive number of seconds, as
+        an ``int`` or a ``timedelta``; implementations should pass it through
+        ``validate_ttl`` and use what it returns, so zero and negative values
+        are rejected the same way on every backend and a ``timedelta`` is
+        stored as its whole seconds.
         """
 
     @abstractmethod
@@ -220,7 +257,7 @@ class BaseCacheBackend(ABC):
         return value
 
     async def set_if_absent(
-        self, key: str, value: CacheEntry, ttl: int | None = None
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> bool:
         """Store ``value`` only when ``key`` does not exist yet.
 
@@ -242,7 +279,7 @@ class BaseCacheBackend(ABC):
         Returns:
             Whether ``value`` was stored
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         if await self.get(key) is not None:
             return False
         await self.set(key, value, ttl=ttl)
@@ -271,7 +308,9 @@ class BaseCacheBackend(ABC):
             return False
         return await self._delete_reporting(key)
 
-    async def expire_if_equals(self, key: str, expected: CacheEntry, ttl: int) -> bool:
+    async def expire_if_equals(
+        self, key: str, expected: CacheEntry, ttl: int | timedelta
+    ) -> bool:
         """Update expiry on ``key`` to ``ttl`` seconds only while it still holds ``expected``.
 
         Re-setting a lock's TTL with a plain ``set`` is unsafe: if the holder's
@@ -291,7 +330,7 @@ class BaseCacheBackend(ABC):
         Returns:
             Whether the expiry was updated
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         if await self.get(key) != expected:
             return False
         await self.set(key, expected, ttl=ttl)
@@ -302,7 +341,7 @@ class BaseCacheBackend(ABC):
         key: str,
         expected: CacheEntry,
         value: CacheEntry,
-        ttl: int | None = None,
+        ttl: int | timedelta | None = None,
     ) -> bool:
         """Store ``value`` only while ``key`` still holds ``expected``.
 
@@ -324,13 +363,15 @@ class BaseCacheBackend(ABC):
         Returns:
             Whether ``value`` was stored
         """
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         if await self.get(key) != expected:
             return False
         await self.set(key, value, ttl=ttl)
         return True
 
-    async def increment(self, key: str, delta: int = 1, ttl: int | None = None) -> int:
+    async def increment(
+        self, key: str, delta: int = 1, ttl: int | timedelta | None = None
+    ) -> int:
         """Atomically add ``delta`` to the integer counter stored at ``key``.
 
         A missing key counts as 0: the first call creates the counter with the
@@ -358,12 +399,13 @@ class BaseCacheBackend(ABC):
                 counter, or the result would leave the counter's range: signed
                 64-bit, except on Memcached, whose counters are unsigned 64-bit.
                 The counter is left unchanged.
-            TypeError: If ``delta`` or ``ttl`` is not an ``int``
+            TypeError: If ``delta`` is not an ``int``, or ``ttl`` is not an
+                ``int`` or a ``timedelta``
             ValueError: If ``ttl`` is out of range, or ``delta`` does not fit
                 in a signed 64-bit integer
         """
         validate_delta(delta)
-        validate_ttl(ttl)
+        ttl = validate_ttl(ttl)
         current = await self.get(key)
         value = delta if current is None else counter_value(current) + delta
         check_counter_range(value)

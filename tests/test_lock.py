@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import timedelta
 
 import pytest
 
@@ -189,7 +190,7 @@ async def test_lock_reentry_raises_runtime_error() -> None:
 
 class YieldingMemoryBackend(MemoryBackend):
     async def set_if_absent(
-        self, key: str, value: CacheEntry, ttl: int | None = None
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> bool:
         await asyncio.sleep(0)
         return await super().set_if_absent(key, value, ttl=ttl)
@@ -240,7 +241,7 @@ class StoreThenStallBackend(MemoryBackend):
         self.error = error
 
     async def set_if_absent(
-        self, key: str, value: CacheEntry, ttl: int | None = None
+        self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> bool:
         stored = await super().set_if_absent(key, value, ttl=ttl)
         if self.error is not None:
