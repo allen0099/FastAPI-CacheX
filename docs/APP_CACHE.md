@@ -44,6 +44,43 @@ await manager.clear_pattern("user:*")  # matches "myapp:user:*"
 
 Complete runnable example: [`examples/app_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/app_cache.py).
 
+## Caching a function
+
+`@cached` does what `get_or_set()` does for a plain function, keyed on its
+arguments, so a loader or a call to another service is written once and
+cached wherever it is called:
+
+<!-- fmt:off -->
+```python
+--8<-- "examples/app_cache.py:cached"
+```
+<!-- fmt:on -->
+
+- The decorated function is always `await`-ed, even if it was `def` (a sync
+  function then runs on the event loop, as a `get_or_set()` factory does).
+  Its result goes through the manager's [JSON round-trip](#json-round-trip),
+  so it must be JSON-serializable and comes back as JSON gives it, on the
+  first call too.
+- `ttl` takes seconds or a `timedelta`; without it the manager's
+  `default_ttl` applies. `manager=` names the `CacheManager` to store
+  through; without it the application's is used (what `AppCache` returns),
+  resolved on each call, so one registered with `CacheManagerProxy.set()` at
+  startup is picked up. `lock=False` skips the manager's
+  [stampede protection](#stampede-protection) for that function.
+- Without `key=` the key is `module.qualname:` followed by a SHA-256 of the
+  arguments, bound to the signature with defaults applied, so `load(1)`,
+  `load(user_id=1)` and `load(1, locale="en")` share one entry. The
+  arguments are hashed as JSON, so they must be JSON-serializable; a call
+  with one that is not raises `CacheXError`. `key="user:{user_id}"` is a
+  `str.format` template over the arguments by name (a plain string is a fixed
+  key), and `key=lambda self, user_id: f"user:{user_id}"` is called with
+  them: use either for a method, whose `self` cannot be hashed, or for a
+  model. The manager's `key_prefix` goes in front, as for every key it stores.
+- `fn.cache_key(*args, **kwargs)` is the key a call uses (without the
+  prefix) and `await fn.invalidate(*args, **kwargs)` drops its value,
+  returning whether one was cached. On a method, `obj.load.invalidate(1)`
+  binds `obj` as on a call.
+
 ## Behavior
 
 - `get()` returns `None` (or a supplied `default=`) on a cache miss — it never

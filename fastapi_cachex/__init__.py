@@ -11,6 +11,8 @@ from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
 from .cache import invalidate as invalidate
 from .cache_key import CacheKey as CacheKey
+from .cached import CachedFunction as CachedFunction
+from .cached import cached as cached
 from .dependencies import AppCache as AppCache
 from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_app_cache as get_app_cache
@@ -135,6 +137,7 @@ __all__ = [
     "CacheManager",
     "CacheManagerProxy",
     "CacheXError",
+    "CachedFunction",
     "LockTimeoutError",
     "ProxyNotSetError",
     "RequestNotFoundError",
@@ -142,6 +145,7 @@ __all__ = [
     "add_routes",
     "build_cache_key",
     "cache",
+    "cached",
     "default_key_builder",
     "get_app_cache",
     "get_cache_backend",

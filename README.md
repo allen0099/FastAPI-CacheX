@@ -23,7 +23,8 @@ A high-performance caching extension for FastAPI: a server-side response cache w
 - **HTTP caching** — a `@cache` decorator for GET routes with `Cache-Control`,
   `ETag` / `If-None-Match` (304) and per-route invalidation.
 - **Application cache** — `CacheManager` for caching arbitrary JSON values in
-  your own code, with compute-on-miss `get_or_set()` and atomic store-if-absent `add()`.
+  your own code, with compute-on-miss `get_or_set()` and atomic store-if-absent `add()`,
+  and `@cached` for a plain function, keyed on its arguments.
 - **Backends** — in-memory, Redis and Memcached, with atomic counters,
   one-shot values and locks.
 - **Sessions and OAuth state (deprecated)**: signed session tokens and one-time
