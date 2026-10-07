@@ -6,6 +6,8 @@
 
 ## `@cache` 裝飾器 {#the-cache-decorator}
 
+以下是 [`examples/http_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/http_cache.py) 的路由（程式碼註解為英文）：
+
 <!-- fmt:off -->
 ```python
 --8<-- "examples/http_cache.py:routes"
@@ -521,7 +523,7 @@ add_routes(
 > [!WARNING]
 > **這些路由本身沒有任何身分驗證。** `include_in_schema=False` 只是讓它們不出現在 OpenAPI 文件中；任何猜到路徑的人都能讀取。它們會暴露整個路由結構（包含查詢字串），設定 `include_content_preview=True` 時還會暴露每個快取回應的開頭。因此 `dependencies` 為必填：請傳入 `dependencies=[Depends(your_auth)]`，或將路由掛載在僅供內部使用的應用程式上。若本機或測試用的應用程式確實要保持開放，請傳入 `dependencies=[]` 明確選擇不設防護。
 
-可執行範例以環境變數中的權杖保護它們，未設定該變數時路由一律拒絕存取：
+[`examples/http_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/http_cache.py) 以環境變數中的權杖保護它們，未設定該變數時路由一律拒絕存取（程式碼註解為英文）：
 
 <!-- fmt:off -->
 ```python

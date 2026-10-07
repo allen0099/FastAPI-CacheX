@@ -9,6 +9,8 @@ Complete runnable example: [`examples/http_cache.py`](https://github.com/allen00
 
 ## The `@cache` decorator
 
+The routes of [`examples/http_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/http_cache.py):
+
 <!-- fmt:off -->
 ```python
 --8<-- "examples/http_cache.py:routes"
@@ -910,8 +912,8 @@ keys from a `key_builder` that does not use `build_cache_key()`.
 > the routes on an internal-only app. For a local or test app that should stay
 > open, pass `dependencies=[]` to opt out deliberately.
 
-The runnable example guards them with a token from an environment variable, and
-keeps them closed while the variable is unset:
+[`examples/http_cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/http_cache.py) guards them with a token from an environment variable,
+and keeps them closed while the variable is unset:
 
 <!-- fmt:off -->
 ```python

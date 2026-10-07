@@ -178,7 +178,7 @@ await session_manager.delete_session("session-abc123")
 
 If your application needs additional JWT claims, write your own serializer and pass an instance to `SessionManager` through its `token_serializer` argument. Any object with `to_string(token) -> str` and `from_string(token_str) -> SessionToken` methods (the `TokenSerializer` protocol) will do; `from_string()` should raise `ValueError` for invalid tokens, which `SessionManager` converts into `SessionTokenError`.
 
-The base class below does what the built-in `JWTTokenSerializer` does and leaves two hooks for the extra claims. It keeps its own copy of the settings, read from the public `SessionConfig` fields, instead of reaching into `JWTTokenSerializer`'s private attributes, which may change in any release. Like the built-in serializer, it follows `token.expires_at` in `to_string()`, so `exp` keeps up with sliding expiration.
+The base class below does what the built-in `JWTTokenSerializer` does and leaves two hooks for the extra claims. It keeps its own copy of the settings, read from the public `SessionConfig` fields, instead of reaching into `JWTTokenSerializer`'s private attributes, which may change in any release. Like the built-in serializer, it follows `token.expires_at` in `to_string()`, so `exp` keeps up with sliding expiration. It is the `serializer` part of [`examples/session_jwt_claims.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt_claims.py).
 
 <!-- fmt:off -->
 ```python
@@ -211,6 +211,8 @@ class ExtendedJWTSerializer(CustomClaimsJWTSerializer):
 
 ### Example 2: Adding Multi-Tenant Custom Claims
 
+From [`examples/session_jwt_claims.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt_claims.py):
+
 <!-- fmt:off -->
 ```python
 --8<-- "examples/session_jwt_claims.py:multi-tenant"
@@ -220,6 +222,8 @@ class ExtendedJWTSerializer(CustomClaimsJWTSerializer):
 ### Using a Custom Serializer
 
 #### Option 1: Pass it to `SessionManager` (recommended)
+
+From [`examples/session_jwt_claims.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/session_jwt_claims.py):
 
 <!-- fmt:off -->
 ```python

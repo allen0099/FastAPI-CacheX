@@ -271,6 +271,11 @@ its English comments on the Traditional Chinese site too; explain it in the
 text around the fence. `README.md` keeps its quick start inline, since PyPI and
 GitHub render it without snippets.
 
+GitHub renders a page under `docs/` without expanding the include: the reader
+sees the bare `--8<--` line. So the sentence before every fence names the
+example file and links to it on GitHub, in both languages (#394); the
+`README.md` says the same once for the whole `docs/` tree.
+
 ### Traditional Chinese translation
 
 A Traditional Chinese (`zh-TW`) translation is published at

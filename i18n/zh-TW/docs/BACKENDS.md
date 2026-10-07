@@ -146,7 +146,7 @@ BackendProxy.set(backend)
 
 ## 關閉後端 {#closing-a-backend}
 
-每個後端都有 `aclose()`，用來釋放它持有的連線與背景工作。請在關閉應用程式時，於 FastAPI lifespan 的結尾呼叫它：
+每個後端都有 `aclose()`，用來釋放它持有的連線與背景工作。請在關閉應用程式時，於 FastAPI lifespan 的結尾呼叫它，如 [`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py) 所示（程式碼註解為英文）：
 
 <!-- fmt:off -->
 ```python
