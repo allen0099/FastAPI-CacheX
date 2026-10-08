@@ -23,6 +23,7 @@ site_dir = "site-zh-TW"
 nav = [
   { "首頁" = "index.md" },
   { "遷移至 0.4.0" = "MIGRATING_0_4.md" },
+  { "何時使用" = "COMPARISON.md" },
   { "快取" = [
     { "HTTP 快取" = "HTTP_CACHING.md" },
     { "應用層快取" = "APP_CACHE.md" },
