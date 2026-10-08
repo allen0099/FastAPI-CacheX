@@ -19,6 +19,7 @@ site_dir = "site"
 nav = [
   { "Home" = "index.md" },
   { "Migrating to 0.4.0" = "MIGRATING_0_4.md" },
+  { "When to use it" = "COMPARISON.md" },
   { "Caching" = [
     { "HTTP caching" = "HTTP_CACHING.md" },
     { "Application cache" = "APP_CACHE.md" },

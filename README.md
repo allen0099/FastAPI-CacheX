@@ -107,6 +107,7 @@ while GitHub shows only its `--8<--` include line (the sentence before each
 block links the example file).
 
 - [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x
+- [When to use it](https://fastapi-cachex.readthedocs.io/en/latest/COMPARISON/) — how it compares with fastapi-cache2, cashews, aiocache and a CDN, and when another one fits better
 - [HTTP caching](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation and monitoring routes
 - [Application cache](https://fastapi-cachex.readthedocs.io/en/latest/APP_CACHE/) — `CacheManager`
 - [Backends](https://fastapi-cachex.readthedocs.io/en/latest/BACKENDS/) — choosing and configuring a backend, atomic primitives
