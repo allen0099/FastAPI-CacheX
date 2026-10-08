@@ -92,6 +92,8 @@ Points to know when comparing:
   per-user endpoint must put the user into the key itself.
 - Its latest release is from July 2024.
 
+To switch, see [Migrating from fastapi-cache2](MIGRATING_FROM_FASTAPI_CACHE2.md).
+
 ## cashews
 
 [cashews](https://github.com/Krukov/cashews) is a general caching toolkit for

@@ -105,6 +105,7 @@ block links the example file).
 
 - [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_5/) — what 0.5.0 removes and how to upgrade from 0.4.x
 - [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x
+- [Migrating from fastapi-cache2](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_FROM_FASTAPI_CACHE2/) — its API mapped onto this one, and the behaviour that differs
 - [When to use it](https://fastapi-cachex.readthedocs.io/en/latest/COMPARISON/) — how it compares with fastapi-cache2, cashews, aiocache and a CDN, and when another one fits better
 - [HTTP caching](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation and monitoring routes
 - [Application cache](https://fastapi-cachex.readthedocs.io/en/latest/APP_CACHE/) — `CacheManager`

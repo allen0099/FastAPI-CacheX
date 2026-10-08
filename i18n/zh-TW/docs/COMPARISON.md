@@ -56,6 +56,8 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 - 帶 `Authorization` 或 cookie 的請求和其他請求一樣被快取。每個使用者各自不同的端點必須自行把使用者放進快取鍵。
 - 它的最新版本發行於 2024 年 7 月。
 
+要轉換過來，請見[從 fastapi-cache2 遷移](MIGRATING_FROM_FASTAPI_CACHE2.md)。
+
 ## cashews {#cashews}
 
 [cashews](https://github.com/Krukov/cashews) 是非同步 Python 的通用快取工具組，是本頁幾個函式庫中功能最多的。

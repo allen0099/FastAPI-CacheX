@@ -88,6 +88,7 @@ async def report(cache: AppCache):
 
 - [遷移至 0.5.0](MIGRATING_0_5.md)：0.5.0 移除的功能，以及如何從 0.4.x 升級
 - [遷移至 0.4.0](MIGRATING_0_4.md)：0.4.0 的變更，以及如何從 0.3.x 升級
+- [從 fastapi-cache2 遷移](MIGRATING_FROM_FASTAPI_CACHE2.md)：它的 API 對應到本套件的哪些功能，以及行為上的差異
 - [何時使用](COMPARISON.md)：與 fastapi-cache2、cashews、aiocache 及 CDN 的比較，以及什麼時候其他選擇更合適
 - [HTTP 快取](HTTP_CACHING.md)：`@cache` 裝飾器、Cache-Control 指令、快取鍵、快取失效與監控路由
 - [應用層快取](APP_CACHE.md)：`CacheManager`

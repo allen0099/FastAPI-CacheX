@@ -20,6 +20,7 @@ nav = [
   { "Home" = "index.md" },
   { "Migrating to 0.5.0" = "MIGRATING_0_5.md" },
   { "Migrating to 0.4.0" = "MIGRATING_0_4.md" },
+  { "Migrating from fastapi-cache2" = "MIGRATING_FROM_FASTAPI_CACHE2.md" },
   { "When to use it" = "COMPARISON.md" },
   { "Caching" = [
     { "HTTP caching" = "HTTP_CACHING.md" },
