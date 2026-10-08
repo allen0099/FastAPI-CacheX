@@ -1,6 +1,7 @@
 """The non-abstract helpers on ``BaseCacheBackend`` must work for third-party
 subclasses that only implement the abstract methods."""
 
+import warnings
 from datetime import timedelta
 from typing import Any
 
@@ -214,24 +215,26 @@ class LegacyDictBackend(DictBackend):
 @pytest.mark.parametrize(
     ("call", "expected"),
     [
-        (lambda b, e: b.get_and_delete("k"), "entry"),
-        (lambda b, e: b.delete_if_equals("k", e), True),
-        (lambda b, e: b.delete_many(["k"]), 1),
+        (lambda b, e: b.get_and_delete("k"), None),
+        (lambda b, e: b.delete_if_equals("k", e), False),
+        (lambda b, e: b.delete_many(["k"]), 0),
     ],
     ids=["get_and_delete", "delete_if_equals", "delete_many"],
 )
-async def test_fallbacks_count_a_none_delete_as_removed_and_warn(
+async def test_fallbacks_count_a_none_delete_as_not_removed(
     call: Any, expected: object
 ) -> None:
-    """0.3.x semantics until 0.5.0: the key is gone, so the caller won."""
+    """Since 0.5.0 a ``None`` from ``delete`` is falsy like ``False``, with no warning.
+
+    0.4.x counted it as removed and warned (#421).
+    """
     backend = LegacyDictBackend()
     entry = CacheEntry(fingerprint="e", content=b"v")
     await backend.set("k", entry)
 
-    with pytest.warns(
-        FutureWarning, match=r"LegacyDictBackend\.delete\(\) returned None"
-    ):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         result = await call(backend, entry)
 
-    assert result == (entry if expected == "entry" else expected)
+    assert result == expected
     assert "k" not in backend.store

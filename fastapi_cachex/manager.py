@@ -91,8 +91,7 @@ def _validate_get_or_set_args(
 class CacheManager:
     """Provides convenient get/set/delete access to the configured cache backend.
 
-    Unlike the ``@cache`` decorator (which caches HTTP response bodies) or
-    ``StateManager``/``SessionManager`` (which manage OAuth state and sessions),
+    Unlike the ``@cache`` decorator (which caches HTTP response bodies),
     ``CacheManager`` is a thin, JSON-serializing wrapper for caching arbitrary
     application values under a dedicated key namespace.
     """

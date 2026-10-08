@@ -57,6 +57,5 @@ repos:
           - orjson
           - types-orjson
           - pymemcache>=4.0.0
-          - PyJWT>=2.9.0
         args: [--strict]
         exclude: ^(docs/|scripts/)

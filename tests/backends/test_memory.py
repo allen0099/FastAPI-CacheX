@@ -385,7 +385,7 @@ async def test_memory_backend_clear_pattern_separator_less_keys(
     memory_backend: MemoryBackend,
 ):
     """clear_pattern must also match keys with no http:v2|method|host|path format,
-    e.g. CacheManager ("cache:...") or StateManager ("oauth_state:...") keys.
+    e.g. CacheManager ("cache:...") or CacheLock ("lock:...") keys.
     """
     value1 = CacheEntry(fingerprint="e1", content=b"v1")
     value2 = CacheEntry(fingerprint="e2", content=b"v2")
@@ -754,8 +754,8 @@ async def test_write_only_use_starts_the_cleanup_task(
 ):
     """A backend that is only written to still needs its sweeper running.
 
-    Only `get` used to start it, so a write-mostly caller — `StateManager`
-    creates states without ever reading them back through `get` — accumulated
+    Only `get` used to start it, so a write-mostly caller (one that stores
+    entries without ever reading them back through `get`) accumulated
     expired entries with nothing to remove them.
     """
     backend = MemoryBackend(cleanup_interval=1)

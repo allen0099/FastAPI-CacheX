@@ -40,7 +40,7 @@ if not await lock.acquire():
 - **TTL 過期**：若工作花費的時間超過 `ttl` 且沒有續約，鎖的項目會在後端過期並被釋出。此時其他行程或容器就能在原本的程式碼仍在執行時取得這把鎖。原持有者之後呼叫 `extend()` 或 `release()` 會安全地回傳 `False`，而不會拋出錯誤。請選擇比預期工作時間更長的 `ttl`，或在長時間執行的操作中定期呼叫 `extend()`。
 - **TTL 續約（`extend`）**：`extend(ttl)` 只在鎖仍由這個持有者實例擁有時才更新鍵的 TTL，避免在已過期的鎖上發生競爭條件。
 - **每次取得使用一個實例**：單一 `CacheLock` 實例會追蹤自己目前的持有狀態。重複進入同一個 `CacheLock` 實例，或在並行的 task 之間共用它，都會拋出 `RuntimeError`。每次取得鎖時請建立新的 `CacheLock` 實例。
-- **命名空間**：鎖的鍵預設位於獨立的 `lock:` 前綴下（例如 `lock:report:123`），與 `cache:` 及 `oauth_state:` 分開。
+- **命名空間**：鎖的鍵預設位於獨立的 `lock:` 前綴下（例如 `lock:report:123`），與 `CacheManager` 的 `cache:` 分開。
 - **後端**：未傳入 `backend=` 時，鎖會使用以 `BackendProxy.set()` 註冊的後端。與 `@cache` 不同，它不會改用 `MemoryBackend`：尚未註冊任何後端時，`acquire()` 會拋出 `BackendNotFoundError`。鎖只能排除共用同一個後端的行程，因此每個行程各自一份的 `MemoryBackend` 只能協調同一個行程內的 task。
 
 > [!NOTE]

@@ -208,9 +208,8 @@ class MemoryBackend(BaseCacheBackend):
         """Store a response in the cache.
 
         Starting the sweeper here as well as in ``get`` matters for a
-        write-mostly user — `StateManager.create_state` only writes, say — who
-        would otherwise accumulate expired entries forever, since nothing else
-        ever starts it.
+        write-mostly user, who would otherwise accumulate expired entries
+        forever, since nothing else ever starts it.
 
         Args:
             key: Cache key

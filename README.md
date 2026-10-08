@@ -27,9 +27,6 @@ A high-performance caching extension for FastAPI: a server-side response cache w
   and `@cached` for a plain function, keyed on its arguments.
 - **Backends** — in-memory, Redis and Memcached, with atomic counters,
   one-shot values and locks.
-- **Sessions and OAuth state (deprecated)**: signed session tokens and one-time
-  OAuth state tokens. Both are deprecated in 0.4.0 and removed in 0.5.0; see
-  [where to move](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/#session-state-deprecated).
 
 ## Installation
 
@@ -38,15 +35,14 @@ uv add fastapi-cachex
 ```
 
 Everything in the core package works with the in-memory backend. The other
-backends and the optional session transports ship as extras:
+backends ship as extras:
 
 | Extra | Install | Pulls in | Needed for |
 |-------|---------|----------|------------|
 | `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`, `orjson` | `AsyncRedisCacheBackend` |
 | `memcached` | `uv add "fastapi-cachex[memcached]"` | `pymemcache` | `MemcachedBackend` |
-| `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
 
-Extras combine: `uv add "fastapi-cachex[redis,jwt]"`.
+Extras combine: `uv add "fastapi-cachex[redis,memcached]"`.
 
 ## Quick Start
 
@@ -96,7 +92,8 @@ async def report(cache: AppCache):
 > [!WARNING]
 > The default cache key carries no user identity. Cache authenticated endpoints
 > with `private=True` or a per-user key builder plus `cache_authorized=True`
-> (requests with `Authorization` or a session otherwise bypass the backend) — see
+> (requests with `Authorization` or non-empty `request.session` data otherwise
+> bypass the backend) — see
 > [Authenticated endpoints](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/#authenticated-endpoints).
 
 ## Documentation
@@ -106,13 +103,13 @@ a code block that includes one of the runnable examples renders on the site,
 while GitHub shows only its `--8<--` include line (the sentence before each
 block links the example file).
 
+- [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_5/) — what 0.5.0 removes and how to upgrade from 0.4.x
 - [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x
 - [When to use it](https://fastapi-cachex.readthedocs.io/en/latest/COMPARISON/) — how it compares with fastapi-cache2, cashews, aiocache and a CDN, and when another one fits better
 - [HTTP caching](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation and monitoring routes
 - [Application cache](https://fastapi-cachex.readthedocs.io/en/latest/APP_CACHE/) — `CacheManager`
 - [Backends](https://fastapi-cachex.readthedocs.io/en/latest/BACKENDS/) — choosing and configuring a backend, atomic primitives
 - [Distributed lock](https://fastapi-cachex.readthedocs.io/en/latest/LOCK/) — `CacheLock` for multi-process mutual exclusion
-- Deprecated, removed in 0.5.0: [Session management](https://fastapi-cachex.readthedocs.io/en/latest/SESSION/), [OAuth state](https://fastapi-cachex.readthedocs.io/en/latest/STATE/) (one-shot OAuth/CSRF state tokens) and [JWT claims](https://fastapi-cachex.readthedocs.io/en/latest/JWT_CLAIMS/)
 - [Cache flow](https://fastapi-cachex.readthedocs.io/en/latest/CACHE_FLOW/) — what happens inside a cached request
 - [Runnable examples](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples) — one complete app per feature, each covered by the test suite
 - [API reference](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)

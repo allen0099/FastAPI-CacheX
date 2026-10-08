@@ -101,12 +101,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
-      # The extras are redundant — the dev group already pins redis, pymemcache,
-      # PyJWT and orjson — but they are named anyway. This is the one job where
+      # The extras are redundant — the dev group already pins redis, pymemcache
+      # and orjson — but they are named anyway. This is the one job where
       # a missing backend package would turn the gate below into a formality,
       # so it does not rely on a dev-group entry staying put.
       - name: Sync dependencies
-        run: uv sync --locked --group dev --extra jwt --extra redis --extra memcached
+        run: uv sync --locked --group dev --extra redis --extra memcached
 
       # The gate. A release is the one run where a red test result arrives too
       # late to matter, so everything CI checks elsewhere is checked here too,

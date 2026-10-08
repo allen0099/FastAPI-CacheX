@@ -43,16 +43,7 @@ def _validate_vary(vary: Sequence[str] | None) -> list[str]:
 # Request headers whose values are credentials: ``vary`` keys on a digest of
 # the value instead of the value, so the key (shown by ``get_all_keys()``, the
 # monitoring routes and the Redis/Memcached keyspace) never holds a token.
-_HASHED_VARY_HEADERS = frozenset(
-    {
-        "authorization",
-        "proxy-authorization",
-        "cookie",
-        # The session token header (`SessionConfig.header_name`'s default).
-        # Inlined, so @cache does not import the deprecated session package.
-        "x-session-token",
-    }
-)
+_HASHED_VARY_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie"})
 _HASHED_VARY_MARKER = "sha256:"
 
 
@@ -62,9 +53,9 @@ def _vary_components(request: Request, names: Sequence[str]) -> list[str]:
     The name is lower-cased and the value trimmed; repeated header lines are
     joined with ``,`` as RFC 9110 §5.3 allows, and a missing header gives an
     empty value, the same as an empty one. For a credential header
-    (``Authorization``, ``Proxy-Authorization``, ``Cookie`` and the session
-    subsystem's ``X-Session-Token``) a non-empty value is replaced by
-    ``sha256:`` and the full hex SHA-256 of the joined value; an empty or
+    (``Authorization``, ``Proxy-Authorization`` and ``Cookie``) a non-empty
+    value is replaced by ``sha256:`` and the full hex SHA-256 of the joined
+    value; an empty or
     missing one stays ``name=``, so anonymous requests share one entry.
     """
     components = []

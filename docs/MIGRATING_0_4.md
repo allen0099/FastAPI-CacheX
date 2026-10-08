@@ -52,6 +52,9 @@ Every warning below names the setting to change and links to its issue. `FutureW
 
 `fastapi_cachex.session` and `fastapi_cachex.state` are deprecated in 0.4.0 and removed in 0.5.0 ([#420](https://github.com/allen0099/FastAPI-CacheX/issues/420), [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421)). FastAPI-CacheX is narrowing to HTTP and application caching. Session handling and OAuth state are security-sensitive, and libraries built for them maintain them better. 0.3.9 did not announce this, so both packages keep working throughout 0.4.x and get security fixes only.
 
+> [!NOTE]
+> 0.5.0 has removed both packages; see [Migrating to 0.5.0](MIGRATING_0_5.md#session-state-removed). The table below still applies.
+
 Importing either package, or reading one of their names from `fastapi_cachex` (such as `fastapi_cachex.SessionConfig`), emits a `FutureWarning` that points at the importing line. `import fastapi_cachex` on its own does not warn, and neither do `@cache`, `CacheManager`, `CacheLock` or the backends. The session and state names are no longer in `fastapi_cachex.__all__`, so `from fastapi_cachex import *` stops providing them. Until you migrate, import them by name.
 
 Where to move:
@@ -170,7 +173,7 @@ async def profile(session: AuthenticatedSession): ...
 
 ### SessionMiddleware {#session-middleware}
 
-The header-only `SessionMiddleware` is removed ([#69](https://github.com/allen0099/FastAPI-CacheX/issues/69)); 0.3.x already emits a `DeprecationWarning`. Use `FastAPICacheXSessionMiddleware`, which also reads the header and `Authorization: Bearer` token and adds `request.session`. It also sends a session cookie to clients that sent no token, so set the cookie options as in [Session cookie](#session-cookie). See [Session management](SESSION.md#migration-sessionmiddleware-fastapicachexsessionmiddleware).
+The header-only `SessionMiddleware` is removed ([#69](https://github.com/allen0099/FastAPI-CacheX/issues/69)); 0.3.x already emits a `DeprecationWarning`. Use `FastAPICacheXSessionMiddleware`, which also reads the header and `Authorization: Bearer` token and adds `request.session`. It also sends a session cookie to clients that sent no token, so set the cookie options as in [Session cookie](#session-cookie). See [Session management in the 0.4.1 docs](https://github.com/allen0099/FastAPI-CacheX/blob/v0.4.1/docs/SESSION.md#migration-sessionmiddleware-fastapicachexsessionmiddleware).
 
 ```python
 # Before
@@ -340,7 +343,7 @@ await backend.clear_pattern("GET|||*")  # "http:v2|GET|*" with 0.4.0's key forma
 
 ### delete() return value {#backend-delete}
 
-`BaseCacheBackend.delete()` returns whether a key was removed in 0.4.0, instead of `None` ([#71](https://github.com/allen0099/FastAPI-CacheX/issues/71)), and the non-atomic fallbacks on the base class use the result: `delete_many()` counts the keys that existed rather than the ones attempted, and `get_and_delete()` and `delete_if_equals()` let a caller win only if its delete removed the key. A third-party backend that still declares `-> None` fails type checking; at runtime the fallbacks count `None` as removed, as 0.3.x did, and emit a `FutureWarning`. 0.5.0 treats `None` as `False`. 0.3.9 does not warn: a subclass cannot declare `-> bool` there without a type error against the 0.3.x base class.
+`BaseCacheBackend.delete()` returns whether a key was removed in 0.4.0, instead of `None` ([#71](https://github.com/allen0099/FastAPI-CacheX/issues/71)), and the non-atomic fallbacks on the base class use the result: `delete_many()` counts the keys that existed rather than the ones attempted, and `get_and_delete()` and `delete_if_equals()` let a caller win only if its delete removed the key. A third-party backend that still declares `-> None` fails type checking; at runtime the fallbacks count `None` as removed, as 0.3.x did, and emit a `FutureWarning`. 0.5.0 treats `None` as `False` (see [Migrating to 0.5.0](MIGRATING_0_5.md#backend-delete-none)). 0.3.9 does not warn: a subclass cannot declare `-> bool` there without a type error against the 0.3.x base class.
 
 ```python
 # Before

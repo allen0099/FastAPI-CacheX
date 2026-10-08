@@ -1,6 +1,6 @@
 # Backends
 
-Every cache — HTTP responses, `CacheManager` values, sessions and OAuth states —
+Every cache — HTTP responses, `CacheManager` values and `CacheLock` locks —
 lives in one backend, registered once at startup with `BackendProxy.set()`.
 
 ## Choosing a backend
@@ -170,8 +170,8 @@ after about 0.25 s. The costs:
 - `socket_timeout` also bounds slow replies. Set both timeouts above your
   normal Redis latency, including for the largest entries you cache.
 - The settings apply to every command the backend sends, not only to `@cache`.
-  `CacheManager`, `StateManager`, `CacheLock` and sessions, which raise backend
-  errors instead of failing open, see those errors sooner.
+  `CacheManager` and `CacheLock`, which raise backend errors instead of
+  failing open, see those errors sooner.
 
 `RedisConfig` has no `retry` field, so pass it to the constructor.
 
@@ -336,7 +336,6 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   `exptime=-1` (retrying if another writer replaced the value in between). If
   writers keep replacing it for 16 attempts in a row, Memcached raises
   `CacheXError` rather than report the key as missing.
-  `StateManager.consume_state`, `StateManager.delete_state`,
   `CacheManager.delete` and `invalidate()` are built on it.
 - `set_if_absent(key, value, ttl=None) -> bool` — stores `value` only when
   `key` does not exist (an expired key counts as absent) and reports whether it
@@ -356,8 +355,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   same bytes with the new exptime (`TOUCH` takes no CAS token).
 - `set_if_equals(key, expected, value, ttl=None) -> bool` — stores `value` only
   while `key` still holds `expected`: a compare-and-set that fails if anything
-  changed, deleted or expired the key since the caller read it. Sessions save
-  through it (see [Session writes](MIGRATING_0_4.md#session-writes)). Memory
+  changed, deleted or expired the key since the caller read it. Memory
   compares under its lock, Redis compares in Python then runs a Lua script
   (`GET` compare + `SET`, with `EX` when `ttl` is set), and Memcached uses
   `GETS` + a `CAS` write of the new value.
@@ -365,15 +363,15 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 All six have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
 that only implements the abstract methods keeps working; override them to get
 real atomicity. The fallbacks rely on `delete()` returning whether the key held
-an entry; a `delete()` that still returns `None`, as in 0.3.x, warns and counts
-as removed until 0.5.0 (see [delete() return value](MIGRATING_0_4.md#backend-delete)).
+an entry; since 0.5.0 a `delete()` that still returns `None`, as in 0.3.x,
+counts as not removed (see [Backend `delete()` returning `None`](MIGRATING_0_5.md#backend-delete-none)).
 
 Complete runnable example: [`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py).
 
 ## TTL values
 
-Every `ttl` argument (`set`, `set_if_absent`, `set_if_equals`, `increment`, and the `CacheManager`,
-`CacheLock` and `StateManager` methods and defaults built on them) is either `None`, meaning
+Every `ttl` argument (`set`, `set_if_absent`, `set_if_equals`, `increment`, and the `CacheManager`
+and `CacheLock` methods and defaults built on them) is either `None`, meaning
 the entry never expires, or a number of seconds from 1 up to `MAX_TTL`
 (2**31 - 1, about 68 years), as an `int` or a `datetime.timedelta` of whole
 seconds (`timedelta(minutes=5)` is stored as `300`). The checks run before any

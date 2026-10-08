@@ -1,6 +1,6 @@
 # 後端 {#backends}
 
-所有快取，包括 HTTP 回應、`CacheManager` 的值、Session 與 OAuth state，都存放在同一個後端，並在啟動時以 `BackendProxy.set()` 註冊一次。
+所有快取，包括 HTTP 回應、`CacheManager` 的值與 `CacheLock` 的鎖，都存放在同一個後端，並在啟動時以 `BackendProxy.set()` 註冊一次。
 
 ## 選擇後端 {#choosing-a-backend}
 
@@ -113,7 +113,7 @@ BackendProxy.set(backend)
 
 - 不重試時，單一暫時性錯誤（例如指令執行到一半時連線被重設）會讓該指令失敗。`Retry(NoBackoff(), 1)` 會立即重試一次。
 - `socket_timeout` 也會限制較慢的回覆。兩個逾時都應設定得比你平常的 Redis 延遲高，包括快取最大項目時的延遲。
-- 這些設定適用於後端送出的所有指令，而不只是 `@cache`。`CacheManager`、`StateManager`、`CacheLock` 與 Session 不會 fail open，而是拋出後端錯誤，它們也會更早收到這些錯誤。
+- 這些設定適用於後端送出的所有指令，而不只是 `@cache`。`CacheManager` 與 `CacheLock` 不會 fail open，而是拋出後端錯誤，它們也會更早收到這些錯誤。
 
 `RedisConfig` 沒有 `retry` 欄位，因此請將它傳給建構函式。
 
@@ -199,11 +199,11 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 ```
 
 - `increment(key, delta=1, ttl=None) -> int`：記憶體後端在鎖內執行讀取—修改—寫入，Redis 執行 Lua 腳本（`EXISTS` + `INCRBY` + `EXPIRE`），Memcached 則使用 `ADD` + `INCR`/`DECR`（Memcached 的計數器最低停在 0）。Memcached 以整秒計時，因此 `ttl` 很短的新計數器可能在 `ADD` 與 `INCR` 之間就過期；此時 Memcached 會重試 `ADD` + `INCR`，從 `delta` 開始新的時間窗，只有連續 16 次嘗試計數器都消失時才拋出 `CacheXError`。計數器可透過 `get()` 讀到，形式為 fingerprint 為 `COUNTER_FINGERPRINT`、內容為十進位數值的 `CacheEntry`，因此 `delete`／`clear*` 與監控路由都會把它當成一般項目處理。對存放其他內容的鍵執行 increment，在每個後端上都會拋出 `CacheXError`，即使是本文剛好是數字的快取回應也一樣。以 `set(key, counter_entry(n))` 寫入的計數器在每個後端上都可以 increment，前提是 `n` 在伺服器計數器的範圍內：Redis 的計數器是 signed 64 位元，因此在它上面 `n` 必須介於 -2**63 到 2**63 - 1 之間；Memcached 的計數器沒有正負號，因此在它上面 `n` 必須介於 0 到 2**64 - 1 之間。對超出該範圍的計數器執行 increment 會拋出 `CacheXError`。記憶體後端與基底類別的後備實作同樣使用 signed 64 位元的範圍。在每個後端上，結果會超出範圍的 increment 都會拋出 `CacheXError`，並保持計數器不變（0.4.1 之前，Redis 會拋出它自己的 `ResponseError`，Memcached 會繞回成很小的數字，記憶體後端則會無限制地增長）。Memcached 是在 `INCR` 之後才偵測到繞回，再以第二個 `INCR` 復原，因此在兩者之間對同一個鍵執行的 increment 或 decrement 可能會看到繞回後的值。`delta` 必須是 signed 64 位元範圍內的 `int`，否則會在存取後端之前拋出 `TypeError` 或 `ValueError`。
-- `get_and_delete(key) -> CacheEntry | None`：記憶體後端在鎖內 pop，Redis 使用 `GETDEL`（伺服器 6.2 以上），Memcached 使用 `GETS` + `exptime=-1` 的 `CAS` 寫入（若中間有其他寫入者替換了值則會重試；連續 16 次都被替換時會拋出 `CacheXError`，而不是當成鍵不存在）。`StateManager.consume_state`、`StateManager.delete_state`、`CacheManager.delete` 與 `invalidate()` 都建立在它之上。
+- `get_and_delete(key) -> CacheEntry | None`：記憶體後端在鎖內 pop，Redis 使用 `GETDEL`（伺服器 6.2 以上），Memcached 使用 `GETS` + `exptime=-1` 的 `CAS` 寫入（若中間有其他寫入者替換了值則會重試；連續 16 次都被替換時會拋出 `CacheXError`，而不是當成鍵不存在）。`CacheManager.delete` 與 `invalidate()` 都建立在它之上。
 - `set_if_absent(key, value, ttl=None) -> bool`：只在 `key` 不存在時儲存 `value`（已過期的鍵視為不存在），並回報是否有寫入。記憶體後端在鎖內檢查，Redis 使用 `SET NX EX`，Memcached 使用 `ADD`。
 - `delete_if_equals(key, expected) -> bool`：只在 `key` 仍存放 `expected` 時才移除它，因此項目已過期的持有者無法釋放已被他人取得的鎖。請在你儲存的項目中放入唯一的權杖，並以同一個項目釋放。記憶體後端在鎖內比較，Redis 透過 Lua 腳本刪除，並在腳本中重新檢查先前比較過的值，Memcached 則使用 `GETS` + 一個讓項目立即過期的 `CAS` 寫入（傳統協定的 `DELETE` 不接受 CAS 權杖）。
 - `expire_if_equals(key, expected, ttl) -> bool`：只在 `key` 仍存放 `expected` 時，才把它的 TTL 更新為 `ttl` 秒，因此長時間執行的鎖持有者可以續約租期，而不會在鎖已過期時動到別人的鎖。記憶體後端在鎖內更新，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `EXPIRE`），Memcached 則使用 `GETS` + 以新 exptime 寫回相同位元組的 `CAS`（`TOUCH` 不接受 CAS 權杖）。
-- `set_if_equals(key, expected, value, ttl=None) -> bool`：只在 `key` 仍存放 `expected` 時才儲存 `value`。這是 compare-and-set：若呼叫端讀取之後有任何操作變更、刪除了該鍵，或它已過期，寫入就會失敗。Session 透過它儲存（見 [Session 寫入](MIGRATING_0_4.md#session-writes)）。記憶體後端在鎖內比較，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `SET`，設定了 `ttl` 時加上 `EX`），Memcached 則使用 `GETS` + 寫入新值的 `CAS`。
+- `set_if_equals(key, expected, value, ttl=None) -> bool`：只在 `key` 仍存放 `expected` 時才儲存 `value`。這是 compare-and-set：若呼叫端讀取之後有任何操作變更、刪除了該鍵，或它已過期，寫入就會失敗。記憶體後端在鎖內比較，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `SET`，設定了 `ttl` 時加上 `EX`），Memcached 則使用 `GETS` + 寫入新值的 `CAS`。
 
 這六個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。這些後備實作依賴 `delete()` 回傳鍵是否存有項目；仍像 0.3.x 一樣回傳 `None` 的 `delete()` 會發出警告，並在 0.5.0 之前視為已移除（見 [delete() 的回傳值](MIGRATING_0_4.md#backend-delete)）。
 
@@ -211,7 +211,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 
 ## TTL 值 {#ttl-values}
 
-每個 `ttl` 參數（`set`、`set_if_absent`、`set_if_equals`、`increment`，以及建立在它們之上的 `CacheManager`、`CacheLock` 與 `StateManager` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的秒數，型別可以是 `int` 或整數秒的 `datetime.timedelta`（`timedelta(minutes=5)` 會存成 `300`）。這些檢查都在存取後端之前進行：
+每個 `ttl` 參數（`set`、`set_if_absent`、`set_if_equals`、`increment`，以及建立在它們之上的 `CacheManager` 與 `CacheLock` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的秒數，型別可以是 `int` 或整數秒的 `datetime.timedelta`（`timedelta(minutes=5)` 會存成 `300`）。這些檢查都在存取後端之前進行：
 
 - 零、負值與更大的值會拋出 `ValueError`。底層儲存對 `0` 的解讀各不相同：Memcached 把 exptime `0` 視為「永不過期」，Redis 拒絕 `EX 0`，而行程內的 dict 則會立即讓項目過期。
 - `float`、`bool` 或其他型別會拋出 `TypeError`。float 過去只在記憶體後端上有效，而 `True` 會被當成一秒。帶有小數秒的 `timedelta`（`timedelta(seconds=1.5)`）會拋出 `ValueError`，因為每個後端都以整秒計時。
