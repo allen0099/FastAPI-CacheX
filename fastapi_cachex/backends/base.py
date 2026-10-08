@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import overload
 
-from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import HTTP_KEY_FORMAT_TAG
@@ -203,42 +202,20 @@ class BaseCacheBackend(ABC):
 
         The base implementation deletes one key at a time and counts the
         deletes that found an entry. The built-in backends override it with
-        batched deletes.
+        batched deletes. Like every fallback here, it reads ``delete``'s
+        result with ``bool()``, so a third-party ``delete`` that still
+        returns ``None`` (as before 0.4.0) counts as not removed.
         """
         count = 0
         for key in keys:
-            if await self._delete_reporting(key):
+            if await self.delete(key):
                 count += 1
         return count
-
-    async def _delete_reporting(self, key: str) -> bool:
-        """Call ``delete`` for the fallbacks, accepting a 0.3.x ``None`` result.
-
-        ``delete`` returned ``None`` before 0.4.0, and a third-party backend
-        written then may still do so. ``None`` counts as removed, as every
-        fallback assumed in 0.3.x, and warns: 0.5.0 will treat it as ``False``.
-        ``FutureWarning`` rather than ``DeprecationWarning``: the warning is
-        raised inside the package, where a ``DeprecationWarning`` is hidden by
-        default, and the change affects the application at runtime.
-        """
-        result: object = await self.delete(key)
-        if result is None:
-            warnings.warn(
-                f"{type(self).__name__}.delete() returned None. Since "
-                "fastapi-cachex 0.4.0 it must return whether the key was "
-                "removed; None is counted as removed until 0.5.0, which treats "
-                "it as False. See https://fastapi-cachex.readthedocs.io/en/"
-                "stable/MIGRATING_0_4/#backend-delete",
-                FutureWarning,
-                stacklevel=caller_stacklevel(),
-            )
-            return True
-        return bool(result)
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry.
 
-        Use this for one-shot values (OAuth states, grants, invalidation) where
+        Use this for one-shot values (tokens, grants, invalidation) where
         exactly one of several concurrent callers may win: every other caller
         sees ``None``.
 
@@ -250,7 +227,7 @@ class BaseCacheBackend(ABC):
             The entry that was stored under ``key``, or ``None`` if there was none
         """
         value = await self.get(key)
-        if value is None or not await self._delete_reporting(key):
+        if value is None or not await self.delete(key):
             # Absent, or another caller removed it between the get and the
             # delete: that caller got the entry.
             return None
@@ -306,7 +283,7 @@ class BaseCacheBackend(ABC):
         """
         if await self.get(key) != expected:
             return False
-        return await self._delete_reporting(key)
+        return bool(await self.delete(key))
 
     async def expire_if_equals(
         self, key: str, expected: CacheEntry, ttl: int | timedelta
@@ -346,9 +323,9 @@ class BaseCacheBackend(ABC):
         """Store ``value`` only while ``key`` still holds ``expected``.
 
         A compare-and-set: a caller that read ``expected`` earlier overwrites
-        it only if nothing changed, deleted or expired the key since. Sessions
-        save through it, so a request that loaded a session cannot bring it
-        back after another request deleted or invalidated it.
+        it only if nothing changed, deleted or expired the key since, so a
+        request that loaded a value cannot bring it back after another request
+        deleted or replaced it.
 
         The base implementation is a best-effort, NON-atomic get-compare-set
         fallback for third-party backends; the built-in backends override it

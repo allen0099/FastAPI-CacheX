@@ -10,7 +10,6 @@ from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
 
-from fastapi_cachex import SessionConfig
 from fastapi_cachex import add_routes
 from fastapi_cachex import build_cache_key
 from fastapi_cachex import invalidate
@@ -342,7 +341,6 @@ async def test_authorization_value_is_hashed_everywhere_the_key_shows() -> None:
         pytest.param("Authorization", "authorization", id="authorization"),
         pytest.param("AUTHORIZATION", "authorization", id="upper-case"),
         pytest.param("proxy-authorization", "proxy-authorization", id="proxy"),
-        pytest.param("X-Session-Token", "x-session-token", id="session-token"),
     ],
 )
 async def test_credential_headers_are_hashed_in_any_case(
@@ -357,10 +355,14 @@ async def test_credential_headers_are_hashed_in_any_case(
     ]
 
 
-def test_session_header_default_is_hashed() -> None:
-    default = SessionConfig.model_fields["header_name"].default
+async def test_x_session_token_is_an_ordinary_header() -> None:
+    """0.5.0 removed the session middleware, and with it its token header."""
+    client, _ = _credential_app(["X-Session-Token"], public=True)
 
-    assert default.lower() in _HASHED_VARY_HEADERS
+    client.get("/me", headers={"X-Session-Token": "abc"})
+
+    assert "x-session-token" not in _HASHED_VARY_HEADERS
+    assert await BackendProxy.get().get_all_keys() == [f"{ME_KEY}|x-session-token=abc"]
 
 
 async def test_cookie_is_hashed_with_repeated_lines_joined() -> None:
@@ -449,7 +451,7 @@ def test_documented_filter_silences_the_cookie_warning() -> None:
     "vary",
     [
         pytest.param(["Accept-Language"], id="accept-language"),
-        pytest.param(["Authorization", "X-Session-Token"], id="credentials"),
+        pytest.param(["Authorization", "Proxy-Authorization"], id="credentials"),
         pytest.param(["X-Cookie-Consent"], id="cookie-lookalike"),
     ],
 )

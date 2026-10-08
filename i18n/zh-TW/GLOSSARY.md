@@ -72,5 +72,6 @@
 | production | 正式環境 | |
 | callback（OAuth） | 回呼（callback） | |
 | extra | 保留 | 套件的選用依賴，例：`redis` extra |
+| (dependency) floor / lower bound | 最低版本 | 例：`fastapi` 的最低版本 |
 | deprecated | 已棄用 | |
 | breaking change | 破壞性變更 | |

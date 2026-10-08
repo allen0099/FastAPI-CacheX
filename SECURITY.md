@@ -13,9 +13,6 @@ the problem is still there.
 
 A fix ships as a new 0.4.x patch release; earlier releases are not patched.
 
-`fastapi_cachex.session` and `fastapi_cachex.state` are deprecated in 0.4.0.
-They get security fixes during 0.4.x and none after 0.5.0 removes them.
-
 ## Reporting a vulnerability
 
 Please do **not** open a public issue, pull request or discussion for a
@@ -27,9 +24,9 @@ reporting instead:
 The report is visible only to you and the maintainers until an advisory is
 published.
 
-Examples of what counts: a way to forge, reuse or steal a session or OAuth
-state token, to read or poison another client's cached response, or to make
-the library leak data it was given to protect. A bug in your own application's
+Examples of what counts: a way to read or poison another client's cached
+response, to make `@cache` store or serve a response it should have bypassed,
+or to make the library leak data it was given to protect. A bug in your own application's
 use of the library, or in a dependency that FastAPI-CacheX does not work around,
 is usually better reported to that project.
 
@@ -39,8 +36,8 @@ The more of these a report has, the faster it can be confirmed:
 
 - The FastAPI-CacheX version, the Python version, and the backend in use
   (memory, Redis or Memcached) with its server version.
-- The affected component, for example `@cache`, `CacheManager`, the session
-  middleware, `StateManager` or `CacheLock`, and the relevant configuration.
+- The affected component, for example `@cache`, `CacheManager` or
+  `CacheLock`, and the relevant configuration.
 - Steps to reproduce, ideally a minimal FastAPI app or test case.
 - What an attacker can achieve, and under which conditions.
 - Any fix or mitigation you have in mind.

@@ -22,6 +22,7 @@ site_dir = "site-zh-TW"
 # to the local file once its translation lands.
 nav = [
   { "首頁" = "index.md" },
+  { "遷移至 0.5.0" = "MIGRATING_0_5.md" },
   { "遷移至 0.4.0" = "MIGRATING_0_4.md" },
   { "何時使用" = "COMPARISON.md" },
   { "快取" = [
@@ -29,11 +30,6 @@ nav = [
     { "應用層快取" = "APP_CACHE.md" },
     { "後端" = "BACKENDS.md" },
     { "分散式鎖" = "LOCK.md" },
-  ] },
-  { "Session 與登入（已棄用）" = [
-    { "Session 管理" = "SESSION.md" },
-    { "OAuth state" = "STATE.md" },
-    { "JWT claims" = "JWT_CLAIMS.md" },
   ] },
   { "深入了解" = [
     { "快取流程" = "CACHE_FLOW.md" },

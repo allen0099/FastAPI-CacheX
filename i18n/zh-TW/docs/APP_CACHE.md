@@ -71,13 +71,13 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 - `get_or_set()` 預設使用 cache stampede 保護（`lock=True`，可針對單次呼叫或以 `CacheManager(lock=...)` 全域設定），避免多次並行未命中時同時執行 `factory`，若等待超時則具備直接計算的優雅降級回退。分散式鎖的鍵名格式為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
 - `get_or_set()` 在未命中與命中時都回傳經 JSON 解碼後的值（見 [JSON 往返](#json-round-trip)），因此兩條路徑的結果相同。
 - `add()` 只在鍵尚未被占用時寫入值，並回傳是否有寫入。檢查與寫入是同一個後端原子操作（`set_if_absent`），因此適合「每個鍵只做一次」的工作，例如 webhook 或電子郵件的去重。已過期的鍵視為未被占用；存放無法解碼之值的鍵則不算，即使 `get()` 會把它當成未命中。
-- 鍵預設位於獨立、以 `cache:` 為前綴的命名空間，與 HTTP 路由快取及 OAuth state 分開，因此 `clear()`／`clear_prefix()` 絕不會動到無關的快取項目。
-- 前綴是以單純的字串前綴比對。因此 `key_prefix="cache:"` 的 manager 也會清除 `key_prefix="cache:users:"` 的 manager 的項目；而空的 `key_prefix` 會讓 `clear()` 移除後端中的所有內容，包括 HTTP 回應、鎖、OAuth state 與 Session。請讓每個 manager 的前綴都不以另一個 manager 的前綴開頭。
+- 鍵預設位於獨立、以 `cache:` 為前綴的命名空間，與 HTTP 路由快取及鎖分開，因此 `clear()`／`clear_prefix()` 絕不會動到無關的快取項目。
+- 前綴是以單純的字串前綴比對。因此 `key_prefix="cache:"` 的 manager 也會清除 `key_prefix="cache:users:"` 的 manager 的項目；而空的 `key_prefix` 會讓 `clear()` 移除後端中的所有內容，包括 HTTP 回應與鎖。請讓每個 manager 的前綴都不以另一個 manager 的前綴開頭。
 - `clear_pattern(pattern)` 只把 `pattern` 當成 glob；`key_prefix` 一律照字面比對。前綴不含 glob 特殊字元（`*`、`?`、`[`、`]`、`\`）時，會把 `key_prefix + pattern` 交給後端的 `clear_pattern()`（Redis `SCAN MATCH`），`pattern` 採用後端的 glob 語法。前綴含有這些字元時（例如 `cache[1]:`），無法把它當成 glob 傳給後端，因此 `clear_pattern()` 會以 `get_all_keys()` 列出所有鍵，保留以該前綴開頭、且其餘部分以 `fnmatch.fnmatchcase` 符合 `pattern` 的鍵，再以 `delete_many()` 刪除。這在 Redis 上較慢，而且此時 `pattern` 採用 fnmatch 語法而非 Redis glob：區分大小寫、不支援反斜線跳脫，否定用 `[!a]` 而非 `[^a]`。以這種前綴建立 `CacheManager` 時會發出 `UserWarning`；請改用不含 `*?[]\` 的前綴以維持快速路徑。
 - `AppCache` 依賴項在第一次使用時會建立並註冊一個預設的 `CacheManager`；`CacheManagerProxy.set()` 則可改為註冊你自己的實例。
 
 > [!NOTE]
-> `CacheManager.clear()`／`clear_prefix()` 是以後端的 `get_all_keys()` 與 `delete_many()` 實作（在 Redis 上是每批 100 個鍵的 `DEL`）。由於 Memcached 不支援列舉鍵（見[後端](BACKENDS.md#memcached)），這些方法以及 `CacheManager.clear_pattern()` 在 Memcached 後端上不會有任何作用，只會回傳 0 並發出 `RuntimeWarning`；`get()`／`set()`／`add()`／`delete()`／`has()` 則照常運作。若需要大量清除，請使用 Redis 或記憶體後端。不要在 Memcached 上改用後端本身的 `clear()`：`MemcachedBackend.clear()` 會發出 `flush_all`，清空整台伺服器，包括 HTTP 回應、Session、鎖以及其他應用程式的鍵。
+> `CacheManager.clear()`／`clear_prefix()` 是以後端的 `get_all_keys()` 與 `delete_many()` 實作（在 Redis 上是每批 100 個鍵的 `DEL`）。由於 Memcached 不支援列舉鍵（見[後端](BACKENDS.md#memcached)），這些方法以及 `CacheManager.clear_pattern()` 在 Memcached 後端上不會有任何作用，只會回傳 0 並發出 `RuntimeWarning`；`get()`／`set()`／`add()`／`delete()`／`has()` 則照常運作。若需要大量清除，請使用 Redis 或記憶體後端。不要在 Memcached 上改用後端本身的 `clear()`：`MemcachedBackend.clear()` 會發出 `flush_all`，清空整台伺服器，包括 HTTP 回應、鎖以及其他應用程式的鍵。
 
 ### 在 Memcached 上讓一組鍵失效 {#group-invalidation-on-memcached}
 

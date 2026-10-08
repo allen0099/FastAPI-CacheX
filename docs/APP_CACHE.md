@@ -111,13 +111,12 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
   deduplication. An expired key counts as free; a key holding an undecodable
   value does not, even though `get()` treats it as a miss.
 - Keys live under their own `cache:`-prefixed namespace by default, separate from
-  the HTTP route cache and OAuth state, so `clear()`/`clear_prefix()` never touch
+  the HTTP route cache and the locks, so `clear()`/`clear_prefix()` never touch
   unrelated cache entries.
 - The prefix is matched as a plain string prefix. A manager with
   `key_prefix="cache:"` therefore also clears the entries of one with
   `key_prefix="cache:users:"`, and an empty `key_prefix` makes `clear()` remove
-  everything in the backend, including HTTP responses, locks, OAuth states and
-  sessions. Give each manager a prefix that does not start with another's.
+  everything in the backend, including HTTP responses and locks. Give each manager a prefix that does not start with another's.
 - `clear_pattern(pattern)` treats only `pattern` as a glob; `key_prefix` is
   always matched literally. With a prefix free of glob metacharacters
   (`*`, `?`, `[`, `]`, `\`) it hands `key_prefix + pattern` to the backend's
@@ -143,7 +142,7 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
 > `get()`/`set()`/`add()`/`delete()`/`has()` work normally. Use Redis or the in-memory
 > backend if you need bulk clearing. Do not fall back to the backend's own `clear()`
 > on Memcached: `MemcachedBackend.clear()` issues `flush_all` and wipes the whole
-> server, HTTP responses, sessions, locks and other applications' keys included.
+> server, HTTP responses, locks and other applications' keys included.
 
 ### Group invalidation on Memcached {#group-invalidation-on-memcached}
 

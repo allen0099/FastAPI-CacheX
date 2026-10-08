@@ -67,7 +67,7 @@ header, and the server-side cache behaves the same with or without them.
 | `no-cache`               | `no_cache=True`                          | :white_check_mark: | The handler runs on every request; the response is still stored, and a matching `If-None-Match` gets a 304.   |
 | `no-store`               | `no_store=True`                          | :white_check_mark: | Nothing is read or stored, and no ETag is set.                                                                  |
 | `private`                | `private=True`                           | :white_check_mark: | The backend is bypassed; the handler runs on every request, and ETag revalidation still works.                 |
-| `public`                 | `public=True`                            | :white_check_mark: | Requests with `Authorization` or a session still use the backend (otherwise they bypass it).                   |
+| `public`                 | `public=True`                            | :white_check_mark: | Requests with `Authorization` or session data still use the backend (otherwise they bypass it).               |
 | `immutable`              | `immutable=True`                         | :white_check_mark: | None (header only).                                                                                            |
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | None (header only).                                                                                            |
 | `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | None (header only): the server-side cache never serves stale content.                                         |
@@ -91,7 +91,7 @@ A bare `@cache()`, with neither `ttl` nor a directive, stores nothing and has no
 `Cache-Control` of its own. It adds an ETag and answers a matching
 `If-None-Match` with `304`, and keeps the handler's own `Cache-Control` (or
 sends none). As on every route, a response that sets a cookie or answers a
-request with `Authorization` or a session is still sent with `private`.
+request with `Authorization` or session data is still sent with `private`.
 
 ### The request's `Cache-Control` is ignored
 
@@ -167,7 +167,7 @@ meaningful for the `Range` request that produced it.
 
 A response that belongs to one caller is never stored either (#296):
 
-- **The request carries `Authorization` or a session.** As RFC 9111 §3.5 requires of a
+- **The request carries `Authorization` or session data.** As RFC 9111 §3.5 requires of a
   shared cache, the backend is bypassed, as with `private=True`: nothing is
   read or written, the handler runs, and `If-None-Match` is compared against
   the fresh render. The response (and a 304) is sent with `private` in place
@@ -185,15 +185,15 @@ A response that belongs to one caller is never stored either (#296):
   backend anyway, but its response to such a request still gets `private`
   (before 0.3.9 it was sent without it, #362); `private=True` routes send it
   already.
-  A request has a session when `FastAPICacheXSessionMiddleware` (deprecated,
-  removed in 0.5.0) loaded one for it, from the token header, a
-  bearer token or the session cookie, with or without a user, or when
-  `request.session` is non-empty under any session middleware, Starlette's
-  included. A token that resolves to no session (forged, expired) does not
-  count, so it cannot be used to skip the cache. Before 0.3.9 only
-  `Authorization` did, and a plain `@cache` on a route that read the session
-  served one visitor's response to the next (#319). The first bypass on each
-  route that reads the backend is logged at `WARNING` (see
+  A request has session data when `request.session` is non-empty under any
+  session middleware, such as Starlette's `SessionMiddleware`. An empty
+  session does not count, and neither does a `Cookie` header on its own.
+  Before 0.3.9 only `Authorization` did, and a plain `@cache` on a route
+  that read the session served one visitor's response to the next (#319).
+  Before 0.5.0 a session that the removed `FastAPICacheXSessionMiddleware`
+  loaded (from `X-Session-Token`, a bearer token or its cookie) counted too;
+  see [Migrating to 0.5.0](MIGRATING_0_5.md#cache-session-token).
+  The first bypass on each route that reads the backend is logged at `WARNING` (see
   [Requests with credentials](#requests-with-credentials)).
 - **The handler's own `Cache-Control` contains `private` or `no-store`**
   (as whole directives, in any case). The response is served but not stored,
@@ -329,12 +329,12 @@ methods get no header, as they get no `Cache-Control`.
 ### Requests with credentials
 
 A single-page app that sends `Authorization` on every request, or a site where
-every visitor has a session, gets no cache hits at all on a plain `@cache`
+every visitor has session data, gets no cache hits at all on a plain `@cache`
 route: each request bypasses the backend (see above). Pick the option that
 matches what the handler returns:
 
 - **The response is the same for every user** (a product list, a public
-  article): set `public=True`. Requests with `Authorization` or a session then
+  article): set `public=True`. Requests with `Authorization` or session data then
   read and write the backend like any other. Note that `public=True` also
   changes the header sent downstream to `Cache-Control: public, ...`, which
   tells a CDN or reverse proxy that it may store the response even though the
@@ -352,7 +352,7 @@ So that a 0% hit rate does not go unnoticed, the first request that bypasses
 a route because of a credential is logged once at `WARNING` on the
 `fastapi_cachex.cache` logger, naming the route template (such as
 `'/items/{item_id}'`), the credential that caused it (an `Authorization`
-header, a session token, or non-empty `request.session` data) and the two
+header or non-empty `request.session` data) and the two
 options above:
 
 ```text
@@ -429,8 +429,8 @@ async def report():
     return await build_report()
 ```
 
-This only covers `@cache`. `invalidate()`, `CacheManager`, `CacheLock` and the
-deprecated `StateManager` and sessions still raise backend errors to the caller.
+This only covers `@cache`. `invalidate()`, `CacheManager` and `CacheLock` still
+raise backend errors to the caller.
 
 ## Cache keys
 
@@ -625,8 +625,7 @@ the response already lists (in any case) is not repeated, and a response with
 The key is not secret: it is listed by `get_all_keys()`, shown by the
 `/cached-records` and `/cached-hits` monitoring routes, and stored as-is in the
 Redis or Memcached keyspace. So for the headers that carry credentials,
-`Authorization`, `Proxy-Authorization`, `Cookie` and `X-Session-Token` (the
-deprecated session subsystem's default `header_name`), matched in any case, the component
+`Authorization`, `Proxy-Authorization` and `Cookie`, matched in any case, the component
 holds the full hex SHA-256 of the value (trimmed and joined as above) instead
 of the value:
 
@@ -638,13 +637,13 @@ The same token always gives the same digest, so it hits its own entry, and two
 tokens give two entries. A missing or empty credential header is not hashed:
 it stays `authorization=`, like any other empty header, so every anonymous
 caller shares one entry and the key still shows that it is the anonymous one.
-Every other header, including a session header configured under another name,
-stays readable; if yours carries a secret, key on it through a `key_builder`
+Every other header, including a custom token header such as `X-Session-Token`
+(hashed before 0.5.0), stays readable; if yours carries a secret, key on it through a `key_builder`
 (hashing it yourself) rather than `vary`.
 
 `vary=["Authorization"]` does not lift the rule for authorized requests (see
 [Authenticated endpoints](#authenticated-endpoints)): a request with an
-`Authorization` header (or a session) still bypasses the backend unless the route is
+`Authorization` header (or session data) still bypasses the backend unless the route is
 `public=True` or passes `cache_authorized=True`. Without either, only the
 anonymous `authorization=` entry is ever stored.
 
@@ -662,7 +661,7 @@ these is what you want instead:
 - `private=True`, which leaves per-visitor responses to the browser cache.
 
 The per-caller rules still apply: a request carrying a cookie is cached (only
-`Authorization` or a session triggers the bypass), but a response that sets a cookie is
+`Authorization` or session data triggers the bypass), but a response that sets a cookie is
 never stored and is sent with `private`, so a route that refreshes a session
 cookie on every request stores nothing. If you do want `vary=["Cookie"]`,
 silence the warning with the standard filter, before the module defining the
@@ -674,7 +673,7 @@ import warnings
 warnings.filterwarnings("ignore", message="cache vary on Cookie")
 ```
 
-`Authorization` and `X-Session-Token` in `vary` do not warn: they are also one
+`Authorization` and `Proxy-Authorization` in `vary` do not warn: they are also one
 entry per caller, but that is what `vary` with `cache_authorized=True` is for,
 and a caller keeps the same token across many requests, unlike an arbitrary
 bundle of cookies.
@@ -729,9 +728,10 @@ request it is given selects.
 >    do want a server-side cache per user. Leave `private` unset: `private=True`
 >    bypasses the backend, so the key builder would never be used. Pass
 >    `cache_authorized=True` when callers authenticate with an `Authorization`
->    header or a session: without it such requests bypass the backend too.
+>    header or session data: without it such requests bypass the backend too.
 >
-> If callers authenticate with a cookie that no session middleware loads (for
+> If callers authenticate with a cookie that no session middleware loads into
+> `request.session` (for
 > example a token cookie your own dependency reads), nothing triggers the bypass: a plain `@cache` serves the first
 > caller's response to everyone, so use one of the two options above.
 
@@ -763,14 +763,14 @@ def per_user_key(request: Request) -> str:
 @cache(ttl=60, key_builder=per_user_key, cache_authorized=True)
 async def my_dashboard(user: CurrentUser):
     # Sent as `Cache-Control: private, max-age=60` to a request with
-    # `Authorization` or a session: only this backend and the user's browser
+    # `Authorization` or session data: only this backend and the user's browser
     # keep a copy.
     return build_dashboard(user)
 ```
 
 The per-user entry lives only in your backend. A shared cache in front of the
 app (CDN, reverse proxy) sees only the URL, so every response to a request with
-`Authorization` or a session carries `private`, even with `cache_authorized`.
+`Authorization` or session data carries `private`, even with `cache_authorized`.
 When identity comes from a cookie of your own instead, nothing marks the
 request as credentialed and the decorator's header goes out unchanged: set
 `private=True` (option 1), or send `Vary: Cookie` yourself if a shared cache
@@ -792,7 +792,7 @@ may store it.
 
 The key builder runs only when `@cache` reads or writes the backend, so it is not
 called for `no_store=True`, `private=True`, routes without a `ttl`, or requests
-with `Authorization` or a session on a route without `public=True` or `cache_authorized=True`. Before 0.3.8
+with `Authorization` or session data on a route without `public=True` or `cache_authorized=True`. Before 0.3.8
 it was, only to feed a debug log. Keep it free of side effects.
 
 The key builder must be a sync function that returns a `str`; it is called
@@ -954,7 +954,7 @@ add_routes(
   `media_type` instead.
 
 Both routes list only route entries (keys in the `http:v2|method|host|path|query`
-format); `CacheManager`, session, state and lock keys are skipped, and so are
+format); `CacheManager` and lock keys are skipped, and so are
 keys from a `key_builder` that does not use `build_cache_key()`.
 
 > [!WARNING]

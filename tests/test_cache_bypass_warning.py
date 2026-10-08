@@ -20,10 +20,6 @@ from starlette.middleware.sessions import (
 
 from fastapi_cachex import cache
 from fastapi_cachex.cache import _BypassWarner
-from fastapi_cachex.session.config import SessionConfig
-from fastapi_cachex.session.manager import SessionManager
-from fastapi_cachex.session.middleware import FastAPICacheXSessionMiddleware
-from fastapi_cachex.session.models import SessionUser
 
 _LOGGER = "fastapi_cachex.cache"
 _BEARER = "Bearer secret-bearer-value-326"
@@ -37,19 +33,10 @@ def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     ]
 
 
-def _app(
-    manager: SessionManager | None = None,
-    config: SessionConfig | None = None,
-    **cache_kwargs: object,
-) -> FastAPI:
+def _app(**cache_kwargs: object) -> FastAPI:
     """Two cached routes and a route that writes the session."""
     app = FastAPI()
-    if manager is not None:
-        app.add_middleware(
-            FastAPICacheXSessionMiddleware, session_manager=manager, config=config
-        )
-    else:
-        app.add_middleware(StarletteSessionMiddleware, secret_key="s" * 32)
+    app.add_middleware(StarletteSessionMiddleware, secret_key="s" * 32)
 
     @app.get("/products")
     @cache(ttl=60, **cache_kwargs)  # type: ignore[arg-type]
@@ -69,48 +56,28 @@ def _app(
     return app
 
 
-async def _token(manager: SessionManager) -> str:
-    _session, token = await manager.create_session(user=SessionUser(user_id="alice"))
-    return token
-
-
-async def _client(
-    kind: str, manager: SessionManager, config: SessionConfig, **cache_kwargs: object
-) -> tuple[TestClient, str]:
+def _client(kind: str, **cache_kwargs: object) -> tuple[TestClient, str]:
     """A client whose every request carries credential ``kind``, and its secret."""
     if kind == "authorization":
-        app = _app(manager, config, **cache_kwargs)
+        app = _app(**cache_kwargs)
         return TestClient(app, headers={"Authorization": _BEARER}), _BEARER
-    if kind == "session header":
-        token = await _token(manager)
-        app = _app(manager, config, **cache_kwargs)
-        return TestClient(app, headers={config.header_name: token}), token
-    if kind == "session cookie":
-        token = await _token(manager)
-        app = _app(manager, config, **cache_kwargs)
-        return TestClient(app, cookies={config.cookie_name: token}), token
     # Starlette's cookie session with data in it.
-    client = TestClient(_app(None, None, **cache_kwargs))
+    client = TestClient(_app(**cache_kwargs))
     client.get("/add")
     return client, client.cookies["session"]
 
 
 _KINDS = {
     "authorization": "an Authorization header",
-    "session header": "a session token (header, bearer token or cookie)",
-    "session cookie": "a session token (header, bearer token or cookie)",
     "session data": "non-empty session data (request.session)",
 }
 
 
 @pytest.mark.parametrize("kind", list(_KINDS))
 async def test_first_bypass_warns_once(
-    kind: str,
-    manager: SessionManager,
-    config: SessionConfig,
-    caplog: pytest.LogCaptureFixture,
+    kind: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    client, secret = await _client(kind, manager, config)
+    client, secret = _client(kind)
 
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
         for _ in range(3):
@@ -126,15 +93,13 @@ async def test_first_bypass_warns_once(
     # Every request still gets its DEBUG line.
     debug = [r for r in caplog.records if "bypassing the backend" in r.getMessage()]
     assert len(debug) == 3
-    # Neither the token nor the header value reaches any log line.
+    # Neither the session cookie nor the header value reaches any log line.
     assert secret not in caplog.text
     assert "secret-bearer-value" not in caplog.text
 
 
-async def test_each_route_warns(
-    manager: SessionManager, config: SessionConfig, caplog: pytest.LogCaptureFixture
-) -> None:
-    client, _ = await _client("authorization", manager, config)
+async def test_each_route_warns(caplog: pytest.LogCaptureFixture) -> None:
+    client, _ = _client("authorization")
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         for _ in range(2):
@@ -148,10 +113,10 @@ async def test_each_route_warns(
 
 
 async def test_route_is_named_by_its_template(
-    manager: SessionManager, config: SessionConfig, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Distinct paths of one route warn once, and no requested path is logged."""
-    client, _ = await _client("authorization", manager, config)
+    client, _ = _client("authorization")
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         for item_id in range(5):
@@ -162,33 +127,28 @@ async def test_route_is_named_by_its_template(
     assert "/items/3" not in warning
 
 
-async def test_each_credential_kind_warns(
-    manager: SessionManager, config: SessionConfig, caplog: pytest.LogCaptureFixture
-) -> None:
-    token = await _token(manager)
-    client = TestClient(_app(manager, config))
+async def test_each_credential_kind_warns(caplog: pytest.LogCaptureFixture) -> None:
+    client = TestClient(_app())
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         for _ in range(2):
             client.get("/products", headers={"Authorization": _BEARER})
-            client.get("/products", headers={config.header_name: token})
+        client.get("/add")
+        for _ in range(2):
+            client.get("/products")
 
     warnings = _warnings(caplog)
     assert len(warnings) == 2
     assert _KINDS["authorization"] in warnings[0]
-    assert _KINDS["session header"] in warnings[1]
+    assert _KINDS["session data"] in warnings[1]
 
 
 @pytest.mark.parametrize("opt_in", ["public", "cache_authorized"])
 @pytest.mark.parametrize("kind", list(_KINDS))
 async def test_opted_in_routes_do_not_warn(
-    opt_in: str,
-    kind: str,
-    manager: SessionManager,
-    config: SessionConfig,
-    caplog: pytest.LogCaptureFixture,
+    opt_in: str, kind: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    client, _ = await _client(kind, manager, config, **{opt_in: True})
+    client, _ = _client(kind, **{opt_in: True})
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         for _ in range(2):
@@ -198,9 +158,9 @@ async def test_opted_in_routes_do_not_warn(
 
 
 async def test_requests_without_credentials_do_not_warn(
-    manager: SessionManager, config: SessionConfig, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    client = TestClient(_app(manager, config))
+    client = TestClient(_app(), cookies={"theme": "dark"})
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         for _ in range(3):

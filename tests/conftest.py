@@ -4,8 +4,6 @@ import logging
 import os
 import time
 from collections.abc import AsyncGenerator
-from datetime import datetime
-from datetime import tzinfo
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,12 +19,6 @@ from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.backends.redis import AsyncRedisCacheBackend
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import BackendProxy
-from fastapi_cachex.session import manager as session_manager
-from fastapi_cachex.session import models as session_models
-from fastapi_cachex.session.proxy import SessionManagerProxy
-from fastapi_cachex.state import manager as state_manager
-from fastapi_cachex.state import models as state_models
-from fastapi_cachex.state.proxy import StateManagerProxy
 
 _PENDING_TASK_MESSAGE = "Task was destroyed but it is pending!"
 
@@ -84,7 +76,7 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
 
 # Every proxy is a process-wide singleton, so whatever one test installs is
 # still installed for the next one.
-_PROXIES = (CacheManagerProxy, SessionManagerProxy, StateManagerProxy)
+_PROXIES = (CacheManagerProxy,)
 
 
 @pytest_asyncio.fixture
@@ -183,9 +175,9 @@ async def close_network_clients(
 def reset_proxy_singletons():
     """Clear the remaining proxy singletons around every test.
 
-    `BackendProxy` has `setup_default_backend`; the other three had nothing,
-    so a test that failed before reaching its own cleanup left its manager
-    installed for every test that ran afterwards.
+    `BackendProxy` has `setup_default_backend`; `CacheManagerProxy` had
+    nothing, so a test that failed before reaching its own cleanup left its
+    manager installed for every test that ran afterwards.
     """
     for proxy in _PROXIES:
         proxy.set(None)
@@ -228,19 +220,11 @@ class Clock:
 def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     """Point every time read behind a TTL or expiry check at a `Clock`.
 
-    That is `time.time()` in the memory backend and `datetime.now()` in the
-    session and state modules. PyJWT and live servers keep real time.
+    That is `time.time()` in the memory backend and the monotonic clock and
+    sleep of `CacheManager`. Live servers keep real time.
     """
     clock = Clock()
-
-    class ClockDatetime(datetime):
-        @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:  # type: ignore[override]
-            return datetime.fromtimestamp(clock.now, tz)
-
     monkeypatch.setattr(memory, "time", SimpleNamespace(time=clock.time))
     monkeypatch.setattr(manager, "_monotonic", clock.monotonic)
     monkeypatch.setattr(manager, "_sleep", clock.sleep)
-    for module in (session_manager, session_models, state_manager, state_models):
-        monkeypatch.setattr(module, "datetime", ClockDatetime)
     return clock

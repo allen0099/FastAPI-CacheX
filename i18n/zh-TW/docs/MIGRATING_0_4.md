@@ -52,6 +52,9 @@ filterwarnings = [
 
 `fastapi_cachex.session` 與 `fastapi_cachex.state` 在 0.4.0 已棄用，並將在 0.5.0 移除（[#420](https://github.com/allen0099/FastAPI-CacheX/issues/420)、[#421](https://github.com/allen0099/FastAPI-CacheX/issues/421)）。FastAPI-CacheX 的範圍將收斂到 HTTP 快取與應用層快取。Session 處理與 OAuth state 都牽涉安全性，由專門的函式庫維護會更好。由於 0.3.9 沒有預告這項變更，兩個套件在整個 0.4.x 期間都能繼續使用，但只會收到安全性修正。
 
+> [!NOTE]
+> 0.5.0 已移除這兩個套件，請參閱[遷移至 0.5.0](MIGRATING_0_5.md#session-state-removed)。下方的遷移方向表仍然適用。
+
 匯入其中任一個套件，或從 `fastapi_cachex` 讀取它們的名稱（例如 `fastapi_cachex.SessionConfig`），都會發出 `FutureWarning`，並指向匯入的那一行。單純 `import fastapi_cachex` 不會發出警告，`@cache`、`CacheManager`、`CacheLock` 與各後端也不會。Session 與 state 的名稱已不在 `fastapi_cachex.__all__` 中，因此 `from fastapi_cachex import *` 不再提供它們。遷移完成前，請以名稱個別匯入。
 
 遷移方向：
@@ -170,7 +173,7 @@ async def profile(session: AuthenticatedSession): ...
 
 ### SessionMiddleware {#session-middleware}
 
-只使用標頭的 `SessionMiddleware` 會被移除（[#69](https://github.com/allen0099/FastAPI-CacheX/issues/69)）；0.3.x 已經會發出 `DeprecationWarning`。請改用 `FastAPICacheXSessionMiddleware`，它同樣讀取標頭與 `Authorization: Bearer` 權杖，並提供 `request.session`。它也會對沒有送出權杖的用戶端送出 Session Cookie，因此請依照 [Session Cookie](#session-cookie) 設定 Cookie 選項。另請參閱 [Session 管理](SESSION.md#migration-sessionmiddleware-fastapicachexsessionmiddleware)。
+只使用標頭的 `SessionMiddleware` 會被移除（[#69](https://github.com/allen0099/FastAPI-CacheX/issues/69)）；0.3.x 已經會發出 `DeprecationWarning`。請改用 `FastAPICacheXSessionMiddleware`，它同樣讀取標頭與 `Authorization: Bearer` 權杖，並提供 `request.session`。它也會對沒有送出權杖的用戶端送出 Session Cookie，因此請依照 [Session Cookie](#session-cookie) 設定 Cookie 選項。另請參閱 [0.4.1 文件中的 Session 管理](https://github.com/allen0099/FastAPI-CacheX/blob/v0.4.1/i18n/zh-TW/docs/SESSION.md#migration-sessionmiddleware-fastapicachexsessionmiddleware)。
 
 ```python
 # 修改前
@@ -340,7 +343,7 @@ await backend.clear_pattern("GET|||*")  # 在 0.4.0 的鍵格式下為 "http:v2|
 
 ### delete() 的回傳值 {#backend-delete}
 
-0.4.0 起 `BaseCacheBackend.delete()` 回傳是否移除了鍵，而不是 `None`（[#71](https://github.com/allen0099/FastAPI-CacheX/issues/71)），基底類別的非原子性後備實作也會使用這個結果：`delete_many()` 改為計算實際存在的鍵，而不是嘗試刪除的鍵；`get_and_delete()` 與 `delete_if_equals()` 只在呼叫者的刪除確實移除了鍵時才算成功。仍宣告 `-> None` 的第三方後端無法通過型別檢查；執行時，後備實作會像 0.3.x 一樣把 `None` 視為已移除，並發出 `FutureWarning`。0.5.0 會把 `None` 視為 `False`。0.3.9 不會警告：子類別在該版本無法宣告 `-> bool` 而不與 0.3.x 的基底類別產生型別錯誤。
+0.4.0 起 `BaseCacheBackend.delete()` 回傳是否移除了鍵，而不是 `None`（[#71](https://github.com/allen0099/FastAPI-CacheX/issues/71)），基底類別的非原子性後備實作也會使用這個結果：`delete_many()` 改為計算實際存在的鍵，而不是嘗試刪除的鍵；`get_and_delete()` 與 `delete_if_equals()` 只在呼叫者的刪除確實移除了鍵時才算成功。仍宣告 `-> None` 的第三方後端無法通過型別檢查；執行時，後備實作會像 0.3.x 一樣把 `None` 視為已移除，並發出 `FutureWarning`。0.5.0 會把 `None` 視為 `False`（請參閱[遷移至 0.5.0](MIGRATING_0_5.md#backend-delete-none)）。0.3.9 不會警告：子類別在該版本無法宣告 `-> bool` 而不與 0.3.x 的基底類別產生型別錯誤。
 
 ```python
 # 修改前

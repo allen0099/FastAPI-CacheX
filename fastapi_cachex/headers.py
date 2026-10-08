@@ -1,4 +1,4 @@
-"""Response header helpers shared by ``@cache`` and the session middleware."""
+"""Response header helpers for ``@cache``."""
 
 from starlette.datastructures import MutableHeaders
 
