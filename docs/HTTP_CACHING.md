@@ -625,7 +625,8 @@ the response already lists (in any case) is not repeated, and a response with
 The key is not secret: it is listed by `get_all_keys()`, shown by the
 `/cached-records` and `/cached-hits` monitoring routes, and stored as-is in the
 Redis or Memcached keyspace. So for the headers that carry credentials,
-`Authorization`, `Proxy-Authorization` and `Cookie`, matched in any case, the component
+`Authorization`, `Proxy-Authorization`, `Cookie` and `X-Session-Token` (the
+token header of the session middleware removed in 0.5.0), matched in any case, the component
 holds the full hex SHA-256 of the value (trimmed and joined as above) instead
 of the value:
 
@@ -637,8 +638,8 @@ The same token always gives the same digest, so it hits its own entry, and two
 tokens give two entries. A missing or empty credential header is not hashed:
 it stays `authorization=`, like any other empty header, so every anonymous
 caller shares one entry and the key still shows that it is the anonymous one.
-Every other header, including a custom token header such as `X-Session-Token`
-(hashed before 0.5.0), stays readable; if yours carries a secret, key on it through a `key_builder`
+Every other header, including a custom token header such as `X-API-Key`,
+stays readable; if yours carries a secret, key on it through a `key_builder`
 (hashing it yourself) rather than `vary`.
 
 `vary=["Authorization"]` does not lift the rule for authorized requests (see
@@ -673,7 +674,7 @@ import warnings
 warnings.filterwarnings("ignore", message="cache vary on Cookie")
 ```
 
-`Authorization` and `Proxy-Authorization` in `vary` do not warn: they are also one
+`Authorization` and `X-Session-Token` in `vary` do not warn: they are also one
 entry per caller, but that is what `vary` with `cache_authorized=True` is for,
 and a caller keeps the same token across many requests, unlike an arbitrary
 bundle of cookies.

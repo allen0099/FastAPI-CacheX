@@ -27,7 +27,7 @@ filterwarnings = [
 |--------|-------|-----------------|---------|
 | Sessions and OAuth state removed | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | `FutureWarning` | [Sessions and OAuth state](#session-state-removed) |
 | `jwt` extra removed | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | No | [jwt extra](#jwt-extra) |
-| `@cache` no longer recognises the session middleware or `X-Session-Token` | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | No | [Session tokens and @cache](#cache-session-token) |
+| `@cache` no longer recognises sessions loaded by the removed middleware | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | No | [Session tokens and @cache](#cache-session-token) |
 | `itsdangerous` and `starlette` are no longer direct requirements; lower `fastapi` floor | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | No | [Dependencies](#dependencies) |
 | A backend `delete()` that returns `None` counts as not removed | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | `FutureWarning` | [delete() returning None](#backend-delete-none) |
 
@@ -70,12 +70,11 @@ uv add "fastapi-cachex[redis]" PyJWT
 What 0.4.x also counted, and 0.5.0 no longer does:
 
 - A session that `FastAPICacheXSessionMiddleware` loaded, from its `X-Session-Token` header, a bearer token or its cookie, even with no data in it. The middleware is gone, so the check went with it.
-- `X-Session-Token` in `@cache(vary=[...])` was keyed on a SHA-256 digest of the value, like `Authorization`, `Proxy-Authorization` and `Cookie`. It is an ordinary header now, so its value appears in the key as sent.
 
-A `Cookie` header on its own still does not bypass the cache, as before. If your replacement for the session middleware identifies callers by a header or cookie that `@cache` cannot see, a plain `@cache` on such a route serves the first caller's response to everyone. Use `private=True`, or a `key_builder` that puts the verified identity into the key together with `cache_authorized=True`, and, for a custom token header, key on it through the `key_builder` (hashing it yourself) rather than `vary`:
+A `Cookie` header on its own still does not bypass the cache, as before. `X-Session-Token` in `@cache(vary=[...])` is still keyed on a SHA-256 digest of its value, like `Authorization`, `Proxy-Authorization` and `Cookie`, so keys do not change. If your replacement for the session middleware identifies callers by a header or cookie that `@cache` cannot see, a plain `@cache` on such a route serves the first caller's response to everyone. Use `private=True`, or a `key_builder` that puts the verified identity into the key together with `cache_authorized=True`, and, for a custom token header, key on it through the `key_builder` (hashing it yourself) rather than `vary`:
 
 ```python
-# Before: X-Session-Token was hashed, and a loaded session bypassed the backend
+# Before: a session the middleware loaded from X-Session-Token bypassed the backend
 @cache(ttl=60, vary=["X-Session-Token"], cache_authorized=True)
 
 # After: hash the token yourself, or better, key on the verified user id
