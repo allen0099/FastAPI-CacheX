@@ -27,7 +27,7 @@ filterwarnings = [
 |------|-------|----------------|------|
 | 移除 Session 與 OAuth state | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | `FutureWarning` | [Session 與 OAuth state](#session-state-removed) |
 | 移除 `jwt` extra | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | 否 | [jwt extra](#jwt-extra) |
-| `@cache` 不再辨識 Session 中介軟體與 `X-Session-Token` | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | 否 | [Session 權杖與 @cache](#cache-session-token) |
+| `@cache` 不再辨識已移除的中介軟體所載入的 Session | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | 否 | [Session 權杖與 @cache](#cache-session-token) |
 | `itsdangerous` 與 `starlette` 不再是直接依賴；`fastapi` 的最低版本降低 | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | 否 | [依賴套件](#dependencies) |
 | 後端 `delete()` 回傳 `None` 時視為未移除 | [#421](https://github.com/allen0099/FastAPI-CacheX/issues/421) | `FutureWarning` | [delete() 回傳 None](#backend-delete-none) |
 
@@ -70,12 +70,11 @@ uv add "fastapi-cachex[redis]" PyJWT
 0.4.x 另外會計入、0.5.0 不再計入的：
 
 - `FastAPICacheXSessionMiddleware` 載入的 Session（來自它的 `X-Session-Token` 標頭、Bearer 權杖或它的 Cookie），即使其中沒有資料也算。中介軟體已移除，這項檢查也隨之移除。
-- `@cache(vary=[...])` 中的 `X-Session-Token` 會像 `Authorization`、`Proxy-Authorization` 與 `Cookie` 一樣，以值的 SHA-256 摘要作為鍵。現在它是一般的標頭，值會原樣出現在鍵中。
 
-單獨的 `Cookie` 標頭仍然不會繞過快取，與以前相同。若取代 Session 中介軟體的做法以 `@cache` 看不到的標頭或 Cookie 辨識呼叫者，只加上 `@cache` 的路由會把第一位呼叫者的回應提供給所有人。請使用 `private=True`，或讓 `key_builder` 把已驗證的身分放進鍵中並搭配 `cache_authorized=True`；若是自訂的權杖標頭，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵：
+單獨的 `Cookie` 標頭仍然不會繞過快取，與以前相同。`@cache(vary=[...])` 中的 `X-Session-Token` 仍會像 `Authorization`、`Proxy-Authorization` 與 `Cookie` 一樣，以值的 SHA-256 摘要作為鍵，所以鍵不會改變。若取代 Session 中介軟體的做法以 `@cache` 看不到的標頭或 Cookie 辨識呼叫者，只加上 `@cache` 的路由會把第一位呼叫者的回應提供給所有人。請使用 `private=True`，或讓 `key_builder` 把已驗證的身分放進鍵中並搭配 `cache_authorized=True`；若是自訂的權杖標頭，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵：
 
 ```python
-# Before: X-Session-Token was hashed, and a loaded session bypassed the backend
+# Before: a session the middleware loaded from X-Session-Token bypassed the backend
 @cache(ttl=60, vary=["X-Session-Token"], cache_authorized=True)
 
 # After: hash the token yourself, or better, key on the verified user id

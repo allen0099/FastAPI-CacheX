@@ -517,10 +517,10 @@ def cache(
             lists them or ``*``. Values are client-controlled: each listed
             header multiplies the number of entries, so normalise them in a
             ``key_builder`` when only a few values matter. The credential
-            headers ``Authorization``, ``Proxy-Authorization`` and ``Cookie``
-            are keyed on ``sha256:<hex digest>`` of the value rather than the
-            value, so no token or session cookie appears in the key; missing
-            or empty, they stay ``name=``.
+            headers ``Authorization``, ``Proxy-Authorization``, ``Cookie``
+            and ``X-Session-Token`` are keyed on ``sha256:<hex digest>`` of
+            the value rather than the value, so no token or session cookie
+            appears in the key; missing or empty, they stay ``name=``.
             Listing ``Cookie`` emits a ``UserWarning`` when the decorator is
             applied, since every visitor then gets their own entry.
             A request with ``Authorization`` or a non-empty

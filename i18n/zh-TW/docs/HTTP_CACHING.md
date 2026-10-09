@@ -333,13 +333,13 @@ async def greeting(request: Request):
 
 #### 憑證標頭會雜湊 {#credential-headers-are-hashed}
 
-快取鍵並非機密：`get_all_keys()` 會列出它、`/cached-records` 與 `/cached-hits` 監控路由會顯示它，Redis 或 Memcached 的鍵空間也會原樣儲存它。因此對於攜帶憑證的標頭，也就是 `Authorization`、`Proxy-Authorization` 與 `Cookie`，不分大小寫，該段存放的是值（依上述方式去除空白並串接）的完整十六進位 SHA-256，而不是值本身：
+快取鍵並非機密：`get_all_keys()` 會列出它、`/cached-records` 與 `/cached-hits` 監控路由會顯示它，Redis 或 Memcached 的鍵空間也會原樣儲存它。因此對於攜帶憑證的標頭，也就是 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`（0.5.0 移除的 Session 中介軟體所用的權杖標頭），不分大小寫，該段存放的是值（依上述方式去除空白並串接）的完整十六進位 SHA-256，而不是值本身：
 
 ```
 http:v2|GET|example.com|/me||authorization=sha256:3f0a…（64 個十六進位字元）
 ```
 
-同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。其他標頭（包括 `X-Session-Token` 這類自訂的權杖標頭；0.5.0 之前它會被雜湊）都維持可讀；若你的標頭帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
+同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。其他標頭（包括 `X-API-Key` 這類自訂的權杖標頭）都維持可讀；若你的標頭帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
 
 `vary=["Authorization"]` 不會解除針對已授權請求的規則（見[需驗證身分的端點](#authenticated-endpoints)）：除非路由設定 `public=True` 或傳入 `cache_authorized=True`，帶有 `Authorization` 標頭（或 Session 資料）的請求仍會繞過後端。兩者都沒有設定時，只會儲存匿名的 `authorization=` 那一筆。
 
@@ -358,7 +358,7 @@ import warnings
 warnings.filterwarnings("ignore", message="cache vary on Cookie")
 ```
 
-`vary` 中的 `Authorization` 與 `Proxy-Authorization` 不會發出警告：它們同樣是每位呼叫者一筆項目，但這正是 `vary` 搭配 `cache_authorized=True` 的用途，而且呼叫者在多個請求間會沿用同一個權杖，不像任意組合的 Cookie。
+`vary` 中的 `Authorization` 與 `X-Session-Token` 不會發出警告：它們同樣是每位呼叫者一筆項目，但這正是 `vary` 搭配 `cache_authorized=True` 的用途，而且呼叫者在多個請求間會沿用同一個權杖，不像任意組合的 Cookie。
 
 > [!WARNING]
 > **每個不同的標頭值都是一筆獨立的項目，而這些值來自用戶端。** `Accept-Language: de`、`de-DE`、`de-DE,de;q=0.9` 以及其他寫法都是不同的鍵，用戶端可以在每個請求送出新的值來塞滿後端。每多列一個標頭，項目數量就會成倍增加。若只有少數幾個值有意義，請改在 `key_builder` 中正規化，並自行把該標頭加入 `Vary`：
