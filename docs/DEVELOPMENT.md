@@ -126,7 +126,7 @@ git checkout fastapi_cachex/
 ```
 
 Anything still green is a test that was not testing. A sweep of 25 such
-mutations across the backends, the cache decorator and the session layer found
+mutations across the backends, the cache decorator and the (since removed) session layer found
 three, including one that claimed to prove a forged `X-Forwarded-For` cannot
 satisfy IP binding and would have stayed green with the check disabled entirely.
 Worth doing whenever a test is written for something security-relevant.
@@ -161,7 +161,9 @@ uv run tox -e py310  # only run for Python 3.10
 The `py3*` environments install the versions in `uv.lock`, which are the newest
 ones. The `lowest` environment instead resolves every direct dependency of the
 package, extras included, to the lower bound in `pyproject.toml`
-(`uv_resolution = lowest-direct`) and runs the suite on Python 3.10. It is not in
+(`uv_resolution = lowest-direct`) and runs the suite on Python 3.10. Starlette
+is not a direct dependency, so `tox.ini` lists it in the env's `deps` at the
+oldest release the `fastapi` floor accepts; raise the two together. It is not in
 `env_list`; the **Lowest dependencies** workflow runs it with live servers.
 
 ```bash
@@ -229,7 +231,7 @@ uv run mypy fastapi_cachex --strict
 
 - Make sure all functions have type annotations
 - Use `Type | None` for parameters that could be None (the codebase uses PEP 604 unions, not `Optional`)
-- Write forward references as quoted annotations (`"SessionManager"`), importing the name under
+- Write forward references as quoted annotations (`"BaseCacheBackend"`), importing the name under
   `if TYPE_CHECKING:` when it is only needed for typing. Most modules do this; only a couple use
   `from __future__ import annotations`
 - Keep `fastapi_cachex/py.typed` in place; it is what makes the installed package typed for users

@@ -100,7 +100,7 @@ def test_parse_reverses_to_str(key: CacheKey) -> None:
     "key",
     [
         pytest.param("cache:user:1", id="cache-manager"),
-        pytest.param("oauth_state:abc", id="state-manager"),
+        pytest.param("lock:abc", id="cache-lock"),
         pytest.param("GET|||example.com|||/items|||", id="0.3.x"),
         pytest.param("http:v1|GET|example.com|/items|", id="other-tag"),
         pytest.param("GET|example.com|/items|", id="no-tag"),

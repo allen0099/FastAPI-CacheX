@@ -10,11 +10,9 @@ from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
 
-from fastapi_cachex import SessionConfig
 from fastapi_cachex import add_routes
 from fastapi_cachex import build_cache_key
 from fastapi_cachex import invalidate
-from fastapi_cachex._vary import _HASHED_VARY_HEADERS
 from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
@@ -357,12 +355,6 @@ async def test_credential_headers_are_hashed_in_any_case(
     ]
 
 
-def test_session_header_default_is_hashed() -> None:
-    default = SessionConfig.model_fields["header_name"].default
-
-    assert default.lower() in _HASHED_VARY_HEADERS
-
-
 async def test_cookie_is_hashed_with_repeated_lines_joined() -> None:
     with pytest.warns(UserWarning, match="cache vary on Cookie"):
         client, _ = _credential_app(["Cookie"])
@@ -449,7 +441,10 @@ def test_documented_filter_silences_the_cookie_warning() -> None:
     "vary",
     [
         pytest.param(["Accept-Language"], id="accept-language"),
-        pytest.param(["Authorization", "X-Session-Token"], id="credentials"),
+        pytest.param(
+            ["Authorization", "Proxy-Authorization", "X-Session-Token"],
+            id="credentials",
+        ),
         pytest.param(["X-Cookie-Consent"], id="cookie-lookalike"),
     ],
 )

@@ -23,7 +23,6 @@ FastAPI-CacheX 是 FastAPI 的高效能快取擴充套件：提供支援 `Cache-
 - **HTTP 快取**：GET 路由專用的 `@cache` 裝飾器，支援 `Cache-Control`、`ETag` / `If-None-Match`（304）與單一路由的快取失效。
 - **應用層快取**：`CacheManager` 可在自己的程式碼中快取任意 JSON 值，提供未命中時才計算的 `get_or_set()` 與原子性的「不存在才寫入」`add()`。
 - **後端**：記憶體、Redis 與 Memcached，支援原子操作的計數器、一次性取值與鎖。
-- **Session 與 OAuth state（已棄用）**：簽署過的 Session 權杖與一次性的 OAuth state 權杖。兩者在 0.4.0 已棄用，並將在 0.5.0 移除，遷移方向請見[這裡](MIGRATING_0_4.md#session-state-deprecated)。
 
 ## 安裝 {#installation}
 
@@ -31,15 +30,14 @@ FastAPI-CacheX 是 FastAPI 的高效能快取擴充套件：提供支援 `Cache-
 uv add fastapi-cachex
 ```
 
-核心套件搭配記憶體後端即可使用；其他後端與 Session 的選用傳輸方式以 extra 提供：
+核心套件搭配記憶體後端即可使用；其他後端以 extra 提供：
 
 | Extra | 安裝 | 帶入套件 | 用途 |
 |-------|------|---------|------|
 | `redis` | `uv add "fastapi-cachex[redis]"` | `redis[hiredis]`、`orjson` | `AsyncRedisCacheBackend` |
 | `memcached` | `uv add "fastapi-cachex[memcached]"` | `pymemcache` | `MemcachedBackend` |
-| `jwt` | `uv add "fastapi-cachex[jwt]"` | `PyJWT` | `SessionConfig(token_format="jwt")` |
 
-Extra 可以組合：`uv add "fastapi-cachex[redis,jwt]"`。
+Extra 可以組合：`uv add "fastapi-cachex[redis,memcached]"`。
 
 ## 快速開始 {#quick-start}
 
@@ -84,17 +82,18 @@ async def report(cache: AppCache):
 > ```
 
 > [!WARNING]
-> 預設的快取鍵不包含使用者身分。需要驗證身分的端點請使用 `private=True`，或依使用者區分的 key builder 搭配 `cache_authorized=True`（否則帶有 `Authorization` 或 Session 的請求會繞過後端），詳見 [需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
+> 預設的快取鍵不包含使用者身分。需要驗證身分的端點請使用 `private=True`，或依使用者區分的 key builder 搭配 `cache_authorized=True`（否則帶有 `Authorization` 或不是空的 `request.session` 的請求會繞過後端），詳見 [需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
 
 ## 文件 {#documentation}
 
+- [遷移至 0.5.0](MIGRATING_0_5.md)：0.5.0 移除的功能，以及如何從 0.4.x 升級
 - [遷移至 0.4.0](MIGRATING_0_4.md)：0.4.0 的變更，以及如何從 0.3.x 升級
+- [從 fastapi-cache2 遷移](MIGRATING_FROM_FASTAPI_CACHE2.md)：它的 API 對應到本套件的哪些功能，以及行為上的差異
 - [何時使用](COMPARISON.md)：與 fastapi-cache2、cashews、aiocache 及 CDN 的比較，以及什麼時候其他選擇更合適
 - [HTTP 快取](HTTP_CACHING.md)：`@cache` 裝飾器、Cache-Control 指令、快取鍵、快取失效與監控路由
 - [應用層快取](APP_CACHE.md)：`CacheManager`
 - [後端](BACKENDS.md)：選擇與設定後端、原子操作的基本功能
 - [分散式鎖](LOCK.md)：以 `CacheLock` 在多個行程之間互斥
-- 已棄用、0.5.0 移除：[Session 管理](SESSION.md)、[OAuth state](STATE.md)（一次性的 OAuth / CSRF state 權杖）與 [JWT claims](JWT_CLAIMS.md)
 - [快取流程](CACHE_FLOW.md)：快取請求內部的處理流程
 - [可執行範例](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples)（英文）：每個功能一個完整的應用程式，皆由測試套件涵蓋
 - [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)（英文）

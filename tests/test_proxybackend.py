@@ -17,8 +17,6 @@ from fastapi_cachex.exceptions import ProxyNotSetError
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import ProxyBase
 from fastapi_cachex.proxy import get_backend_or_fallback
-from fastapi_cachex.session.proxy import SessionManagerProxy
-from fastapi_cachex.state.proxy import StateManagerProxy
 from fastapi_cachex.types import CacheEntry
 from tests.conftest import Clock
 
@@ -117,9 +115,7 @@ def test_backend_proxy_cannot_be_instantiated():
         BackendProxy()
 
 
-@pytest.mark.parametrize(
-    "proxy", [CacheManagerProxy, SessionManagerProxy, StateManagerProxy]
-)
+@pytest.mark.parametrize("proxy", [CacheManagerProxy])
 def test_manager_proxies_raise_proxy_not_set_error(proxy) -> None:
     """An unset manager proxy is not a missing backend (#161).
 

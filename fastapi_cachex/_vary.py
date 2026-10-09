@@ -48,8 +48,9 @@ _HASHED_VARY_HEADERS = frozenset(
         "authorization",
         "proxy-authorization",
         "cookie",
-        # The session token header (`SessionConfig.header_name`'s default).
-        # Inlined, so @cache does not import the deprecated session package.
+        # The token header of the session middleware removed in 0.5.0. Apps
+        # that still send it under their own session scheme keep the digest,
+        # so upgrading never puts their tokens into keys.
         "x-session-token",
     }
 )
@@ -62,10 +63,10 @@ def _vary_components(request: Request, names: Sequence[str]) -> list[str]:
     The name is lower-cased and the value trimmed; repeated header lines are
     joined with ``,`` as RFC 9110 §5.3 allows, and a missing header gives an
     empty value, the same as an empty one. For a credential header
-    (``Authorization``, ``Proxy-Authorization``, ``Cookie`` and the session
-    subsystem's ``X-Session-Token``) a non-empty value is replaced by
-    ``sha256:`` and the full hex SHA-256 of the joined value; an empty or
-    missing one stays ``name=``, so anonymous requests share one entry.
+    (``Authorization``, ``Proxy-Authorization``, ``Cookie`` and
+    ``X-Session-Token``) a non-empty value is replaced by ``sha256:`` and the
+    full hex SHA-256 of the joined value; an empty or missing one stays
+    ``name=``, so anonymous requests share one entry.
     """
     components = []
     for name in names:

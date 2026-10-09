@@ -26,7 +26,6 @@ from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.base import validate_ttl
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.manager import CacheManager
-from fastapi_cachex.state import StateManager
 from fastapi_cachex.types import CacheEntry
 from tests.backends.test_base import DictBackend
 from tests.live_servers import UNCONNECTED_PORT
@@ -112,20 +111,6 @@ async def test_cache_manager_rejects_invalid_ttl(
         await manager.get_or_set("k", factory, ttl=ttl)
     # The ttl is checked before the factory runs.
     factory.assert_not_called()
-    assert backend.store == {}
-
-
-@pytest.mark.parametrize(("ttl", "error", "match"), BAD_TTLS)
-async def test_state_manager_rejects_invalid_ttl(
-    ttl: Any, error: type[Exception], match: str
-) -> None:
-    backend = DictBackend()
-    with pytest.raises(error, match=match):
-        StateManager(backend, default_ttl=ttl)
-
-    manager = StateManager(backend)
-    with pytest.raises(error, match=match):
-        await manager.create_state(ttl=ttl)
     assert backend.store == {}
 
 

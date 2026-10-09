@@ -550,13 +550,13 @@ async def test_clear_removes_all_manager_keys(memory_backend: MemoryBackend) -> 
     await manager.set("b", 2)
 
     other_entry = CacheEntry(fingerprint="x", content=b'"other"')
-    await memory_backend.set("oauth_state:untouched", other_entry, ttl=None)
+    await memory_backend.set("other_namespace:untouched", other_entry, ttl=None)
 
     removed = await manager.clear()
 
     assert removed == 2
     assert await manager.get("a") is None
-    assert await memory_backend.get("oauth_state:untouched") is not None
+    assert await memory_backend.get("other_namespace:untouched") is not None
 
 
 async def test_clear_pattern_delegates_to_backend_within_namespace(

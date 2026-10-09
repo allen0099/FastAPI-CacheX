@@ -194,7 +194,7 @@ class CacheKey:
 
         ``key`` is the logical key, without a backend's ``key_prefix``. Only
         a key that starts with ``FORMAT_TAG`` and has at least a method, host,
-        path and query is an HTTP key. ``CacheManager`` and ``StateManager``
+        path and query is an HTTP key. ``CacheManager`` and ``CacheLock``
         keys, keys written by 0.3.x (``method|||host|||path|||query``) and keys
         from a key builder that does not use ``build_cache_key`` are not.
         """

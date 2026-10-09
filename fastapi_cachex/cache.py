@@ -152,25 +152,15 @@ async def _read_entry(
         return None, False
 
 
-# Where `FastAPICacheXSessionMiddleware` puts the session it loaded;
-# `get_session` reads it.
-_SESSION_STATE_KEY = "__fastapi_cachex_session"
-
-
 def _request_credential(request: Request) -> str | None:
     """What identifies the caller of ``request``, or ``None`` if nothing does.
 
-    ``Authorization``, a session the session middleware loaded (from the
-    token header, a bearer token or the session cookie, anonymous or not), or
-    a non-empty ``request.session`` from any session middleware (Starlette's
-    cookie sessions included). Only a token that resolved to a session
-    counts, so an invalid or expired one does not keep a request away from
-    the cache.
+    ``Authorization``, or a non-empty ``request.session`` from any session
+    middleware (Starlette's ``SessionMiddleware``, for example). An empty
+    session does not count, and neither does a ``Cookie`` header alone.
     """
     if "authorization" in request.headers:
         return "Authorization header"
-    if getattr(request.state, _SESSION_STATE_KEY, None) is not None:
-        return "Session"
     if request.scope.get("session"):
         return "Session data"
     return None
@@ -198,7 +188,6 @@ def _no_store_ignored_warning(ignored: list[str]) -> str:
 # How the one-time bypass warning names each `_request_credential` result.
 _CREDENTIAL_DESCRIPTIONS = {
     "Authorization header": "an Authorization header",
-    "Session": "a session token (header, bearer token or cookie)",
     "Session data": "non-empty session data (request.session)",
 }
 
@@ -498,16 +487,14 @@ def cache(
             leaves the response unstored. ``False`` lets the error propagate,
             so the request fails.
         cache_authorized: Read and write the backend for requests that carry
-            an ``Authorization`` header or arrive with a session: one the
-            session middleware loaded (from its token header, a bearer token
-            or the session cookie, with or without a user) or a non-empty
-            ``request.session``. By default such a request bypasses the
+            an ``Authorization`` header or a non-empty ``request.session``
+            (from any session middleware, such as Starlette's
+            ``SessionMiddleware``). By default such a request bypasses the
             backend as ``private=True`` does (RFC 9111 §3.5), unless
             ``public`` is set, and its response is sent with ``private``.
             With this option the response to such a request still carries
             ``private``: its entry is per caller only in this backend, while
             a shared cache downstream keys on the URL alone.
-            A token that does not resolve to a session does not count.
             A route without a positive ``ttl`` skips the backend anyway, but
             its response to such a request is still sent with ``private``;
             ``private=True`` routes send it already.
@@ -536,9 +523,10 @@ def cache(
             appears in the key; missing or empty, they stay ``name=``.
             Listing ``Cookie`` emits a ``UserWarning`` when the decorator is
             applied, since every visitor then gets their own entry.
-            A request with ``Authorization`` or a session still bypasses the
-            backend unless ``public`` or ``cache_authorized`` is set, and a response
-            that sets a cookie is still not stored.
+            A request with ``Authorization`` or a non-empty
+            ``request.session`` still bypasses the backend unless ``public``
+            or ``cache_authorized`` is set, and a response that sets a cookie
+            is still not stored.
         sort_query: Order the query parameters by name before building the
             key, so ``?a=1&b=2`` and ``?b=2&a=1`` share one entry. The sort is
             stable: repeated values of one name keep the order the client
@@ -811,11 +799,11 @@ def cache(
             # RFC 9111 §3.5: a shared cache must not reuse a response to a
             # request with `Authorization` unless the response allows it. The
             # default key carries no identity, so treat such requests as
-            # private unless the route is `public` or opted in. A request that
-            # arrived with a session is the same case, whichever transport
-            # carried its token (#319). Routes without a positive ttl skip the
-            # backend anyway, but their response still needs `private` for a
-            # downstream cache (#362); only `private=True` already sends it.
+            # private unless the route is `public` or opted in. A request with
+            # a non-empty `request.session` is the same case (#319). Routes
+            # without a positive ttl skip the backend anyway, but their
+            # response still needs `private` for a downstream cache (#362);
+            # only `private=True` already sends it.
             # `cache_authorized` lifts the bypass but not `private`: its entries
             # are per caller only in this backend, while a shared cache
             # downstream keys on the URL alone (#372).

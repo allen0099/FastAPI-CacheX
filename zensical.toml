@@ -18,18 +18,15 @@ site_dir = "site"
 
 nav = [
   { "Home" = "index.md" },
+  { "Migrating to 0.5.0" = "MIGRATING_0_5.md" },
   { "Migrating to 0.4.0" = "MIGRATING_0_4.md" },
+  { "Migrating from fastapi-cache2" = "MIGRATING_FROM_FASTAPI_CACHE2.md" },
   { "When to use it" = "COMPARISON.md" },
   { "Caching" = [
     { "HTTP caching" = "HTTP_CACHING.md" },
     { "Application cache" = "APP_CACHE.md" },
     { "Backends" = "BACKENDS.md" },
     { "Distributed lock" = "LOCK.md" },
-  ] },
-  { "Sessions and sign-in (deprecated)" = [
-    { "Session management" = "SESSION.md" },
-    { "OAuth state" = "STATE.md" },
-    { "JWT claims" = "JWT_CLAIMS.md" },
   ] },
   { "Under the hood" = [
     { "Cache flow" = "CACHE_FLOW.md" },
@@ -39,8 +36,6 @@ nav = [
     { "CacheManager" = "api/cache-manager.md" },
     { "Backends" = "api/backends.md" },
     { "CacheLock" = "api/lock.md" },
-    { "Session (deprecated)" = "api/session.md" },
-    { "State (deprecated)" = "api/state.md" },
     { "Types and exceptions" = "api/types.md" },
   ] },
   { "Development" = [
