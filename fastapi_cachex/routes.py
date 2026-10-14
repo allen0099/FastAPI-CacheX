@@ -5,7 +5,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
 from typing import TYPE_CHECKING
+from typing import Annotated
 from typing import Any
+
+from pydantic import Field
 
 from .cache_key import CacheKey
 from .exceptions import BackendNotFoundError
@@ -42,19 +45,42 @@ class CacheHitSummary:
     cached_paths: list[str]
 
 
+# Why the ``*_hits`` fields are deprecated, shown in the OpenAPI schema.
+_HITS_DEPRECATED = (
+    "Counts cache entries, not hits; use {0} instead. Deprecated in 0.5.1, "
+    "removed in 0.6.0 (#336)."
+)
+
+
 @dataclass
 class CacheHitsResponse:
     """Response for the ``/cached-hits`` endpoint.
 
-    The ``*_hits`` fields count cached entries, not requests served from them.
+    ``entries``, ``total_entries``, ``valid_entries`` and ``expired_entries``
+    list and count the cached route entries. The ``cached_hits`` and
+    ``*_hits`` fields hold the same values under names that suggested
+    requests served from the cache; they are deprecated (marked so in the
+    OpenAPI schema) and removed in 0.6.0 (#336).
     """
 
-    cached_hits: list[CacheHitRecord]
-    total_hits: int
-    valid_hits: int
-    expired_hits: int
+    entries: list[CacheHitRecord]
+    total_entries: int
+    valid_entries: int
+    expired_entries: int
     unique_routes: int
     summary: CacheHitSummary
+    cached_hits: Annotated[
+        list[CacheHitRecord], Field(deprecated=_HITS_DEPRECATED.format("entries"))
+    ]
+    total_hits: Annotated[
+        int, Field(deprecated=_HITS_DEPRECATED.format("total_entries"))
+    ]
+    valid_hits: Annotated[
+        int, Field(deprecated=_HITS_DEPRECATED.format("valid_entries"))
+    ]
+    expired_hits: Annotated[
+        int, Field(deprecated=_HITS_DEPRECATED.format("expired_entries"))
+    ]
 
 
 @dataclass
@@ -174,17 +200,23 @@ def _cached_hits(entries: list[_Entry]) -> CacheHitsResponse:
     valid_hits = [h for h in cached_hits if not h.is_expired]
     routes_hit = {h.path for h in valid_hits}
 
+    total = len(cached_hits)
+    valid = len(valid_hits)
     return CacheHitsResponse(
-        cached_hits=cached_hits,
-        total_hits=len(cached_hits),
-        valid_hits=len(valid_hits),
-        expired_hits=len(cached_hits) - len(valid_hits),
+        entries=cached_hits,
+        total_entries=total,
+        valid_entries=valid,
+        expired_entries=total - valid,
         unique_routes=len(routes_hit),
         summary=CacheHitSummary(
-            total_cached_entries=len(cached_hits),
-            active_entries=len(valid_hits),
+            total_cached_entries=total,
+            active_entries=valid,
             cached_paths=sorted(routes_hit),
         ),
+        cached_hits=cached_hits,
+        total_hits=total,
+        valid_hits=valid,
+        expired_hits=total - valid,
     )
 
 

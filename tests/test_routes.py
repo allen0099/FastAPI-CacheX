@@ -673,3 +673,70 @@ class TestMonitoringEdgeCases:
         assert hits["summary"]["cached_paths"] == []
         assert records["total_records"] == 0
         assert records["summary"]["estimated_cache_size_kb"] == 0.0
+
+
+class TestEntryNamedFields:
+    """``/cached-hits`` counts entries under entry names (#336).
+
+    The ``cached_hits`` and ``*_hits`` fields stay, with the same values, and
+    are marked deprecated in the OpenAPI schema until 0.6.0 removes them.
+    """
+
+    def test_new_fields_list_and_count_the_entries(
+        self, app: FastAPI, client: TestClient, setup_cache: MemoryBackend
+    ) -> None:
+        add_routes(app, dependencies=[])
+
+        @app.get("/a")
+        @cache(ttl=60)
+        async def a() -> dict[str, str]:
+            return {"a": "1"}
+
+        @app.get("/b")
+        @cache(ttl=60)
+        async def b() -> dict[str, str]:
+            return {"b": "1"}
+
+        client.get("/a")
+        client.get("/b")
+        data = client.get("/cached-hits").json()
+
+        assert data["total_entries"] == 2
+        assert data["valid_entries"] == 2
+        assert data["expired_entries"] == 0
+        assert {e["path"] for e in data["entries"]} == {"/a", "/b"}
+        # The deprecated names carry the same values.
+        assert data["cached_hits"] == data["entries"]
+        assert data["total_hits"] == data["total_entries"]
+        assert data["valid_hits"] == data["valid_entries"]
+        assert data["expired_hits"] == data["expired_entries"]
+
+    def test_an_expired_entry_is_counted_as_expired(
+        self, app: FastAPI, client: TestClient, setup_cache: MemoryBackend
+    ) -> None:
+        add_routes(app, dependencies=[])
+        _report_expired(
+            setup_cache,
+            "http:v2|GET|testserver|/old|",
+            CacheEntry(fingerprint='W/"old"', content=b"old"),
+        )
+
+        data = client.get("/cached-hits").json()
+
+        assert data["total_entries"] == 1
+        assert data["valid_entries"] == 0
+        assert data["expired_entries"] == 1
+        assert data["expired_hits"] == 1
+
+    def test_openapi_marks_only_the_hits_fields_deprecated(
+        self, app: FastAPI, client: TestClient
+    ) -> None:
+        add_routes(app, include_in_schema=True, dependencies=[])
+
+        schema = client.get("/openapi.json").json()["components"]["schemas"]
+        properties = schema["CacheHitsResponse"]["properties"]
+
+        for name in ("cached_hits", "total_hits", "valid_hits", "expired_hits"):
+            assert properties[name]["deprecated"] is True, name
+        for name in ("entries", "total_entries", "valid_entries", "expired_entries"):
+            assert "deprecated" not in properties[name], name

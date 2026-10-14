@@ -544,7 +544,7 @@ add_routes(
 )
 ```
 
-- `GET {prefix}/cached-hits`：列出每筆快取項目，拆分為方法、主機、路徑與查詢（超過 200 位元組的查詢為 `sha256:<十六進位>`），附上 ETag 與到期時間，另外統計有效與已過期的項目數，以及不重複的快取路徑。它不會計算命中次數。
+- `GET {prefix}/cached-hits`：列出每筆快取項目，拆分為方法、主機、路徑與查詢（超過 200 位元組的查詢為 `sha256:<十六進位>`），附上 ETag 與到期時間，放在 `entries` 中，並以 `total_entries`、`valid_entries` 與 `expired_entries` 統計項目數，另外列出不重複的快取路徑。雖然路由名稱有 hits，它並不會計算命中次數。舊的 `cached_hits`、`total_hits`、`valid_hits` 與 `expired_hits` 內容相同，但已棄用（OpenAPI schema 中會標示），並將在 0.6.0 移除，請改讀 `*entries` 欄位（[#336](https://github.com/allen0099/FastAPI-CacheX/issues/336)）。
 - `GET {prefix}/cached-records`：列出每筆快取紀錄的大小、到期時間、`media_type`（儲存的回應的媒體類型，沒有時為 `null`），以及在 `include_content_preview=True` 時快取內容前 100 個位元組的預覽。預設 `content_preview` 為 `null`，不會有任何回應本文離開伺服器；鍵、大小與到期時間仍會回報。`content_type` 一律是 `"bytes"`，只為相容而保留；請改讀 `media_type`。
 
 兩個路由都只列出路由項目（格式為 `http:v2|method|host|path|query` 的鍵）；`CacheManager` 與鎖的鍵都會略過，未使用 `build_cache_key()` 的 `key_builder` 產生的鍵也一樣。
