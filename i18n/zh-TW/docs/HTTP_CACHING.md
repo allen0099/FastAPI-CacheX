@@ -131,7 +131,7 @@ HEAD 請求會讀取 GET 以同一個快取鍵儲存的項目，這是 RFC 9110 
 
 未命中時 handler 會執行，它的回應得到與 GET 相同的 `Cache-Control` 與 `Vary` 處理，`ETag` 與 `Content-Length` 則依它實際產生的內容計算：對 HEAD 省略本文的 handler，送出的是空本文的值。這個回應不會儲存，否則之後的 GET 會拿到空的本文。伺服器會丟棄每個 HEAD 回應的本文。`invalidate()` 建立的是 GET 的快取鍵，因此也會清除 HEAD 讀取的項目。
 
-0.4.2 之前，已接受 HEAD 的路由每次收到 HEAD 請求都會執行 handler，也不會加上這些標頭；現在命中時不會執行 handler。
+0.5.0 之前，已接受 HEAD 的路由每次收到 HEAD 請求都會執行 handler，也不會加上這些標頭；現在命中時不會執行 handler。
 
 ### 同時發生的未命中 {#concurrent-misses}
 
