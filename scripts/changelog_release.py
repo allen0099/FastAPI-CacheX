@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import datetime
+import datetime as dt
 import re
 import sys
 from pathlib import Path
@@ -458,7 +458,7 @@ def release_notes(body: str, version: str, date: str) -> str:
 
 
 def _today() -> str:
-    return datetime.datetime.now(tz=datetime.timezone.utc).date().isoformat()
+    return dt.datetime.now(tz=dt.timezone.utc).date().isoformat()
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

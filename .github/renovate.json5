@@ -32,6 +32,29 @@
       matchManagers: ["pep621"],
       groupName: "python dependencies",
     },
+    // A tool pinned both as a pre-commit hook and in uv.lock must move in
+    // one PR. CI lints with the locked version and contributors run the hook,
+    // so when only one side moved (#453), pre-commit failed on master while CI
+    // stayed green. These rules come after the manager groups above, so their
+    // groupName wins. `bump` raises the pyproject floor to the new version,
+    // which makes the PR relock to it too.
+    {
+      description: "Keep the ruff pre-commit hook and the locked ruff in step",
+      matchPackageNames: ["ruff", "astral-sh/ruff-pre-commit"],
+      groupName: "ruff",
+      rangeStrategy: "bump",
+    },
+    {
+      description: "Keep the mypy pre-commit hook and the locked mypy in step",
+      matchPackageNames: ["mypy", "pre-commit/mirrors-mypy"],
+      groupName: "mypy",
+      rangeStrategy: "bump",
+    },
+    {
+      description: "Keep the uv pre-commit hook (uv lock) and the uv_build backend in step",
+      matchPackageNames: ["uv_build", "astral-sh/uv-pre-commit"],
+      groupName: "uv",
+    },
     {
       description: "Automerge non-major updates once CI passes",
       matchUpdateTypes: ["minor", "patch", "pin", "digest"],

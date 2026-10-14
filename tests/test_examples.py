@@ -218,7 +218,10 @@ def test_redis_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     example = load_example("redis_backend")
     with TestClient(example.app) as client:
         backend = BackendProxy.get()
-        client.portal.call(backend.clear)  # type: ignore[union-attr]
+        # `portal` is Optional in the stubs of some starlette releases.
+        portal = client.portal
+        assert portal is not None
+        portal.call(backend.clear)
         try:
             first = client.get("/hello/redis")
             assert first.json() == {"hello": "redis"}
@@ -228,7 +231,7 @@ def test_redis_backend(monkeypatch: pytest.MonkeyPatch) -> None:
             assert client.post("/visits").json() == {"visits": 1}
             assert client.post("/visits").json() == {"visits": 2}
         finally:
-            client.portal.call(backend.clear)  # type: ignore[union-attr]
+            portal.call(backend.clear)
     # The lifespan unregistered the backend on shutdown.
     with pytest.raises(BackendNotFoundError):
         BackendProxy.get()

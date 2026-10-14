@@ -1358,8 +1358,10 @@ def test_cached_route_with_ttl_zero_is_served() -> None:
                 "/ttl-zero", headers={"If-None-Match": first.headers["ETag"]}
             )
             # Clean up inside the client's event loop, which owns the pool.
-            client.portal.call(backend.clear)  # type: ignore[union-attr]
-            client.portal.call(backend.aclose)  # type: ignore[union-attr]
+            # `portal` is Optional in the stubs of some starlette releases.
+            assert client.portal is not None
+            client.portal.call(backend.clear)
+            client.portal.call(backend.aclose)
 
         assert first.status_code == 200
         assert first.headers["Cache-Control"] == "max-age=0"
