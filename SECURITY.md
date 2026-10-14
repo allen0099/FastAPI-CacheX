@@ -3,15 +3,17 @@
 ## Supported versions
 
 Security fixes are released for the latest release line only, currently
-0.4.x. Upgrade to the newest 0.4.x release before reporting, and check whether
+0.5.x. Upgrade to the newest 0.5.x release before reporting, and check whether
 the problem is still there.
 
 | Version           | Supported |
 |-------------------|-----------|
-| Latest 0.4.x      | Yes       |
-| 0.3.9 and older   | No        |
+| Latest 0.5.x      | Yes       |
+| 0.4.1 and older   | No        |
 
-A fix ships as a new 0.4.x patch release; earlier releases are not patched.
+A fix ships as a new 0.5.x patch release; earlier releases are not patched.
+0.4.x gets no further releases: move to 0.5.x with
+[Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_5/).
 
 ## Reporting a vulnerability
 
@@ -50,7 +52,7 @@ guaranteed response times. What you can expect:
 - An acknowledgement once a maintainer has read the report, and a follow-up
   after it has been looked into, saying whether it is being treated as a
   vulnerability.
-- If it is, a fix in a new 0.4.x patch release, followed by a published GitHub
+- If it is, a fix in a new 0.5.x patch release, followed by a published GitHub
   security advisory that credits you, unless you prefer not to be named.
 - Questions in the advisory thread if the report needs more detail.
 
