@@ -232,12 +232,13 @@ def cached(
         A decorator turning the function into a ``CachedFunction``
 
     Raises:
-        TypeError: When the decorator is applied, if ``ttl`` is not an
-            ``int``, a ``timedelta`` or ``None``, or ``lock`` is not a
-            ``bool`` or ``None``
-        ValueError: When the decorator is applied, if ``ttl`` is zero,
+        TTLTypeError: When the decorator is applied, if ``ttl`` is not an
+            ``int``, a ``timedelta`` or ``None`` (also a ``TypeError``)
+        TTLValueError: When the decorator is applied, if ``ttl`` is zero,
             negative, larger than ``MAX_TTL`` or not a whole number of
-            seconds
+            seconds (also a ``ValueError``)
+        TypeError: When the decorator is applied, if ``lock`` is not a
+            ``bool`` or ``None``
         CacheXError: When the decorator is applied, if ``key`` is not a
             ``str``, a callable or ``None``; and when the function is
             called, if the key cannot be built (see ``cache_key``)

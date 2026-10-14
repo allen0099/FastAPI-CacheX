@@ -377,16 +377,35 @@ the entry never expires, or a number of seconds from 1 up to `MAX_TTL`
 seconds (`timedelta(minutes=5)` is stored as `300`). The checks run before any
 backend I/O:
 
-- Zero, negative and larger values raise `ValueError`. The underlying stores
+- Zero, negative and larger values raise `TTLValueError`. The underlying stores
   disagree on what `0` means: Memcached reads it as "never expire", Redis
   rejects `EX 0`, and an in-process dict would expire the entry at once.
-- A `float`, a `bool` or any other type raises `TypeError`. A float worked
+- A `float`, a `bool` or any other type raises `TTLTypeError`. A float worked
   only on the memory backend, and `True` was taken as one second. A
   `timedelta` with a fraction of a second (`timedelta(seconds=1.5)`) raises
-  `ValueError`, since every backend keeps time in whole seconds.
+  `TTLValueError`, since every backend keeps time in whole seconds.
 - Memcached cannot store an expiry after 2038-01-19 (its exptime is a signed
-  32-bit timestamp), so the Memcached backend raises `ValueError` for a `ttl`
-  that reaches past it instead of accepting a write it would drop at once.
+  32-bit timestamp), so the Memcached backend raises `TTLValueError` for a
+  `ttl` that reaches past it instead of accepting a write it would drop at once.
+
+Both classes derive from `InvalidTTLError`, a `CacheXError`, and are raised
+for an invalid `ttl` wherever it is passed: the backends, `CacheManager`,
+`CacheLock`, `@cached` and `@cache` (`ttl` and `stale_ttl`). Catch
+`InvalidTTLError` to handle all of them. `TTLTypeError` is also a `TypeError`
+and `TTLValueError` a `ValueError`, which is what the backends, `CacheManager`
+and `CacheLock` raised before 0.5.1, so an existing `except TypeError` or
+`except ValueError` keeps working, as does an `except CacheXError` around
+`@cache`:
+
+```python
+from fastapi_cachex import InvalidTTLError
+
+
+try:
+    await manager.set("report", data, ttl=user_supplied_ttl)
+except InvalidTTLError as e:
+    raise HTTPException(422, detail=str(e)) from e
+```
 
 A third-party backend should call `fastapi_cachex.backends.base.validate_ttl(ttl)`
 in its `set` and store the `int` it returns, to follow the same rules and

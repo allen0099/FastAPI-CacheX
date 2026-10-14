@@ -12,6 +12,7 @@ from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.exceptions import TTLValueError
 from fastapi_cachex.types import CacheEntry
 
 from .base import BaseCacheBackend
@@ -88,8 +89,9 @@ def _expiry(ttl: int | None) -> int:
     in 1970 and expire the entry immediately. ``None`` means no expiry.
 
     Raises:
-        ValueError: If the expiry would fall after 2038-01-19, which Memcached
-            cannot represent: it would accept the write and drop the item.
+        TTLValueError: If the expiry would fall after 2038-01-19, which
+            Memcached cannot represent: it would accept the write and drop the
+            item. Also a ``ValueError``.
     """
     if ttl is None:
         return 0
@@ -100,7 +102,7 @@ def _expiry(ttl: int | None) -> int:
                 f"ttl {ttl!r} expires after 2038-01-19, which Memcached cannot "
                 "store; use a shorter ttl or None"
             )
-            raise ValueError(msg)
+            raise TTLValueError(msg)
         return expires_at
     return ttl
 

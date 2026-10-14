@@ -58,6 +58,8 @@ from .directives import DirectiveType
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
 from .exceptions import RequestNotFoundError
+from .exceptions import TTLTypeError
+from .exceptions import TTLValueError
 from .headers import add_vary
 from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
@@ -378,16 +380,19 @@ def _seconds(name: str, value: int | timedelta | None) -> int | None:
     does not use ``validate_ttl``; the type and range rules are the same.
 
     Raises:
-        CacheXError: If ``value`` is not an ``int`` or a ``timedelta``, is
-            negative, is larger than ``MAX_TTL`` or is a ``timedelta`` that
-            is not a whole number of seconds
+        TTLTypeError: If ``value`` is not an ``int`` or a ``timedelta``
+        TTLValueError: If ``value`` is negative, is larger than ``MAX_TTL`` or
+            is a ``timedelta`` that is not a whole number of seconds
+
+    Both are ``CacheXError`` subclasses, which ``@cache`` raised before, and
+    the same classes the backends raise (#337).
     """
     if value is None:
         return None
     if isinstance(value, timedelta):
         if value.microseconds:
             msg = f"{name} must be a whole number of seconds, got {value!r}"
-            raise CacheXError(msg)
+            raise TTLValueError(msg)
         value = int(value.total_seconds())
     elif isinstance(value, bool) or not isinstance(value, int):
         # Checked here: at request time the backend would reject it, and
@@ -396,13 +401,13 @@ def _seconds(name: str, value: int | timedelta | None) -> int | None:
             f"{name} must be an int number of seconds or a timedelta, "
             f"got {type(value).__name__}"
         )
-        raise CacheXError(msg)
+        raise TTLTypeError(msg)
     if value < 0:
         msg = f"{name} must not be negative"
-        raise CacheXError(msg)
+        raise TTLValueError(msg)
     if value > MAX_TTL:
         msg = f"{name} must be at most {MAX_TTL} seconds"
-        raise CacheXError(msg)
+        raise TTLValueError(msg)
     return value
 
 
