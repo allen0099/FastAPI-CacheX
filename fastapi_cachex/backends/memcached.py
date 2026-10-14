@@ -15,11 +15,34 @@ from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import TTLValueError
 from fastapi_cachex.types import CacheEntry
 
+from ._unavailable import translate_unavailable
 from .base import BaseCacheBackend
 from .base import validate_delta
 from .base import validate_ttl
 
 logger = logging.getLogger(__name__)
+
+# What pymemcache's HashClient raises while every server is out of rotation.
+_ALL_SERVERS_DOWN = "All servers seem to be down"
+
+
+def _is_unavailable(error: Exception) -> bool:
+    """Whether ``error`` means no Memcached server could be reached.
+
+    A socket error (refused, reset, timed out), a connection the server
+    closed mid-reply, and pymemcache's "All servers seem to be down" while a
+    failed server is out of rotation. A ``MemcacheClientError`` (bad input,
+    an item over the size limit) is not about availability and is left as is.
+    """
+    from pymemcache.exceptions import MemcacheError
+    from pymemcache.exceptions import MemcacheUnexpectedCloseError
+
+    if isinstance(error, (OSError, MemcacheUnexpectedCloseError)):
+        return True
+    return type(error) is MemcacheError and _ALL_SERVERS_DOWN in str(error)
+
+
+_unavailable = translate_unavailable(_is_unavailable)
 
 # Default Memcached key prefix for fastapi-cachex
 DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
@@ -202,6 +225,7 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached key hashed; key=%s digest=%s", key, digest)
         return f"{self.key_prefix}{digest}"
 
+    @_unavailable
     async def get(self, key: str) -> CacheEntry | None:
         """Get value from cache.
 
@@ -221,6 +245,7 @@ class MemcachedBackend(BaseCacheBackend):
             logger.debug("Memcached HIT; key=%s", key)
         return value
 
+    @_unavailable
     async def set(
         self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> None:
@@ -237,6 +262,7 @@ class MemcachedBackend(BaseCacheBackend):
         )
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
 
+    @_unavailable
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry (see base class).
 
@@ -275,6 +301,7 @@ class MemcachedBackend(BaseCacheBackend):
         msg = f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts on key {key!r}"
         raise CacheXError(msg)
 
+    @_unavailable
     async def set_if_absent(
         self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> bool:
@@ -298,6 +325,7 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return bool(stored)
 
+    @_unavailable
     async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
         """Atomically remove ``key`` while it holds ``expected`` (see base class).
 
@@ -323,6 +351,7 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return bool(deleted)
 
+    @_unavailable
     async def expire_if_equals(
         self, key: str, expected: CacheEntry, ttl: int | timedelta
     ) -> bool:
@@ -356,6 +385,7 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return bool(updated)
 
+    @_unavailable
     async def set_if_equals(
         self,
         key: str,
@@ -451,6 +481,7 @@ class MemcachedBackend(BaseCacheBackend):
             logger.debug("Memcached INCREMENT RETRY; key=%s", prefixed_key)
         return None
 
+    @_unavailable
     async def increment(
         self, key: str, delta: int = 1, ttl: int | timedelta | None = None
     ) -> int:
@@ -491,6 +522,7 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
         return value
 
+    @_unavailable
     async def delete(self, key: str) -> bool:
         """Delete value from cache.
 
@@ -507,6 +539,7 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached DELETE; key=%s removed=%s", key, removed)
         return removed
 
+    @_unavailable
     async def delete_many(self, keys: Iterable[str]) -> int:
         """Remove every key in ``keys`` in one worker call; returns how many existed.
 
@@ -531,6 +564,7 @@ class MemcachedBackend(BaseCacheBackend):
             bool(self.client.delete(key, noreply=False)) for key in prefixed_keys
         )
 
+    @_unavailable
     async def clear(self) -> None:
         """Clear all values from cache.
 
@@ -550,6 +584,7 @@ class MemcachedBackend(BaseCacheBackend):
         await asyncio.to_thread(self.client.flush_all)
         logger.debug("Memcached CLEAR; flush_all issued")
 
+    @_unavailable
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Delete the key that is exactly ``path``; warns on every call.
 
@@ -588,6 +623,7 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return removed
 
+    @_unavailable
     async def clear_pattern(self, pattern: str) -> int:
         """Clear cached responses matching a pattern.
 
@@ -611,6 +647,7 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached CLEAR_PATTERN unsupported; pattern=%s", pattern)
         return 0
 
+    @_unavailable
     async def get_all_keys(self) -> list[str]:
         """Get all cache keys in the backend.
 
@@ -633,6 +670,7 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached GET_ALL_KEYS unsupported; returning empty list")
         return []
 
+    @_unavailable
     async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
 

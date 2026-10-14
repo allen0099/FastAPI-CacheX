@@ -113,7 +113,7 @@ BackendProxy.set(backend)
 
 - 不重試時，單一暫時性錯誤（例如指令執行到一半時連線被重設）會讓該指令失敗。`Retry(NoBackoff(), 1)` 會立即重試一次。
 - `socket_timeout` 也會限制較慢的回覆。兩個逾時都應設定得比你平常的 Redis 延遲高，包括快取最大項目時的延遲。
-- 這些設定適用於後端送出的所有指令，而不只是 `@cache`。`CacheManager` 與 `CacheLock` 不會 fail open，而是拋出後端錯誤，它們也會更早收到這些錯誤。
+- 這些設定適用於後端送出的所有指令，而不只是 `@cache`。`CacheManager` 與 `CacheLock` 不會 fail open，而是拋出 [`BackendUnavailableError`](#backend-unavailable)，它們也會更早收到這些錯誤。
 
 `RedisConfig` 沒有 `retry` 欄位，因此請將它傳給建構函式。
 
@@ -142,7 +142,7 @@ BackendProxy.set(backend)
 
 同步的 pymemcache 用戶端在工作執行緒中執行，並使用連線池，因此並行的請求絕不會共用同一個 socket。寫入會等待伺服器確認（`default_noreply=False`），因此只要 `set()` 返回，就能從連線池中的任何連線讀到該值。每次呼叫只切換到工作執行緒一次，多步驟的[原子操作](#atomic-backend-primitives)也是如此。`delete_many()` 在這一次呼叫中逐一對每個鍵送出 `DELETE`，並回傳實際存在的鍵數；0.3.8 之前它每個鍵都要切換一次執行緒，回傳的是傳入的鍵數。
 
-伺服器無法連線時，所有要送往它的呼叫都會拋出錯誤，一秒後會再嘗試連線。0.3.8 之前，失敗後一秒內的呼叫會回傳虛構的結果：`get()` 當成未命中、`set()` 沒有任何反應（寫入遺失）、`increment()` 當成新的計數器並回傳 0。設定多台伺服器時，失敗的那台會立即移出輪替，它的鍵會改由其餘伺服器處理，直到它恢復回應。
+伺服器無法連線時，所有要送往它的呼叫都會拋出 [`BackendUnavailableError`](#backend-unavailable)，一秒後會再嘗試連線。0.3.8 之前，失敗後一秒內的呼叫會回傳虛構的結果：`get()` 當成未命中、`set()` 沒有任何反應（寫入遺失）、`increment()` 當成新的計數器並回傳 0。設定多台伺服器時，失敗的那台會立即移出輪替，它的鍵會改由其餘伺服器處理，直到它恢復回應。
 
 ## 關閉後端 {#closing-a-backend}
 
@@ -168,6 +168,26 @@ BackendProxy.set(backend)
 - `BackendProxy.set(None)` 只會取消註冊後端，不會關閉它。
 - 自訂後端會從 `BaseCacheBackend` 繼承一個什麼都不做的 `aclose()`；若後端持有連線或背景工作，請覆寫它。
 - 若不呼叫 `aclose()`，開啟中的 socket 只會由垃圾回收器關閉，關閉應用程式時可能會產生 `ResourceWarning`。0.3.9 之前只有 `MemoryBackend` 有 `aclose()`，Redis 與 Memcached 後端要透過 `backend.client` 關閉。
+
+## 伺服器無法使用時 {#backend-unavailable}
+
+Redis 或 Memcached 伺服器無法連線時，後端會拋出 `BackendUnavailableError`（它是 `CacheXError` 的子類別）。這包括連線被拒絕或被重設、逾時，以及 Memcached 伺服器被移出輪替（「All servers seem to be down」）。記憶體後端永遠不會拋出它。因此想處理「快取掛了」的程式碼，不論設定的是哪種後端，只需要一個 `except`：
+
+```python
+from fastapi_cachex import AppCache, BackendUnavailableError
+
+
+@app.get("/report")
+async def report(cache: AppCache) -> dict[str, int]:
+    try:
+        return await cache.get_or_set("report", build_report, ttl=300)
+    except BackendUnavailableError:
+        return build_report()  # 快取無法使用時，直接產生不經快取的結果
+```
+
+這個錯誤會串接用戶端原本的例外（`__cause__`），而且同時也是該例外型別的實例：Memcached 的連線被拒絕時，它既是 `BackendUnavailableError` 也是 `ConnectionRefusedError`；Redis 的則既是 `BackendUnavailableError` 也是 `redis.exceptions.ConnectionError`。0.5.1 之前寫好、直接捕捉用戶端例外的 `except` 仍然有效。與連線無關的錯誤維持原樣：無效的參數、Memcached 因過大而拒絕的值、存放了其他內容的鍵。
+
+`@cache` 不受影響：遇到任何後端錯誤（包括這個）都會 [fail open](HTTP_CACHING.md#when-the-backend-fails)。`CacheManager`、`CacheLock` 與直接呼叫後端時，則會把它往外拋出。
 
 ## 後端的原子操作 {#atomic-backend-primitives}
 
