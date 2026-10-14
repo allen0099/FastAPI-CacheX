@@ -4,7 +4,7 @@ Guidance for Claude Code in this repository. It lists only what the code, `pypro
 
 ## Project
 
-`fastapi_cachex` (PyPI `fastapi-cachex`): HTTP caching, application cache and a distributed lock for FastAPI, on pluggable backends (memory, Redis, Memcached). The 0.4 line is current (0.4.0 released 2026-10-02). `release.yml` releases only from `master`, so `master` stays 0.4.x-compatible: merging breaking 0.5.0 work (milestone `0.5.0`) ends 0.4.x patch releases. 0.5.0 removes sessions and OAuth state (`fastapi_cachex.session`, `fastapi_cachex.state`, deprecated in 0.4.0 by #420; removed by #421); `docs/MIGRATING_0_5.md` covers the move.
+`fastapi_cachex` (PyPI `fastapi-cachex`): HTTP caching, application cache and a distributed lock for FastAPI, on pluggable backends (memory, Redis, Memcached). `master` carries 0.5.0, so 0.4.x gets no further releases (0.4.1, 2026-10-03, was the last); `release.yml` releases only from `master`. 0.5.0 removes sessions and OAuth state (`fastapi_cachex.session`, `fastapi_cachex.state`, deprecated in 0.4.0 by #420; removed by #421); `docs/MIGRATING_0_5.md` covers the move. Merging breaking work for the next minor ends 0.5.x patch releases the same way.
 
 ## Commands
 

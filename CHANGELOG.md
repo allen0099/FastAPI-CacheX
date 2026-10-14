@@ -20,6 +20,11 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+0.5.0 contains breaking changes; read
+[Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_5/)
+before upgrading. Sessions and OAuth state, deprecated in 0.4.0, are removed,
+and the dependency floors are lower. 0.4.1 is the last 0.4.x release.
+
 ## [0.4.1] - 2026-10-03
 
 ### Changed
