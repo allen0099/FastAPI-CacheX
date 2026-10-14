@@ -944,8 +944,12 @@ add_routes(
 
 - `GET {prefix}/cached-hits` — every cached entry split into method, host, path
   and query (`sha256:<hex>` for a query over 200 bytes), with its ETag and
-  expiry, plus counts of valid and expired entries
-  and the distinct cached paths. It does not count hits.
+  expiry, in `entries`, counted in `total_entries`, `valid_entries` and
+  `expired_entries`, plus the distinct cached paths. Despite the route's name,
+  it does not count hits. The older `cached_hits`, `total_hits`, `valid_hits`
+  and `expired_hits` hold the same values; they are deprecated (marked so in
+  the OpenAPI schema) and removed in 0.6.0, so read the `*entries` fields
+  ([#336](https://github.com/allen0099/FastAPI-CacheX/issues/336)).
 - `GET {prefix}/cached-records` — every cached record with its size, expiry,
   `media_type` (the stored response's media type, `null` if it had none) and,
   with `include_content_preview=True`, a preview of the first 100 bytes of the
