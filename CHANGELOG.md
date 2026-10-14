@@ -20,10 +20,109 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-14
+
 0.5.0 contains breaking changes; read
 [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_5/)
 before upgrading. Sessions and OAuth state, deprecated in 0.4.0, are removed,
 and the dependency floors are lower. 0.4.1 is the last 0.4.x release.
+
+### Added
+
+- **`MemoryBackend(max_entries=...)` caps the in-memory cache with LRU eviction.**
+  Without it the cache grows until entries expire, and a client can grow it on
+  purpose by varying the query string of a cached route. With a limit, storing
+  an entry past it evicts the least recently used one, expired or not; a read
+  hit and every write count as a use. The default stays unlimited. ([#242](https://github.com/allen0099/FastAPI-CacheX/issues/242))
+- **`@cached` caches a plain function's result, keyed on its arguments.**
+  `@cached(ttl=60)` on an `async` or sync function stores its result through
+  `CacheManager.get_or_set()`, so concurrent misses run it once; the decorated
+  function is always awaited. The default key is `module.qualname:` plus a
+  SHA-256 of the JSON-serialized arguments, bound to the signature with defaults
+  applied; `key="user:{user_id}"` or `key=lambda ...: ...` names it instead, for
+  a method or a non-JSON argument. `fn.cache_key(...)` returns the key a call
+  uses and `await fn.invalidate(...)` drops its value. `manager=` picks the
+  `CacheManager`; without it the application's (`AppCache`) is used. ([#248](https://github.com/allen0099/FastAPI-CacheX/issues/248))
+- **`@cache(coalesce=True)` runs the handler once for concurrent misses.**
+  Requests that miss a key while another request in the same process is
+  rendering it wait for that request, then are served the stored entry, so a
+  cold or just-expired key no longer sends every concurrent request to the
+  handler. When the first response is not stored (a cookie, `private`, an error
+  status), the waiting requests run the handler themselves, all at once. Off by
+  default; it needs a positive `ttl` and is rejected with `private` or
+  `no_cache`. Each worker process still runs the handler once per cold key. ([#252](https://github.com/allen0099/FastAPI-CacheX/issues/252))
+- **`@cache` answers HEAD requests from the cached GET response.** On a route
+  that accepts HEAD (`@app.api_route(..., methods=["GET", "HEAD"])`), a HEAD
+  request reads the entry a GET stored under the same key, so health and link
+  checkers no longer run the handler on a hit; a matching `If-None-Match` gets a
+  304. A custom `key_builder` sees the request with method `GET`. On a miss the
+  handler runs and its response gets the same `Cache-Control` and `Vary`
+  handling as a GET, with an `ETag` of what it rendered, but it is not stored.
+  Routes that already accepted HEAD get this without any change, and skip the
+  handler on a hit. ([#253](https://github.com/allen0099/FastAPI-CacheX/issues/253))
+- **Every `ttl` accepts a `datetime.timedelta`.** `@cache(ttl=timedelta(minutes=5))`,
+  `stale_ttl`, the backends' `set`, `set_if_absent`, `set_if_equals`,
+  `expire_if_equals` and `increment`, `CacheManager` (`default_ttl`, `lock_ttl`,
+  `set`, `add`, `get_or_set`) and `CacheLock` (`ttl`, `acquire`, `extend`) take
+  one and store its whole seconds, so a `timedelta(minutes=5)` is the same as
+  `300`. A `timedelta` with a fraction of a second raises `ValueError`
+  (`CacheXError` in `@cache`), as a `float` does; `validate_ttl()` returns the
+  `int` a third-party backend should store. ([#334](https://github.com/allen0099/FastAPI-CacheX/issues/334))
+- **`@cache(debug_header=True)` sends `X-Cache: HIT | MISS | BYPASS`.** `HIT` is
+  a response served from the stored entry (a 200, or a 304 for its ETag), `MISS`
+  one where the backend was consulted and the handler ran, and `BYPASS` one
+  where the backend was neither read nor written (`no_store`, `private`, no
+  positive `ttl`, or a request with credentials on a route without `public` or
+  `cache_authorized`). Off by default, since it tells clients what the server
+  caches; the header is never stored. ([#335](https://github.com/allen0099/FastAPI-CacheX/issues/335))
+- **Python 3.15 is supported.** The package declares it, and CI runs the
+  full suite on it, against Redis and Memcached, alongside 3.10 to 3.14. ([#459](https://github.com/allen0099/FastAPI-CacheX/issues/459))
+
+### Changed
+
+- **`@cache` checks `stale_ttl` like `ttl`, and `CacheLock` checks `ttl` when
+  built.** A `stale_ttl` that is not an `int` (or a `timedelta`), is negative
+  or is above `MAX_TTL` now raises `CacheXError` when the decorator is applied;
+  before, a float was written into the header as `stale-if-error=1.5`. A
+  `CacheLock` with a zero, negative or non-`int` `ttl` raises `ValueError` or
+  `TypeError` from its constructor, where before the error came from
+  `acquire()`; `acquire(ttl=...)` and `extend(ttl=...)` check theirs the same way.
+
+  A third-party backend that overrides `set`, `set_if_absent`, `set_if_equals`,
+  `expire_if_equals` or `increment` with `ttl: int | None` still works, but a
+  type checker now reports the narrower annotation; widen it to
+  `int | timedelta | None` and store what `validate_ttl()` returns. ([#334](https://github.com/allen0099/FastAPI-CacheX/issues/334))
+- **Lower dependency floors: `itsdangerous` and `starlette` are no longer
+  required directly, and `fastapi>=0.128.2` replaces `fastapi>=0.133.0`.** Only
+  the removed session middleware needed `itsdangerous` and `starlette>=1.0.0`;
+  the core now runs on whichever Starlette the installed FastAPI allows, down to
+  0.40.0. The `lowest` tox env tests that oldest stack. ([#421](https://github.com/allen0099/FastAPI-CacheX/issues/421))
+- **A third-party backend `delete()` that returns `None` now counts as not
+  removed.** The non-atomic fallbacks on `BaseCacheBackend` (`delete_many()`,
+  `get_and_delete()`, `delete_if_equals()`) read `delete()`'s result with
+  `bool()`, so `None` is `False` and no `FutureWarning` is emitted; 0.4.x
+  counted it as removed. Return a `bool` from `delete()`, as 0.4.0 requires. See
+  [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_5/#backend-delete-none). ([#421](https://github.com/allen0099/FastAPI-CacheX/issues/421))
+
+### Removed
+
+- **Sessions and OAuth state are removed, and so is the `jwt` extra.**
+  `fastapi_cachex.session` and `fastapi_cachex.state`, deprecated in 0.4.0
+  (#420), are gone: `FastAPICacheXSessionMiddleware`, `SessionManager`,
+  `SessionConfig`, the session dependencies, the token serializers,
+  `StateManager` and their proxies and exceptions. Importing either package
+  raises `ModuleNotFoundError`, and their names on `fastapi_cachex` raise
+  `AttributeError` instead of warning. The `jwt` extra, which only installed
+  `PyJWT` for JWT session tokens, is removed too. See
+  [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_5/#session-state-removed). ([#421](https://github.com/allen0099/FastAPI-CacheX/issues/421))
+- **`@cache` no longer counts a session loaded by the removed session
+  middleware as a credential.** A request bypasses the shared backend for an
+  `Authorization` header or a non-empty `request.session` from any session
+  middleware, as before; a session that `FastAPICacheXSessionMiddleware` loaded
+  no longer counts, since the middleware is gone. A `Cookie` header alone still
+  does not bypass the cache, and `X-Session-Token` in `@cache(vary=[...])` is
+  still keyed on its SHA-256 digest, so keys do not change.
+  See [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_5/#cache-session-token). ([#421](https://github.com/allen0099/FastAPI-CacheX/issues/421))
 
 ## [0.4.1] - 2026-10-03
 
@@ -1321,7 +1420,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.8...v0.3.9
