@@ -22,5 +22,31 @@ class RequestNotFoundError(CacheXError):
     """Exception raised when a request is not found."""
 
 
+class InvalidTTLError(CacheXError):
+    """An invalid ``ttl``, wherever it is passed.
+
+    Raised for a ``ttl`` (or ``stale_ttl``, ``default_ttl``, ``lock_ttl``)
+    that ``@cache``, ``@cached``, a backend, ``CacheManager`` or ``CacheLock``
+    refuses. Catch this class to handle all of them; the subclasses keep the
+    built-in exception each place raised before (#337).
+    """
+
+
+class TTLTypeError(InvalidTTLError, TypeError):
+    """A ``ttl`` that is not an ``int`` or a ``timedelta`` (``bool`` included).
+
+    Also a ``TypeError``, which the backends, ``CacheManager`` and
+    ``CacheLock`` raised before 0.5.1.
+    """
+
+
+class TTLValueError(InvalidTTLError, ValueError):
+    """A ``ttl`` out of range, or a ``timedelta`` with a fraction of a second.
+
+    Also a ``ValueError``, which the backends, ``CacheManager`` and
+    ``CacheLock`` raised before 0.5.1.
+    """
+
+
 class LockTimeoutError(CacheXError, TimeoutError):
     """Exception raised when acquiring a lock or waiting for stampede protection times out."""

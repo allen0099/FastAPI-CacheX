@@ -48,9 +48,10 @@ class CacheLock:
         key_prefix: Prefix for lock keys (default: "lock:")
 
     Raises:
-        TypeError: If ``ttl`` is not an ``int`` or a ``timedelta``
-        ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL`` or
-            not a whole number of seconds
+        TTLTypeError: If ``ttl`` is not an ``int`` or a ``timedelta`` (also
+            a ``TypeError``)
+        TTLValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
+            or not a whole number of seconds (also a ``ValueError``)
     """
 
     def __init__(

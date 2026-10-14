@@ -110,7 +110,7 @@ When a cached entry is valid (within TTL):
 - **With `no-cache` directive**: Forces revalidation with fresh content before deciding on 304
 - **With `private=True`**: Nothing is read from or written to the shared backend; the handler runs every time and only `If-None-Match` revalidation applies
 - **Without `ttl`** (`ttl=None`): Nothing is read from or written to the backend, as with `private=True`. The handler runs on every request, and `If-None-Match` gets a 304 only when it matches the freshly rendered response, so an old ETag never gets a 304 once the content has changed
-- **With `ttl=0`**: Sends `max-age=0` and otherwise behaves like `ttl=None`. A negative `ttl`, a non-`int` one (such as `1.5` or `True`) and one above `MAX_TTL` (see [TTL values](BACKENDS.md#ttl-values)) are rejected with `CacheXError` when the decorator is applied
+- **With `ttl=0`**: Sends `max-age=0` and otherwise behaves like `ttl=None`. A negative `ttl`, a non-`int` one (such as `1.5` or `True`) and one above `MAX_TTL` (see [TTL values](BACKENDS.md#ttl-values)) are rejected with `TTLTypeError` or `TTLValueError` when the decorator is applied; both are `CacheXError` subclasses, the same ones the backends raise (see [TTL values](BACKENDS.md#ttl-values))
 - **With a `timedelta`**: `ttl=timedelta(minutes=5)` is the same as `ttl=300`, and so is `stale_ttl`; a `timedelta` with a fraction of a second is rejected like a `float`
 
 ### What still runs on a hit

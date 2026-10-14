@@ -11,6 +11,8 @@ from typing import Any
 from typing import overload
 
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.exceptions import TTLTypeError
+from fastapi_cachex.exceptions import TTLValueError
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 from fastapi_cachex.types import HTTP_KEY_FORMAT_TAG
 from fastapi_cachex.types import CacheEntry
@@ -75,10 +77,11 @@ def validate_ttl(ttl: int | timedelta | None) -> int | None:
     backend stores.
 
     Raises:
-        TypeError: If ``ttl`` is not an ``int`` or a ``timedelta`` (``bool``
-            included)
-        ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL`` or
-            a ``timedelta`` that is not a whole number of seconds
+        TTLTypeError: If ``ttl`` is not an ``int`` or a ``timedelta``
+            (``bool`` included); also a ``TypeError``
+        TTLValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
+            or a ``timedelta`` that is not a whole number of seconds; also a
+            ``ValueError``
     """
     if ttl is None:
         return None
@@ -89,13 +92,13 @@ def validate_ttl(ttl: int | timedelta | None) -> int | None:
             "ttl must be an int number of seconds, a timedelta or None, "
             f"got {type(ttl).__name__}"
         )
-        raise TypeError(msg)
+        raise TTLTypeError(msg)
     if ttl <= 0:
         msg = f"ttl must be a positive number of seconds or None, got {ttl!r}"
-        raise ValueError(msg)
+        raise TTLValueError(msg)
     if ttl > MAX_TTL:
         msg = f"ttl must be at most {MAX_TTL} seconds (about 68 years)"
-        raise ValueError(msg)
+        raise TTLValueError(msg)
     return ttl
 
 
@@ -103,11 +106,11 @@ def _whole_seconds(value: timedelta, name: str) -> int:
     """The whole number of seconds in ``value``.
 
     Raises:
-        ValueError: If ``value`` has a fraction of a second
+        TTLValueError: If ``value`` has a fraction of a second
     """
     if value.microseconds:
         msg = f"{name} must be a whole number of seconds, got {value!r}"
-        raise ValueError(msg)
+        raise TTLValueError(msg)
     return int(value.total_seconds())
 
 

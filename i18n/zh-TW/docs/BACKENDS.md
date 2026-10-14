@@ -213,9 +213,21 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 
 每個 `ttl` 參數（`set`、`set_if_absent`、`set_if_equals`、`increment`，以及建立在它們之上的 `CacheManager` 與 `CacheLock` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的秒數，型別可以是 `int` 或整數秒的 `datetime.timedelta`（`timedelta(minutes=5)` 會存成 `300`）。這些檢查都在存取後端之前進行：
 
-- 零、負值與更大的值會拋出 `ValueError`。底層儲存對 `0` 的解讀各不相同：Memcached 把 exptime `0` 視為「永不過期」，Redis 拒絕 `EX 0`，而行程內的 dict 則會立即讓項目過期。
-- `float`、`bool` 或其他型別會拋出 `TypeError`。float 過去只在記憶體後端上有效，而 `True` 會被當成一秒。帶有小數秒的 `timedelta`（`timedelta(seconds=1.5)`）會拋出 `ValueError`，因為每個後端都以整秒計時。
-- Memcached 無法儲存 2038-01-19 之後的過期時間（它的 exptime 是 signed 32 位元時間戳），因此 Memcached 後端遇到超過這個時間點的 `ttl` 會拋出 `ValueError`，而不是接受一筆會立即被丟棄的寫入。
+- 零、負值與更大的值會拋出 `TTLValueError`。底層儲存對 `0` 的解讀各不相同：Memcached 把 exptime `0` 視為「永不過期」，Redis 拒絕 `EX 0`，而行程內的 dict 則會立即讓項目過期。
+- `float`、`bool` 或其他型別會拋出 `TTLTypeError`。float 過去只在記憶體後端上有效，而 `True` 會被當成一秒。帶有小數秒的 `timedelta`（`timedelta(seconds=1.5)`）會拋出 `TTLValueError`，因為每個後端都以整秒計時。
+- Memcached 無法儲存 2038-01-19 之後的過期時間（它的 exptime 是 signed 32 位元時間戳），因此 Memcached 後端遇到超過這個時間點的 `ttl` 會拋出 `TTLValueError`，而不是接受一筆會立即被丟棄的寫入。
+
+這兩個類別都繼承自 `InvalidTTLError`（它是 `CacheXError` 的子類別），無論 `ttl` 傳給哪裡，只要無效就會拋出：後端、`CacheManager`、`CacheLock`、`@cached` 與 `@cache`（`ttl` 和 `stale_ttl`）。捕捉 `InvalidTTLError` 就能處理所有情況。`TTLTypeError` 同時也是 `TypeError`，`TTLValueError` 同時也是 `ValueError`，也就是 0.5.1 之前後端、`CacheManager` 與 `CacheLock` 拋出的例外，因此既有的 `except TypeError` 或 `except ValueError` 仍然有效，包在 `@cache` 外的 `except CacheXError` 也一樣：
+
+```python
+from fastapi_cachex import InvalidTTLError
+
+
+try:
+    await manager.set("report", data, ttl=user_supplied_ttl)
+except InvalidTTLError as e:
+    raise HTTPException(422, detail=str(e)) from e
+```
 
 第三方後端應在其 `set` 中呼叫 `fastapi_cachex.backends.base.validate_ttl(ttl)` 並儲存它回傳的 `int`，以遵循相同規則並接受 `timedelta`；並在 `increment` 中呼叫 `validate_delta(delta)`。（`@cache(ttl=0)` 是另一回事：它會送出 `max-age=0`，且絕不會把 `0` 傳給後端；見 [HTTP 快取](HTTP_CACHING.md)。）
 
