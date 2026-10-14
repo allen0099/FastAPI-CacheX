@@ -16,6 +16,7 @@ from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_app_cache as get_app_cache
 from .dependencies import get_cache_backend as get_cache_backend
 from .exceptions import BackendNotFoundError as BackendNotFoundError
+from .exceptions import BackendUnavailableError as BackendUnavailableError
 from .exceptions import CacheXError as CacheXError
 from .exceptions import InvalidTTLError as InvalidTTLError
 from .exceptions import LockTimeoutError as LockTimeoutError
@@ -55,6 +56,7 @@ __all__ = [
     "AppCache",
     "BackendNotFoundError",
     "BackendProxy",
+    "BackendUnavailableError",
     "CacheBackend",
     "CacheKey",
     "CacheKeyBuilder",

@@ -17,6 +17,7 @@ from fastapi_cachex.cache_key import escape_glob
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 
+from ._unavailable import translate_unavailable
 from .base import BaseCacheBackend
 from .base import validate_delta
 from .base import validate_ttl
@@ -26,6 +27,21 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
 logger = logging.getLogger(__name__)
+
+
+def _is_unavailable(error: Exception) -> bool:
+    """Whether ``error`` means the Redis server could not be reached.
+
+    redis-py's ``ConnectionError`` (its subclasses included) and
+    ``TimeoutError``, and a socket error that reaches the caller unwrapped.
+    """
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    return isinstance(error, (RedisConnectionError, RedisTimeoutError, OSError))
+
+
+_unavailable = translate_unavailable(_is_unavailable)
 
 # PTTL replies that are not a remaining lifetime.
 _PTTL_NO_EXPIRY = -1
@@ -300,12 +316,14 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             deleted += await self.client.delete(*keys[i : i + _BATCH_SIZE])
         return deleted
 
+    @_unavailable
     async def get(self, key: str) -> CacheEntry | None:
         """Retrieve a cached response."""
         value = decode_entry(await self.client.get(self._make_key(key)))
         logger.debug("Redis %s; key=%s", "HIT" if value else "MISS", key)
         return value
 
+    @_unavailable
     async def set(
         self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> None:
@@ -314,18 +332,21 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         await self.client.set(self._make_key(key), encode_entry(value), ex=ttl)
         logger.debug("Redis SET; key=%s ttl=%s", key, ttl)
 
+    @_unavailable
     async def delete(self, key: str) -> bool:
         """Remove a response from the cache; returns whether the key existed."""
         removed = bool(await self.client.delete(self._make_key(key)))
         logger.debug("Redis DELETE; key=%s removed=%s", key, removed)
         return removed
 
+    @_unavailable
     async def delete_many(self, keys: Iterable[str]) -> int:
         """Remove every key in ``keys`` with batched DELs; returns how many existed."""
         removed = await self._delete_keys([self._make_key(key) for key in keys])
         logger.debug("Redis DELETE_MANY; removed=%s", removed)
         return removed
 
+    @_unavailable
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry (see base class).
 
@@ -335,6 +356,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         logger.debug("Redis GETDEL %s; key=%s", "HIT" if value else "MISS", key)
         return value
 
+    @_unavailable
     async def set_if_absent(
         self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
     ) -> bool:
@@ -354,6 +376,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return bool(stored)
 
+    @_unavailable
     async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
         """Atomically remove ``key`` while it holds ``expected`` (see base class).
 
@@ -372,6 +395,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return bool(deleted)
 
+    @_unavailable
     async def expire_if_equals(
         self, key: str, expected: CacheEntry, ttl: int | timedelta
     ) -> bool:
@@ -398,6 +422,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return bool(updated)
 
+    @_unavailable
     async def set_if_equals(
         self,
         key: str,
@@ -428,6 +453,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return bool(stored)
 
+    @_unavailable
     async def increment(
         self, key: str, delta: int = 1, ttl: int | timedelta | None = None
     ) -> int:
@@ -455,6 +481,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         logger.debug("Redis INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
         return int(value)
 
+    @_unavailable
     async def clear(self) -> None:
         """Clear all cached responses for this namespace.
 
@@ -463,6 +490,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         removed = await self._delete_matching(f"{self._prefix_pattern}*")
         logger.debug("Redis CLEAR; removed=%s", removed)
 
+    @_unavailable
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
 
@@ -501,6 +529,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return cleared_count
 
+    @_unavailable
     async def clear_pattern(self, pattern: str) -> int:
         """Clear cached responses matching a pattern.
 
@@ -524,6 +553,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return cleared_count
 
+    @_unavailable
     async def get_all_keys(self) -> list[str]:
         """Get all cache keys in the backend.
 
@@ -535,6 +565,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         logger.debug("Redis GET_ALL_KEYS; count=%s", len(logical_keys))
         return logical_keys
 
+    @_unavailable
     async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
 

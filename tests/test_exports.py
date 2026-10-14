@@ -12,6 +12,7 @@ from fastapi_cachex import exceptions
     "name",
     [
         "BackendNotFoundError",
+        "BackendUnavailableError",
         "CacheXError",
         "InvalidTTLError",
         "ProxyNotSetError",

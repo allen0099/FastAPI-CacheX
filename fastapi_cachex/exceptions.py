@@ -22,6 +22,18 @@ class RequestNotFoundError(CacheXError):
     """Exception raised when a request is not found."""
 
 
+class BackendUnavailableError(CacheXError):
+    """The cache backend's server could not be reached.
+
+    Raised by the Redis and Memcached backends for a transport failure: a
+    refused or reset connection, a timeout, or a server out of rotation. It is
+    chained to the client's own exception (``raise ... from``). The instance
+    raised is also of that exception's type, so an ``except`` clause naming
+    the client's exception (``redis.exceptions.ConnectionError``,
+    ``OSError``) keeps catching it (#260). The memory backend never raises it.
+    """
+
+
 class InvalidTTLError(CacheXError):
     """An invalid ``ttl``, wherever it is passed.
 

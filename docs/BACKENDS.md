@@ -170,7 +170,8 @@ after about 0.25 s. The costs:
 - `socket_timeout` also bounds slow replies. Set both timeouts above your
   normal Redis latency, including for the largest entries you cache.
 - The settings apply to every command the backend sends, not only to `@cache`.
-  `CacheManager` and `CacheLock`, which raise backend errors instead of
+  `CacheManager` and `CacheLock`, which raise
+  [`BackendUnavailableError`](#backend-unavailable) instead of
   failing open, see those errors sooner.
 
 `RedisConfig` has no `retry` field, so pass it to the constructor.
@@ -232,8 +233,9 @@ to a worker thread, including the multi-step
 of the keys existed; before 0.3.8 it took one thread trip per key and returned
 how many keys it was given.
 
-When a server cannot be reached, every call that would go to it raises, and the
-server is tried again after one second. Before 0.3.8, calls in the second after a
+When a server cannot be reached, every call that would go to it raises
+[`BackendUnavailableError`](#backend-unavailable), and the server is tried again
+after one second. Before 0.3.8, calls in the second after a
 failure returned made-up results instead: `get()` a miss, `set()` nothing (the write
 was lost), `increment()` a fresh counter of 0. With several servers, a failed one is
 taken out of rotation at once and its keys go to the remaining servers until it
@@ -275,6 +277,39 @@ when the block ends, including when the block raises.
   which may emit `ResourceWarning`s at shutdown. Before 0.3.9 only
   `MemoryBackend` had `aclose()`, and the Redis and Memcached backends were
   closed through `backend.client`.
+
+## When the server is unavailable {#backend-unavailable}
+
+When the Redis or Memcached server cannot be reached, the backend raises
+`BackendUnavailableError`, a `CacheXError`. That covers a refused or reset
+connection, a timeout, and a Memcached server out of rotation ("All servers
+seem to be down"). The memory backend never raises it. So code that wants to
+handle "the cache is down" needs one `except`, whichever backend is set:
+
+```python
+from fastapi_cachex import AppCache, BackendUnavailableError
+
+
+@app.get("/report")
+async def report(cache: AppCache) -> dict[str, int]:
+    try:
+        return await cache.get_or_set("report", build_report, ttl=300)
+    except BackendUnavailableError:
+        return build_report()  # serve it uncached while the cache is down
+```
+
+The error is chained to the client's own exception (`__cause__`), and is also
+an instance of that exception's type: a refused Memcached connection is a
+`BackendUnavailableError` and a `ConnectionRefusedError`, a Redis one a
+`BackendUnavailableError` and a `redis.exceptions.ConnectionError`. An
+`except` clause naming the client's exception, written before 0.5.1, keeps
+catching it. Errors that are not about reaching the server are left as they
+are: an invalid argument, a value Memcached refuses as too large, a key that
+holds something else.
+
+`@cache` is not affected: it [fails open](HTTP_CACHING.md#when-the-backend-fails)
+on any backend error, this one included. `CacheManager`, `CacheLock` and direct
+backend calls let it propagate.
 
 ## Atomic backend primitives
 
