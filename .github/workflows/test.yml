@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  # The one CI run of the 3.10-3.14 matrix. tox runs the same suites against
+  # The one CI run of the 3.10-3.15 matrix. tox runs the same suites against
   # the same lockfile, so it is left to local use rather than run here twice.
   # A run against the lowest supported dependency versions would be a
   # separate job next to this one.
@@ -38,7 +38,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

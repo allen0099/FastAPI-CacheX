@@ -268,7 +268,7 @@ empty body. The server drops the body of every HEAD response.
 `invalidate()` builds the GET key, so it clears what HEAD reads as well.
 
 A route that already accepted HEAD ran the handler on every HEAD request before
-0.4.2 and added none of these headers; it now skips the handler on a hit.
+0.5.0 and added none of these headers; it now skips the handler on a hit.
 
 ### Concurrent misses
 

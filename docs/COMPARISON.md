@@ -14,22 +14,22 @@ If something here is out of date, please
 ## At a glance
 
 Facts about the other libraries are from their source code at the release
-named in the last row. A feature marked 0.4.2 is not in a FastAPI-CacheX
-release yet.
+named in the last row (the latest release of each). A feature marked 0.5.0 needs FastAPI-CacheX 0.5.0
+or newer.
 
 | | FastAPI-CacheX | fastapi-cache2 | cashews | aiocache |
 |---|---|---|---|---|
-| What it caches | FastAPI GET responses; JSON values; function results (`@cached`, 0.4.2) | Return values of endpoints and plain functions | Return values of any async function | Return values of any async function; a key-value API |
+| What it caches | FastAPI GET responses; JSON values; function results (`@cached`, 0.5.0) | Return values of endpoints and plain functions | Return values of any async function | Return values of any async function; a key-value API |
 | Key built from | Method, host, path and query of the request | Function module, name and arguments | Function name and arguments, or a template | Function name and arguments, or a key builder |
 | `Cache-Control`, `ETag`, `304` | Written from the decorator's arguments; `304` on a matching `If-None-Match` | `max-age`, a weak `ETag` and `304` when the endpoint takes a `Response` | With its `CacheRequestControlMiddleware` and `CacheEtagMiddleware` | None |
 | A client's `Cache-Control` request header | Ignored, so clients cannot skip the cache | `no-store` and `no-cache` are honoured | Honoured by the middleware (`no-cache`, `no-store`, `max-age`) | — |
 | Requests with `Authorization` or a session | Bypass the shared cache unless you opt in | Cached like any other request | Your choice of key and middleware settings | — |
 | Serialization | JSON, no pickle | JSON by default, pickle optional | Pickle by default, optionally HMAC-signed; JSON optional | Pickle, JSON, msgpack, string or none |
 | Backends | Memory, Redis, Memcached | Memory, Redis, Memcached, DynamoDB | Memory, Redis (incl. cluster and client-side caching), diskcache | Memory, Redis, Memcached |
-| Stampede protection | `get_or_set()` with a distributed lock; `coalesce=True` per process on `@cache` (0.4.2) | None | `locked`, `early`, `soft`, `thunder_protection` | `cached_stampede` (lock based) |
+| Stampede protection | `get_or_set()` with a distributed lock; `coalesce=True` per process on `@cache` (0.5.0) | None | `locked`, `early`, `soft`, `thunder_protection` | `cached_stampede` (lock based) |
 | Tags, early refresh, metrics | No | No | Tags, early and soft refresh, Prometheus middleware, callbacks | Hit/miss and timing plugins |
 | Also included | `CacheLock`, atomic counters, monitoring routes | — | Rate limiting, circuit breaker, Bloom filters, locks | `RedLock`, `OptimisticLock`, `multi_cached` |
-| Latest release | 0.4.1 (2026-10-03); Python 3.10+, FastAPI 0.133+, Starlette 1.0+ | 0.2.2 (2024-07-24); Python 3.8+ | 7.6.0 (2026-09-17); Python 3.10+ | 0.12.3 (2024-09-25) |
+| Version compared | 0.5.0; Python 3.10–3.15, FastAPI 0.128.2+ | 0.2.2 (2024-07-24); Python 3.8+ | 7.6.0 (2026-09-17); Python 3.10+ | 0.12.3 (2024-09-25) |
 
 ## FastAPI-CacheX
 
@@ -40,7 +40,7 @@ cache to behave like an HTTP cache:
   adds a weak `ETag` and answers a matching `If-None-Match` with `304`,
   also on a miss and on `no_cache` routes. It sends `Age` on a hit, honours
   `Vary` (`vary=` adds request headers to the key), and answers `HEAD` from
-  the cached `GET` (0.4.2). See [HTTP caching](HTTP_CACHING.md).
+  the cached `GET` (0.5.0). See [HTTP caching](HTTP_CACHING.md).
 - **Safe by default with credentials.** The default key carries no user
   identity, so a request with `Authorization` or a session bypasses the shared
   cache and is answered with `Cache-Control: private`, and a response that sets
@@ -56,7 +56,7 @@ cache to behave like an HTTP cache:
   handler, so a cache outage does not become an API outage.
 - **Small extras on the same backend.** `CacheManager` / `AppCache` with
   `get_or_set()` behind a distributed lock, `@cached` for plain functions
-  (0.4.2), and `CacheLock` for one holder across workers.
+  (0.5.0), and `CacheLock` for one holder across workers.
 
 What it does not do, or does only simply:
 
