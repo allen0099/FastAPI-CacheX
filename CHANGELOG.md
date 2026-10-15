@@ -20,6 +20,37 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-15
+
+### Added
+
+- **The Redis and Memcached backends raise `BackendUnavailableError` when their
+  server cannot be reached.** A refused or reset connection, a timeout and a
+  Memcached server out of rotation all raise it, chained to the client's own
+  exception, so one `except BackendUnavailableError` handles "the cache is down"
+  around `CacheManager`, `CacheLock` or a backend call whatever the backend. The
+  error is also an instance of the client's exception type, so existing `except
+  redis.exceptions.ConnectionError` or `except OSError` clauses keep catching it.
+  `@cache` still fails open on it. ([#260](https://github.com/allen0099/FastAPI-CacheX/issues/260))
+- **`/cached-hits` reports `entries`, `total_entries`, `valid_entries` and
+  `expired_entries`.** They list and count the cached route entries under names
+  that say so; the route never counted hits. ([#336](https://github.com/allen0099/FastAPI-CacheX/issues/336))
+- **An invalid `ttl` raises `TTLTypeError` or `TTLValueError` wherever it is
+  passed.** Both derive from the new `InvalidTTLError`, a `CacheXError`, and are
+  raised by the backends, `CacheManager`, `CacheLock`, `@cached` and `@cache`
+  (`ttl` and `stale_ttl`), so one `except InvalidTTLError` handles all of them.
+  `TTLTypeError` is also a `TypeError` and `TTLValueError` a `ValueError`, which
+  the backends, `CacheManager` and `CacheLock` raised before, so existing
+  `except TypeError`, `except ValueError` and `except CacheXError` clauses keep
+  working. ([#337](https://github.com/allen0099/FastAPI-CacheX/issues/337))
+
+### Deprecated
+
+- **The `cached_hits`, `total_hits`, `valid_hits` and `expired_hits` fields of
+  `/cached-hits` are deprecated and will be removed in 0.6.0.** They keep their
+  values until then and are marked `deprecated` in the OpenAPI schema; read
+  `entries`, `total_entries`, `valid_entries` and `expired_entries` instead. ([#336](https://github.com/allen0099/FastAPI-CacheX/issues/336))
+
 ## [0.5.0] - 2026-10-14
 
 0.5.0 contains breaking changes; read
@@ -1420,7 +1451,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.3.9...v0.4.0
