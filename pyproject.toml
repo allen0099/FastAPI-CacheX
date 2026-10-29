@@ -51,7 +51,7 @@ dev = [
     "httpx2>=2.13.1",
     # Starlette's SessionMiddleware, which tests of the session bypass use.
     "itsdangerous>=1.1.0",
-    "mypy>=2.4.0",
+    "mypy>=2.4.1",
     "orjson>=3.10.16",
     "pre-commit>=4.2.0",
     "pymemcache>=4.0.0",
