@@ -96,6 +96,15 @@
       internalChecksFilter: "strict",
     },
     {
+      // The typos hook installs `typos==<rev>` from PyPI, and the v1.52.1
+      // wheels never reached PyPI (the upstream publish job failed), so that
+      // rev breaks every pre-commit run. Drop this rule once a newer release
+      // is out.
+      description: "Skip typos v1.52.1: it was never published to PyPI",
+      matchDepNames: ["crate-ci/typos"],
+      allowedVersions: "!/^v1\\.52\\.1$/",
+    },
+    {
       description: "lowest.yml pins the oldest supported Python on purpose",
       matchFileNames: [".github/workflows/lowest.yml"],
       matchDepNames: ["python"],
