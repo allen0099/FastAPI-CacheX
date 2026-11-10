@@ -1326,19 +1326,27 @@ async def test_the_longest_accepted_prefix_stores_a_hashed_key() -> None:
     await backend.delete("needs hashing " * 30)
 
 
-def test_memcached_timeouts_default_to_five_seconds() -> None:
+def test_memcached_timeouts_default_to_one_second() -> None:
+    """As on the Redis backend; they were 5 seconds before 0.6.0 (#516)."""
     backend = MemcachedBackend([MEMCACHED_SERVER])
 
-    assert backend.client.default_kwargs["connect_timeout"] == 5
-    assert backend.client.default_kwargs["timeout"] == 5
+    assert backend.client.default_kwargs["connect_timeout"] == 1
+    assert backend.client.default_kwargs["timeout"] == 1
+
+
+def test_memcached_without_timeouts_no_longer_warns() -> None:
+    """0.5.3 announced the new default with a ``FutureWarning`` (#516)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        MemcachedBackend([MEMCACHED_SERVER])
 
 
 def test_memcached_timeouts_reach_the_client() -> None:
     """They were fixed at 5 seconds (#502)."""
-    backend = MemcachedBackend([MEMCACHED_SERVER], connect_timeout=0.5, timeout=1)
+    backend = MemcachedBackend([MEMCACHED_SERVER], connect_timeout=0.5, timeout=3)
 
     assert backend.client.default_kwargs["connect_timeout"] == 0.5
-    assert backend.client.default_kwargs["timeout"] == 1
+    assert backend.client.default_kwargs["timeout"] == 3
 
 
 @pytest.mark.parametrize("name", ["connect_timeout", "timeout"])
@@ -1351,6 +1359,7 @@ def test_memcached_timeouts_reach_the_client() -> None:
         (float("nan"), ValueError),
         (True, TypeError),
         ("1", TypeError),
+        (None, TypeError),
     ],
 )
 def test_memcached_rejects_a_timeout_that_cannot_work(
@@ -1358,34 +1367,6 @@ def test_memcached_rejects_a_timeout_that_cannot_work(
 ) -> None:
     with pytest.raises(error, match=rf"^{name} must be "):
         MemcachedBackend([MEMCACHED_SERVER], **{name: value})  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize(
-    "kwargs", [{}, {"timeout": 1}, {"connect_timeout": 1}], ids=str
-)
-def test_memcached_warns_that_the_timeout_defaults_change(
-    kwargs: dict[str, float],
-) -> None:
-    """0.6.0 makes them 1 second; 0.5.x says so first (#516)."""
-    with pytest.warns(FutureWarning, match="default to 1 second in") as caught:
-        MemcachedBackend(
-            [MEMCACHED_SERVER],
-            connect_timeout=kwargs.get("connect_timeout"),
-            timeout=kwargs.get("timeout"),
-        )
-
-    # The application's line, not the library's.
-    assert caught[0].filename == __file__
-
-
-def test_memcached_with_both_timeouts_does_not_warn() -> None:
-    # pyproject.toml ignores this warning, so record it instead of relying on
-    # filterwarnings = ["error"].
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        MemcachedBackend([MEMCACHED_SERVER], connect_timeout=5, timeout=5)
-
-    assert caught == []
 
 
 _SECRET_KEY = "user:alice@example.com"

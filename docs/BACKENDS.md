@@ -280,8 +280,8 @@ backend = MemcachedBackend(
 BackendProxy.set(backend)
 ```
 
-`connect_timeout` and `timeout` (seconds; 5 by default, [1 from 0.6.0](MIGRATING_0_6.md#memcached-timeouts),
-and leaving either out warns about that) bound each connection
+`connect_timeout` and `timeout` (seconds; 1 by default,
+[5 before 0.6.0](MIGRATING_0_6.md#memcached-timeouts)) bound each connection
 attempt and each wait for a reply; a call that sends several commands
 (`delete_many`, the compare-and-write operations) can take several times
 `timeout`. Every Memcached call runs in a worker thread, which it holds until

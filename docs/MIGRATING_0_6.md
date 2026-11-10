@@ -42,20 +42,20 @@ The `redis` extra now needs `orjson` 3.8.0 or later (it was 3.4.7): 3.8.0 is the
 
 ## Memcached timeouts default to 1 second {#memcached-timeouts}
 
-`MemcachedBackend` waits 5 seconds for a connection and for each reply unless told otherwise. In 0.6.0 both defaults become 1 second, as on the Redis backend ([#516](https://github.com/allen0099/FastAPI-CacheX/issues/516)): every Memcached call holds a worker thread until the server answers or the timeout passes, so a long default lets an unreachable server tie up the thread pool your sync handlers and dependencies share.
+`MemcachedBackend` waited 5 seconds for a connection and for each reply unless told otherwise. In 0.6.0 both defaults are 1 second, as on the Redis backend ([#516](https://github.com/allen0099/FastAPI-CacheX/issues/516)): every Memcached call holds a worker thread until the server answers or the timeout passes, so a long default lets an unreachable server tie up the thread pool your sync handlers and dependencies share.
 
-From 0.5.3 on, building the backend without both arguments emits a `FutureWarning`:
+0.5.3 says so first: there, building the backend without both arguments emits a `FutureWarning`:
 
 ```text
 FutureWarning: MemcachedBackend timeouts will default to 1 second in fastapi-cachex 0.6.0; ...
 ```
 
-Pass both to choose the values now; that also silences the warning:
+Pass both to choose the values; on 0.5.3 that also silences the warning, and on 0.6.0 it is how to keep the old 5 seconds:
 
 ```python
 backend = MemcachedBackend(
     servers=["localhost:11211"],
-    connect_timeout=1.0,  # or 5.0 to keep today's behaviour
+    connect_timeout=1.0,  # or 5.0, the default before 0.6.0
     timeout=1.0,
 )
 ```

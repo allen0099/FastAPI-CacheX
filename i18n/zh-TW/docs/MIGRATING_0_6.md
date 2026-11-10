@@ -42,20 +42,20 @@ import fastapi_cachex  # noqa: E402
 
 ## Memcached 逾時預設為 1 秒 {#memcached-timeouts}
 
-`MemcachedBackend` 在未指定時，建立連線與每次等待回應都會等 5 秒。0.6.0 會把這兩個預設值改為 1 秒，與 Redis 後端一致（[#516](https://github.com/allen0099/FastAPI-CacheX/issues/516)）：每次 Memcached 呼叫都會佔用一個工作執行緒，直到伺服器回應或逾時，因此過長的預設值會讓無法連線的伺服器拖住同步 handler 與依賴項共用的執行緒池。
+`MemcachedBackend` 原本在未指定時，建立連線與每次等待回應都會等 5 秒。0.6.0 的這兩個預設值為 1 秒，與 Redis 後端一致（[#516](https://github.com/allen0099/FastAPI-CacheX/issues/516)）：每次 Memcached 呼叫都會佔用一個工作執行緒，直到伺服器回應或逾時，因此過長的預設值會讓無法連線的伺服器拖住同步 handler 與依賴項共用的執行緒池。
 
-從 0.5.3 起，建立後端時若沒有同時傳入這兩個參數，會發出 `FutureWarning`：
+0.5.3 會先預告：在該版本建立後端時若沒有同時傳入這兩個參數，會發出 `FutureWarning`：
 
 ```text
 FutureWarning: MemcachedBackend timeouts will default to 1 second in fastapi-cachex 0.6.0; ...
 ```
 
-現在就同時傳入兩者以選定數值，這也會讓警告消失：
+同時傳入兩者以選定數值；在 0.5.3 上這也會讓警告消失，在 0.6.0 上則是維持原本 5 秒的方法：
 
 ```python
 backend = MemcachedBackend(
     servers=["localhost:11211"],
-    connect_timeout=1.0,  # 或 5.0 以維持目前的行為
+    connect_timeout=1.0,  # 或 5.0，即 0.6.0 之前的預設值
     timeout=1.0,
 )
 ```
