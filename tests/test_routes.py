@@ -103,10 +103,8 @@ class TestCachedHitsRoute:
         # Check summary
         assert data["summary"]["total_cached_entries"] == 2
         assert data["summary"]["active_entries"] == 2
-        assert set(data["summary"]["cached_paths"]) == {
-            "/api/users",
-            "/api/products",
-        }
+        # Sorted, each path once.
+        assert data["summary"]["cached_paths"] == ["/api/products", "/api/users"]
 
     def test_cached_hits_route_structure(self, app, client, setup_cache):
         """Test that cached hit records have correct structure."""
@@ -680,7 +678,7 @@ class TestEntryNamedFields:
     deprecated in 0.5.1 and removed in 0.6.0 (#507).
     """
 
-    def test_new_fields_list_and_count_the_entries(
+    def test_the_hits_fields_are_gone(
         self, app: FastAPI, client: TestClient, setup_cache: MemoryBackend
     ) -> None:
         add_routes(app, dependencies=[])
@@ -722,6 +720,9 @@ class TestEntryNamedFields:
         assert data["total_entries"] == 1
         assert data["valid_entries"] == 0
         assert data["expired_entries"] == 1
+        # An expired entry is not a cached route.
+        assert data["unique_routes"] == 0
+        assert data["summary"]["cached_paths"] == []
 
     def test_openapi_has_only_the_entry_fields(
         self, app: FastAPI, client: TestClient

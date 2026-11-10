@@ -173,19 +173,19 @@ def _cached_hits(entries: list[_Entry]) -> CacheHitsResponse:
         )
         for e in entries
     ]
-    valid_paths = [r.path for r in records if not r.is_expired]
+    valid = sum(1 for r in records if not r.is_expired)
+    valid_paths = {r.path for r in records if not r.is_expired}
     total = len(records)
-    valid = len(valid_paths)
     return CacheHitsResponse(
         entries=records,
         total_entries=total,
         valid_entries=valid,
         expired_entries=total - valid,
-        unique_routes=len(set(valid_paths)),
+        unique_routes=len(valid_paths),
         summary=CacheHitSummary(
             total_cached_entries=total,
             active_entries=valid,
-            cached_paths=sorted(set(valid_paths)),
+            cached_paths=sorted(valid_paths),
         ),
     )
 
