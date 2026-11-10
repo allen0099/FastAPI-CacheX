@@ -138,4 +138,4 @@ def test_the_etag_digest_is_not_declared_a_security_use(
     monkeypatch.setattr(hashlib, "md5", fips_md5)
 
     # The value is unchanged, so stored entries and client validators stay valid.
-    assert _stored_response._etag_for(b"x") == f'W/"{real_md5(b"x").hexdigest()}"'
+    assert _stored_response._etag_for(b"x") == 'W/"9dd4e461268c8034f5c8564e155c67a6"'

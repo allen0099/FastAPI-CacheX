@@ -13,6 +13,7 @@ from fastapi_cachex.exceptions import LockTimeoutError
 from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import log_ref
 
 
 async def test_lock_basic_context_manager() -> None:
@@ -82,7 +83,7 @@ async def test_lock_context_manager_timeout_raises_lock_timeout_error() -> None:
     lock1 = CacheLock("job", ttl=30)
     assert await lock1.acquire(blocking=False) is True
 
-    with pytest.raises(LockTimeoutError, match="Failed to acquire lock 'job'"):
+    with pytest.raises(LockTimeoutError, match="Failed to acquire lock within timeout"):
         async with CacheLock("job", ttl=30, timeout=0.05, poll_interval=0.01):
             pass
 
@@ -290,10 +291,27 @@ async def test_a_failed_withdrawal_is_logged_and_the_error_kept(
     assert "could not withdraw an interrupted claim" in warnings[0].getMessage()
     # The name reaches WARNING only as a digest; DEBUG has the key (#497).
     assert "user@example.com" not in warnings[0].getMessage()
+    key_ref = log_ref("lock:user@example.com")
+    assert key_ref in warnings[0].getMessage()
     assert any(
-        r.levelno == logging.DEBUG and "lock:user@example.com" in r.getMessage()
+        r.levelno == logging.DEBUG
+        and key_ref in r.getMessage()
+        and "lock:user@example.com" in r.getMessage()
         for r in caplog.records
     )
+
+
+async def test_a_timeout_does_not_name_the_lock() -> None:
+    """An unhandled ``LockTimeoutError`` ends up in the error log (#497)."""
+    backend = MemoryBackend()
+    assert await CacheLock("user@example.com", backend=backend).acquire() is True
+
+    with pytest.raises(LockTimeoutError) as raised:
+        async with CacheLock("user@example.com", timeout=0.01, backend=backend):
+            pass
+
+    assert "user@example.com" not in str(raised.value)
+    assert log_ref("lock:user@example.com") in str(raised.value)
 
 
 async def test_a_cancelled_acquire_leaves_another_holders_lock() -> None:

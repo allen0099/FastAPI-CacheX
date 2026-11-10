@@ -187,8 +187,11 @@ class CacheManager:
             return json.loads(cached.content)
         except _DECODE_ERRORS:
             # Keys often embed user IDs or e-mails: only a digest at WARNING.
-            logger.warning("Failed to decode cached value; key_ref=%s", log_ref(key))
-            logger.debug("Failed to decode cached value; key=%s", key)
+            key_ref = log_ref(key)
+            logger.warning("Failed to decode cached value; key_ref=%s", key_ref)
+            logger.debug(
+                "Failed to decode cached value; key_ref=%s key=%s", key_ref, key
+            )
             return default
 
     async def set(
@@ -340,7 +343,16 @@ class CacheManager:
                     if cached is not _SENTINEL:
                         return cached
                     if raise_on_timeout:
-                        msg = f"Waiting for cache key {key!r} timed out after {wait_timeout}s"
+                        key_ref = log_ref(key)
+                        logger.debug(
+                            "Cache stampede wait timed out; key_ref=%s key=%s",
+                            key_ref,
+                            key,
+                        )
+                        msg = (
+                            f"Waiting for a cache key timed out after "
+                            f"{wait_timeout}s (key_ref={key_ref})"
+                        )
                         raise LockTimeoutError(msg)
                     logger.warning(
                         "Cache stampede wait timeout exceeded for key_ref=%s; computing directly",
