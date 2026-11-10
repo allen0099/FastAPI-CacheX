@@ -5,6 +5,7 @@ import hashlib
 import logging
 import time
 import warnings
+from collections.abc import Callable
 from collections.abc import Iterable
 from datetime import timedelta
 
@@ -335,31 +336,45 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return bool(stored)
 
+    def _cas_if_equals(
+        self,
+        operation: str,
+        key: str,
+        expected: CacheEntry,
+        new: Callable[[bytes], bytes],
+        exptime: int,
+    ) -> bool:
+        """GETS, compare and CAS in one worker thread.
+
+        Writes ``new(raw)``, given the bytes just read, with ``exptime`` only
+        if the key holds ``expected`` and nothing wrote or deleted it since
+        ``GETS`` read the value that was compared. ``new`` is called only once
+        the comparison has passed.
+        """
+        prefixed_key = self._make_key(key)
+        raw, cas_token = self.client.gets(prefixed_key)
+        if raw is None or decode_entry(raw) != expected:
+            logger.debug("Memcached %s MISMATCH; key=%s", operation, key)
+            return False
+        done = self.client.cas(
+            prefixed_key, new(raw), cas_token, exptime, noreply=False
+        )
+        logger.debug(
+            "Memcached %s %s; key=%s", operation, "HIT" if done else "LOST RACE", key
+        )
+        return bool(done)
+
     @_unavailable
     async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
         """Atomically remove ``key`` while it holds ``expected`` (see base class).
 
         The classic protocol's DELETE takes no CAS token, so the release is a
         CAS write with a negative exptime, which Memcached treats as "expired
-        immediately": it succeeds only if nothing wrote the key since ``GETS``
-        read the value that was compared.
+        immediately".
         """
-        return await asyncio.to_thread(self._delete_if_equals, key, expected)
-
-    def _delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
-        """Run ``delete_if_equals``'s GETS, compare and CAS in one worker thread."""
-        prefixed_key = self._make_key(key)
-        raw, cas_token = self.client.gets(prefixed_key)
-        if raw is None or decode_entry(raw) != expected:
-            logger.debug("Memcached DELETE_IF_EQUALS MISMATCH; key=%s", key)
-            return False
-        deleted = self.client.cas(prefixed_key, b"", cas_token, -1, noreply=False)
-        logger.debug(
-            "Memcached DELETE_IF_EQUALS %s; key=%s",
-            "HIT" if deleted else "LOST RACE",
-            key,
+        return await asyncio.to_thread(
+            self._cas_if_equals, "DELETE_IF_EQUALS", key, expected, lambda _: b"", -1
         )
-        return bool(deleted)
 
     @_unavailable
     async def expire_if_equals(
@@ -370,30 +385,16 @@ class MemcachedBackend(BaseCacheBackend):
         TOUCH in the Memcached protocol takes no CAS token, so the renewal is a
         CAS write with the same bytes read by GETS and the new exptime.
         """
-        ttl = require_ttl(ttl)
         # Converted up front so a ttl Memcached cannot store fails before I/O.
-        exptime = _expiry(ttl)
+        exptime = _expiry(require_ttl(ttl))
         return await asyncio.to_thread(
-            self._expire_if_equals, key, expected, ttl, exptime
-        )
-
-    def _expire_if_equals(
-        self, key: str, expected: CacheEntry, ttl: int, exptime: int
-    ) -> bool:
-        """Run ``expire_if_equals``'s GETS, compare and CAS in one worker thread."""
-        prefixed_key = self._make_key(key)
-        raw, cas_token = self.client.gets(prefixed_key)
-        if raw is None or decode_entry(raw) != expected:
-            logger.debug("Memcached EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
-            return False
-        updated = self.client.cas(prefixed_key, raw, cas_token, exptime, noreply=False)
-        logger.debug(
-            "Memcached EXPIRE_IF_EQUALS %s; key=%s ttl=%s",
-            "HIT" if updated else "LOST RACE",
+            self._cas_if_equals,
+            "EXPIRE_IF_EQUALS",
             key,
-            ttl,
+            expected,
+            lambda raw: raw,
+            exptime,
         )
-        return bool(updated)
 
     @_unavailable
     async def set_if_equals(
@@ -403,42 +404,17 @@ class MemcachedBackend(BaseCacheBackend):
         value: CacheEntry,
         ttl: int | timedelta | None = None,
     ) -> bool:
-        """Atomically store ``value`` while ``key`` holds ``expected`` (see base class).
-
-        GETS reads the value to compare along with its CAS token, and the CAS
-        write succeeds only if nothing wrote or deleted the key since.
-        """
-        ttl = validate_ttl(ttl)
+        """Atomically store ``value`` while ``key`` holds ``expected`` (see base class)."""
         # Converted up front so a ttl Memcached cannot store fails before I/O.
-        exptime = _expiry(ttl)
+        exptime = _expiry(validate_ttl(ttl))
         return await asyncio.to_thread(
-            self._set_if_equals, key, expected, value, ttl, exptime
-        )
-
-    def _set_if_equals(
-        self,
-        key: str,
-        expected: CacheEntry,
-        value: CacheEntry,
-        ttl: int | None,
-        exptime: int,
-    ) -> bool:
-        """Run ``set_if_equals``'s GETS, compare and CAS in one worker thread."""
-        prefixed_key = self._make_key(key)
-        raw, cas_token = self.client.gets(prefixed_key)
-        if raw is None or decode_entry(raw) != expected:
-            logger.debug("Memcached SET_IF_EQUALS MISMATCH; key=%s", key)
-            return False
-        stored = self.client.cas(
-            prefixed_key, encode_entry(value), cas_token, exptime, noreply=False
-        )
-        logger.debug(
-            "Memcached SET_IF_EQUALS %s; key=%s ttl=%s",
-            "HIT" if stored else "LOST RACE",
+            self._cas_if_equals,
+            "SET_IF_EQUALS",
             key,
-            ttl,
+            expected,
+            lambda _: encode_entry(value),
+            exptime,
         )
-        return bool(stored)
 
     def _add_delta(self, prefixed_key: str, delta: int) -> int | None:
         """Apply ``delta`` with INCR/DECR; ``None`` when the key does not exist.
@@ -633,7 +609,6 @@ class MemcachedBackend(BaseCacheBackend):
         )
         return removed
 
-    @_unavailable
     async def clear_pattern(self, pattern: str) -> int:
         """Clear cached responses matching a pattern.
 
@@ -657,7 +632,6 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached CLEAR_PATTERN unsupported; pattern=%s", pattern)
         return 0
 
-    @_unavailable
     async def get_all_keys(self) -> list[str]:
         """Get all cache keys in the backend.
 
@@ -680,7 +654,6 @@ class MemcachedBackend(BaseCacheBackend):
         logger.debug("Memcached GET_ALL_KEYS unsupported; returning empty list")
         return []
 
-    @_unavailable
     async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
 

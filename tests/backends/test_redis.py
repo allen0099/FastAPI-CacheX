@@ -172,6 +172,17 @@ async def test_redis_accepts_a_pool_that_decodes_replies() -> None:
 
 
 @requires_redis_package
+def test_redis_load_from_config_returns_the_class_it_is_called_on() -> None:
+    """It named the base class, so a subclass got the base back (#504)."""
+    from fastapi_cachex.backends.config import RedisConfig
+
+    class Custom(AsyncRedisCacheBackend):
+        pass
+
+    assert type(Custom.load_from_config(RedisConfig())) is Custom
+
+
+@requires_redis_package
 def test_redis_load_from_config_passes_all_fields() -> None:
     """load_from_config must forward all RedisConfig fields to the backend."""
     from pydantic import SecretStr

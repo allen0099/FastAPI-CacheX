@@ -7,7 +7,6 @@ from collections.abc import Iterable
 from datetime import timedelta
 from types import TracebackType
 from typing import TYPE_CHECKING
-from typing import Any
 from typing import overload
 
 from fastapi_cachex.exceptions import CacheXError
@@ -466,7 +465,7 @@ class BaseCacheBackend(ABC):
         """
 
     @abstractmethod
-    async def get_cache_data(self) -> dict[str, tuple[Any, float | None]]:
+    async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
 
         This method is primarily used for cache monitoring and statistics.
