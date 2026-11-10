@@ -192,9 +192,11 @@ class MemcachedBackend(BaseCacheBackend):
             servers: List of Memcached servers in format ["host:port", ...]
             key_prefix: Prefix for all cache keys (default: 'fastapi_cachex:')
             connect_timeout: Seconds to wait for a connection to a server.
-                ``None`` (not passed) is 5 seconds, and 1 second from 0.6.0.
+                ``None`` (not passed) is 5 seconds, and 1 second from 0.6.0;
+                it does not disable the timeout.
             timeout: Seconds to wait for each reply from a server. ``None``
-                (not passed) is 5 seconds, and 1 second from 0.6.0. Every
+                (not passed) is 5 seconds, and 1 second from 0.6.0; it does
+                not disable the timeout. Every
                 call runs in a worker thread of the default executor and
                 holds it until it is answered or times out, so while a
                 server is unreachable a lower value frees those threads

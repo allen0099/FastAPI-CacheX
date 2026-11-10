@@ -125,19 +125,15 @@ BackendProxy.set(backend)
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex import BackendProxy
 
-backend = MemcachedBackend(servers=["localhost:11211"])
-BackendProxy.set(backend)
-```
-
-`connect_timeout` 與 `timeout`（單位為秒；預設皆為 5，[0.6.0 起為 1](MIGRATING_0_6.md#memcached-timeouts)，省略任一個都會對此發出警告）限制每次建立連線與每次等待回應的時間；會送出多個指令的呼叫（`delete_many`、compare-and-write 類操作）可能耗時 `timeout` 的數倍。每次 Memcached 呼叫都在工作執行緒中執行，並佔用該執行緒直到伺服器回應或逾時，因此若不希望無法連線的伺服器拖住執行緒池，請調低這兩個值：
-
-```python
 backend = MemcachedBackend(
     servers=["localhost:11211"],
     connect_timeout=0.5,  # 建立連線的秒數上限
     timeout=1.0,  # 等待回應的秒數上限
 )
+BackendProxy.set(backend)
 ```
+
+`connect_timeout` 與 `timeout`（單位為秒；預設皆為 5，[0.6.0 起為 1](MIGRATING_0_6.md#memcached-timeouts)，省略任一個都會對此發出警告）限制每次建立連線與每次等待回應的時間；會送出多個指令的呼叫（`delete_many`、compare-and-write 類操作）可能耗時 `timeout` 的數倍。每次 Memcached 呼叫都在工作執行緒中執行，並佔用該執行緒直到伺服器回應或逾時，因此若不希望無法連線的伺服器拖住執行緒池，請讓這兩個值保持在低點。
 
 **限制**：
 
