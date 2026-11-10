@@ -58,4 +58,16 @@ backend = MemcachedBackend(
 )
 ```
 
+把警告視為錯誤的測試套件（`filterwarnings = ["error"]`）在 0.5.3 上，只要有地方未同時傳入這兩個參數就建立後端，就會失敗。若後端是由你無法修改的程式碼建立的，請改為忽略這一則警告：
+
+```toml
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+    "ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning",
+]
+```
+
+在 pytest 之外，於建立後端之前呼叫 `warnings.filterwarnings("ignore", message="MemcachedBackend timeouts will default to 1 second", category=FutureWarning)` 有相同效果，在環境變數中設定 `PYTHONWARNINGS="ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning"` 也是。
+
 對 `@cache` 而言，逾時與其他後端失敗相同：請求會[在不使用快取的情況下回應](HTTP_CACHING.md#when-the-backend-fails)。若伺服器經常需要超過一秒才回應，請明確寫出較大的數值。

@@ -58,4 +58,16 @@ backend = MemcachedBackend(
 )
 ```
 
+A test suite that turns warnings into errors (`filterwarnings = ["error"]`) fails on 0.5.3 wherever it builds the backend without both arguments. If the backend is built by code you cannot change, ignore this one warning instead:
+
+```toml
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+    "ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning",
+]
+```
+
+Outside pytest, `warnings.filterwarnings("ignore", message="MemcachedBackend timeouts will default to 1 second", category=FutureWarning)` before the backend is built does the same, as does `PYTHONWARNINGS="ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning"` in the environment.
+
 With `@cache`, a timeout is a backend failure like any other: the request is [answered without the cache](HTTP_CACHING.md#when-the-backend-fails). A server that regularly takes longer than a second to answer needs the larger value spelled out.
