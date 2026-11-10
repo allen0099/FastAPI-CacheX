@@ -2,7 +2,7 @@
 
 [fastapi-cache2](https://github.com/long2ice/fastapi-cache)（以 `fastapi_cache` 匯入）是安裝數最多的 FastAPI 快取，最新版本 0.2.2 發行於 2024 年 7 月。本頁把它的 API 對應到 FastAPI-CacheX，列出行為上的差異，並指出沒有對應功能的部分。內容以 fastapi-cache2 0.2.2 與 FastAPI-CacheX 0.5.0 為準。如果你還在考慮是否要轉換，請見[何時使用](COMPARISON.md)。
 
-FastAPI-CacheX 需要 Python 3.10 以上與 FastAPI 0.128.2 以上。
+FastAPI-CacheX 需要 Python 3.11 以上與 FastAPI 0.128.2 以上。
 
 ## 同一個路由，遷移前後 {#before-and-after}
 

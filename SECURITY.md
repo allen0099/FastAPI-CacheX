@@ -15,6 +15,14 @@ A fix ships as a new 0.5.x patch release; earlier releases are not patched.
 0.4.x gets no further releases: move to 0.5.x with
 [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_5/).
 
+## Supported Python versions
+
+A Python version is dropped in the first minor release after its end-of-life
+date, and the release line before that one warns at import time on the
+version about to be dropped. 0.6.0 requires Python 3.11 or later; Python 3.10
+reached its end of life in October 2026. Python 3.11 follows in the first
+minor release after October 2027.
+
 ## Reporting a vulnerability
 
 Please do **not** open a public issue, pull request or discussion for a

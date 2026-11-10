@@ -458,7 +458,7 @@ def release_notes(body: str, version: str, date: str) -> str:
 
 
 def _today() -> str:
-    return dt.datetime.now(tz=dt.timezone.utc).date().isoformat()
+    return dt.datetime.now(tz=dt.UTC).date().isoformat()
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

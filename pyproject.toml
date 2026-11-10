@@ -3,7 +3,7 @@ name = "fastapi-cachex"
 version = "0.5.6"
 description = "A caching library for FastAPI with support for Cache-Control, ETag, and multiple backends."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
@@ -14,7 +14,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -65,14 +64,16 @@ dev = [
 ]
 docs = [
     # Pre-1.0: upgrades are deliberate, not automatic.
-    "zensical>=0.1,<0.2; python_version >= '3.11'",
+    "zensical>=0.1,<0.2",
     "mkdocstrings-python>=2.0",
     "markdown-callouts>=0.4",
 ]
 
 [project.optional-dependencies]
 memcached = ["pymemcache>=4.0.0"]
-redis = ["redis[hiredis]>=5.3.0", "orjson>=3.4.7"]
+# orjson 3.8.0 is the first release with Python 3.11 wheels for Linux, macOS
+# and Windows; older ones would be built from source there.
+redis = ["redis[hiredis]>=5.3.0", "orjson>=3.8.0"]
 
 [build-system]
 requires = ["uv_build>=0.13,<0.14"]
@@ -101,9 +102,6 @@ filterwarnings = [
     # deprecates. Later starlette releases no longer use it; nothing in this
     # package or its tests does.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
-    # Importing the package warns on Python 3.10 until 0.6.0 drops it (#491);
-    # tests/test_python_support.py checks that warning.
-    "ignore:fastapi-cachex 0.6.0 will require Python 3.11:FutureWarning",
     # A MemcachedBackend built without timeouts warns until 0.6.0 changes
     # their default (#516); tests/backends/test_memcached.py checks that warning.
     "ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning",
@@ -156,7 +154,9 @@ keep-runtime-typing = true
 # PLR0917: these constructors take many positional options; making them
 # keyword-only would break the public API.
 "fastapi_cachex/backends/redis.py" = ["PLR0913", "PLR0917", "PLC0415"]  # Optional dependency, Redis config
-"fastapi_cachex/lock.py" = ["PLR0913", "PLR0917"]  # Configurable lock parameters
+# ASYNC109: `acquire(timeout=...)` is public API; it also decides the return
+# value (False), which `asyncio.timeout` around the call would not.
+"fastapi_cachex/lock.py" = ["PLR0913", "PLR0917", "ASYNC109"]  # Configurable lock parameters
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -185,7 +185,7 @@ fail_under = 90
 show_missing = true
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 plugins = [
     "pydantic.mypy"
 ]

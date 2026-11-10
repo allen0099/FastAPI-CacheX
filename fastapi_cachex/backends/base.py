@@ -19,9 +19,7 @@ from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
 
 if TYPE_CHECKING:
-    # Type-only: typing.Self is 3.11+, and typing_extensions is not a runtime
-    # dependency.
-    from typing_extensions import Self
+    from typing import Self
 
 
 def warn_if_path_shaped(pattern: str, cleared: int) -> None:
