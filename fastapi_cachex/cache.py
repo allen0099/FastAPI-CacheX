@@ -500,7 +500,7 @@ class _Call:
         return self.request.headers.get("if-none-match")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class _Route:
     """What ``@cache(...)`` decided for one handler, and how it answers.
 
@@ -1062,7 +1062,7 @@ def cache(
             argument it overrides.
     """
     # Checked when `@cache(...)` is evaluated, which is at decoration time
-    # too; the closure below sees the whole seconds.
+    # too; the route built below sees the whole seconds.
     ttl = _seconds("ttl", ttl)
     stale_ttl = _seconds("stale_ttl", stale_ttl)
 
