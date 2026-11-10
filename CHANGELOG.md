@@ -20,6 +20,63 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-10
+
+### Added
+
+- **`MemcachedBackend` takes `connect_timeout` and `timeout`.** Both were fixed
+  at 5 seconds, which remains the default until 0.6.0. Every Memcached call holds a worker
+  thread until it is answered or times out, so a lower value keeps an
+  unreachable server from tying up the thread pool. ([#502](https://github.com/allen0099/FastAPI-CacheX/issues/502))
+
+### Deprecated
+
+- **`MemcachedBackend` timeouts will default to 1 second in 0.6.0.** They
+  default to 5 seconds now. Building the backend without both `connect_timeout`
+  and `timeout` emits a `FutureWarning`; pass both to choose the values and
+  silence it. A test suite that turns warnings into errors fails until it does,
+  or ignores the warning; see
+  [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#memcached-timeouts). ([#516](https://github.com/allen0099/FastAPI-CacheX/issues/516))
+
+### Fixed
+
+- **`@cache` works on a FIPS-enabled Python.** The ETag digest is now computed with
+  `usedforsecurity=False`; before, a Python whose OpenSSL blocks MD5 raised
+  `ValueError` on every rendered response. ETag values are unchanged. ([#496](https://github.com/allen0099/FastAPI-CacheX/issues/496))
+- **`MemoryBackend.delete_many()` no longer scans the whole cache.** It walked
+  every stored key on each call, however few it was asked to delete, which
+  blocked the event loop for tens of milliseconds on a large cache. It now
+  removes the requested keys directly, so `CacheManager.clear_prefix()` and
+  `clear_pattern()` scan the cache once instead of twice. ([#498](https://github.com/allen0099/FastAPI-CacheX/issues/498))
+- **`expire_if_equals(ttl=None)` raises `TTLTypeError` on every backend.** The
+  signature never allowed `None`, but an untyped call got a bare `TypeError` on
+  the memory backend, and on Memcached and the base-class fallback it made the
+  entry (a lock, usually) never expire. ([#499](https://github.com/allen0099/FastAPI-CacheX/issues/499))
+- **A stored document with fields of the wrong type is a cache miss.** The Redis
+  and Memcached backends accepted a document whose `fingerprint`, `media_type`
+  or `status_code` was not of the expected type (or whose status code is not
+  between 100 and 599), and the request then failed while the response was
+  replayed. A document nested too deeply for the standard library JSON parser
+  (installs without `orjson`) is a miss too. ([#501](https://github.com/allen0099/FastAPI-CacheX/issues/501))
+- **`AsyncRedisCacheBackend.load_from_config()` returns the class it is called
+  on.** It was a static method naming `AsyncRedisCacheBackend`, so calling it on
+  a subclass built the parent class instead. ([#504](https://github.com/allen0099/FastAPI-CacheX/issues/504))
+
+### Security
+
+- **`CacheLock` and `CacheManager` no longer put a key into a warning or an
+  error message.** The warning for an interrupted `acquire()` that could not
+  withdraw its claim held the full lock key, and the `LockTimeoutError` raised
+  by `async with CacheLock(...)` and by `get_or_set(raise_on_timeout=True)`
+  named the lock or the cache key. Keys often embed a user ID or an e-mail
+  address, and both end up in application logs. They now carry a digest
+  (`key_ref`), with the full key logged at `DEBUG` under the same digest. ([#497](https://github.com/allen0099/FastAPI-CacheX/issues/497))
+- **`MemcachedBackend.get_and_delete()` no longer puts the cache key in its
+  error message.** The `CacheXError` raised after too many concurrent writes
+  named the full key, which holds the query string and often a user ID, and the
+  message ends up in error logs. It now carries a digest (`key_ref`), with the
+  key at `DEBUG`. ([#500](https://github.com/allen0099/FastAPI-CacheX/issues/500))
+
 ## [0.5.2] - 2026-11-10
 
 ### Deprecated
@@ -1461,7 +1518,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.1...v0.5.0
