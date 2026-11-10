@@ -52,14 +52,16 @@ async def items(): ...
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | 無（僅寫入標頭）：伺服器端快取不會回傳過期內容。                                                               |
 | `stale-if-error`         | `stale="error", stale_ttl=N`             | :white_check_mark: | 無（僅寫入標頭）：handler 失敗時不會改用快取回應。                                                             |
-| `s-maxage`               | —                                        | :x:                | —                                                                                                              |
-| `proxy-revalidate`       | —                                        | :x:                | —                                                                                                              |
-| `no-transform`           | —                                        | :x:                | —                                                                                                              |
+| `s-maxage`               | `s_maxage=N`                             | :white_check_mark: | 無（僅寫入標頭）：已儲存的回應仍在 `ttl` 之後到期。                                                            |
+| `proxy-revalidate`       | `proxy_revalidate=True`                  | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
+| `no-transform`           | `no_transform=True`                      | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `must-understand`        | —                                        | :x:                | —                                                                                                              |
 
-`no_cache=True` 與 `no_store=True` 會取代標頭的其餘內容：使用 `no_cache` 時只送出 `no-cache`（若有設定，再加上 `must-revalidate`），使用 `no_store` 時只送出 `no-store`。其他參數如何組合，請見[快取流程](CACHE_FLOW.md#2-cache-control-directives)。
+`s-maxage` 與 `proxy-revalidate` 是給共用快取（CDN 或反向代理）看的，因此 `s_maxage` 可以讓共用快取保留回應的時間與瀏覽器不同，不論有沒有設定 `ttl`：`@cache(ttl=60, s_maxage=300)` 會送出 `max-age=60, s-maxage=300`。只給單一呼叫者的回應（回應設定 Cookie，或回應帶有憑證的請求時所送出的 `private` 標頭）不會帶這兩個指令，而且把任一個與 `private=True` 一起使用，會在套用裝飾器時被拒絕。`no-transform` 則在所有情況下都會送出。`must-understand` 不會產生：它應該與 `no-store` 一起出現，而 `no_store=True` 只會單獨送出 `no-store`。
 
-`no_store=True` 搭配其他任何快取參數（`ttl`、`stale`、`no_cache`、`public`、`private`、`immutable`、`must_revalidate`）時，套用裝飾器時 `@cache` 會發出指向你 `@cache(...)` 那一行的 `UserWarning`：`no_store` 會覆蓋這些參數，警告會列出它們。
+`no_cache=True` 與 `no_store=True` 會取代標頭的其餘內容：使用 `no_cache` 時只送出 `no-cache`（若有設定，再加上 `must-revalidate`、`proxy-revalidate` 與 `no-transform`），使用 `no_store` 時只送出 `no-store`。其他參數如何組合，請見[快取流程](CACHE_FLOW.md#2-cache-control-directives)。
+
+`no_store=True` 搭配其他任何快取參數（`ttl`、`stale`、`no_cache`、`public`、`private`、`immutable`、`must_revalidate`、`s_maxage`、`proxy_revalidate`、`no_transform`）時，套用裝飾器時 `@cache` 會發出指向你 `@cache(...)` 那一行的 `UserWarning`：`no_store` 會覆蓋這些參數，警告會列出它們。
 
 不帶參數的 `@cache()`，既沒有 `ttl` 也沒有任何指令，不會儲存任何內容，也沒有自己的 `Cache-Control`。它會加上 ETag，以 `304` 回應相符的 `If-None-Match`，並保留 handler 自己的 `Cache-Control`（沒有就不送）。與其他路由一樣，設定 Cookie 的回應，或回應帶有 `Authorization` 或 Session 資料的請求時，仍會送出 `private`。
 

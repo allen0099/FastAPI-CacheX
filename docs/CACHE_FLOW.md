@@ -179,9 +179,9 @@ The header value is built once per decorated route:
 | Arguments | `Cache-Control` sent |
 |-----------|----------------------|
 | `no_store=True` | `no-store` (overrides everything else) |
-| `no_cache=True` | `no-cache`, plus `must-revalidate` if requested; `public`/`private`/`max-age`/`stale-*`/`immutable` are omitted |
+| `no_cache=True` | `no-cache`, plus `must-revalidate`, `proxy-revalidate` and `no-transform` if requested; `public`/`private`/`max-age`/`s-maxage`/`stale-*`/`immutable` are omitted |
 | none (a bare `@cache()`) | none of its own; the handler's header, if any, is kept (`private` for a cookie or credentials, as on every route) |
-| anything else | in order: `public` or `private`, `max-age=<ttl>`, `must-revalidate`, `stale-while-revalidate=<n>` or `stale-if-error=<n>`, `immutable` |
+| anything else | in order: `public` or `private`, `max-age=<ttl>`, `s-maxage=<n>`, `must-revalidate`, `proxy-revalidate`, `stale-while-revalidate=<n>` or `stale-if-error=<n>`, `immutable`, `no-transform` |
 
 > [!NOTE]
 > Without `ttl` (or with `ttl=0`, which sends `max-age=0`), the backend is

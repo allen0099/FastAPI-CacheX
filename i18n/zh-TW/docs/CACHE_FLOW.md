@@ -129,9 +129,9 @@ cache_key = "|".join(
 | 參數 | 送出的 `Cache-Control` |
 |------|------------------------|
 | `no_store=True` | `no-store`（覆蓋其他所有設定） |
-| `no_cache=True` | `no-cache`，若有要求則加上 `must-revalidate`；省略 `public`／`private`／`max-age`／`stale-*`／`immutable` |
+| `no_cache=True` | `no-cache`，若有要求則加上 `must-revalidate`、`proxy-revalidate` 與 `no-transform`；省略 `public`／`private`／`max-age`／`s-maxage`／`stale-*`／`immutable` |
 | 無（不帶參數的 `@cache()`） | 不送出自己的標頭；保留 handler 的標頭（若有）（遇到 Cookie 或憑證時送出 `private`，與其他路由相同） |
-| 其他情況 | 依序為：`public` 或 `private`、`max-age=<ttl>`、`must-revalidate`、`stale-while-revalidate=<n>` 或 `stale-if-error=<n>`、`immutable` |
+| 其他情況 | 依序為：`public` 或 `private`、`max-age=<ttl>`、`s-maxage=<n>`、`must-revalidate`、`proxy-revalidate`、`stale-while-revalidate=<n>` 或 `stale-if-error=<n>`、`immutable`、`no-transform` |
 
 > [!NOTE]
 > 沒有設定 `ttl`（或設定 `ttl=0`，此時會送出 `max-age=0`）時，既不讀取也不寫入後端：每個請求都會執行 handler，相符的 `If-None-Match` 只有在與新產生的回應比對之後才會以 `304` 回應。請設定正數的 `ttl`，讓伺服器儲存並重播回應。

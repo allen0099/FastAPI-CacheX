@@ -844,6 +844,8 @@ def _check_arguments(
     private: bool,
     coalesce: object,
     debug_header: object,
+    s_maxage: int | None,
+    proxy_revalidate: bool,
 ) -> None:
     """Reject ``@cache`` arguments that contradict each other.
 
@@ -859,6 +861,15 @@ def _check_arguments(
     if public and private:
         msg = "public and private are mutually exclusive"
         raise CacheXError(msg)
+    for name, value in (("s_maxage", s_maxage), ("proxy_revalidate", proxy_revalidate)):
+        if private and value is not None and value is not False:
+            # Both speak to shared caches, which must not store a private
+            # response at all.
+            msg = (
+                f"{name} cannot be combined with private: it only applies "
+                "to shared caches, which do not store a private response"
+            )
+            raise CacheXError(msg)
     if not isinstance(coalesce, bool):
         msg = f"coalesce must be a bool, got {type(coalesce).__name__}"
         raise CacheXError(msg)
@@ -886,6 +897,9 @@ def cache(
     private: bool = False,
     immutable: bool = False,
     must_revalidate: bool = False,
+    s_maxage: int | timedelta | None = None,
+    proxy_revalidate: bool = False,
+    no_transform: bool = False,
     key_builder: CacheKeyBuilder | None = None,
     fail_open: bool = True,
     cache_authorized: bool = False,
@@ -941,6 +955,20 @@ def cache(
             Mutually exclusive with ``public``.
         immutable: Send ``immutable``.
         must_revalidate: Send ``must-revalidate``.
+        s_maxage: Send ``s-maxage=<seconds>``, the freshness lifetime for
+            shared caches (a CDN or reverse proxy) in front of the app, in
+            seconds or as a ``timedelta`` of whole seconds; ``0`` is sent as
+            ``s-maxage=0``. It only shapes the header: the backend entry
+            still expires after ``ttl``, and ``s_maxage`` works without a
+            ``ttl``. Left out with ``no_cache``, and of the ``private``
+            header a response gets when it sets a cookie or answers a
+            request with credentials. Rejected with ``private=True``.
+        proxy_revalidate: Send ``proxy-revalidate``: ``must-revalidate`` for
+            shared caches only. Left out of the ``private`` header, like
+            ``s_maxage``, and rejected with ``private=True``.
+        no_transform: Send ``no-transform``, which tells intermediaries not
+            to alter the body (recompress an image, say). Sent with
+            ``no_cache`` and ``private`` too.
         key_builder: Custom function to build cache keys. If None, uses
             ``default_key_builder``. To add a component (user ID, tenant,
             locale) to the default key, return
@@ -1038,7 +1066,9 @@ def cache(
     Raises:
         CacheXError: When the decorator is applied, if ``stale`` and
             ``stale_ttl`` are not given together, if ``public`` and
-            ``private`` are both set, if ``ttl`` or ``stale_ttl`` is not an
+            ``private`` are both set, if ``s_maxage`` or
+            ``proxy_revalidate`` is set with ``private``, if ``ttl``,
+            ``stale_ttl`` or ``s_maxage`` is not an
             ``int`` or a ``timedelta`` of whole seconds, is negative or is
             larger than ``MAX_TTL``, or if ``vary`` is not a
             list of header field names (a single string is rejected), if
@@ -1065,6 +1095,7 @@ def cache(
     # too; the route built below sees the whole seconds.
     ttl = _seconds("ttl", ttl)
     stale_ttl = _seconds("stale_ttl", stale_ttl)
+    s_maxage = _seconds("s_maxage", s_maxage)
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
         # Validate parameters eagerly at decoration time
@@ -1078,6 +1109,8 @@ def cache(
             private=private,
             coalesce=coalesce,
             debug_header=debug_header,
+            s_maxage=s_maxage,
+            proxy_revalidate=proxy_revalidate,
         )
         vary_names = _validate_vary(vary)
         builder = _resolve_key_builder(key_builder, sort_query)
@@ -1099,6 +1132,9 @@ def cache(
                     ("private", private),
                     ("immutable", immutable),
                     ("must_revalidate", must_revalidate),
+                    ("s_maxage", s_maxage),
+                    ("proxy_revalidate", proxy_revalidate),
+                    ("no_transform", no_transform),
                     ("coalesce", coalesce),
                 )
                 if value is not None and value is not False
@@ -1117,6 +1153,23 @@ def cache(
             private=private,
             immutable=immutable,
             must_revalidate=must_revalidate,
+            s_maxage=s_maxage,
+            proxy_revalidate=proxy_revalidate,
+            no_transform=no_transform,
+        )
+        # The same header for one caller only: `private` instead of `public`,
+        # and without `s-maxage` and `proxy-revalidate`, which speak to the
+        # shared caches that must not store it.
+        private_cache_control = _build_cache_control(
+            ttl=ttl,
+            stale=stale,
+            stale_ttl=stale_ttl,
+            no_cache=no_cache,
+            public=False,
+            private=True,
+            immutable=immutable,
+            must_revalidate=must_revalidate,
+            no_transform=no_transform,
         )
         route = _Route(
             func=func,
@@ -1131,21 +1184,11 @@ def cache(
             key_builder=builder,
             vary_names=vary_names,
             cache_control=cache_control,
-            # `public` becomes `private`; `no_cache` leaves the scope out of
-            # `cache_control`, so it is added.
+            # `no_cache` leaves the scope out of the header, so it is added.
             private_cache_control=(
-                f"{DirectiveType.PRIVATE.value}, {cache_control}"
+                f"{DirectiveType.PRIVATE.value}, {private_cache_control}"
                 if no_cache
-                else _build_cache_control(
-                    ttl=ttl,
-                    stale=stale,
-                    stale_ttl=stale_ttl,
-                    no_cache=no_cache,
-                    public=False,
-                    private=True,
-                    immutable=immutable,
-                    must_revalidate=must_revalidate,
-                )
+                else private_cache_control
             ),
             warn_bypass=_BypassWarner(
                 f"{getattr(func, '__module__', '?')}."
