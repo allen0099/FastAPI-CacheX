@@ -10,8 +10,8 @@ still there.
 
 | Version           | Supported                       |
 |-------------------|---------------------------------|
-| 0.5.3             | Until 0.6.0 is released         |
-| 0.5.2 and older   | No                              |
+| Latest 0.5.x      | Until 0.6.0 is released         |
+| Older releases    | No                              |
 
 A fix ships in the next release from `master`; earlier releases are not
 patched. To prepare for 0.6.0, see

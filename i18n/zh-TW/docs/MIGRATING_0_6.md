@@ -4,7 +4,7 @@
 
 ## Python 3.11 或更新版本 {#python-311}
 
-Python 3.10 已在 2026 年 10 月結束生命週期（end of life），0.6.0 需要 Python 3.11 或更新版本（[#491](https://github.com/allen0099/FastAPI-CacheX/issues/491)）。0.5.2 與 0.5.3 會先預告：在 Python 3.10 上匯入 `fastapi_cachex` 時，每個行程會發出一次 `FutureWarning`：
+Python 3.10 已在 2026 年 10 月結束生命週期（end of life），0.6.0 需要 Python 3.11 或更新版本（[#491](https://github.com/allen0099/FastAPI-CacheX/issues/491)）。0.5.2 起的 0.5.x 版本會先預告：在 Python 3.10 上匯入 `fastapi_cachex` 時，每個行程會發出一次 `FutureWarning`：
 
 ```text
 FutureWarning: fastapi-cachex 0.6.0 will require Python 3.11 or later; ...

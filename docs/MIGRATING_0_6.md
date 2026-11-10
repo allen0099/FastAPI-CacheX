@@ -4,7 +4,7 @@
 
 ## Python 3.11 or later {#python-311}
 
-Python 3.10 reached its end of life in October 2026, and 0.6.0 requires Python 3.11 or later ([#491](https://github.com/allen0099/FastAPI-CacheX/issues/491)). 0.5.2 and 0.5.3 say so first: importing `fastapi_cachex` under Python 3.10 emits a `FutureWarning` once per process:
+Python 3.10 reached its end of life in October 2026, and 0.6.0 requires Python 3.11 or later ([#491](https://github.com/allen0099/FastAPI-CacheX/issues/491)). The 0.5.x releases from 0.5.2 on say so first: importing `fastapi_cachex` under Python 3.10 emits a `FutureWarning` once per process:
 
 ```text
 FutureWarning: fastapi-cachex 0.6.0 will require Python 3.11 or later; ...
