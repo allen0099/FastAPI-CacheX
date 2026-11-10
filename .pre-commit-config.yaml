@@ -38,22 +38,17 @@ repos:
       - id: uv-lock
         name: Update uv lockfile
       - id: uv-sync
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.4.1
+  - repo: local
     hooks:
       - id: mypy
         name: Static type checking with mypy
-        # The hook runs in its own virtualenv, so it needs every package the
-        # checked code imports, including the optional backends. Keep the
-        # floors in step with pyproject.toml; the rev with the locked mypy
-        # (Renovate groups the two).
-        additional_dependencies:
-          - fastapi>=0.128.2
-          - pydantic>=2.7.0
-          - pytest>=8.3.5
-          - pytest-asyncio>=0.26.0
-          - redis>=5.3.0
-          - orjson
-          - pymemcache>=4.0.0
-        args: [--strict]
+        # Runs the project's own mypy against the locked environment
+        # (`uv sync --group dev`), the same versions CI type-checks with. A
+        # hook environment of its own would install the newest release of
+        # every dependency on each fresh build, so a new upstream release
+        # could fail the check on an unrelated change (#505).
+        entry: uv run mypy --strict
+        language: system
+        types: [python]
+        require_serial: true
         exclude: ^(docs/|scripts/)
