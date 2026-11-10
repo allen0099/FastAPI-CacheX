@@ -5,6 +5,7 @@ import hashlib
 import logging
 import time
 import warnings
+from collections.abc import Callable
 from collections.abc import Iterable
 from datetime import timedelta
 
@@ -340,14 +341,15 @@ class MemcachedBackend(BaseCacheBackend):
         operation: str,
         key: str,
         expected: CacheEntry,
-        new: bytes | None,
+        new: Callable[[bytes], bytes],
         exptime: int,
     ) -> bool:
         """GETS, compare and CAS in one worker thread.
 
-        Writes ``new`` (``None``: the bytes just read) with ``exptime`` only
+        Writes ``new(raw)``, given the bytes just read, with ``exptime`` only
         if the key holds ``expected`` and nothing wrote or deleted it since
-        ``GETS`` read the value that was compared.
+        ``GETS`` read the value that was compared. ``new`` is called only once
+        the comparison has passed.
         """
         prefixed_key = self._make_key(key)
         raw, cas_token = self.client.gets(prefixed_key)
@@ -355,7 +357,7 @@ class MemcachedBackend(BaseCacheBackend):
             logger.debug("Memcached %s MISMATCH; key=%s", operation, key)
             return False
         done = self.client.cas(
-            prefixed_key, raw if new is None else new, cas_token, exptime, noreply=False
+            prefixed_key, new(raw), cas_token, exptime, noreply=False
         )
         logger.debug(
             "Memcached %s %s; key=%s", operation, "HIT" if done else "LOST RACE", key
@@ -371,7 +373,7 @@ class MemcachedBackend(BaseCacheBackend):
         immediately".
         """
         return await asyncio.to_thread(
-            self._cas_if_equals, "DELETE_IF_EQUALS", key, expected, b"", -1
+            self._cas_if_equals, "DELETE_IF_EQUALS", key, expected, lambda _: b"", -1
         )
 
     @_unavailable
@@ -386,7 +388,12 @@ class MemcachedBackend(BaseCacheBackend):
         # Converted up front so a ttl Memcached cannot store fails before I/O.
         exptime = _expiry(require_ttl(ttl))
         return await asyncio.to_thread(
-            self._cas_if_equals, "EXPIRE_IF_EQUALS", key, expected, None, exptime
+            self._cas_if_equals,
+            "EXPIRE_IF_EQUALS",
+            key,
+            expected,
+            lambda raw: raw,
+            exptime,
         )
 
     @_unavailable
@@ -405,7 +412,7 @@ class MemcachedBackend(BaseCacheBackend):
             "SET_IF_EQUALS",
             key,
             expected,
-            encode_entry(value),
+            lambda _: encode_entry(value),
             exptime,
         )
 

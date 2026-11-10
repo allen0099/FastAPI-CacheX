@@ -182,6 +182,7 @@ def test_redis_load_from_config_returns_the_class_it_is_called_on() -> None:
     assert type(Custom.load_from_config(RedisConfig())) is Custom
 
 
+@requires_redis_package
 def test_redis_load_from_config_passes_all_fields() -> None:
     """load_from_config must forward all RedisConfig fields to the backend."""
     from pydantic import SecretStr

@@ -387,21 +387,22 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         key: str,
         expected: CacheEntry,
         script: "AsyncScript",
-        *args: bytes | int,
+        args: Callable[[], Iterable[bytes | int]] = tuple,
     ) -> bool:
         """Run ``script`` on ``key`` only while it holds ``expected``.
 
         The stored value is decoded and compared here; the script then acts
         only if the key still holds the exact bytes that were compared
         (``ARGV[1]``), so a value written, replaced or deleted in between is
-        left as it is.
+        left as it is. ``args`` builds the script's other arguments, and is
+        called only once the comparison has passed.
         """
         prefixed_key = self._make_key(key)
         raw = await self.client.get(prefixed_key)
         if raw is None or decode_entry(raw) != expected:
             logger.debug("Redis %s MISMATCH; key=%s", operation, key)
             return False
-        done = await script(keys=[prefixed_key], args=[raw, *args])
+        done = await script(keys=[prefixed_key], args=[raw, *args()])
         logger.debug(
             "Redis %s %s; key=%s", operation, "HIT" if done else "LOST RACE", key
         )
@@ -421,7 +422,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """Atomically update expiry on ``key`` while it holds ``expected`` (see ``_if_equals``)."""
         ttl = require_ttl(ttl)
         return await self._if_equals(
-            "EXPIRE_IF_EQUALS", key, expected, self._expire_if_equals_script, ttl
+            "EXPIRE_IF_EQUALS",
+            key,
+            expected,
+            self._expire_if_equals_script,
+            lambda: (ttl,),
         )
 
     @_unavailable
@@ -439,8 +444,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             key,
             expected,
             self._set_if_equals_script,
-            encode_entry(value),
-            ttl or 0,
+            lambda: (encode_entry(value), ttl or 0),
         )
 
     @_unavailable
