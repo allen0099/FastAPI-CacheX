@@ -181,8 +181,8 @@ pre-commit helps maintain code quality by running checks before each commit.
    already installs it.
 
 2. Install the git hooks (`.pre-commit-config.yaml` sets
-   `default_install_hook_types`, so this installs the `pre-commit`,
-   `post-commit` and `post-merge` hooks together):
+   `default_install_hook_types`, so this installs the `pre-commit`
+   and `post-merge` hooks together):
 ```bash
 uv run pre-commit install
 ```
