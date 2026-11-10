@@ -10,7 +10,7 @@ authors = [
     { name = "allen0099", email = "s96016641@gmail.com" }
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -62,7 +62,6 @@ dev = [
     "ruff>=0.17.4",
     "tox>=4.25.0",
     "tox-uv>=1.29.0",
-    "ty>=0.0.1a34",
 ]
 docs = [
     # Pre-1.0: upgrades are deliberate, not automatic.
@@ -158,11 +157,6 @@ keep-runtime-typing = true
 
 [tool.ruff.format]
 docstring-code-format = true
-
-[tool.ty.src]
-exclude = [
-    "./.serena/",
-]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -181,8 +181,8 @@ pre-commit helps maintain code quality by running checks before each commit.
    already installs it.
 
 2. Install the git hooks (`.pre-commit-config.yaml` sets
-   `default_install_hook_types`, so this installs the `pre-commit`,
-   `post-commit` and `post-merge` hooks together):
+   `default_install_hook_types`, so this installs the `pre-commit`
+   and `post-merge` hooks together):
 ```bash
 uv run pre-commit install
 ```
@@ -202,8 +202,9 @@ fails when `uv.lock` does not match `pyproject.toml`, so a pull request that
 changes a dependency without committing the relocked `uv.lock` goes red
 instead of quietly re-resolving on the runner.
 
-pre-commit only sees the files you touched. The **Lint** workflow checks the
-whole tree; run the same commands before pushing:
+On a commit, pre-commit only sees the files you touched. The **Lint** workflow
+checks the whole tree, and then runs `pre-commit run --all-files` as well; run
+the same commands before pushing:
 
 ```bash
 uv run ruff check fastapi_cachex tests scripts

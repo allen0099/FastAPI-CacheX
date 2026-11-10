@@ -6,6 +6,8 @@ on:
     paths:
       - '**.py'
       - 'pyproject.toml'
+      - 'uv.lock'
+      - '.pre-commit-config.yaml'
       - '.github/workflows/lint.yml'
   # No paths filter on pull requests, so this check can be required before
   # merging: a required check that never starts blocks the pull request. It
@@ -20,6 +22,7 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,7 +32,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
-        python-version: "3.15"
+        python-version-file: ".python-version"
 
     - name: Install uv
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -37,10 +40,11 @@ jobs:
     - name: Sync dependencies
       run: uv sync --locked --group dev
 
-    # `tests` is linted here too. pre-commit only sees staged files, so test
-    # code that was never touched again drifts; that is how the suite came to
-    # have unsorted imports, three unformatted files and six type errors that
-    # nobody saw. Strict mypy stays package-only, matching CLAUDE.md.
+    # `tests` is linted here too. On a commit pre-commit only sees staged
+    # files, so test code that was never touched again drifts; that is how the
+    # suite came to have unsorted imports, three unformatted files and six
+    # type errors that nobody saw. These steps use the locked tool versions;
+    # the pre-commit step at the end runs the hooks' own.
     - name: Ruff check
       run: uv run ruff check fastapi_cachex tests scripts
 
@@ -55,3 +59,9 @@ jobs:
 
     - name: Mypy (scripts)
       run: uv run mypy scripts
+
+    # The hooks contributors run before committing. Renovate automerges hook
+    # updates on a green CI, so CI has to run them: otherwise an update that
+    # fails on the tree leaves master red locally and green here (#453, #505).
+    - name: pre-commit
+      run: uv run pre-commit run --all-files --show-diff-on-failure

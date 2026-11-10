@@ -23,6 +23,7 @@ jobs:
     # install the locked, newest versions, so a floor that is too low for the
     # code only shows up here.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     services:
       memcached:
@@ -31,7 +32,7 @@ jobs:
           - 11211:11211
 
       redis:
-        image: redis:alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
 
