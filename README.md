@@ -103,6 +103,7 @@ a code block that includes one of the runnable examples renders on the site,
 while GitHub shows only its `--8<--` include line (the sentence before each
 block links the example file).
 
+- [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_6/) — what 0.6.0 will change, starting with the end of Python 3.10 support
 - [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_5/) — what 0.5.0 removes and how to upgrade from 0.4.x
 - [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x
 - [Migrating from fastapi-cache2](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_FROM_FASTAPI_CACHE2/) — its API mapped onto this one, and the behaviour that differs
