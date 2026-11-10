@@ -147,10 +147,7 @@ keep-runtime-typing = true
     "PLC0415",  # Import in functions is intentional for test setup
     "PT031"  # Single statement in pytest.warns is acceptable
 ]
-"fastapi_cachex/cache.py" = [
-    "PLR0913", "PLR0915", "PLR0911", "PLR0912", "C901", # Many arguments/statements/returns/branches needed for flexible caching logic
-    "S101", # Internal invariant guard, not a validation shortcut
-]
+"fastapi_cachex/cache.py" = ["PLR0913"]  # One keyword per @cache option
 "fastapi_cachex/_cache_control.py" = ["PLR0913"]  # One keyword per @cache option
 "fastapi_cachex/_rendering.py" = ["PLR0913"]  # The handler call and its sub-response
 "fastapi_cachex/backends/memcached.py" = ["PLC0415"]  # Optional dependency
