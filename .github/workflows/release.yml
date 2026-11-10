@@ -210,6 +210,17 @@ jobs:
       - name: Build package
         run: uv build
 
+      # The suite runs from the source tree, so only this notices a wheel that
+      # was packaged wrongly: installed alone in a throwaway environment, it
+      # must hold py.typed, the licence and every backend, and import as the
+      # version just built (#241).
+      - name: Check the built wheel
+        run: |
+          set -euo pipefail
+          wheel="$(ls dist/*.whl)"
+          uv run --isolated --no-project --with "$wheel" \
+            python scripts/check_wheel.py "$wheel"
+
       # A dry run's whole value is in what you can inspect afterwards, and the
       # two questions it exists to answer are "did the bump and the changelog
       # promotion actually land in the files?" and "what exactly would have

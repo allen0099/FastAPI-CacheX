@@ -362,7 +362,10 @@ The workflow runs in this order:
    the notice, if any, each entry's bold summary and issue links, and a link
    to the full entries on the documentation site. The workflow then appends an
    installation snippet and, when there is a previous tag, a compare link.
-4. **The build.** `uv build`. The bumped files, the release notes and
+4. **The build.** `uv build`, then `scripts/check_wheel.py` on the wheel,
+   installed alone in a throwaway environment: it must hold `py.typed`, the
+   licence and every backend, and import as the version just built. The
+   **Lint** workflow runs the same check on every pull request. The bumped files, the release notes and
    `dist/` are uploaded as one artifact, which the next two jobs download
    instead of building anything again.
 5. **The permanent part**, kept together at the end: commit the version bump,
