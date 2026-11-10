@@ -244,7 +244,8 @@ with [Zensical](https://zensical.org/) from `zensical.toml` and the `docs/`
 directory. The home page includes `README.md` and the changelog page includes
 `CHANGELOG.md` through snippets, so links in `README.md` must stay absolute
 (`https://github.com/allen0099/FastAPI-CacheX/blob/master/...`) to work in both
-places.
+places. Zensical needs Python 3.11 or later, so on 3.10 the `docs` group
+installs without it.
 
 ```bash
 uv sync --group docs
