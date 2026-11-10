@@ -37,3 +37,37 @@ import fastapi_cachex  # noqa: E402
 ```
 
 or set `PYTHONWARNINGS="ignore:fastapi-cachex 0.6.0 will require Python 3.11:FutureWarning"` in the environment.
+
+## Memcached timeouts default to 1 second {#memcached-timeouts}
+
+`MemcachedBackend` waits 5 seconds for a connection and for each reply unless told otherwise. In 0.6.0 both defaults become 1 second, as on the Redis backend ([#516](https://github.com/allen0099/FastAPI-CacheX/issues/516)): every Memcached call holds a worker thread until the server answers or the timeout passes, so a long default lets an unreachable server tie up the thread pool your sync handlers and dependencies share.
+
+From 0.5.3 on, building the backend without both arguments emits a `FutureWarning`:
+
+```text
+FutureWarning: MemcachedBackend timeouts will default to 1 second in fastapi-cachex 0.6.0; ...
+```
+
+Pass both to choose the values now; that also silences the warning:
+
+```python
+backend = MemcachedBackend(
+    servers=["localhost:11211"],
+    connect_timeout=1.0,  # or 5.0 to keep today's behaviour
+    timeout=1.0,
+)
+```
+
+A test suite that turns warnings into errors (`filterwarnings = ["error"]`) fails on 0.5.3 wherever it builds the backend without both arguments. If the backend is built by code you cannot change, ignore this one warning instead:
+
+```toml
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+    "ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning",
+]
+```
+
+Outside pytest, `warnings.filterwarnings("ignore", message="MemcachedBackend timeouts will default to 1 second", category=FutureWarning)` before the backend is built does the same, as does `PYTHONWARNINGS="ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning"` in the environment.
+
+With `@cache`, a timeout is a backend failure like any other: the request is [answered without the cache](HTTP_CACHING.md#when-the-backend-fails). A server that regularly takes longer than a second to answer needs the larger value spelled out.

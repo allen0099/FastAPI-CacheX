@@ -2,6 +2,7 @@ import asyncio
 import logging
 import socket
 import sys
+import warnings
 from unittest.mock import MagicMock
 
 import pytest
@@ -1348,7 +1349,6 @@ def test_memcached_timeouts_reach_the_client() -> None:
         (float("nan"), ValueError),
         (True, TypeError),
         ("1", TypeError),
-        (None, TypeError),
     ],
 )
 def test_memcached_rejects_a_timeout_that_cannot_work(
@@ -1356,3 +1356,31 @@ def test_memcached_rejects_a_timeout_that_cannot_work(
 ) -> None:
     with pytest.raises(error, match=rf"^{name} must be "):
         MemcachedBackend([MEMCACHED_SERVER], **{name: value})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{}, {"timeout": 1}, {"connect_timeout": 1}], ids=str
+)
+def test_memcached_warns_that_the_timeout_defaults_change(
+    kwargs: dict[str, float],
+) -> None:
+    """0.6.0 makes them 1 second; 0.5.x says so first (#516)."""
+    with pytest.warns(FutureWarning, match="default to 1 second in") as caught:
+        MemcachedBackend(
+            [MEMCACHED_SERVER],
+            connect_timeout=kwargs.get("connect_timeout"),
+            timeout=kwargs.get("timeout"),
+        )
+
+    # The application's line, not the library's.
+    assert caught[0].filename == __file__
+
+
+def test_memcached_with_both_timeouts_does_not_warn() -> None:
+    # pyproject.toml ignores this warning, so record it instead of relying on
+    # filterwarnings = ["error"].
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        MemcachedBackend([MEMCACHED_SERVER], connect_timeout=5, timeout=5)
+
+    assert caught == []

@@ -104,6 +104,9 @@ filterwarnings = [
     # Importing the package warns on Python 3.10 until 0.6.0 drops it (#491);
     # tests/test_python_support.py checks that warning.
     "ignore:fastapi-cachex 0.6.0 will require Python 3.11:FutureWarning",
+    # A MemcachedBackend built without timeouts warns until 0.6.0 changes
+    # their default (#516); tests/backends/test_memcached.py checks that warning.
+    "ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning",
 ]
 
 [tool.ruff.lint]

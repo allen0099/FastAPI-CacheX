@@ -60,6 +60,18 @@ _LEGAL_KEY_BYTES = frozenset(range(0x21, 0x7F))
 _MAX_PREFIX_BYTES = _MAX_KEY_BYTES - 64
 
 
+# What `connect_timeout` and `timeout` are while they are not passed. 0.6.0
+# makes it 1 second, as on the Redis backend (#516).
+_DEFAULT_TIMEOUT = 5.0
+
+_TIMEOUT_DEFAULT_NOTICE = (
+    "MemcachedBackend timeouts will default to 1 second in fastapi-cachex "
+    "0.6.0; they default to 5 seconds now. Pass connect_timeout and timeout "
+    "to choose the values and silence this warning; see "
+    "https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#memcached-timeouts"
+)
+
+
 def _validate_timeout(name: str, value: float) -> None:
     """Reject a timeout that is not a positive, finite number of seconds.
 
@@ -171,21 +183,28 @@ class MemcachedBackend(BaseCacheBackend):
         servers: list[str],
         key_prefix: str = DEFAULT_MEMCACHE_PREFIX,
         *,
-        connect_timeout: float = 5.0,
-        timeout: float = 5.0,
+        connect_timeout: float | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize the Memcached backend.
 
         Args:
             servers: List of Memcached servers in format ["host:port", ...]
             key_prefix: Prefix for all cache keys (default: 'fastapi_cachex:')
-            connect_timeout: Seconds to wait for a connection to a server
-                (default: 5)
-            timeout: Seconds to wait for each reply from a server
-                (default: 5). Every call runs in a worker thread of the
-                default executor and holds it until it is answered or times
-                out, so while a server is unreachable a lower value frees
-                those threads sooner.
+            connect_timeout: Seconds to wait for a connection to a server.
+                ``None`` (not passed) is 5 seconds, and 1 second from 0.6.0;
+                it does not disable the timeout.
+            timeout: Seconds to wait for each reply from a server. ``None``
+                (not passed) is 5 seconds, and 1 second from 0.6.0; it does
+                not disable the timeout. Every
+                call runs in a worker thread of the default executor and
+                holds it until it is answered or times out, so while a
+                server is unreachable a lower value frees those threads
+                sooner.
+
+        Warns:
+            FutureWarning: If ``connect_timeout`` or ``timeout`` is not
+                passed, since their default changes in 0.6.0 (#516).
 
         Raises:
             CacheXError: If pymemcache is not installed
@@ -195,6 +214,14 @@ class MemcachedBackend(BaseCacheBackend):
                 ``connect_timeout`` or ``timeout`` is not greater than zero
         """
         _validate_key_prefix(key_prefix)
+        if connect_timeout is None or timeout is None:
+            warnings.warn(
+                _TIMEOUT_DEFAULT_NOTICE, FutureWarning, stacklevel=caller_stacklevel()
+            )
+        connect_timeout = (
+            _DEFAULT_TIMEOUT if connect_timeout is None else connect_timeout
+        )
+        timeout = _DEFAULT_TIMEOUT if timeout is None else timeout
         _validate_timeout("connect_timeout", connect_timeout)
         _validate_timeout("timeout", timeout)
         try:
