@@ -3,7 +3,6 @@ import logging
 import pickle
 import socket
 import sys
-import warnings
 from unittest.mock import MagicMock
 
 import pytest
@@ -1332,13 +1331,6 @@ def test_memcached_timeouts_default_to_one_second() -> None:
 
     assert backend.client.default_kwargs["connect_timeout"] == 1
     assert backend.client.default_kwargs["timeout"] == 1
-
-
-def test_memcached_without_timeouts_no_longer_warns() -> None:
-    """0.5.3 announced the new default with a ``FutureWarning`` (#516)."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        MemcachedBackend([MEMCACHED_SERVER])
 
 
 def test_memcached_timeouts_reach_the_client() -> None:

@@ -50,7 +50,7 @@ import fastapi_cachex  # noqa: E402
 FutureWarning: MemcachedBackend timeouts will default to 1 second in fastapi-cachex 0.6.0; ...
 ```
 
-同時傳入兩者以選定數值；在 0.5.3 上這也會讓警告消失，在 0.6.0 上則是維持原本 5 秒的方法：
+在 0.5.3 上，同時傳入兩者以選定數值並讓警告消失。在 0.6.0 上，只有需要 1 秒以外的數值（例如原本的 5 秒）時才需要傳入：
 
 ```python
 backend = MemcachedBackend(
@@ -59,6 +59,8 @@ backend = MemcachedBackend(
     timeout=1.0,
 )
 ```
+
+0.5.3 把 `None` 視為「未傳入」，0.6.0 則會對它引發 `TypeError`；請改為省略該參數。
 
 把警告視為錯誤的測試套件（`filterwarnings = ["error"]`）在 0.5.3 與之後的 0.5.x 版本上，只要有地方未同時傳入這兩個參數就建立後端，就會失敗。若後端是由你無法修改的程式碼建立的，請改為忽略這一則警告：
 
