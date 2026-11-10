@@ -20,6 +20,16 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-10
+
+### Deprecated
+
+- **Python 3.10 support ends in 0.6.0.** Importing `fastapi_cachex` under Python
+  3.10, which reached its end of life in October 2026, emits a `FutureWarning`
+  once per process. A test suite that turns warnings into errors fails on 3.10
+  until it upgrades Python or ignores the warning; see
+  [Python 3.11 or later](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#python-311). ([#491](https://github.com/allen0099/FastAPI-CacheX/issues/491))
+
 ## [0.5.1] - 2026-10-15
 
 ### Added
@@ -1451,7 +1461,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.4.0...v0.4.1
