@@ -112,3 +112,16 @@ filterwarnings = [
     "ignore:cached return annotation:FutureWarning",
 ]
 ```
+
+## `/cached-hits` no longer has the `*_hits` fields {#cached-hits-fields}
+
+The monitoring route `GET {prefix}/cached-hits` (see `add_routes()`) reported every value twice: under `entries`, `total_entries`, `valid_entries` and `expired_entries`, and under the older `cached_hits`, `total_hits`, `valid_hits` and `expired_hits`, which suggested requests served from the cache although they counted stored entries. The older names were deprecated in 0.5.1 and are removed in 0.6.0 ([#507](https://github.com/allen0099/FastAPI-CacheX/issues/507)).
+
+| Removed | Read instead |
+|---|---|
+| `cached_hits` | `entries` |
+| `total_hits` | `total_entries` |
+| `valid_hits` | `valid_entries` |
+| `expired_hits` | `expired_entries` |
+
+The values are the same, so a dashboard or script that reads the response only needs the new names; they have been there since 0.5.1, so you can switch before upgrading. `unique_routes` and `summary` are unchanged.

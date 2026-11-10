@@ -5,10 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
 from typing import TYPE_CHECKING
-from typing import Annotated
 from typing import Any
-
-from pydantic import Field
 
 from .cache_key import CacheKey
 from .exceptions import BackendNotFoundError
@@ -45,22 +42,13 @@ class CacheHitSummary:
     cached_paths: list[str]
 
 
-# Why the ``*_hits`` fields are deprecated, shown in the OpenAPI schema.
-_HITS_DEPRECATED = (
-    "Counts cache entries, not hits; use {0} instead. Deprecated in 0.5.1, "
-    "removed in 0.6.0 (#336)."
-)
-
-
 @dataclass
 class CacheHitsResponse:
     """Response for the ``/cached-hits`` endpoint.
 
     ``entries``, ``total_entries``, ``valid_entries`` and ``expired_entries``
-    list and count the cached route entries. The ``cached_hits`` and
-    ``*_hits`` fields hold the same values under names that suggested
-    requests served from the cache; they are deprecated (marked so in the
-    OpenAPI schema) and removed in 0.6.0 (#336).
+    list and count the cached route entries. Despite the route's name, hits
+    are not counted.
     """
 
     entries: list[CacheHitRecord]
@@ -69,18 +57,6 @@ class CacheHitsResponse:
     expired_entries: int
     unique_routes: int
     summary: CacheHitSummary
-    cached_hits: Annotated[
-        list[CacheHitRecord], Field(deprecated=_HITS_DEPRECATED.format("entries"))
-    ]
-    total_hits: Annotated[
-        int, Field(deprecated=_HITS_DEPRECATED.format("total_entries"))
-    ]
-    valid_hits: Annotated[
-        int, Field(deprecated=_HITS_DEPRECATED.format("valid_entries"))
-    ]
-    expired_hits: Annotated[
-        int, Field(deprecated=_HITS_DEPRECATED.format("expired_entries"))
-    ]
 
 
 @dataclass
@@ -183,7 +159,7 @@ async def _cache_data() -> dict[str, tuple[CacheEntry, float | None]]:
 
 
 def _cached_hits(entries: list[_Entry]) -> CacheHitsResponse:
-    cached_hits = [
+    records = [
         CacheHitRecord(
             cache_key=e.cache_key,
             method=e.method,
@@ -197,26 +173,20 @@ def _cached_hits(entries: list[_Entry]) -> CacheHitsResponse:
         )
         for e in entries
     ]
-    valid_hits = [h for h in cached_hits if not h.is_expired]
-    routes_hit = {h.path for h in valid_hits}
-
-    total = len(cached_hits)
-    valid = len(valid_hits)
+    valid_paths = [r.path for r in records if not r.is_expired]
+    total = len(records)
+    valid = len(valid_paths)
     return CacheHitsResponse(
-        entries=cached_hits,
+        entries=records,
         total_entries=total,
         valid_entries=valid,
         expired_entries=total - valid,
-        unique_routes=len(routes_hit),
+        unique_routes=len(set(valid_paths)),
         summary=CacheHitSummary(
             total_cached_entries=total,
             active_entries=valid,
-            cached_paths=sorted(routes_hit),
+            cached_paths=sorted(set(valid_paths)),
         ),
-        cached_hits=cached_hits,
-        total_hits=total,
-        valid_hits=valid,
-        expired_hits=total - valid,
     )
 
 

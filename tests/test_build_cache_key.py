@@ -172,7 +172,7 @@ def test_monitoring_routes_show_extra_components(backend: MemoryBackend) -> None
     client = TestClient(_per_user_app())
     client.get("/me", params={"page": "2"}, headers={"x-test-user": "a|b"})
 
-    [hit] = client.get("/cache/cached-hits").json()["cached_hits"]
+    [hit] = client.get("/cache/cached-hits").json()["entries"]
     [record] = client.get("/cache/cached-records").json()["cached_records"]
 
     for item in (hit, record):
