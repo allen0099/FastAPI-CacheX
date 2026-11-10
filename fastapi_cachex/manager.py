@@ -17,6 +17,7 @@ from typing import Any
 
 from .backends.base import BaseCacheBackend
 from .backends.base import validate_ttl
+from .cache_key import GLOB_SPECIAL
 from .exceptions import LockTimeoutError
 from .lock import CacheLock
 from .proxy import BackendProxy
@@ -26,11 +27,6 @@ from .types import log_ref
 logger = logging.getLogger(__name__)
 
 _DECODE_ERRORS = (AttributeError, UnicodeDecodeError, json.JSONDecodeError)
-
-# Characters that are live in a glob pattern: the Redis set, mirrored from
-# ``backends/redis.py`` (fnmatch treats the backslash literally, but a prefix
-# holding one still cannot be passed through to Redis unescaped).
-_GLOB_SPECIAL = frozenset("*?[]\\")
 
 # Keys currently held under a stampede-protection lock by the running task.
 # Stored as a set of unique backend-and-key identifiers to skip locking on
@@ -161,7 +157,7 @@ class CacheManager:
 
     @property
     def _prefix_has_glob(self) -> bool:
-        return not _GLOB_SPECIAL.isdisjoint(self.key_prefix)
+        return not GLOB_SPECIAL.isdisjoint(self.key_prefix)
 
     def _cache_key(self, key: str) -> str:
         return f"{self.key_prefix}{key}"

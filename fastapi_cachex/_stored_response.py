@@ -121,7 +121,9 @@ def _get_response_body(response: Response) -> bytes | None:
 
 
 def _etag_for(body: bytes) -> str:
-    return f'W/"{hashlib.md5(body).hexdigest()}"'  # noqa: S324
+    # A validator, not a security control: say so, or a FIPS-mode OpenSSL
+    # refuses MD5 and every render fails (#496).
+    return f'W/"{hashlib.md5(body, usedforsecurity=False).hexdigest()}"'
 
 
 def _weak_etag(etag: str) -> str:

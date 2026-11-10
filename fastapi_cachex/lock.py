@@ -13,6 +13,7 @@ from fastapi_cachex.backends.base import validate_ttl
 from fastapi_cachex.exceptions import LockTimeoutError
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import log_ref
 
 logger = logging.getLogger(__name__)
 
@@ -193,10 +194,17 @@ class CacheLock:
         _pending_withdrawals.discard(withdrawal)
         if withdrawal.cancelled() or withdrawal.exception() is None:
             return
+        # Lock names often embed user IDs or e-mails: only a digest at WARNING.
+        key_ref = log_ref(self.key)
         logger.warning(
-            "CacheLock could not withdraw an interrupted claim; key=%s",
-            self.key,
+            "CacheLock could not withdraw an interrupted claim; key_ref=%s",
+            key_ref,
             exc_info=withdrawal.exception(),
+        )
+        logger.debug(
+            "CacheLock could not withdraw an interrupted claim; key_ref=%s key=%s",
+            key_ref,
+            self.key,
         )
 
     async def release(self) -> bool:

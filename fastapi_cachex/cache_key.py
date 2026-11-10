@@ -31,13 +31,15 @@ _QUERY_HASH_THRESHOLD = 200
 # writes ``:`` as ``%3A``.
 _QUERY_HASH_PREFIX = "sha256:"
 
-# Characters that are live in a Redis glob pattern.
-_GLOB_SPECIAL = frozenset("*?[]\\")
+# Characters that are live in a Redis glob pattern. `CacheManager` checks its
+# prefix against the same set (fnmatch treats the backslash literally, but a
+# prefix holding one still cannot be passed through to Redis unescaped).
+GLOB_SPECIAL = frozenset("*?[]\\")
 
 
 def escape_glob(text: str) -> str:
     """Backslash-escape ``text`` so a Redis glob pattern matches it literally."""
-    return "".join(f"\\{ch}" if ch in _GLOB_SPECIAL else ch for ch in text)
+    return "".join(f"\\{ch}" if ch in GLOB_SPECIAL else ch for ch in text)
 
 
 def _query_component(request: Request, sort_query: bool) -> str:
