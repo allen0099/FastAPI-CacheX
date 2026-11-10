@@ -28,7 +28,8 @@
   minimumReleaseAge: "3 days",
   minimumReleaseAgeBehaviour: "timestamp-required",
   internalChecksFilter: "strict",
-  // A fix for a known vulnerability is not held back.
+  // A fix for a known vulnerability is not held back (Renovate's default,
+  // stated here so the delay above is not read as covering it).
   vulnerabilityAlerts: {
     minimumReleaseAge: null,
   },
@@ -38,6 +39,9 @@
   lockFileMaintenance: {
     enabled: true,
     schedule: ["before 6am on monday"],
+    // uv does not enforce the age itself, so with the top-level delay the
+    // weekly lock file branch would stay pending forever.
+    minimumReleaseAge: null,
   },
   packageRules: [
     {

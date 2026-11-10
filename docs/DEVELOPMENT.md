@@ -202,8 +202,9 @@ fails when `uv.lock` does not match `pyproject.toml`, so a pull request that
 changes a dependency without committing the relocked `uv.lock` goes red
 instead of quietly re-resolving on the runner.
 
-pre-commit only sees the files you touched. The **Lint** workflow checks the
-whole tree; run the same commands before pushing:
+On a commit, pre-commit only sees the files you touched. The **Lint** workflow
+checks the whole tree, and then runs `pre-commit run --all-files` as well; run
+the same commands before pushing:
 
 ```bash
 uv run ruff check fastapi_cachex tests scripts

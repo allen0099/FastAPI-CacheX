@@ -6,6 +6,8 @@ on:
     paths:
       - '**.py'
       - 'pyproject.toml'
+      - 'uv.lock'
+      - '.pre-commit-config.yaml'
       - '.github/workflows/lint.yml'
   # No paths filter on pull requests, so this check can be required before
   # merging: a required check that never starts blocks the pull request. It
@@ -38,10 +40,11 @@ jobs:
     - name: Sync dependencies
       run: uv sync --locked --group dev
 
-    # `tests` is linted here too. pre-commit only sees staged files, so test
-    # code that was never touched again drifts; that is how the suite came to
-    # have unsorted imports, three unformatted files and six type errors that
-    # nobody saw. Strict mypy stays package-only, matching CLAUDE.md.
+    # `tests` is linted here too. On a commit pre-commit only sees staged
+    # files, so test code that was never touched again drifts; that is how the
+    # suite came to have unsorted imports, three unformatted files and six
+    # type errors that nobody saw. These steps use the locked tool versions;
+    # the pre-commit step at the end runs the hooks' own.
     - name: Ruff check
       run: uv run ruff check fastapi_cachex tests scripts
 
