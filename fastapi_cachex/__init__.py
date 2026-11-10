@@ -1,6 +1,8 @@
 """FastAPI-CacheX: A powerful and flexible caching extension for FastAPI."""
 
 import logging
+import sys
+import warnings
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
 
@@ -46,6 +48,28 @@ def _read_version() -> str:
 
 
 __version__ = _read_version()
+
+_PYTHON_310_NOTICE = (
+    "fastapi-cachex 0.6.0 will require Python 3.11 or later; Python 3.10 "
+    "reached its end of life in October 2026. Upgrade Python, or pin "
+    "fastapi-cachex<0.6; see https://fastapi-cachex.readthedocs.io/en/latest/"
+    "MIGRATING_0_6/#python-311"
+)
+
+
+def _warn_python_310(version: tuple[int, int] = sys.version_info[:2]) -> None:
+    """Warn on import under Python 3.10, which 0.6.0 drops (#491).
+
+    ``FutureWarning``, not ``DeprecationWarning``: it is shown by default.
+    ``stacklevel=3`` skips this function and the package module; ``warnings``
+    skips the import machinery's frames itself, so the warning names the line
+    that imported ``fastapi_cachex``.
+    """
+    if version < (3, 11):
+        warnings.warn(_PYTHON_310_NOTICE, FutureWarning, stacklevel=3)
+
+
+_warn_python_310()
 
 _package_logger = logging.getLogger("fastapi_cachex")
 _package_logger.addHandler(
