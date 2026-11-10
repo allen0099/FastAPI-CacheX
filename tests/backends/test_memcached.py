@@ -22,6 +22,7 @@ from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
+from fastapi_cachex.types import log_ref
 from tests.live_servers import MEMCACHED_SERVER
 from tests.live_servers import flush_memcached
 from tests.live_servers import requires_memcached
@@ -605,9 +606,13 @@ async def test_memcached_get_and_delete_exhausts_retries_when_writes_continue() 
 
     with pytest.raises(
         CacheXError,
-        match=f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts on key 'key'",
-    ):
-        await backend.get_and_delete("key")
+        match=f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts",
+    ) as raised:
+        await backend.get_and_delete("user@example.com")
+
+    # The message reaches error logs: a digest of the key, never the key (#500).
+    assert "user@example.com" not in str(raised.value)
+    assert log_ref("user@example.com") in str(raised.value)
 
     assert backend.client.gets.call_count == _CAS_MAX_RETRIES
     assert backend.client.cas.call_count == _CAS_MAX_RETRIES

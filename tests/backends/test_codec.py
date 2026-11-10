@@ -49,10 +49,21 @@ def test_decode_entry_none_is_a_miss():
         '{"fingerprint": "e", "content": [1, 2, 3]}',
         '"a bare string"',
         "[]",
+        # Fields of the wrong type would only fail later, during replay (#501).
+        '{"fingerprint": 1, "content": ""}',
+        '{"fingerprint": "e", "content": "", "status_code": "200"}',
+        '{"fingerprint": "e", "content": "", "status_code": true}',
+        '{"fingerprint": "e", "content": "", "status_code": null}',
+        '{"fingerprint": "e", "content": "", "media_type": 5}',
     ],
 )
 def test_decode_entry_treats_malformed_documents_as_a_miss(raw):
     assert codec.decode_entry(raw) is None
+
+
+def test_decode_entry_treats_too_deep_a_document_as_a_miss(stdlib_json):
+    """The standard library parser raises ``RecursionError`` (#501)."""
+    assert codec.decode_entry("[" * 100_000 + "]" * 100_000) is None
 
 
 @pytest.mark.parametrize("raw", ["7", b"7", b"7   ", "7 "])

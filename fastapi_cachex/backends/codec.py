@@ -23,7 +23,8 @@ except ImportError:  # pragma: no cover - import-time, environment dependent
 # ``json.loads`` (either implementation) raises ``ValueError`` subclasses for bad
 # JSON; ``KeyError``/``TypeError``/``AttributeError`` cover documents whose shape
 # is not the one ``encode_entry`` writes (missing fields, non-string content).
-_DECODE_ERRORS = (ValueError, KeyError, TypeError, AttributeError)
+# The standard library parser raises ``RecursionError`` on deep nesting.
+_DECODE_ERRORS = (ValueError, KeyError, TypeError, AttributeError, RecursionError)
 
 
 def encode_entry(entry: CacheEntry) -> bytes:
@@ -83,11 +84,21 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
         return counter_entry(counter)
     try:
         data = json.loads(raw)
+        fingerprint = data["fingerprint"]
+        media_type = data.get("media_type")
+        status_code = data.get("status_code", DEFAULT_STATUS_CODE)
+        if (
+            not isinstance(fingerprint, str)
+            or not isinstance(media_type, (str, type(None)))
+            or isinstance(status_code, bool)
+            or not isinstance(status_code, int)
+        ):
+            return None
         return CacheEntry(
-            fingerprint=data["fingerprint"],
+            fingerprint=fingerprint,
             content=data["content"].encode("latin-1"),
-            media_type=data.get("media_type"),
-            status_code=data.get("status_code", DEFAULT_STATUS_CODE),
+            media_type=media_type,
+            status_code=status_code,
             headers=data.get("headers"),
             stored_at=_stored_at(data.get("stored_at")),
         )

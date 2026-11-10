@@ -18,6 +18,7 @@ from fastapi_cachex.types import counter_value
 
 from .base import BaseCacheBackend
 from .base import check_counter_range
+from .base import require_ttl
 from .base import validate_delta
 from .base import validate_ttl
 from .base import warn_if_path_shaped
@@ -235,7 +236,13 @@ class MemoryBackend(BaseCacheBackend):
     async def delete_many(self, keys: Iterable[str]) -> int:
         """Remove every key in ``keys`` under one lock; returns how many existed."""
         doomed = set(keys)
-        removed = await self._evict(doomed.__contains__)
+        # Popped key by key: `_evict` would walk the whole cache (#498).
+        async with self.lock:
+            now = time.time()
+            removed = 0
+            for key in doomed:
+                item = self.cache.pop(key, None)
+                removed += item is not None and _is_live(item, now)
         logger.debug(
             "Memory cache DELETE_MANY; requested=%s removed=%s", len(doomed), removed
         )
@@ -289,7 +296,7 @@ class MemoryBackend(BaseCacheBackend):
         self, key: str, expected: CacheEntry, ttl: int | timedelta
     ) -> bool:
         """Atomically update expiry on ``key`` while it holds ``expected`` (see base class)."""
-        ttl = validate_ttl(ttl)
+        ttl = require_ttl(ttl)
         async with self.lock:
             item = self.cache.get(key)
             if item is None or not _is_live(item, time.time()):

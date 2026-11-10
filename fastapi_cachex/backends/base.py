@@ -102,6 +102,24 @@ def validate_ttl(ttl: int | timedelta | None) -> int | None:
     return ttl
 
 
+def require_ttl(ttl: int | timedelta) -> int:
+    """``validate_ttl`` for a TTL that must be given, such as a lock lease.
+
+    ``expire_if_equals`` renews a lease; "no expiry" there would make a lock
+    permanent, and each backend used to read ``None`` its own way (#499).
+
+    Raises:
+        TTLTypeError: If ``ttl`` is ``None``, or anything ``validate_ttl``
+            refuses with it
+        TTLValueError: As ``validate_ttl``
+    """
+    if ttl is None:
+        # Unreachable for type checkers; guards untyped callers.
+        msg = "ttl must be an int number of seconds or a timedelta, got None"  # type: ignore[unreachable]
+        raise TTLTypeError(msg)
+    return validate_ttl(ttl)
+
+
 def _whole_seconds(value: timedelta, name: str) -> int:
     """The whole number of seconds in ``value``.
 
@@ -310,7 +328,7 @@ class BaseCacheBackend(ABC):
         Returns:
             Whether the expiry was updated
         """
-        ttl = validate_ttl(ttl)
+        ttl = require_ttl(ttl)
         if await self.get(key) != expected:
             return False
         await self.set(key, expected, ttl=ttl)

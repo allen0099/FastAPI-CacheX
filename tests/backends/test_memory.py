@@ -749,6 +749,24 @@ async def test_memory_delete_many_counts_only_existing_keys(
     assert await memory_backend.get("keep") is not None
 
 
+async def test_memory_delete_many_does_not_walk_the_whole_cache(
+    memory_backend: MemoryBackend,
+):
+    """It scanned every key for each call, blocking the event loop (#498)."""
+
+    class NoScan(type(memory_backend.cache)):  # type: ignore[misc]
+        def __iter__(self):
+            msg = "delete_many walked the cache"
+            raise AssertionError(msg)
+
+    await memory_backend.set("a", CacheEntry(fingerprint="e", content=b"1"))
+    await memory_backend.set("keep", CacheEntry(fingerprint="e", content=b"2"))
+    memory_backend.cache = NoScan(memory_backend.cache)
+
+    assert await memory_backend.delete_many(["a", "missing"]) == 1
+    assert list(memory_backend.cache.keys()) == ["keep"]
+
+
 async def test_write_only_use_starts_the_cleanup_task(
     clock: Clock, monkeypatch: pytest.MonkeyPatch
 ):
