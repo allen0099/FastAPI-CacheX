@@ -125,7 +125,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
     applications. Keys are namespaced with 'fastapi_cachex:' by default.
     """
 
-    client: "AsyncRedis[bytes]"
+    client: "AsyncRedis"
     key_prefix: str
 
     def __init__(
@@ -183,9 +183,6 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 )
                 raise TypeError(msg)
 
-        # `protocol` is not in the types-redis stubs (added in redis-py 5.x).
-        # Pass it via **kwargs so mypy doesn't complain about an unknown keyword.
-        kwargs.setdefault("protocol", protocol)
         self.client = AsyncRedis(
             host=host,
             port=port,
@@ -196,6 +193,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             decode_responses=False,
             socket_timeout=socket_timeout,
             socket_connect_timeout=socket_connect_timeout,
+            protocol=protocol,
             **kwargs,
         )
         self.key_prefix = key_prefix
@@ -242,9 +240,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         leaves a pool it did not create to whoever created it, and so does
         this backend.
         """
-        # The types-redis stubs predate aclose() (redis-py 5.0.1+); close()
-        # is its deprecated alias and warns.
-        await self.client.aclose()  # type: ignore[attr-defined]
+        # Not close(): it is aclose()'s deprecated alias and warns.
+        await self.client.aclose()
 
     def _make_key(self, key: str) -> str:
         """Add prefix to cache key."""

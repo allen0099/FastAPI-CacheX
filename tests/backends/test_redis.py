@@ -257,9 +257,9 @@ async def test_redis_fail_fast_settings_reach_the_client() -> None:
     assert kwargs["socket_timeout"] == 0.5
     retry = kwargs["retry"]
     assert isinstance(retry, Retry)
-    # Private attributes (missing from the stubs): redis-py 5 has no public getter.
-    assert isinstance(retry._backoff, NoBackoff)  # type: ignore[attr-defined]
-    assert retry._retries == 0  # type: ignore[attr-defined]
+    # Private attributes: redis-py 5 has no public getter.
+    assert isinstance(retry._backoff, NoBackoff)
+    assert retry._retries == 0
 
     from redis.exceptions import ConnectionError as RedisConnectionError
 
@@ -929,9 +929,11 @@ async def test_redis_scan_results_are_deduplicated(
         )
 
     real_scan = async_redis_backend.client.scan
-    returned: list[bytes] = []
+    returned: list[bytes | str] = []
 
-    async def scan_with_repeats(*args: Any, **kwargs: Any) -> tuple[int, list[bytes]]:
+    async def scan_with_repeats(
+        *args: Any, **kwargs: Any
+    ) -> tuple[int, list[bytes | str]]:
         cursor, page = await real_scan(*args, **kwargs)
         page = [*page, *returned[:1]]
         returned.extend(page)
@@ -1022,9 +1024,11 @@ async def test_redis_clear_counts_a_key_scan_repeats_once(
     """A key SCAN returns again on a later page is already deleted (#173, #172)."""
     total = await _fill_pages(async_redis_backend)
     real_scan = async_redis_backend.client.scan
-    returned: list[bytes] = []
+    returned: list[bytes | str] = []
 
-    async def scan_with_repeats(*args: Any, **kwargs: Any) -> tuple[int, list[bytes]]:
+    async def scan_with_repeats(
+        *args: Any, **kwargs: Any
+    ) -> tuple[int, list[bytes | str]]:
         cursor, page = await real_scan(*args, **kwargs)
         page = [*page, *returned[:1]]
         returned.extend(page)
