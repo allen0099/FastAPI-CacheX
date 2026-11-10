@@ -862,7 +862,8 @@ def _check_arguments(
         msg = "public and private are mutually exclusive"
         raise CacheXError(msg)
     for name, value in (("s_maxage", s_maxage), ("proxy_revalidate", proxy_revalidate)):
-        if private and value not in (None, False):
+        # Identity, not equality: `s_maxage=0` is a value, and `0 == False`.
+        if private and value is not None and value is not False:
             # Both speak to shared caches, which must not store a private
             # response at all.
             msg = (
