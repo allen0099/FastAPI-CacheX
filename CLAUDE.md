@@ -14,7 +14,7 @@ Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 - Redis and Memcached tests are skipped unless `CACHEX_TEST_REDIS_PORT` / `CACHEX_TEST_MEMCACHED_PORT` are set. They flush the server they connect to, so point them only at a throwaway instance (`scripts/start-*-server.sh`).
 - `tox -e lowest` runs every direct dependency at its declared floor on Python 3.10.
 - Docs need `uv sync --group dev --group docs --all-extras`, then `uv run zensical build --strict -f zensical.toml` (and `-f zensical.zh-TW.toml`).
-- Before committing, `git add -A` and then run `uv run pre-commit run --all-files`. ruff-format rewrites files, so re-add and re-run until it passes. CI runs the same pre-commit command, and also `mypy tests` and `mypy scripts`, which pre-commit does not.
+- Before committing, `git add -A` and then run `uv run pre-commit run --all-files`. ruff-format rewrites files, so re-add and re-run until it passes. CI runs the same pre-commit command, and also `mypy tests` (non-strict) and `mypy scripts`, which pre-commit does not.
 
 ## Invariants that span modules
 

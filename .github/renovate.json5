@@ -72,12 +72,6 @@
       rangeStrategy: "bump",
     },
     {
-      description: "Keep the mypy pre-commit hook and the locked mypy in step",
-      matchPackageNames: ["mypy", "pre-commit/mirrors-mypy"],
-      groupName: "mypy",
-      rangeStrategy: "bump",
-    },
-    {
       description: "Keep the uv pre-commit hook (uv lock) and the uv_build backend in step",
       matchPackageNames: ["uv_build", "astral-sh/uv-pre-commit"],
       groupName: "uv",

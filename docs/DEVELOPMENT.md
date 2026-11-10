@@ -194,7 +194,9 @@ uv run pre-commit run --all-files
 
 The hooks cover the standard pre-commit-hooks checks, `ruff` (with `--fix`) and
 `ruff-format`, `typos`, `uv-lock`/`uv-sync`, and strict `mypy` (excluding
-`docs/` and `scripts/`). They run automatically on `git commit`. If any checks fail, fix the issues and try committing again.
+`docs/` and `scripts/`). The mypy hook runs `uv run mypy` in the project
+environment, so it checks against the versions in `uv.lock`, as CI does; the
+other hooks install their own tools. They run automatically on `git commit`. If any checks fail, fix the issues and try committing again.
 `uv-lock` only re-resolves the lockfile when `pyproject.toml` changed; it does not
 upgrade pinned versions. Upgrades come from Renovate or an explicit
 `uv lock --upgrade`. Every CI workflow installs with `uv sync --locked`, which
