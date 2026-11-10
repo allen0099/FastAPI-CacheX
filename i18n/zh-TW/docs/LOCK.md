@@ -65,4 +65,4 @@ async def send_digest_once_per_hour(cache: AppCache) -> None:
 
 鍵的名稱就是週期，因此在該小時較晚才啟動的 worker 會發現它已被認領，而 TTL 只要比週期長即可。若工作可能失敗，請在失敗時刪除這個鍵（`await cache.delete(f"digest:{hour}")`），讓其他 worker 可以重試；否則這個週期就會直接略過。只有在工作不能同時執行、但前一次結束後應該立刻可以再跑時，才使用 `CacheLock`。
 
-完整的類別簽章與選項請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/lock/)（英文）。
+完整的類別簽章與選項請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/stable/api/lock/)（英文）。

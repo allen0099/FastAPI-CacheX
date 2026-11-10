@@ -42,4 +42,4 @@ release", is not a fragment: write it into `CHANGELOG.md` directly under
 (a bad name, an unknown section, no bold summary, a leading `- `, its own issue
 link) fails CI in the pull request that adds it. This README and dotfiles are
 not fragments. See
-[Releasing](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/#releasing).
+[Releasing](https://fastapi-cachex.readthedocs.io/en/stable/DEVELOPMENT/#releasing).

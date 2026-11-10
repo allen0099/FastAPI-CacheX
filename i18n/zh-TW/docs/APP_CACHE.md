@@ -166,4 +166,4 @@ manager = CacheManager(lock=False)  # 每次並行未命中都各自計算
 
 `get_or_set()` 在未命中時也套用同樣的規則：它將 `factory` 的值編碼一次、儲存這些位元組，並回傳其解碼結果，因此第一次呼叫的回傳值與之後命中時完全相同。JSON 無法編碼的值要等到 `factory` 執行後才會拋出 `TypeError`，因為在那之前這個值還不存在；請先轉換，例如 `lambda: model.model_dump(mode="json")` 或 `lambda: when.isoformat()`。
 
-完整的方法清單請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/cache-manager/)（英文）。
+完整的方法清單請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/stable/api/cache-manager/)（英文）。

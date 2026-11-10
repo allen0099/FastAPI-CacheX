@@ -11,7 +11,7 @@
 [project]
 site_name = "FastAPI-CacheX"
 site_description = "FastAPI 的 HTTP 快取與應用層快取。"
-site_url = "https://fastapi-cachex.readthedocs.io/zh-tw/latest/"
+site_url = "https://fastapi-cachex.readthedocs.io/zh-tw/stable/"
 repo_url = "https://github.com/allen0099/FastAPI-CacheX"
 repo_name = "allen0099/FastAPI-CacheX"
 edit_uri = "edit/master/i18n/zh-TW/docs/"
@@ -36,9 +36,9 @@ nav = [
   { "深入了解" = [
     { "快取流程" = "CACHE_FLOW.md" },
   ] },
-  { "API 參考（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/" },
+  { "API 參考（英文）" = "https://fastapi-cachex.readthedocs.io/en/stable/api/http-caching/" },
   { "開發" = [
-    { "開發指南（英文）" = "https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/" },
+    { "開發指南（英文）" = "https://fastapi-cachex.readthedocs.io/en/stable/DEVELOPMENT/" },
     { "貢獻指南" = "CONTRIBUTING.md" },
   ] },
   { "變更紀錄（英文）" = "https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md" },
@@ -47,16 +47,16 @@ nav = [
 [project.extra]
 # Base of the English original; the "may be outdated" banner links each page
 # to its counterpart there.
-english_site = "https://fastapi-cachex.readthedocs.io/en/latest/"
+english_site = "https://fastapi-cachex.readthedocs.io/en/stable/"
 
 [[project.extra.alternate]]
 name = "English"
-link = "https://fastapi-cachex.readthedocs.io/en/latest/"
+link = "https://fastapi-cachex.readthedocs.io/en/stable/"
 lang = "en"
 
 [[project.extra.alternate]]
 name = "繁體中文"
-link = "https://fastapi-cachex.readthedocs.io/zh-tw/latest/"
+link = "https://fastapi-cachex.readthedocs.io/zh-tw/stable/"
 lang = "zh-Hant"
 
 [project.theme]

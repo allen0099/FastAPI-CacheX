@@ -12,11 +12,11 @@
 [![PyPI version](https://img.shields.io/pypi/v/fastapi-cachex.svg?logo=pypi&logoColor=gold&label=PyPI)](https://pypi.org/project/fastapi-cachex)
 [![Python Versions](https://img.shields.io/pypi/pyversions/fastapi-cachex.svg?logo=python&label=Python&logoColor=gold)](https://pypi.org/project/fastapi-cachex/)
 
-[English](https://fastapi-cachex.readthedocs.io/en/latest/) | [繁體中文](https://fastapi-cachex.readthedocs.io/zh-tw/latest/)
+[English](https://fastapi-cachex.readthedocs.io/en/stable/) | [繁體中文](https://fastapi-cachex.readthedocs.io/zh-tw/stable/)
 
 FastAPI-CacheX 是 FastAPI 的高效能快取擴充套件：提供支援 `Cache-Control` 與 `ETag` 的伺服器端回應快取，以及應用層快取。
 
-**文件：** <https://fastapi-cachex.readthedocs.io/zh-tw/latest/>（尚未翻譯的頁面與完整 API 參考請見[英文文件](https://fastapi-cachex.readthedocs.io/en/latest/)）
+**文件：** <https://fastapi-cachex.readthedocs.io/zh-tw/stable/>（尚未翻譯的頁面與完整 API 參考請見[英文文件](https://fastapi-cachex.readthedocs.io/en/stable/)）
 
 ## 功能特點 {#features}
 
@@ -97,8 +97,8 @@ async def report(cache: AppCache):
 - [分散式鎖](LOCK.md)：以 `CacheLock` 在多個行程之間互斥
 - [快取流程](CACHE_FLOW.md)：快取請求內部的處理流程
 - [可執行範例](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples)（英文）：每個功能一個完整的應用程式，皆由測試套件涵蓋
-- [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)（英文）
-- [開發指南](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/)（英文）與[貢獻指南](CONTRIBUTING.md) · [安全性政策](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)（英文）：請私下回報漏洞，不要開公開 issue
+- [API 參考](https://fastapi-cachex.readthedocs.io/en/stable/api/http-caching/)（英文）
+- [開發指南](https://fastapi-cachex.readthedocs.io/en/stable/DEVELOPMENT/)（英文）與[貢獻指南](CONTRIBUTING.md) · [安全性政策](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)（英文）：請私下回報漏洞，不要開公開 issue
 - [變更紀錄](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md)（英文） · [已知限制與規劃中的工作](https://github.com/allen0099/FastAPI-CacheX/issues)
 
 ## 授權 {#license}

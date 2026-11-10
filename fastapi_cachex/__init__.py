@@ -52,7 +52,7 @@ __version__ = _read_version()
 _PYTHON_310_NOTICE = (
     "fastapi-cachex 0.6.0 will require Python 3.11 or later; Python 3.10 "
     "reached its end of life in October 2026. Upgrade Python; see "
-    "https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_6/#python-311"
+    "https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#python-311"
 )
 
 
