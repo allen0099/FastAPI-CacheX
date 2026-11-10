@@ -6,14 +6,16 @@ import threading
 import warnings
 from collections.abc import Callable
 from collections.abc import Sequence
+from dataclasses import dataclass
+from dataclasses import field
 from datetime import timedelta
-from functools import update_wrapper
 from functools import wraps
 from inspect import Parameter
 from inspect import Signature
 from typing import Annotated
 from typing import Any
 from typing import Literal
+from typing import NamedTuple
 from typing import get_args
 from typing import get_origin
 from typing import get_type_hints
@@ -90,20 +92,6 @@ _DEBUG_HEADER = "X-Cache"
 _HIT = "HIT"
 _MISS = "MISS"
 _BYPASS = "BYPASS"
-
-
-class _Outcome:
-    """How a GET or HEAD request was answered, for the ``X-Cache`` header.
-
-    ``HIT``: served from the stored entry (a 200, or a 304 for its ETag).
-    ``MISS``: the backend was consulted and the handler ran. ``BYPASS``: the
-    backend was neither read nor written. ``None`` until decided.
-    """
-
-    __slots__ = ("value",)
-
-    def __init__(self) -> None:
-        self.value: str | None = None
 
 
 def _as_get(request: Request) -> Request:
@@ -411,6 +399,482 @@ def _seconds(name: str, value: int | timedelta | None) -> int | None:
     return value
 
 
+class _Params(NamedTuple):
+    """The wrapper's signature and where its ``Request`` and ``Response`` are.
+
+    ``*_injected`` says the parameter was added by ``@cache``: the wrapper
+    then takes it out of the keyword arguments before calling the handler.
+    """
+
+    signature: Signature
+    request_name: str
+    request_injected: bool
+    response_name: str
+    response_injected: bool
+
+    def take_request(self, kwargs: dict[str, Any]) -> Request | None:
+        request: Request | None = (
+            kwargs.pop(self.request_name, None)
+            if self.request_injected
+            else kwargs.get(self.request_name)
+        )
+        return request
+
+    def take_response(self, kwargs: dict[str, Any]) -> Response | None:
+        response: Response | None = (
+            kwargs.pop(self.response_name, None)
+            if self.response_injected
+            else kwargs.get(self.response_name)
+        )
+        return response
+
+
+def _wrapper_params(func: HandlerCallable) -> _Params:
+    """Find the handler's ``Request`` and ``Response`` parameters, or add them.
+
+    The wrapper needs the request, and FastAPI's sub-response even when the
+    handler does not ask for it, to send what the dependencies set on it
+    (#233).
+    """
+    sig = inspect.signature(func)
+    params = list(sig.parameters.values())
+    found_request = _find_request_param(func, params)
+    found_response = _find_response_param(func, params)
+
+    injected = [
+        inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, annotation=annotation)
+        for found, name, annotation in (
+            (found_request, "__cachex_request", Request),
+            (found_response, "__cachex_response", Response),
+        )
+        if found is None
+    ]
+    if injected:
+        # A keyword-only parameter must precede **kwargs; appending it
+        # after one makes `Signature.replace` raise at decoration time,
+        # so a handler taking **kwargs could not be cached at all.
+        insert_at = next(
+            (
+                index
+                for index, param in enumerate(params)
+                if param.kind is Parameter.VAR_KEYWORD
+            ),
+            len(params),
+        )
+        sig = sig.replace(
+            parameters=[*params[:insert_at], *injected, *params[insert_at:]]
+        )
+    return _Params(
+        signature=sig,
+        request_name=found_request.name if found_request else "__cachex_request",
+        request_injected=found_request is None,
+        response_name=found_response.name if found_response else "__cachex_response",
+        response_injected=found_response is None,
+    )
+
+
+@dataclass
+class _Call:
+    """One GET, HEAD or other request to a decorated handler.
+
+    ``dependency_lines`` and ``dependency_status`` are what the dependencies
+    left on the sub-response before the handler ran (see
+    ``_split_header_lines``). ``outcome`` is how the request was answered,
+    for the ``X-Cache`` header: ``HIT`` (served from the stored entry, as a
+    200 or a 304 for its ETag), ``MISS`` (the backend was consulted and the
+    handler ran), ``BYPASS`` (the backend was neither read nor written), or
+    ``None`` for a method that is not cached.
+    """
+
+    request: Request
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    sub_response: Response | None
+    dependency_lines: list[tuple[bytes, bytes]]
+    dependency_status: int | None
+    flight: _Flight = field(default_factory=_Flight)
+    outcome: str | None = None
+
+    @property
+    def client_etag(self) -> str | None:
+        return self.request.headers.get("if-none-match")
+
+
+@dataclass(frozen=True)
+class _Route:
+    """What ``@cache(...)`` decided for one handler, and how it answers.
+
+    ``cache_control`` only depends on the decorator arguments, so it is
+    built once. ``private_cache_control`` is sent instead for a response
+    that must not be stored downstream either: one that sets a cookie, or
+    one answering a request with credentials.
+    """
+
+    func: HandlerCallable
+    ttl: int | None
+    no_cache: bool
+    no_store: bool
+    public: bool
+    private: bool
+    fail_open: bool
+    cache_authorized: bool
+    coalesce: bool
+    key_builder: CacheKeyBuilder
+    vary_names: list[str]
+    cache_control: str
+    private_cache_control: str
+    warn_bypass: _BypassWarner
+
+    @property
+    def skips_backend(self) -> bool:
+        """Whether no request to this route reads or writes the backend.
+
+        Without a positive ttl nothing may be served from storage, and a 304
+        answered from a stored ETag would be exactly that: it would keep
+        confirming a copy that the handler no longer produces (#110). Such
+        routes skip the backend like private ones. ``ttl=0`` is included,
+        since ``max-age=0`` allows no reuse either.
+        """
+        return self.private or not self.ttl
+
+    async def respond(self, call: _Call, backend: BaseCacheBackend) -> Response:
+        """Answer ``call``, from the backend where the route and request allow."""
+        req = call.request
+        if req.method not in _CACHED_METHODS:
+            logger.debug("Not GET or HEAD; bypassing cache for method=%s", req.method)
+            return await self._run(call)
+        if self.no_store:
+            return await self._no_store(call)
+
+        # RFC 9111 §3.5: a shared cache must not reuse a response to a
+        # request with `Authorization` unless the response allows it. The
+        # default key carries no identity, so treat such requests as
+        # private unless the route is `public` or opted in. A request with
+        # a non-empty `request.session` is the same case (#319). Routes
+        # without a positive ttl skip the backend anyway, but their
+        # response still needs `private` for a downstream cache (#362);
+        # only `private=True` already sends it.
+        # `cache_authorized` lifts the bypass but not `private`: its entries
+        # are per caller only in this backend, while a shared cache
+        # downstream keys on the URL alone (#372).
+        credential = None if self.private or self.public else _request_credential(req)
+        cache_control = (
+            self.cache_control if credential is None else self.private_cache_control
+        )
+        authorized_bypass = credential is not None and not self.cache_authorized
+        if credential is not None and not self.cache_authorized:
+            logger.debug(
+                "%s present; bypassing the backend for path=%s",
+                credential,
+                req.url.path,
+            )
+            # The warning is about lost cache hits, which a route that
+            # never reads the backend does not have.
+            if not self.skips_backend:
+                self.warn_bypass(req, credential)
+
+        if self.skips_backend or authorized_bypass:
+            return await self._uncached(call, cache_control)
+        return await self._cached(call, backend, cache_control)
+
+    async def _run(self, call: _Call) -> Response:
+        """Run the handler and build its response."""
+        return await _respond(
+            self.func,
+            call.request,
+            call.args,
+            call.kwargs,
+            sub_response=call.sub_response,
+            dependency_lines=call.dependency_lines,
+        )
+
+    async def _render(self, call: _Call) -> tuple[Response, bytes | None, str | None]:
+        """Run the handler; the body and ETag are None for a streamed response."""
+        return await _render(
+            self.func,
+            call.request,
+            call.args,
+            call.kwargs,
+            sub_response=call.sub_response,
+            dependency_lines=call.dependency_lines,
+        )
+
+    def _send(self, response: Response, cache_control: str) -> Response:
+        """A freshly rendered response, with the ``Cache-Control`` it gets."""
+        return _with_cache_control(response, cache_control, self.private_cache_control)
+
+    def _revalidated(
+        self, call: _Call, response: Response, etag: str, cache_control: str
+    ) -> Response | None:
+        """The 304 for a fresh render the client's ETag matches, else None."""
+        return _fresh_not_modified(
+            response,
+            etag,
+            call.client_etag,
+            _cache_control_for(response, cache_control, self.private_cache_control),
+        )
+
+    async def _no_store(self, call: _Call) -> Response:
+        """``no_store=True``: the highest priority, nothing else applies."""
+        call.outcome = _BYPASS
+        response = await self._run(call)
+        logger.debug(
+            "no-store active; bypassed cache for path=%s", call.request.url.path
+        )
+        # Unconditional: `no-store` is stricter than anything the
+        # handler may have sent.
+        response.headers["Cache-Control"] = _NO_STORE
+        return response
+
+    async def _uncached(self, call: _Call, cache_control: str) -> Response:
+        """Answer without reading or writing the backend.
+
+        A private response belongs to exactly one user, so it must never
+        be read from or written to the shared backend: the default cache
+        key carries no identity, so a stored copy would be served to the
+        next caller. The same path serves routes without a positive ttl
+        (see ``skips_backend``). ETag revalidation still works: it compares
+        the client's validator against freshly rendered content.
+
+        ``cache_control`` has ``private`` for a request with credentials:
+        RFC 9111 §3.5 would still let a downstream shared cache reuse the
+        answer to an ``Authorization`` request under ``must-revalidate``,
+        and nothing at all stops one reusing the answer to a cookie.
+        """
+        call.outcome = _BYPASS
+        path = call.request.url.path
+        response, _, etag = await self._render(call)
+        if not _is_cacheable_status(response.status_code):
+            return response
+        if etag is None:
+            # StreamingResponse/FileResponse — cannot compute ETag
+            return self._send(response, cache_control)
+        not_modified = self._revalidated(call, response, etag, cache_control)
+        if not_modified is not None:
+            logger.debug("304 Not Modified (uncached); path=%s", path)
+            return not_modified
+        response.headers["ETag"] = etag
+        logger.debug("Bypassed the backend; path=%s", path)
+        return self._send(response, cache_control)
+
+    async def _cached(
+        self, call: _Call, backend: BaseCacheBackend, cache_control: str
+    ) -> Response:
+        """Answer from the stored entry, or render, store and answer."""
+        req = call.request
+        # Built only here: the paths above never touch the backend, so a
+        # custom key builder would run for nothing.
+        # HEAD reads the entry of the GET (#253), whichever builder made
+        # the key.
+        cache_key = _append_key_components(
+            _build_key(self.key_builder, _as_get(req) if req.method == "HEAD" else req),
+            _vary_components(req, self.vary_names),
+        )
+
+        # Decided below: a hit is served from the entry, anything else runs
+        # the handler.
+        call.outcome = _MISS
+        entry = await self._read(call, backend, cache_key)
+        if entry is not None and not self.no_cache:
+            return self._hit(call, entry, cache_key, cache_control)
+
+        response, body, etag = await self._render(call)
+        if not _is_cacheable_status(response.status_code):
+            # Leave any existing entry alone: a transient error must not
+            # evict or overwrite the last good response. Error responses
+            # carry no validator either: never answer 304.
+            logger.debug(
+                "Uncacheable status %s; not storing key=%s",
+                response.status_code,
+                cache_key,
+            )
+            return response
+        if body is None or etag is None:
+            # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
+            return self._send(response, cache_control)
+
+        if self.no_cache and call.client_etag:
+            # A `no_cache` route answers a matching ETag before storing, so
+            # that 304 leaves the stored entry as it is.
+            not_modified = self._revalidated(call, response, etag, cache_control)
+            if not_modified is not None:
+                logger.debug("304 Not Modified via no-cache; key=%s", cache_key)
+                return not_modified
+        else:
+            logger.debug("Cache MISS; computed fresh ETag for key=%s", cache_key)
+
+        response.headers["ETag"] = etag
+        await self._store(
+            call,
+            backend,
+            cache_key,
+            stored=entry,
+            response=response,
+            etag=etag,
+            body=body,
+        )
+
+        # A client revalidating a copy that the fresh render reproduces gets
+        # a 304, as on the bypass and no_cache paths: the entry may have
+        # expired, been cleared or evicted, or never been stored in this
+        # worker, while the client's ETag still matches (#237).
+        not_modified = self._revalidated(call, response, etag, cache_control)
+        if not_modified is not None:
+            logger.debug("304 Not Modified (fresh render); key=%s", cache_key)
+            return not_modified
+        return self._send(response, cache_control)
+
+    async def _read(
+        self, call: _Call, backend: BaseCacheBackend, cache_key: str
+    ) -> CacheEntry | None:
+        """The stored entry, after waiting for a running miss if coalescing."""
+        req = call.request
+        entry, read_ok = await _read_entry(
+            backend, cache_key, req, fail_open=self.fail_open
+        )
+        # A failed read does not wait: the backend is likely down, so the
+        # leader could not store its response either. A miss read just
+        # before a leader stores may still lead a second render; that
+        # window is one backend round trip.
+        if self.coalesce and read_ok and entry is None:
+            leader = call.flight.join(backend, cache_key, may_lead=req.method == "GET")
+            if leader is not None:
+                logger.debug("Waiting for a running miss; key=%s", cache_key)
+                await _wait_for(leader)
+                entry, _ = await _read_entry(
+                    backend, cache_key, req, fail_open=self.fail_open
+                )
+        return entry
+
+    def _hit(
+        self, call: _Call, entry: CacheEntry, cache_key: str, cache_control: str
+    ) -> Response:
+        """Serve the stored entry: a 304 for its ETag, or the entry itself."""
+        call.outcome = _HIT
+        if _etag_matches(call.client_etag, entry.fingerprint):
+            logger.debug("304 Not Modified (cached ETag match); key=%s", cache_key)
+            # Answered from the stored entry, so the 304 says how old
+            # that entry is: a cache refreshing its copy with this 304
+            # takes the new Age with it (RFC 9111 §4.3.4).
+            return _not_modified(
+                entry.fingerprint,
+                cache_control,
+                entry.headers,
+                _age_headers(entry, self.ttl),
+            )
+
+        logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
+        hit = Response(
+            content=entry.content,
+            status_code=entry.status_code,
+            media_type=entry.media_type,
+        )
+        # Framing and validator headers come from this response, not
+        # the entry: an entry built outside @cache may still carry them.
+        _append_headers(
+            hit,
+            (
+                (name, value)
+                for name, value in entry.headers
+                if name.lower() not in _UNCACHEABLE_HEADERS
+            ),
+        )
+        hit.headers["ETag"] = entry.fingerprint
+        hit.headers["Cache-Control"] = cache_control
+        hit.headers.update(_age_headers(entry, self.ttl))
+        return hit
+
+    def _skip_reason(self, call: _Call, response: Response) -> str | None:
+        """Why a rendered response is served but not stored, if it is not.
+
+        A response scoped to one caller is never stored. An entry already
+        under its key is left alone, as for an error status: it came from a
+        response that was shareable.
+        """
+        reason = _unshareable_reason(response)
+        if reason is None:
+            reason = _dependency_unshareable_reason(call.dependency_lines)
+        if reason is None and call.dependency_status is not None:
+            # It may hold for this request only, and a hit would replay it.
+            reason = "a dependency set the status code"
+        if reason is None and call.request.method == "HEAD":
+            # A handler may skip the body for HEAD; a GET hit would then
+            # replay the empty one.
+            reason = "only a GET response is stored"
+        return reason
+
+    async def _store(
+        self,
+        call: _Call,
+        backend: BaseCacheBackend,
+        cache_key: str,
+        *,
+        stored: CacheEntry | None,
+        response: Response,
+        etag: str,
+        body: bytes,
+    ) -> None:
+        """Store a rendered response, unless it must not be or already is."""
+        skip_reason = self._skip_reason(call, response)
+        if skip_reason is not None:
+            logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
+            return
+        if stored is not None and stored.fingerprint == etag:
+            return
+        try:
+            await backend.set(cache_key, _entry_for(response, etag, body), ttl=self.ttl)
+        except Exception as e:
+            if not self.fail_open:
+                raise
+            _log_backend_failure(
+                "write failed; response not stored", call.request, cache_key, e
+            )
+        else:
+            logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, self.ttl)
+
+
+def _check_arguments(
+    *,
+    ttl: int | None,
+    stale: object,
+    stale_ttl: int | None,
+    no_cache: bool,
+    no_store: bool,
+    public: bool,
+    private: bool,
+    coalesce: object,
+    debug_header: object,
+) -> None:
+    """Reject ``@cache`` arguments that contradict each other.
+
+    Raises:
+        CacheXError: See ``cache()``
+    """
+    if stale is not None and stale_ttl is None:
+        msg = "stale_ttl must be set if stale is used"
+        raise CacheXError(msg)
+    if stale_ttl is not None and stale is None:
+        msg = "stale must be set if stale_ttl is used"
+        raise CacheXError(msg)
+    if public and private:
+        msg = "public and private are mutually exclusive"
+        raise CacheXError(msg)
+    if not isinstance(coalesce, bool):
+        msg = f"coalesce must be a bool, got {type(coalesce).__name__}"
+        raise CacheXError(msg)
+    if not isinstance(debug_header, bool):
+        msg = f"debug_header must be a bool, got {type(debug_header).__name__}"
+        raise CacheXError(msg)
+    if coalesce and not no_store and (private or no_cache or not ttl):
+        # Such a route never serves a stored entry, so there would be
+        # nothing to wait for.
+        msg = (
+            "coalesce needs a positive ttl and cannot be combined with "
+            "private or no_cache, which never serve a stored entry"
+        )
+        raise CacheXError(msg)
+
+
 def cache(
     ttl: int | timedelta | None = None,
     stale_ttl: int | timedelta | None = None,
@@ -604,30 +1068,17 @@ def cache(
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
         # Validate parameters eagerly at decoration time
-        if stale is not None and stale_ttl is None:
-            msg = "stale_ttl must be set if stale is used"
-            raise CacheXError(msg)
-        if stale_ttl is not None and stale is None:
-            msg = "stale must be set if stale_ttl is used"
-            raise CacheXError(msg)
-        if public and private:
-            msg = "public and private are mutually exclusive"
-            raise CacheXError(msg)
-        if not isinstance(coalesce, bool):
-            # Unreachable for type checkers; guards untyped callers.
-            msg = f"coalesce must be a bool, got {type(coalesce).__name__}"  # type: ignore[unreachable]
-            raise CacheXError(msg)
-        if not isinstance(debug_header, bool):
-            msg = f"debug_header must be a bool, got {type(debug_header).__name__}"  # type: ignore[unreachable]
-            raise CacheXError(msg)
-        if coalesce and not no_store and (private or no_cache or not ttl):
-            # Such a route never serves a stored entry, so there would be
-            # nothing to wait for.
-            msg = (
-                "coalesce needs a positive ttl and cannot be combined with "
-                "private or no_cache, which never serve a stored entry"
-            )
-            raise CacheXError(msg)
+        _check_arguments(
+            ttl=ttl,
+            stale=stale,
+            stale_ttl=stale_ttl,
+            no_cache=no_cache,
+            no_store=no_store,
+            public=public,
+            private=private,
+            coalesce=coalesce,
+            debug_header=debug_header,
+        )
         vary_names = _validate_vary(vary)
         builder = _resolve_key_builder(key_builder, sort_query)
         if any(name.lower() == "cookie" for name in vary_names):
@@ -657,55 +1108,6 @@ def cache(
                     _no_store_ignored_warning(ignored), UserWarning, stacklevel=2
                 )
 
-        # Analyze the original function's signature
-        sig: Signature = inspect.signature(func)
-        params: list[Parameter] = list(sig.parameters.values())
-
-        # Check if Request is already in the parameters
-        found_request: Parameter | None = _find_request_param(func, params)
-
-        # FastAPI's sub-response: the wrapper needs it even when the handler
-        # does not ask for it, to send what the dependencies set on it (#233).
-        found_response: Parameter | None = _find_response_param(func, params)
-
-        # Add the Request and Response parameters the handler does not declare
-        injected: list[Parameter] = []
-        if not found_request:
-            request_name: str = "__cachex_request"
-            injected.append(
-                inspect.Parameter(
-                    request_name, inspect.Parameter.KEYWORD_ONLY, annotation=Request
-                )
-            )
-        else:
-            request_name = found_request.name
-        if not found_response:
-            response_name: str = "__cachex_response"
-            injected.append(
-                inspect.Parameter(
-                    response_name, inspect.Parameter.KEYWORD_ONLY, annotation=Response
-                )
-            )
-        else:
-            response_name = found_response.name
-
-        if injected:
-            # A keyword-only parameter must precede **kwargs; appending it
-            # after one makes `Signature.replace` raise at decoration time,
-            # so a handler taking **kwargs could not be cached at all.
-            insert_at = next(
-                (
-                    index
-                    for index, param in enumerate(params)
-                    if param.kind is Parameter.VAR_KEYWORD
-                ),
-                len(params),
-            )
-            sig = sig.replace(
-                parameters=[*params[:insert_at], *injected, *params[insert_at:]]
-            )
-
-        # The header only depends on the decorator arguments, so build it once.
         cache_control = _build_cache_control(
             ttl=ttl,
             stale=stale,
@@ -716,429 +1118,89 @@ def cache(
             immutable=immutable,
             must_revalidate=must_revalidate,
         )
-        # Sent instead for a response that must not be stored downstream
-        # either: one that sets a cookie, or one answering an `Authorization`
-        # or session request the backend was bypassed for. `public` becomes `private`;
-        # `no_cache` leaves the scope out of `cache_control`, so it is added.
-        private_cache_control = (
-            f"{DirectiveType.PRIVATE.value}, {cache_control}"
-            if no_cache
-            else _build_cache_control(
-                ttl=ttl,
-                stale=stale,
-                stale_ttl=stale_ttl,
-                no_cache=no_cache,
-                public=False,
-                private=True,
-                immutable=immutable,
-                must_revalidate=must_revalidate,
-            )
+        route = _Route(
+            func=func,
+            ttl=ttl,
+            no_cache=no_cache,
+            no_store=no_store,
+            public=public,
+            private=private,
+            fail_open=fail_open,
+            cache_authorized=cache_authorized,
+            coalesce=coalesce,
+            key_builder=builder,
+            vary_names=vary_names,
+            cache_control=cache_control,
+            # `public` becomes `private`; `no_cache` leaves the scope out of
+            # `cache_control`, so it is added.
+            private_cache_control=(
+                f"{DirectiveType.PRIVATE.value}, {cache_control}"
+                if no_cache
+                else _build_cache_control(
+                    ttl=ttl,
+                    stale=stale,
+                    stale_ttl=stale_ttl,
+                    no_cache=no_cache,
+                    public=False,
+                    private=True,
+                    immutable=immutable,
+                    must_revalidate=must_revalidate,
+                )
+            ),
+            warn_bypass=_BypassWarner(
+                f"{getattr(func, '__module__', '?')}."
+                f"{getattr(func, '__qualname__', '?')}"
+            ),
         )
-        # Without a positive ttl nothing may be served from storage, and a 304
-        # answered from a stored ETag would be exactly that: it would keep
-        # confirming a copy that the handler no longer produces (#110). Such
-        # routes skip the backend like private ones. `ttl=0` is included, since
-        # `max-age=0` allows no reuse either.
-        bypass_backend = private or not ttl
-        warn_bypass = _BypassWarner(
-            f"{getattr(func, '__module__', '?')}.{getattr(func, '__qualname__', '?')}"
-        )
+        params = _wrapper_params(func)
 
-        async def respond(
-            flight: _Flight,
-            outcome: _Outcome,
-            sub_response: Response | None,
-            dependency_lines: Sequence[tuple[bytes, bytes]],
-            dependency_status: int | None,
-            /,
-            *args: Any,
-            **kwargs: Any,
-        ) -> Response:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Response:
+            sub_response = params.take_response(kwargs)
+            request = params.take_request(kwargs)
             # Resolve backend on every request to support lifespan-configured backends
-            cache_backend = get_backend_or_fallback()
-
-            if found_request:
-                req: Request | None = kwargs.get(request_name)
-            else:
-                req = kwargs.pop(request_name, None)
-
-            if req is None:
+            backend = get_backend_or_fallback()
+            if request is None:
                 # Reached when the wrapper is called outside the router, which
                 # is the only caller that supplies the request parameter.
                 raise RequestNotFoundError
-
-            if req.method not in _CACHED_METHODS:
-                logger.debug(
-                    "Not GET or HEAD; bypassing cache for method=%s", req.method
-                )
-                return await _respond(
-                    func,
-                    req,
-                    args,
-                    kwargs,
-                    sub_response=sub_response,
-                    dependency_lines=dependency_lines,
-                )
-
-            # Handle special case: no-store (highest priority)
-            if no_store:
-                outcome.value = _BYPASS
-                response = await _respond(
-                    func,
-                    req,
-                    args,
-                    kwargs,
-                    sub_response=sub_response,
-                    dependency_lines=dependency_lines,
-                )
-                logger.debug(
-                    "no-store active; bypassed cache for path=%s", req.url.path
-                )
-                # Unconditional: `no-store` is stricter than anything the
-                # handler may have sent.
-                response.headers["Cache-Control"] = _NO_STORE
-                return response
-
-            client_etag = req.headers.get("if-none-match")
-
-            # RFC 9111 §3.5: a shared cache must not reuse a response to a
-            # request with `Authorization` unless the response allows it. The
-            # default key carries no identity, so treat such requests as
-            # private unless the route is `public` or opted in. A request with
-            # a non-empty `request.session` is the same case (#319). Routes
-            # without a positive ttl skip the backend anyway, but their
-            # response still needs `private` for a downstream cache (#362);
-            # only `private=True` already sends it.
-            # `cache_authorized` lifts the bypass but not `private`: its entries
-            # are per caller only in this backend, while a shared cache
-            # downstream keys on the URL alone (#372).
-            credential = None if private or public else _request_credential(req)
-            authorized_bypass = credential is not None and not cache_authorized
-            response_cache_control = (
-                cache_control if credential is None else private_cache_control
-            )
-            if credential is not None and not cache_authorized:
-                logger.debug(
-                    "%s present; bypassing the backend for path=%s",
-                    credential,
-                    req.url.path,
-                )
-                # The warning is about lost cache hits, which a route that
-                # never reads the backend does not have.
-                if not bypass_backend:
-                    warn_bypass(req, credential)
-
-            # A private response belongs to exactly one user, so it must never
-            # be read from or written to the shared backend — the default cache
-            # key carries no identity, so a stored copy would be served to the
-            # next caller. The same path serves routes without a positive ttl
-            # (see `bypass_backend`). ETag revalidation still works: it
-            # compares the client's validator against freshly rendered content.
-            if bypass_backend or authorized_bypass:
-                outcome.value = _BYPASS
-                # `response_cache_control` has `private` for a request with
-                # credentials: RFC 9111 §3.5 would still let a downstream shared
-                # cache reuse the answer to an `Authorization` request under
-                # `must-revalidate`, and nothing at all stops one reusing the
-                # answer to a cookie.
-                response, _, etag = await _render(
-                    func,
-                    req,
-                    args,
-                    kwargs,
-                    sub_response=sub_response,
-                    dependency_lines=dependency_lines,
-                )
-                if not _is_cacheable_status(response.status_code):
-                    return response
-                if etag is None:
-                    # StreamingResponse/FileResponse — cannot compute ETag
-                    return _with_cache_control(
-                        response, response_cache_control, private_cache_control
-                    )
-                not_modified = _fresh_not_modified(
-                    response,
-                    etag,
-                    client_etag,
-                    _cache_control_for(
-                        response, response_cache_control, private_cache_control
-                    ),
-                )
-                if not_modified is not None:
-                    logger.debug("304 Not Modified (uncached); path=%s", req.url.path)
-                    return not_modified
-                response.headers["ETag"] = etag
-                logger.debug("Bypassed the backend; path=%s", req.url.path)
-                return _with_cache_control(
-                    response, response_cache_control, private_cache_control
-                )
-
-            # Built only here: the branches above never touch the backend, so a
-            # custom key builder would run for nothing.
-            # HEAD reads the entry of the GET (#253), whichever builder made
-            # the key.
-            cache_key = _append_key_components(
-                _build_key(builder, _as_get(req) if req.method == "HEAD" else req),
-                _vary_components(req, vary_names),
-            )
-
-            # Decided below: a hit is served from the entry, anything else runs
-            # the handler.
-            outcome.value = _MISS
-            cached_data, read_ok = await _read_entry(
-                cache_backend, cache_key, req, fail_open=fail_open
-            )
-            # A failed read does not wait: the backend is likely down, so the
-            # leader could not store its response either. A miss read just
-            # before a leader stores may still lead a second render; that
-            # window is one backend round trip.
-            if coalesce and read_ok and cached_data is None:
-                leader = flight.join(
-                    cache_backend, cache_key, may_lead=req.method == "GET"
-                )
-                if leader is not None:
-                    logger.debug("Waiting for a running miss; key=%s", cache_key)
-                    await _wait_for(leader)
-                    cached_data, _ = await _read_entry(
-                        cache_backend, cache_key, req, fail_open=fail_open
-                    )
-
-            current_response: Response | None = None
-            current_body: bytes | None = None
-            current_etag: str | None = None
-
-            if client_etag:
-                if no_cache:
-                    # Get fresh response first if using no-cache
-                    current_response, current_body, current_etag = await _render(
-                        func,
-                        req,
-                        args,
-                        kwargs,
-                        sub_response=sub_response,
-                        dependency_lines=dependency_lines,
-                    )
-                    if not _is_cacheable_status(current_response.status_code):
-                        # Error responses carry no validator: never answer 304.
-                        logger.debug(
-                            "Uncacheable status %s; serving as-is for key=%s",
-                            current_response.status_code,
-                            cache_key,
-                        )
-                        return current_response
-
-                    if current_etag is None:
-                        # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
-                        return _with_cache_control(
-                            current_response,
-                            response_cache_control,
-                            private_cache_control,
-                        )
-
-                    # For no-cache, compare fresh data with client's ETag
-                    not_modified = _fresh_not_modified(
-                        current_response,
-                        current_etag,
-                        client_etag,
-                        _cache_control_for(
-                            current_response,
-                            response_cache_control,
-                            private_cache_control,
-                        ),
-                    )
-                    if not_modified is not None:
-                        logger.debug("304 Not Modified via no-cache; key=%s", cache_key)
-                        return not_modified
-
-                # Compare with cached ETag - if match, return 304
-                elif cached_data and _etag_matches(
-                    client_etag, cached_data.fingerprint
-                ):
-                    logger.debug(
-                        "304 Not Modified (cached ETag match); key=%s", cache_key
-                    )
-                    outcome.value = _HIT
-                    # Answered from the stored entry, so the 304 says how old
-                    # that entry is: a cache refreshing its copy with this 304
-                    # takes the new Age with it (RFC 9111 §4.3.4).
-                    return _not_modified(
-                        cached_data.fingerprint,
-                        response_cache_control,
-                        cached_data.headers,
-                        _age_headers(cached_data, ttl),
-                    )
-
-            # No 304 was sent (no If-None-Match, or it did not match): serve a
-            # valid cached copy directly (cache hit without running the handler)
-            if cached_data and not no_cache:
-                logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
-                outcome.value = _HIT
-                hit = Response(
-                    content=cached_data.content,
-                    status_code=cached_data.status_code,
-                    media_type=cached_data.media_type,
-                )
-                # Framing and validator headers come from this response, not
-                # the entry: an entry built outside @cache may still carry them.
-                _append_headers(
-                    hit,
-                    (
-                        (name, value)
-                        for name, value in cached_data.headers
-                        if name.lower() not in _UNCACHEABLE_HEADERS
-                    ),
-                )
-                hit.headers["ETag"] = cached_data.fingerprint
-                hit.headers["Cache-Control"] = response_cache_control
-                hit.headers.update(_age_headers(cached_data, ttl))
-                return hit
-
-            if current_response is None or current_etag is None:
-                # Retrieve the current response if not already done
-                current_response, current_body, current_etag = await _render(
-                    func,
-                    req,
-                    args,
-                    kwargs,
-                    sub_response=sub_response,
-                    dependency_lines=dependency_lines,
-                )
-                if not _is_cacheable_status(current_response.status_code):
-                    # Leave any existing entry alone: a transient error must not
-                    # evict or overwrite the last good response.
-                    logger.debug(
-                        "Uncacheable status %s; not storing key=%s",
-                        current_response.status_code,
-                        cache_key,
-                    )
-                    return current_response
-
-                if current_etag is None:
-                    # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
-                    return _with_cache_control(
-                        current_response, response_cache_control, private_cache_control
-                    )
-                logger.debug("Cache MISS; computed fresh ETag for key=%s", cache_key)
-
-            current_response.headers["ETag"] = current_etag
-
-            # A response the handler scoped to one caller is served but never
-            # stored. An entry already under this key is left alone, as for an
-            # error status: it came from a response that was shareable.
-            skip_reason = _unshareable_reason(current_response)
-            if skip_reason is None:
-                skip_reason = _dependency_unshareable_reason(dependency_lines)
-            if skip_reason is None and dependency_status is not None:
-                # It may hold for this request only, and a hit would replay it.
-                skip_reason = "a dependency set the status code"
-            if skip_reason is None and req.method == "HEAD":
-                # A handler may skip the body for HEAD; a GET hit would then
-                # replay the empty one.
-                skip_reason = "only a GET response is stored"
-            if skip_reason is not None:
-                logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
-
-            # Update cache if needed
-            elif not cached_data or cached_data.fingerprint != current_etag:
-                assert (
-                    current_body is not None
-                )  # guaranteed by early-return guards above
-                try:
-                    await cache_backend.set(
-                        cache_key,
-                        _entry_for(current_response, current_etag, current_body),
-                        ttl=ttl,
-                    )
-                except Exception as e:
-                    if not fail_open:
-                        raise
-                    _log_backend_failure(
-                        "write failed; response not stored", req, cache_key, e
-                    )
-                else:
-                    logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, ttl)
-
-            # A client revalidating a copy that the fresh render reproduces gets
-            # a 304, as on the bypass and no_cache paths: the entry may have
-            # expired, been cleared or evicted, or never been stored in this
-            # worker, while the client's ETag still matches (#237).
-            not_modified = _fresh_not_modified(
-                current_response,
-                current_etag,
-                client_etag,
-                _cache_control_for(
-                    current_response, response_cache_control, private_cache_control
-                ),
-            )
-            if not_modified is not None:
-                logger.debug("304 Not Modified (fresh render); key=%s", cache_key)
-                return not_modified
-
-            return _with_cache_control(
-                current_response, response_cache_control, private_cache_control
-            )
-
-        @wraps(func)
-        async def serve(*args: Any, **kwargs: Any) -> Response:
-            if found_response:
-                sub_response: Response | None = kwargs.get(response_name)
-            else:
-                sub_response = kwargs.pop(response_name, None)
             # The dependencies have run; the handler has not (see
             # `_split_header_lines`).
-            dependency_lines = (
-                [] if sub_response is None else list(sub_response.headers.raw)
+            call = _Call(
+                request=request,
+                args=args,
+                kwargs=kwargs,
+                sub_response=sub_response,
+                dependency_lines=(
+                    [] if sub_response is None else list(sub_response.headers.raw)
+                ),
+                dependency_status=(
+                    None if sub_response is None else sub_response.status_code
+                ),
             )
-            dependency_status = (
-                None if sub_response is None else sub_response.status_code
-            )
-            req: Request | None = kwargs.get(request_name)
-            flight = _Flight()
-            outcome = _Outcome()
             try:
-                response = await respond(
-                    flight,
-                    outcome,
-                    sub_response,
-                    dependency_lines,
-                    dependency_status,
-                    *args,
-                    **kwargs,
-                )
+                response = await route.respond(call, backend)
             finally:
                 # Releases the requests waiting on this one (#252).
-                flight.finish()
-            if debug_header and outcome.value is not None:
+                call.flight.finish()
+            if debug_header and call.outcome is not None:
                 # Set after the entry was built, so it is never stored.
-                response.headers[_DEBUG_HEADER] = outcome.value
-            return _with_dependency_headers(
+                response.headers[_DEBUG_HEADER] = call.outcome
+            cacheable_request = request.method in _CACHED_METHODS
+            response = _with_dependency_headers(
                 response,
                 sub_response,
-                dependency_lines,
-                private_cache_control,
-                cacheable_request=req is not None and req.method in _CACHED_METHODS,
+                call.dependency_lines,
+                route.private_cache_control,
+                cacheable_request=cacheable_request,
             )
+            if vary_names and cacheable_request:
+                # Every GET or HEAD answer, served from the backend or not: a
+                # shared cache downstream keys on these headers too.
+                add_vary(response.headers, vary_names)
+            return response
 
-        wrapper: AsyncResponseCallable = serve
-        if vary_names:
-
-            @wraps(func)
-            async def with_vary(*args: Any, **kwargs: Any) -> Response:
-                # Read before `serve` pops an injected request parameter.
-                req: Request | None = kwargs.get(request_name)
-                response = await serve(*args, **kwargs)
-                if req is not None and req.method in _CACHED_METHODS:
-                    # Every GET or HEAD answer, served from the backend or not: a
-                    # shared cache downstream keys on these headers too.
-                    add_vary(response.headers, vary_names)
-                return response
-
-            wrapper = with_vary
-
-        # Update the wrapper with the new signature
-        update_wrapper(wrapper, func)
-        wrapper.__signature__ = sig  # type: ignore[attr-defined]
-
+        wrapper.__signature__ = params.signature  # type: ignore[attr-defined]
         return wrapper
 
     return decorator
