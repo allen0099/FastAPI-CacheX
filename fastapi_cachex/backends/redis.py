@@ -19,6 +19,7 @@ from fastapi_cachex.types import CacheEntry
 
 from ._unavailable import translate_unavailable
 from .base import BaseCacheBackend
+from .base import require_ttl
 from .base import validate_delta
 from .base import validate_ttl
 from .base import warn_if_path_shaped
@@ -405,7 +406,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         updates the expiry on the key only if it still holds the bytes that
         were compared, so a value written in between is never overwritten.
         """
-        ttl = validate_ttl(ttl)
+        ttl = require_ttl(ttl)
         prefixed_key = self._make_key(key)
         raw = await self.client.get(prefixed_key)
         if raw is None or decode_entry(raw) != expected:

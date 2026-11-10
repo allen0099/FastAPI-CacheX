@@ -25,6 +25,7 @@ from fastapi_cachex.backends.base import MAX_TTL
 from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.base import validate_ttl
 from fastapi_cachex.backends.memory import MemoryBackend
+from fastapi_cachex.exceptions import TTLTypeError
 from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.types import CacheEntry
 from tests.backends.test_base import DictBackend
@@ -65,12 +66,16 @@ OPERATIONS: dict[str, Callable[[BaseCacheBackend, int], Awaitable[object]]] = {
     "set_if_equals": lambda backend, ttl: backend.set_if_equals(
         "k", ENTRY, ENTRY, ttl=ttl
     ),
+    "expire_if_equals": lambda backend, ttl: backend.expire_if_equals(
+        "k", ENTRY, ttl=ttl
+    ),
 }
 
 
 @pytest.mark.parametrize(("ttl", "error", "match"), BAD_TTLS)
 @pytest.mark.parametrize(
-    "operation", ["set", "set_if_absent", "increment", "set_if_equals"]
+    "operation",
+    ["set", "set_if_absent", "increment", "set_if_equals", "expire_if_equals"],
 )
 async def test_backends_reject_invalid_ttl(
     operation: str, ttl: object, error: type[Exception], match: str
@@ -85,6 +90,21 @@ async def test_backends_reject_invalid_ttl(
             assert backend.client.method_calls == []
         if isinstance(backend, MemoryBackend):
             assert backend.cache == {}
+            backend.stop_cleanup()
+
+
+async def test_expire_if_equals_needs_a_ttl() -> None:
+    """``None`` made the lease permanent on Memcached and the fallback (#499)."""
+    for backend in make_backends():
+        if isinstance(backend, MemoryBackend):
+            await backend.set("k", ENTRY, ttl=60)
+        with pytest.raises(TTLTypeError, match="got None"):
+            await backend.expire_if_equals("k", ENTRY, ttl=None)  # type: ignore[arg-type]
+        if isinstance(backend, MemcachedBackend):
+            assert isinstance(backend.client, MagicMock)
+            assert backend.client.method_calls == []
+        if isinstance(backend, MemoryBackend):
+            assert backend.cache["k"].expiry is not None
             backend.stop_cleanup()
 
 

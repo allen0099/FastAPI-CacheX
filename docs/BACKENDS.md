@@ -385,6 +385,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 - `expire_if_equals(key, expected, ttl) -> bool` — updates the TTL on `key` to `ttl`
   seconds only while it still holds `expected`, so a long-running lock holder can
   renew its lease without risking overwriting someone else's lock if it expired.
+  `ttl` is required: `None` raises `TTLTypeError`.
   Memory updates under its lock, Redis compares in Python then executes a Lua
   script (`GET` compare + `EXPIRE`), and Memcached uses `GETS` + `CAS` writing the
   same bytes with the new exptime (`TOUCH` takes no CAS token).

@@ -14,9 +14,11 @@ from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import TTLValueError
 from fastapi_cachex.types import CacheEntry
+from fastapi_cachex.types import log_ref
 
 from ._unavailable import translate_unavailable
 from .base import BaseCacheBackend
+from .base import require_ttl
 from .base import validate_delta
 from .base import validate_ttl
 
@@ -298,7 +300,15 @@ class MemcachedBackend(BaseCacheBackend):
                 return None
             logger.debug("Memcached GET_AND_DELETE RETRY; key=%s", key)
 
-        msg = f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts on key {key!r}"
+        # The message reaches error logs and trackers: a digest, not the key.
+        key_ref = log_ref(key)
+        logger.debug(
+            "Memcached GET_AND_DELETE GAVE UP; key_ref=%s key=%s", key_ref, key
+        )
+        msg = (
+            f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts "
+            f"(key_ref={key_ref})"
+        )
         raise CacheXError(msg)
 
     @_unavailable
@@ -360,7 +370,7 @@ class MemcachedBackend(BaseCacheBackend):
         TOUCH in the Memcached protocol takes no CAS token, so the renewal is a
         CAS write with the same bytes read by GETS and the new exptime.
         """
-        ttl = validate_ttl(ttl)
+        ttl = require_ttl(ttl)
         # Converted up front so a ttl Memcached cannot store fails before I/O.
         exptime = _expiry(ttl)
         return await asyncio.to_thread(

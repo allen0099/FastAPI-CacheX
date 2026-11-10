@@ -22,8 +22,10 @@ except ImportError:  # pragma: no cover - import-time, environment dependent
 
 # ``json.loads`` (either implementation) raises ``ValueError`` subclasses for bad
 # JSON; ``KeyError``/``TypeError``/``AttributeError`` cover documents whose shape
-# is not the one ``encode_entry`` writes (missing fields, non-string content).
-_DECODE_ERRORS = (ValueError, KeyError, TypeError, AttributeError)
+# is not the one ``encode_entry`` writes (missing fields, non-string content);
+# fields of another type are checked in ``decode_entry``.
+# The standard library parser raises ``RecursionError`` on deep nesting.
+_DECODE_ERRORS = (ValueError, KeyError, TypeError, AttributeError, RecursionError)
 
 
 def encode_entry(entry: CacheEntry) -> bytes:
@@ -54,6 +56,11 @@ def encode_entry(entry: CacheEntry) -> bytes:
     return serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
 
 
+# The status codes HTTP defines; anything else cannot be replayed.
+_MIN_STATUS = 100
+_MAX_STATUS = 599
+
+
 def _stored_at(value: object) -> float | None:
     """``stored_at`` from a document; anything but a finite number is unknown."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -66,8 +73,8 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
 
     A bare integer (what the server-side ``INCR`` family leaves behind for
     ``increment``) becomes a counter entry. Anything else that is not a document
-    written by ``encode_entry`` (corrupt JSON, missing fields, non-string
-    content) yields ``None``, so callers can treat every malformed value as a
+    written by ``encode_entry`` (corrupt JSON, missing fields, a field of the
+    wrong type, a status code outside 100-599) yields ``None``, so callers can treat every malformed value as a
     cache miss.
 
     Documents written before entries carried a status code and headers simply
@@ -83,11 +90,22 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
         return counter_entry(counter)
     try:
         data = json.loads(raw)
+        fingerprint = data["fingerprint"]
+        media_type = data.get("media_type")
+        status_code = data.get("status_code", DEFAULT_STATUS_CODE)
+        if (
+            not isinstance(fingerprint, str)
+            or not isinstance(media_type, (str, type(None)))
+            or isinstance(status_code, bool)
+            or not isinstance(status_code, int)
+            or not _MIN_STATUS <= status_code <= _MAX_STATUS
+        ):
+            return None
         return CacheEntry(
-            fingerprint=data["fingerprint"],
+            fingerprint=fingerprint,
             content=data["content"].encode("latin-1"),
-            media_type=data.get("media_type"),
-            status_code=data.get("status_code", DEFAULT_STATUS_CODE),
+            media_type=media_type,
+            status_code=status_code,
             headers=data.get("headers"),
             stored_at=_stored_at(data.get("stored_at")),
         )

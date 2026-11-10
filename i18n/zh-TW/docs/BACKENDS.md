@@ -222,7 +222,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 - `get_and_delete(key) -> CacheEntry | None`：記憶體後端在鎖內 pop，Redis 使用 `GETDEL`（伺服器 6.2 以上），Memcached 使用 `GETS` + `exptime=-1` 的 `CAS` 寫入（若中間有其他寫入者替換了值則會重試；連續 16 次都被替換時會拋出 `CacheXError`，而不是當成鍵不存在）。`CacheManager.delete` 與 `invalidate()` 都建立在它之上。
 - `set_if_absent(key, value, ttl=None) -> bool`：只在 `key` 不存在時儲存 `value`（已過期的鍵視為不存在），並回報是否有寫入。記憶體後端在鎖內檢查，Redis 使用 `SET NX EX`，Memcached 使用 `ADD`。
 - `delete_if_equals(key, expected) -> bool`：只在 `key` 仍存放 `expected` 時才移除它，因此項目已過期的持有者無法釋放已被他人取得的鎖。請在你儲存的項目中放入唯一的權杖，並以同一個項目釋放。記憶體後端在鎖內比較，Redis 透過 Lua 腳本刪除，並在腳本中重新檢查先前比較過的值，Memcached 則使用 `GETS` + 一個讓項目立即過期的 `CAS` 寫入（傳統協定的 `DELETE` 不接受 CAS 權杖）。
-- `expire_if_equals(key, expected, ttl) -> bool`：只在 `key` 仍存放 `expected` 時，才把它的 TTL 更新為 `ttl` 秒，因此長時間執行的鎖持有者可以續約租期，而不會在鎖已過期時動到別人的鎖。記憶體後端在鎖內更新，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `EXPIRE`），Memcached 則使用 `GETS` + 以新 exptime 寫回相同位元組的 `CAS`（`TOUCH` 不接受 CAS 權杖）。
+- `expire_if_equals(key, expected, ttl) -> bool`：只在 `key` 仍存放 `expected` 時，才把它的 TTL 更新為 `ttl` 秒，因此長時間執行的鎖持有者可以續約租期，而不會在鎖已過期時動到別人的鎖。`ttl` 為必填：傳入 `None` 會引發 `TTLTypeError`。記憶體後端在鎖內更新，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `EXPIRE`），Memcached 則使用 `GETS` + 以新 exptime 寫回相同位元組的 `CAS`（`TOUCH` 不接受 CAS 權杖）。
 - `set_if_equals(key, expected, value, ttl=None) -> bool`：只在 `key` 仍存放 `expected` 時才儲存 `value`。這是 compare-and-set：若呼叫端讀取之後有任何操作變更、刪除了該鍵，或它已過期，寫入就會失敗。記憶體後端在鎖內比較，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `SET`，設定了 `ttl` 時加上 `EX`），Memcached 則使用 `GETS` + 寫入新值的 `CAS`。
 
 這六個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可正常運作；覆寫它們才能得到真正的原子性。這些後備實作依賴 `delete()` 回傳鍵是否存有項目；仍像 0.3.x 一樣回傳 `None` 的 `delete()` 會發出警告，並在 0.5.0 之前視為已移除（見 [delete() 的回傳值](MIGRATING_0_4.md#backend-delete)）。
