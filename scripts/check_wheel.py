@@ -3,14 +3,20 @@
 Every test runs from the source tree, so a packaging mistake (a missing
 ``py.typed`` or licence, a subpackage left out, the tests shipped by accident)
 shows up only for someone who installs the wheel. ``release.yml`` and the
-**Test** workflow run this on the wheel ``uv build`` produced::
+**Lint** workflow run this on the wheel ``uv build`` produced::
 
     uv run --isolated --no-project --with dist/<wheel> \
         python scripts/check_wheel.py dist/<wheel>
 
 Run in an environment where the wheel is the only source of the package, it
 also imports ``fastapi_cachex`` and checks that the import came from the
-installed wheel and reports the wheel's version.
+installed wheel and reports the wheel's version. It has to be run as a script
+by path, as above: that puts ``scripts/`` on ``sys.path``, not the checkout,
+which ``python -m`` or ``python -c`` from the repository root would.
+
+The environment's dependencies are resolved fresh, not from ``uv.lock``: it is
+what someone installing the release gets, so a new FastAPI or pydantic release
+that breaks the import fails here.
 """
 
 import argparse
@@ -22,6 +28,7 @@ from pathlib import Path
 PACKAGE = "fastapi_cachex"
 
 # Files a wheel without them would still import, so nothing else notices.
+# Renaming one of these modules means updating this list in the same change.
 REQUIRED = (
     f"{PACKAGE}/__init__.py",
     f"{PACKAGE}/py.typed",

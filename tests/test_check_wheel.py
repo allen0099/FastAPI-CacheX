@@ -130,3 +130,26 @@ def test_main_passes_a_good_wheel(
 
     assert main([str(build(tmp_path, GOOD))]) == 0
     assert capsys.readouterr().out.endswith(": ok\n")
+
+
+def test_main_fails_a_wheel_that_was_not_what_got_imported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The import check is on unless ``--no-import`` is passed."""
+    installed(monkeypatch, "/repo/fastapi_cachex/__init__.py", "1.2.3")
+    wheel = build(tmp_path, GOOD)
+
+    assert main([str(wheel)]) == 1
+    assert "not an installed copy" in capsys.readouterr().err
+    assert main([str(wheel), "--no-import"]) == 0
+
+
+def test_a_licence_outside_dist_info_does_not_count(tmp_path: Path) -> None:
+    files = {k: v for k, v in GOOD.items() if not k.endswith("licenses/LICENSE")}
+    files["fastapi_cachex/LICENSE"] = "Apache"
+
+    assert check_contents(build(tmp_path, files)) == [
+        "missing the licence in dist-info/licenses/"
+    ]
