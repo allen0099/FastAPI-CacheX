@@ -1321,3 +1321,38 @@ async def test_the_longest_accepted_prefix_stores_a_hashed_key() -> None:
 
     assert await backend.get("needs hashing " * 30) == entry
     await backend.delete("needs hashing " * 30)
+
+
+def test_memcached_timeouts_default_to_five_seconds() -> None:
+    backend = MemcachedBackend([MEMCACHED_SERVER])
+
+    assert backend.client.default_kwargs["connect_timeout"] == 5
+    assert backend.client.default_kwargs["timeout"] == 5
+
+
+def test_memcached_timeouts_reach_the_client() -> None:
+    """They were fixed at 5 seconds (#502)."""
+    backend = MemcachedBackend([MEMCACHED_SERVER], connect_timeout=0.5, timeout=1)
+
+    assert backend.client.default_kwargs["connect_timeout"] == 0.5
+    assert backend.client.default_kwargs["timeout"] == 1
+
+
+@pytest.mark.parametrize("name", ["connect_timeout", "timeout"])
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (0, ValueError),
+        (-1, ValueError),
+        (float("inf"), ValueError),
+        (float("nan"), ValueError),
+        (True, TypeError),
+        ("1", TypeError),
+        (None, TypeError),
+    ],
+)
+def test_memcached_rejects_a_timeout_that_cannot_work(
+    name: str, value: object, error: type[Exception]
+) -> None:
+    with pytest.raises(error, match=rf"^{name} must be "):
+        MemcachedBackend([MEMCACHED_SERVER], **{name: value})  # type: ignore[arg-type]

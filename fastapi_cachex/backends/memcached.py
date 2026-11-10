@@ -60,6 +60,20 @@ _LEGAL_KEY_BYTES = frozenset(range(0x21, 0x7F))
 _MAX_PREFIX_BYTES = _MAX_KEY_BYTES - 64
 
 
+def _validate_timeout(name: str, value: float) -> None:
+    """Reject a timeout that is not a positive, finite number of seconds.
+
+    Zero would make the sockets non-blocking, and pymemcache reports a
+    negative one only when the first command connects.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        msg = f"{name} must be a number of seconds, got {type(value).__name__}"
+        raise TypeError(msg)
+    if not 0 < value < float("inf"):
+        msg = f"{name} must be greater than zero and finite, got {value!r}"
+        raise ValueError(msg)
+
+
 def _validate_key_prefix(key_prefix: str) -> None:
     """Reject a ``key_prefix`` that would make keys Memcached refuses (#239).
 
@@ -156,19 +170,33 @@ class MemcachedBackend(BaseCacheBackend):
         self,
         servers: list[str],
         key_prefix: str = DEFAULT_MEMCACHE_PREFIX,
+        *,
+        connect_timeout: float = 5.0,
+        timeout: float = 5.0,
     ) -> None:
         """Initialize the Memcached backend.
 
         Args:
             servers: List of Memcached servers in format ["host:port", ...]
             key_prefix: Prefix for all cache keys (default: 'fastapi_cachex:')
+            connect_timeout: Seconds to wait for a connection to a server
+                (default: 5)
+            timeout: Seconds to wait for each reply from a server
+                (default: 5). Every call runs in a worker thread of the
+                default executor and holds it until it is answered or times
+                out, so while a server is unreachable a lower value frees
+                those threads sooner.
 
         Raises:
             CacheXError: If pymemcache is not installed
+            TypeError: If ``connect_timeout`` or ``timeout`` is not a number
             ValueError: If ``key_prefix`` holds whitespace, control
-                characters or non-ASCII, or is 250 bytes or longer
+                characters or non-ASCII, or is 250 bytes or longer, or if
+                ``connect_timeout`` or ``timeout`` is not greater than zero
         """
         _validate_key_prefix(key_prefix)
+        _validate_timeout("connect_timeout", connect_timeout)
+        _validate_timeout("timeout", timeout)
         try:
             from pymemcache import HashClient
         except ImportError as exc:
@@ -188,8 +216,8 @@ class MemcachedBackend(BaseCacheBackend):
         # ``_DEAD_TIMEOUT`` seconds.
         self.client = HashClient(
             servers,
-            connect_timeout=5,
-            timeout=5,
+            connect_timeout=connect_timeout,
+            timeout=timeout,
             use_pooling=True,
             default_noreply=False,
             retry_attempts=0,
