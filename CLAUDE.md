@@ -4,7 +4,7 @@ Guidance for Claude Code in this repository. It lists only what the code, `pypro
 
 ## Project
 
-`fastapi_cachex` (PyPI `fastapi-cachex`): HTTP caching, application cache and a distributed lock for FastAPI, on pluggable backends (memory, Redis, Memcached). `master` carries 0.5.0, so 0.4.x gets no further releases (0.4.1, 2026-10-03, was the last); `release.yml` releases only from `master`. 0.5.0 removes sessions and OAuth state (`fastapi_cachex.session`, `fastapi_cachex.state`, deprecated in 0.4.0 by #420; removed by #421); `docs/MIGRATING_0_5.md` covers the move. Merging breaking work for the next minor ends 0.5.x patch releases the same way.
+`fastapi_cachex` (PyPI `fastapi-cachex`): HTTP caching, application cache and a distributed lock for FastAPI, on pluggable backends (memory, Redis, Memcached). `master` carries 0.6.0 work, so 0.5.x gets no further releases (0.5.3, 2026-11-10, was the last); `release.yml` releases only from `master`. 0.5.0 removes sessions and OAuth state (`fastapi_cachex.session`, `fastapi_cachex.state`, deprecated in 0.4.0 by #420; removed by #421); `docs/MIGRATING_0_5.md` covers the move. 0.6.0 requires Python 3.11 (#491); `docs/MIGRATING_0_6.md` collects its breaking changes. Merging breaking work for the next minor ends that line's patch releases the same way.
 
 ## Commands
 
@@ -38,4 +38,4 @@ Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 - Changelog: add a `changelog.d/<issue>.<section>.md` fragment and never edit `CHANGELOG.md`. The format is in `changelog.d/README.md`.
 - Docs changes go into both `docs/` and `i18n/zh-TW/docs/`. Terms follow `i18n/zh-TW/GLOSSARY.md`.
 - Never edit `version` in `pyproject.toml` by hand. Releases run through the `release.yml` workflow (`docs/DEVELOPMENT.md#releasing`).
-- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in that minor's migration guide (`docs/MIGRATING_0_4.md` for 0.4.0, `docs/MIGRATING_0_5.md` for 0.5.0, each with its zh-TW copy and nav entry).
+- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in that minor's migration guide (`docs/MIGRATING_0_4.md` for 0.4.0, `docs/MIGRATING_0_5.md` for 0.5.0, `docs/MIGRATING_0_6.md` for 0.6.0, each with its zh-TW copy and nav entry).
