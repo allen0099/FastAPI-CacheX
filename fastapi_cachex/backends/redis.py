@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import AsyncIterator
 from collections.abc import Callable
 from collections.abc import Iterable
 from datetime import timedelta
@@ -26,6 +27,8 @@ from .base import warn_if_path_shaped
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
+    from redis.commands.core import AsyncScript
+    from typing_extensions import Self
 
 logger = logging.getLogger(__name__)
 
@@ -209,17 +212,18 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         self._set_if_equals_script = self.client.register_script(_SET_IF_EQUALS_SCRIPT)
 
-    @staticmethod
-    def load_from_config(config: RedisConfig) -> "AsyncRedisCacheBackend":
-        """Create AsyncRedisCacheBackend from RedisConfig.
+    @classmethod
+    def load_from_config(cls, config: RedisConfig) -> "Self":
+        """Create a backend from a ``RedisConfig``.
 
         Args:
             config: RedisConfig instance
 
         Returns:
-            An instance of AsyncRedisCacheBackend
+            An instance of the class it is called on, so a subclass gets
+            itself back
         """
-        return AsyncRedisCacheBackend(
+        return cls(
             host=config.host,
             port=config.port,
             password=config.password.get_secret_value()
@@ -253,24 +257,32 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """The key prefix as a literal glob, so ``*``/``?``/``[`` in it stay inert."""
         return escape_glob(self.key_prefix)
 
-    async def _scan_keys(self, pattern: str) -> list[str]:
-        """Collect every key matching ``pattern`` (a full, prefixed glob).
+    async def _scan_pages(self, pattern: str) -> AsyncIterator[list[bytes | str]]:
+        """Yield the keys matching ``pattern`` (a full, prefixed glob) page by page.
 
         Uses SCAN instead of KEYS so the server is never blocked. SCAN may
-        return a key more than once (when the keyspace shrinks mid-iteration),
-        so the result is deduplicated, keeping the order keys were first seen.
-        Keys that are not UTF-8 are left out (see ``_key_text``).
+        return a key more than once (when the keyspace shrinks mid-iteration).
         """
         cursor = 0
-        keys: dict[str, None] = {}
         while True:
             cursor, page = await self.client.scan(
                 cursor, match=pattern, count=_BATCH_SIZE
             )
+            yield page
+            if cursor == 0:
+                return
+
+    async def _scan_keys(self, pattern: str) -> list[str]:
+        """Collect every key matching ``pattern`` (a full, prefixed glob).
+
+        The result is deduplicated, keeping the order keys were first seen.
+        Keys that are not UTF-8 are left out (see ``_key_text``).
+        """
+        keys: dict[str, None] = {}
+        async for page in self._scan_pages(pattern):
             texts = (_key_text(key) for key in page)
             keys.update(dict.fromkeys(text for text in texts if text is not None))
-            if cursor == 0:
-                return list(keys)
+        return list(keys)
 
     async def _delete_matching(
         self, pattern: str, keep: Callable[[str], bool] | None = None
@@ -290,22 +302,17 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         Returns:
             How many keys were deleted
         """
-        cursor = 0
         deleted = 0
-        while True:
-            cursor, page = await self.client.scan(
-                cursor, match=pattern, count=_BATCH_SIZE
-            )
+        async for page in self._scan_pages(pattern):
             if keep is not None:
-                page = [
+                page = [  # noqa: PLW2901 - the filtered page replaces the page
                     key
                     for key in page
                     if (text := _key_text(key)) is not None and keep(text)
                 ]
             if page:
                 deleted += await self.client.delete(*page)
-            if cursor == 0:
-                return deleted
+        return deleted
 
     async def _delete_keys(self, keys: list[str]) -> int:
         """Delete prefixed keys in batches; returns how many existed."""
@@ -374,51 +381,48 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         )
         return bool(stored)
 
-    @_unavailable
-    async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
-        """Atomically remove ``key`` while it holds ``expected`` (see base class).
+    async def _if_equals(
+        self,
+        operation: str,
+        key: str,
+        expected: CacheEntry,
+        script: "AsyncScript",
+        *args: bytes | int,
+    ) -> bool:
+        """Run ``script`` on ``key`` only while it holds ``expected``.
 
-        The stored value is decoded and compared here, then a Lua script
-        deletes the key only if it still holds the bytes that were compared,
-        so a value written in between is never removed.
+        The stored value is decoded and compared here; the script then acts
+        only if the key still holds the exact bytes that were compared
+        (``ARGV[1]``), so a value written, replaced or deleted in between is
+        left as it is.
         """
         prefixed_key = self._make_key(key)
         raw = await self.client.get(prefixed_key)
         if raw is None or decode_entry(raw) != expected:
-            logger.debug("Redis DELETE_IF_EQUALS MISMATCH; key=%s", key)
+            logger.debug("Redis %s MISMATCH; key=%s", operation, key)
             return False
-        deleted = await self._delete_if_equals_script(keys=[prefixed_key], args=[raw])
+        done = await script(keys=[prefixed_key], args=[raw, *args])
         logger.debug(
-            "Redis DELETE_IF_EQUALS %s; key=%s", "HIT" if deleted else "LOST RACE", key
+            "Redis %s %s; key=%s", operation, "HIT" if done else "LOST RACE", key
         )
-        return bool(deleted)
+        return bool(done)
+
+    @_unavailable
+    async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
+        """Atomically remove ``key`` while it holds ``expected`` (see ``_if_equals``)."""
+        return await self._if_equals(
+            "DELETE_IF_EQUALS", key, expected, self._delete_if_equals_script
+        )
 
     @_unavailable
     async def expire_if_equals(
         self, key: str, expected: CacheEntry, ttl: int | timedelta
     ) -> bool:
-        """Atomically update expiry on ``key`` while it holds ``expected`` (see base class).
-
-        The stored value is decoded and compared here, then a Lua script
-        updates the expiry on the key only if it still holds the bytes that
-        were compared, so a value written in between is never overwritten.
-        """
+        """Atomically update expiry on ``key`` while it holds ``expected`` (see ``_if_equals``)."""
         ttl = require_ttl(ttl)
-        prefixed_key = self._make_key(key)
-        raw = await self.client.get(prefixed_key)
-        if raw is None or decode_entry(raw) != expected:
-            logger.debug("Redis EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
-            return False
-        updated = await self._expire_if_equals_script(
-            keys=[prefixed_key], args=[raw, ttl]
+        return await self._if_equals(
+            "EXPIRE_IF_EQUALS", key, expected, self._expire_if_equals_script, ttl
         )
-        logger.debug(
-            "Redis EXPIRE_IF_EQUALS %s; key=%s ttl=%s",
-            "HIT" if updated else "LOST RACE",
-            key,
-            ttl,
-        )
-        return bool(updated)
 
     @_unavailable
     async def set_if_equals(
@@ -428,28 +432,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         value: CacheEntry,
         ttl: int | timedelta | None = None,
     ) -> bool:
-        """Atomically store ``value`` while ``key`` holds ``expected`` (see base class).
-
-        The stored value is decoded and compared here, then a Lua script
-        writes the key only if it still holds the bytes that were compared,
-        so a value written or deleted in between is never overwritten.
-        """
+        """Atomically store ``value`` while ``key`` holds ``expected`` (see ``_if_equals``)."""
         ttl = validate_ttl(ttl)
-        prefixed_key = self._make_key(key)
-        raw = await self.client.get(prefixed_key)
-        if raw is None or decode_entry(raw) != expected:
-            logger.debug("Redis SET_IF_EQUALS MISMATCH; key=%s", key)
-            return False
-        stored = await self._set_if_equals_script(
-            keys=[prefixed_key], args=[raw, encode_entry(value), ttl or 0]
-        )
-        logger.debug(
-            "Redis SET_IF_EQUALS %s; key=%s ttl=%s",
-            "HIT" if stored else "LOST RACE",
+        return await self._if_equals(
+            "SET_IF_EQUALS",
             key,
-            ttl,
+            expected,
+            self._set_if_equals_script,
+            encode_entry(value),
+            ttl or 0,
         )
-        return bool(stored)
 
     @_unavailable
     async def increment(
