@@ -47,8 +47,9 @@ repos:
         # hook environment of its own would install the newest release of
         # every dependency on each fresh build, so a new upstream release
         # could fail the check on an unrelated change (#505).
-        entry: uv run mypy --strict
+        # --locked: a stale uv.lock stops the hook instead of being rewritten.
+        entry: uv run --locked mypy --strict
         language: system
-        types: [python]
+        types_or: [python, pyi]
         require_serial: true
         exclude: ^(docs/|scripts/)

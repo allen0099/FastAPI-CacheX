@@ -44,7 +44,8 @@ jobs:
     # files, so test code that was never touched again drifts; that is how the
     # suite came to have unsorted imports, three unformatted files and six
     # type errors that nobody saw. These steps use the locked tool versions;
-    # the pre-commit step at the end runs the hooks' own.
+    # the pre-commit step at the end runs the hooks' own, except mypy, which
+    # uses the locked environment too.
     - name: Ruff check
       run: uv run ruff check fastapi_cachex tests scripts
 
