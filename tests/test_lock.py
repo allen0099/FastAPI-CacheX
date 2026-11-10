@@ -1,6 +1,7 @@
 """Tests for the CacheLock distributed lock helper."""
 
 import asyncio
+import logging
 import time
 from datetime import timedelta
 
@@ -281,10 +282,18 @@ async def test_a_failed_withdrawal_is_logged_and_the_error_kept(
 
     backend = Unreachable(error=ConnectionError("reply lost"))
 
-    with pytest.raises(ConnectionError, match="reply lost"):
-        await CacheLock("job", ttl=60, backend=backend).acquire()
+    with caplog.at_level(logging.DEBUG), pytest.raises(ConnectionError, match="reply"):
+        await CacheLock("user@example.com", ttl=60, backend=backend).acquire()
 
-    assert "could not withdraw an interrupted claim" in caplog.text
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "could not withdraw an interrupted claim" in warnings[0].getMessage()
+    # The name reaches WARNING only as a digest; DEBUG has the key (#497).
+    assert "user@example.com" not in warnings[0].getMessage()
+    assert any(
+        r.levelno == logging.DEBUG and "lock:user@example.com" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 async def test_a_cancelled_acquire_leaves_another_holders_lock() -> None:

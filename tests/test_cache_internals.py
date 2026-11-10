@@ -117,3 +117,25 @@ _NO_FLAGS = {
 def test_build_cache_control(overrides: dict[str, object], expected: str) -> None:
     """The header is a pure function of the decorator arguments."""
     assert _build_cache_control(**{**_NO_FLAGS, **overrides}) == expected  # type: ignore[arg-type]
+
+
+def test_the_etag_digest_is_not_declared_a_security_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A FIPS-mode OpenSSL refuses MD5 unless the call says so (#496)."""
+    import hashlib
+
+    from fastapi_cachex import _stored_response
+
+    real_md5 = hashlib.md5
+
+    def fips_md5(data: bytes = b"", *, usedforsecurity: bool = True):
+        if usedforsecurity:
+            msg = "[digital envelope routines] unsupported"
+            raise ValueError(msg)
+        return real_md5(data, usedforsecurity=False)
+
+    monkeypatch.setattr(hashlib, "md5", fips_md5)
+
+    # The value is unchanged, so stored entries and client validators stay valid.
+    assert _stored_response._etag_for(b"x") == f'W/"{real_md5(b"x").hexdigest()}"'
