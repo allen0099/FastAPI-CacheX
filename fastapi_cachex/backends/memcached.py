@@ -181,7 +181,7 @@ class MemcachedBackend(BaseCacheBackend):
             key_prefix: Prefix for all cache keys (default: 'fastapi_cachex:')
             connect_timeout: Seconds to wait for a connection to a server
                 (default: 5)
-            timeout: Seconds to wait for a server to answer a command
+            timeout: Seconds to wait for each reply from a server
                 (default: 5). Every call runs in a worker thread of the
                 default executor and holds it until it is answered or times
                 out, so while a server is unreachable a lower value frees

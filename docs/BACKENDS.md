@@ -192,10 +192,12 @@ backend = MemcachedBackend(servers=["localhost:11211"])
 BackendProxy.set(backend)
 ```
 
-`connect_timeout` and `timeout` (seconds, 5 by default) bound how long a
-connection attempt and a command may take. Every Memcached call runs in a
-worker thread, which it holds until the server answers or the timeout passes,
-so lower them if an unreachable server must not tie up the thread pool:
+`connect_timeout` and `timeout` (seconds, 5 by default) bound each connection
+attempt and each wait for a reply; a call that sends several commands
+(`delete_many`, the compare-and-write operations) can take several times
+`timeout`. Every Memcached call runs in a worker thread, which it holds until
+the server answers or the timeout passes, so lower them if an unreachable
+server must not tie up the thread pool:
 
 ```python
 backend = MemcachedBackend(

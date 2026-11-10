@@ -1354,5 +1354,5 @@ def test_memcached_timeouts_reach_the_client() -> None:
 def test_memcached_rejects_a_timeout_that_cannot_work(
     name: str, value: object, error: type[Exception]
 ) -> None:
-    with pytest.raises(error, match=name):
+    with pytest.raises(error, match=rf"^{name} must be "):
         MemcachedBackend([MEMCACHED_SERVER], **{name: value})  # type: ignore[arg-type]
