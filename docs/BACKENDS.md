@@ -192,6 +192,19 @@ backend = MemcachedBackend(servers=["localhost:11211"])
 BackendProxy.set(backend)
 ```
 
+`connect_timeout` and `timeout` (seconds, 5 by default) bound how long a
+connection attempt and a command may take. Every Memcached call runs in a
+worker thread, which it holds until the server answers or the timeout passes,
+so lower them if an unreachable server must not tie up the thread pool:
+
+```python
+backend = MemcachedBackend(
+    servers=["localhost:11211"],
+    connect_timeout=0.5,  # seconds to open a connection
+    timeout=1.0,  # seconds to wait for a reply
+)
+```
+
 **Limitations**:
 
 - Pattern-based key clearing (`clear_pattern`) is not supported by the Memcached protocol:

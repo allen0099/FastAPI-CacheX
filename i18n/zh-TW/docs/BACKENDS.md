@@ -129,6 +129,16 @@ backend = MemcachedBackend(servers=["localhost:11211"])
 BackendProxy.set(backend)
 ```
 
+`connect_timeout` 與 `timeout`（單位為秒，預設皆為 5）限制建立連線與單一指令可等待的時間。每次 Memcached 呼叫都在工作執行緒中執行，並佔用該執行緒直到伺服器回應或逾時，因此若不希望無法連線的伺服器拖住執行緒池，請調低這兩個值：
+
+```python
+backend = MemcachedBackend(
+    servers=["localhost:11211"],
+    connect_timeout=0.5,  # 建立連線的秒數上限
+    timeout=1.0,  # 等待回應的秒數上限
+)
+```
+
 **限制**：
 
 - Memcached 協定不支援依模式清除鍵（`clear_pattern`）：它會回傳 0 並發出 `RuntimeWarning`
