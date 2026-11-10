@@ -10,6 +10,7 @@ from .cache import build_cache_key as build_cache_key
 from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
 from .cache import invalidate as invalidate
+from .cache import invalidate_path as invalidate_path
 from .cache_key import CacheKey as CacheKey
 from .cached import CachedFunction as CachedFunction
 from .cached import cached as cached
@@ -106,4 +107,5 @@ __all__ = [
     "get_app_cache",
     "get_cache_backend",
     "invalidate",
+    "invalidate_path",
 ]
