@@ -55,10 +55,18 @@ def test_decode_entry_none_is_a_miss():
         '{"fingerprint": "e", "content": "", "status_code": true}',
         '{"fingerprint": "e", "content": "", "status_code": null}',
         '{"fingerprint": "e", "content": "", "media_type": 5}',
+        '{"fingerprint": "e", "content": "", "status_code": 99999}',
     ],
 )
 def test_decode_entry_treats_malformed_documents_as_a_miss(raw):
     assert codec.decode_entry(raw) is None
+
+
+def test_decode_entry_reads_a_document_without_status_or_media_type():
+    """What 0.3.0 wrote: no ``status_code``, and ``media_type`` may be null."""
+    raw = '{"fingerprint": "e", "content": "v", "media_type": null}'
+
+    assert codec.decode_entry(raw) == CacheEntry(fingerprint="e", content=b"v")
 
 
 def test_decode_entry_treats_too_deep_a_document_as_a_miss(stdlib_json):

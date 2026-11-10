@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import socket
 import sys
 from unittest.mock import MagicMock
@@ -597,22 +598,34 @@ async def test_memcached_get_and_delete_returns_none_when_key_deleted_before_cas
     assert backend.client.cas.call_count == 1
 
 
-async def test_memcached_get_and_delete_exhausts_retries_when_writes_continue() -> None:
+async def test_memcached_get_and_delete_exhausts_retries_when_writes_continue(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """When writers keep replacing the value, stop after max retries and raise."""
     backend = stubbed_backend()
     entry = CacheEntry(fingerprint="e", content=b"v")
     backend.client.gets.return_value = (encode_entry(entry), b"101")
     backend.client.cas.return_value = False
 
-    with pytest.raises(
-        CacheXError,
-        match=f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts",
-    ) as raised:
+    with (
+        caplog.at_level(logging.DEBUG),
+        pytest.raises(
+            CacheXError,
+            match=f"Memcached get_and_delete exceeded {_CAS_MAX_RETRIES} attempts",
+        ) as raised,
+    ):
         await backend.get_and_delete("user@example.com")
 
     # The message reaches error logs: a digest of the key, never the key (#500).
     assert "user@example.com" not in str(raised.value)
     assert log_ref("user@example.com") in str(raised.value)
+    # DEBUG has the key under the same digest.
+    assert any(
+        "GAVE UP" in r.getMessage()
+        and log_ref("user@example.com") in r.getMessage()
+        and "user@example.com" in r.getMessage()
+        for r in caplog.records
+    )
 
     assert backend.client.gets.call_count == _CAS_MAX_RETRIES
     assert backend.client.cas.call_count == _CAS_MAX_RETRIES

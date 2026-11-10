@@ -323,10 +323,16 @@ class BaseCacheBackend(ABC):
         Args:
             key: Cache key to update expiry for
             expected: The entry the caller stored (compared with ``==``)
-            ttl: Time to live in seconds
+            ttl: Time to live in seconds or as a ``timedelta``; required
 
         Returns:
             Whether the expiry was updated
+
+        Raises:
+            TTLTypeError: If ``ttl`` is ``None`` or not an ``int`` or a
+                ``timedelta``
+            TTLValueError: If ``ttl`` is zero, negative or larger than
+                ``MAX_TTL``
         """
         ttl = require_ttl(ttl)
         if await self.get(key) != expected:
