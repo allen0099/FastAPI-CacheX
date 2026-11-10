@@ -254,7 +254,10 @@ class CacheLock:
         """
         acquired = await self.acquire()
         if not acquired:
-            msg = f"Failed to acquire lock '{self.name}' within timeout"
+            # An unhandled timeout reaches the error log: a digest, not the name.
+            key_ref = log_ref(self.key)
+            logger.debug("CacheLock timed out; key_ref=%s key=%s", key_ref, self.key)
+            msg = f"Failed to acquire lock within timeout (key_ref={key_ref})"
             raise LockTimeoutError(msg)
         return self
 
