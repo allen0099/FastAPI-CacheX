@@ -862,7 +862,7 @@ def _check_arguments(
         msg = "public and private are mutually exclusive"
         raise CacheXError(msg)
     for name, value in (("s_maxage", s_maxage), ("proxy_revalidate", proxy_revalidate)):
-        if private and value is not None and value is not False:
+        if private and value not in (None, False):
             # Both speak to shared caches, which must not store a private
             # response at all.
             msg = (
@@ -923,7 +923,8 @@ def cache(
     unchanged instead of the decorator's) or when it sets a cookie. Such a
     response is served as rendered, and an entry already stored under its key
     is left alone. A response that sets a cookie is sent with ``private`` in
-    place of ``public`` (the other directives stay), so that a shared cache in
+    place of ``public`` (the other directives stay, except ``s-maxage`` and
+    ``proxy-revalidate``), so that a shared cache in
     front of the app does not store it either.
 
     Args:

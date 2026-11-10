@@ -278,3 +278,27 @@ def test_private_rejects_what_only_applies_to_shared_caches(
 def test_s_maxage_is_validated_like_ttl(value: object, error: type[Exception]) -> None:
     with pytest.raises(error, match="s_maxage"):
         cache(s_maxage=value)  # type: ignore[arg-type]
+
+
+def test_a_response_that_sets_a_cookie_drops_what_speaks_to_shared_caches() -> None:
+    """It is sent with ``private``, like a response to a request with credentials."""
+    app = FastAPI()
+
+    @app.get("/x")
+    @cache(ttl=60, public=True, s_maxage=300, proxy_revalidate=True, no_transform=True)
+    async def x(response: Response) -> dict[str, str]:
+        response.set_cookie("seen", "1")
+        return {}
+
+    header = TestClient(app).get("/x").headers["Cache-Control"]
+
+    assert header == "private, max-age=60, no-transform"
+
+
+def test_a_public_route_keeps_s_maxage_for_a_request_with_credentials() -> None:
+    """``public=True`` declares the response shareable, whoever asks (#144)."""
+    header = _cache_control(
+        {"ttl": 60, "public": True, "s_maxage": 300}, {"Authorization": "Bearer x"}
+    )
+
+    assert header == "public, max-age=60, s-maxage=300"

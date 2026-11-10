@@ -332,7 +332,8 @@ return response
 > sent unchanged instead of the decorator's. A cookie response, and the answer
 > to any `Authorization` or session-data request (bypassed or, with
 > `cache_authorized`, served from the backend), are sent (200 or 304) with `private`
-> in place of `public` and the decorator's other directives kept (`private,
+> in place of `public` and the decorator's other directives kept, except
+> `s-maxage` and `proxy-revalidate` (`private,
 > no-cache` on a `no_cache` route), so a downstream shared cache does not
 > store them either. `must_revalidate=True` does not lift the `Authorization`
 > bypass, although RFC 9111 would allow reuse under `must-revalidate`: the
