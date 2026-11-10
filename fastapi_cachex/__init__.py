@@ -51,21 +51,21 @@ __version__ = _read_version()
 
 _PYTHON_310_NOTICE = (
     "fastapi-cachex 0.6.0 will require Python 3.11 or later; Python 3.10 "
-    "reached its end of life in October 2026. Upgrade Python, or pin "
-    "fastapi-cachex<0.6; see https://fastapi-cachex.readthedocs.io/en/latest/"
-    "MIGRATING_0_6/#python-311"
+    "reached its end of life in October 2026. Upgrade Python; see "
+    "https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_6/#python-311"
 )
 
 
-def _warn_python_310(version: tuple[int, int] = sys.version_info[:2]) -> None:
+def _warn_python_310(python: tuple[int, int] = sys.version_info[:2]) -> None:
     """Warn on import under Python 3.10, which 0.6.0 drops (#491).
 
     ``FutureWarning``, not ``DeprecationWarning``: it is shown by default.
     ``stacklevel=3`` skips this function and the package module; ``warnings``
     skips the import machinery's frames itself, so the warning names the line
-    that imported ``fastapi_cachex``.
+    that imported ``fastapi_cachex`` (for ``importlib.import_module()`` it
+    names ``importlib/__init__.py``; 3.10 has no ``skip_file_prefixes``).
     """
-    if version < (3, 11):
+    if python < (3, 11):
         warnings.warn(_PYTHON_310_NOTICE, FutureWarning, stacklevel=3)
 
 

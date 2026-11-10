@@ -10,7 +10,7 @@ Python 3.10 reached its end of life in October 2026, and 0.6.0 requires Python 3
 FutureWarning: fastapi-cachex 0.6.0 will require Python 3.11 or later; ...
 ```
 
-On Python 3.10 nothing breaks by itself. `pip` and `uv` read `requires-python` and keep installing the newest 0.5.x. Once 0.6.0 is out, though, 0.5.x gets no further releases, security fixes included (see the [security policy](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)). So the fix is to move to Python 3.11 or later.
+On Python 3.10 nothing breaks by itself. `pip` and `uv` read `requires-python` and keep installing the newest 0.5.x. But releases come only from `master`, so 0.5.x releases, security fixes included, stop as soon as the first 0.6.0 change is merged, which can be well before 0.6.0 itself ships (see the [security policy](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md)). So the fix is to move to Python 3.11 or later.
 
 The warning comes from the import, not from any call your code makes, so no change to your code removes it. A test suite that turns warnings into errors (`filterwarnings = ["error"]`) fails on Python 3.10 until you either upgrade Python or ignore this one warning:
 
