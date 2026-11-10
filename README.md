@@ -12,11 +12,11 @@
 [![PyPI version](https://img.shields.io/pypi/v/fastapi-cachex.svg?logo=pypi&logoColor=gold&label=PyPI)](https://pypi.org/project/fastapi-cachex)
 [![Python Versions](https://img.shields.io/pypi/pyversions/fastapi-cachex.svg?logo=python&label=Python&logoColor=gold)](https://pypi.org/project/fastapi-cachex/)
 
-[English](https://fastapi-cachex.readthedocs.io/en/latest/) | [繁體中文](https://fastapi-cachex.readthedocs.io/zh-tw/latest/)
+[English](https://fastapi-cachex.readthedocs.io/en/stable/) | [繁體中文](https://fastapi-cachex.readthedocs.io/zh-tw/stable/)
 
 A high-performance caching extension for FastAPI: a server-side response cache with `Cache-Control` and `ETag` support, and application-level caching.
 
-**Documentation:** <https://fastapi-cachex.readthedocs.io/en/latest/> — guides and the full API reference.
+**Documentation:** <https://fastapi-cachex.readthedocs.io/en/stable/> — guides and the full API reference.
 
 ## Features
 
@@ -77,7 +77,7 @@ async def report(cache: AppCache):
 > Put `@cache` **below** the route decorator. FastAPI registers whatever function
 > reaches `@app.get(...)`; with `@cache` on top, FastAPI registers the
 > undecorated handler, so the route works but nothing is cached and nothing warns
-> (see [Decorator order](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/#decorator-order)).
+> (see [Decorator order](https://fastapi-cachex.readthedocs.io/en/stable/HTTP_CACHING/#decorator-order)).
 >
 > ```python
 > @app.get("/items")  # ✅ route decorator first,
@@ -94,7 +94,7 @@ async def report(cache: AppCache):
 > with `private=True` or a per-user key builder plus `cache_authorized=True`
 > (requests with `Authorization` or non-empty `request.session` data otherwise
 > bypass the backend) — see
-> [Authenticated endpoints](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/#authenticated-endpoints).
+> [Authenticated endpoints](https://fastapi-cachex.readthedocs.io/en/stable/HTTP_CACHING/#authenticated-endpoints).
 
 ## Documentation
 
@@ -103,19 +103,19 @@ a code block that includes one of the runnable examples renders on the site,
 while GitHub shows only its `--8<--` include line (the sentence before each
 block links the example file).
 
-- [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_6/) — what 0.6.0 will change, starting with the end of Python 3.10 support
-- [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_5/) — what 0.5.0 removes and how to upgrade from 0.4.x
-- [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x
-- [Migrating from fastapi-cache2](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_FROM_FASTAPI_CACHE2/) — its API mapped onto this one, and the behaviour that differs
-- [When to use it](https://fastapi-cachex.readthedocs.io/en/latest/COMPARISON/) — how it compares with fastapi-cache2, cashews, aiocache and a CDN, and when another one fits better
-- [HTTP caching](https://fastapi-cachex.readthedocs.io/en/latest/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation and monitoring routes
-- [Application cache](https://fastapi-cachex.readthedocs.io/en/latest/APP_CACHE/) — `CacheManager`
-- [Backends](https://fastapi-cachex.readthedocs.io/en/latest/BACKENDS/) — choosing and configuring a backend, atomic primitives
-- [Distributed lock](https://fastapi-cachex.readthedocs.io/en/latest/LOCK/) — `CacheLock` for multi-process mutual exclusion
-- [Cache flow](https://fastapi-cachex.readthedocs.io/en/latest/CACHE_FLOW/) — what happens inside a cached request
+- [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/) — what 0.6.0 will change, starting with the end of Python 3.10 support
+- [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_5/) — what 0.5.0 removes and how to upgrade from 0.4.x
+- [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x
+- [Migrating from fastapi-cache2](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_FROM_FASTAPI_CACHE2/) — its API mapped onto this one, and the behaviour that differs
+- [When to use it](https://fastapi-cachex.readthedocs.io/en/stable/COMPARISON/) — how it compares with fastapi-cache2, cashews, aiocache and a CDN, and when another one fits better
+- [HTTP caching](https://fastapi-cachex.readthedocs.io/en/stable/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation and monitoring routes
+- [Application cache](https://fastapi-cachex.readthedocs.io/en/stable/APP_CACHE/) — `CacheManager`
+- [Backends](https://fastapi-cachex.readthedocs.io/en/stable/BACKENDS/) — choosing and configuring a backend, atomic primitives
+- [Distributed lock](https://fastapi-cachex.readthedocs.io/en/stable/LOCK/) — `CacheLock` for multi-process mutual exclusion
+- [Cache flow](https://fastapi-cachex.readthedocs.io/en/stable/CACHE_FLOW/) — what happens inside a cached request
 - [Runnable examples](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples) — one complete app per feature, each covered by the test suite
-- [API reference](https://fastapi-cachex.readthedocs.io/en/latest/api/http-caching/)
-- [Development guide](https://fastapi-cachex.readthedocs.io/en/latest/DEVELOPMENT/) and [contributing](https://fastapi-cachex.readthedocs.io/en/latest/CONTRIBUTING/) · [Security policy](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md) — report vulnerabilities privately, not in public issues
+- [API reference](https://fastapi-cachex.readthedocs.io/en/stable/api/http-caching/)
+- [Development guide](https://fastapi-cachex.readthedocs.io/en/stable/DEVELOPMENT/) and [contributing](https://fastapi-cachex.readthedocs.io/en/stable/CONTRIBUTING/) · [Security policy](https://github.com/allen0099/FastAPI-CacheX/blob/master/SECURITY.md) — report vulnerabilities privately, not in public issues
 - [Changelog](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md) · [Known limitations and planned work](https://github.com/allen0099/FastAPI-CacheX/issues)
 
 ## License

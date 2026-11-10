@@ -9,7 +9,7 @@ site_name = "FastAPI-CacheX"
 site_description = "HTTP caching and application caching for FastAPI."
 # Zensical cannot read READTHEDOCS_CANONICAL_URL, so the canonical URL is fixed
 # to the default version Read the Docs serves.
-site_url = "https://fastapi-cachex.readthedocs.io/en/latest/"
+site_url = "https://fastapi-cachex.readthedocs.io/en/stable/"
 repo_url = "https://github.com/allen0099/FastAPI-CacheX"
 repo_name = "allen0099/FastAPI-CacheX"
 edit_uri = "edit/master/docs/"
@@ -50,12 +50,12 @@ nav = [
 # translation project built from zensical.zh-TW.toml.
 [[project.extra.alternate]]
 name = "English"
-link = "https://fastapi-cachex.readthedocs.io/en/latest/"
+link = "https://fastapi-cachex.readthedocs.io/en/stable/"
 lang = "en"
 
 [[project.extra.alternate]]
 name = "繁體中文"
-link = "https://fastapi-cachex.readthedocs.io/zh-tw/latest/"
+link = "https://fastapi-cachex.readthedocs.io/zh-tw/stable/"
 lang = "zh-Hant"
 
 [project.theme]

@@ -239,12 +239,25 @@ uv run mypy fastapi_cachex --strict
 
 ## Documentation site
 
-The documentation at <https://fastapi-cachex.readthedocs.io/en/latest/> is built
+The documentation at <https://fastapi-cachex.readthedocs.io/> is built
 with [Zensical](https://zensical.org/) from `zensical.toml` and the `docs/`
 directory. The home page includes `README.md` and the changelog page includes
 `CHANGELOG.md` through snippets, so links in `README.md` must stay absolute
 (`https://github.com/allen0099/FastAPI-CacheX/blob/master/...`) to work in both
-places. Zensical needs Python 3.11 or later, so on 3.10 the `docs` group
+places.
+
+Read the Docs serves two versions of each language: `stable`, built from the
+latest release tag and served by default, and `latest`, which follows
+`master`. Absolute links into the docs point at `stable`: the README (which is
+also the PyPI description), the zh-TW links to English pages, `site_url` and
+the Python 3.10 warning. That way a reader of a release sees the released
+behaviour (#330). A page added on `master` is therefore reachable through those
+links only after the next release. Zensical cannot tell which version it
+builds, so on `latest` the language switcher and the zh-TW "may be outdated"
+banner also lead to the other language's `stable`. Files read only on GitHub by
+contributors, such as `changelog.d/README.md`, link to `latest`.
+
+Zensical needs Python 3.11 or later, so on 3.10 the `docs` group
 installs without it.
 
 ```bash
@@ -282,7 +295,7 @@ example file and links to it on GitHub, in both languages (#394); the
 ### Traditional Chinese translation
 
 A Traditional Chinese (`zh-TW`) translation is published at
-<https://fastapi-cachex.readthedocs.io/zh-tw/latest/>. It is a separate Read the
+<https://fastapi-cachex.readthedocs.io/zh-tw/stable/>. It is a separate Read the
 Docs translation project built from `zensical.zh-TW.toml` (build settings in
 `i18n/zh-TW/.readthedocs.yaml`), and its pages live in `i18n/zh-TW/docs/` — not
 under `docs/`, which would pull them into the English site.

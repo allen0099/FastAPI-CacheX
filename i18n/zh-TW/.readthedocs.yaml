@@ -1,5 +1,5 @@
 # Read the Docs build of the Traditional Chinese translation:
-# https://fastapi-cachex.readthedocs.io/zh-tw/latest/
+# https://fastapi-cachex.readthedocs.io/zh-tw/stable/
 # Same as the root .readthedocs.yaml, but built from zensical.zh-TW.toml. The
 # translation project points its "Build configuration file" setting here.
 version: 2

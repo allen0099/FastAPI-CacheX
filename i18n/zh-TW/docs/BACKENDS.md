@@ -251,4 +251,4 @@ except InvalidTTLError as e:
 
 第三方後端應在其 `set` 中呼叫 `fastapi_cachex.backends.base.validate_ttl(ttl)` 並儲存它回傳的 `int`，以遵循相同規則並接受 `timedelta`；並在 `increment` 中呼叫 `validate_delta(delta)`。（`@cache(ttl=0)` 是另一回事：它會送出 `max-age=0`，且絕不會把 `0` 傳給後端；見 [HTTP 快取](HTTP_CACHING.md)。）
 
-各後端如何儲存項目，請見[快取流程](CACHE_FLOW.md#backend-storage-formats)；類別本身請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/latest/api/backends/)（英文）。
+各後端如何儲存項目，請見[快取流程](CACHE_FLOW.md#backend-storage-formats)；類別本身請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/stable/api/backends/)（英文）。
