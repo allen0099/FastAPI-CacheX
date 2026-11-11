@@ -809,7 +809,8 @@ class CacheManager:
 
         ``factory`` is only invoked when ``key`` is missing, expired, or its
         stored content cannot be decoded; on a hit the cached value is
-        returned directly.
+        returned directly. While caching is switched off (``set_enabled``),
+        it is invoked on every call and nothing is read or stored.
 
         When stampede protection is enabled (via ``lock=True`` or the
         manager's ``lock`` default), concurrent misses for the same key acquire

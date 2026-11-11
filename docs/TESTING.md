@@ -92,7 +92,7 @@ While it is off:
 | | Does |
 |---|---|
 | `@cache` | Runs the handler on every request and neither reads nor writes the backend. The response has the same `Cache-Control` and `ETag` as with caching on, and a matching `If-None-Match` still gets a 304, so a browser or a CDN in front behaves the same. `X-Cache` is `BYPASS`, with `X-Cache-Reason: disabled`. |
-| `@cached`, `get_or_set()` | Run the function or factory on every call: no read, no lock, no write. The value still goes through the JSON round trip (and `type_`), so it has the shape a hit would have. |
+| `@cached`, `get_or_set()` | Run the function or factory on every call: no read, no lock, no write. The value still goes through the JSON round trip (and `type_`), so it has the shape a hit would have. The [event](HTTP_CACHING.md#counting-hits-and-misses) of each call is a `miss`. |
 | `CacheManager.get()`, `set()`, `add()`, `delete()`, the backends, `CacheLock`, `invalidate()` and the other clearing functions | Work as usual. |
 
 The last row is deliberate. `get()` and `set()` are also used to *store*
@@ -113,6 +113,7 @@ def no_cache() -> Iterator[None]:
     set_enabled(True)
 ```
 
+A `CacheManager()` you build yourself still needs a backend to be set.
 Do not set the variable in production: every request then runs its handler.
 
 ## Asserting that something was cached {#asserting}

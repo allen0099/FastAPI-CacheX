@@ -42,7 +42,7 @@ flowchart TD
 |---|---|
 | GET 或 HEAD？ | 只有 GET 與 HEAD 會經過快取，HEAD 讀取的是 GET 的項目。其他方法直接執行 handler，也不會有 `Cache-Control` 標頭。 |
 | `no_store`？ | 執行 handler，不讀取也不寫入後端，回應帶有 `Cache-Control: no-store`。 |
-| 略過後端？ | 以下情況為「是」：`private=True`、路由沒有正的 `ttl`，或請求帶有 `Authorization` 或 session 資料而路由沒有設定 `public` 或 `cache_authorized`。此時不執行 key builder；以新產生的回應與 `If-None-Match` 比對，決定回 304 還是 200；帶有憑證時，`Cache-Control` 以 `private` 取代 `public`。設定 `cache_authorized` 時會使用後端，但每個回應仍然是 `private`。 |
+| 略過後端？ | 以下情況為「是」：`private=True`、路由沒有正的 `ttl`，或請求帶有 `Authorization` 或 session 資料而路由沒有設定 `public` 或 `cache_authorized`；另外，快取[關閉](TESTING.md#switching-off)期間每個路由都是。此時不執行 key builder；以新產生的回應與 `If-None-Match` 比對，決定回 304 還是 200；帶有憑證時，`Cache-Control` 以 `private` 取代 `public`。設定 `cache_authorized` 時會使用後端，但每個回應仍然是 `private`。 |
 | 用戶端要求最新的回應？ | 只有設定 `client_cache_control` 的路由才會判斷。請求的 `no-cache` 或 `max-age=0` 會略過讀取：handler 執行，它的回應取代該項目。請求的 `no-store` 在更早的地方就決定了，算在「略過後端」。 |
 | 建立快取鍵 | `key_builder`（預設為 `http:v2\|method\|host\|path\|query`），再為每個 `vary` 標頭附加一個 `name=value` 段。 |
 | 讀取項目 | 設定 `fail_open` 時，後端錯誤視為未命中。儲存之後有任何 tag 被失效的項目，以及在路由有這些 tag 之前就儲存的項目，也視為未命中。設定 `coalesce=True` 時，沒有讀到項目的請求會等待正在產生同一個鍵的請求，然後再讀一次。 |

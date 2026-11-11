@@ -56,6 +56,9 @@ def _read_version() -> str:
 
 __version__ = _read_version()
 
+# After the imports above on purpose: `switch` warns at import when the
+# environment turns caching off, and that line must reach stderr in an
+# application that has not configured logging (a test covers it).
 _package_logger = logging.getLogger("fastapi_cachex")
 _package_logger.addHandler(
     logging.NullHandler()

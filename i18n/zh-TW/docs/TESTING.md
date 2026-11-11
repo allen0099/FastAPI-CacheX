@@ -87,7 +87,7 @@ set_enabled(False)  # 用 set_enabled(True) 重新開啟
 | | 行為 |
 |---|---|
 | `@cache` | 每個請求都執行 handler，不讀也不寫後端。回應的 `Cache-Control` 與 `ETag` 和開啟快取時相同，符合的 `If-None-Match` 仍會得到 304，所以瀏覽器或前方的 CDN 行為不變。`X-Cache` 為 `BYPASS`，並帶有 `X-Cache-Reason: disabled`。 |
-| `@cached`、`get_or_set()` | 每次呼叫都執行函式或 factory：不讀取、不加鎖、不寫入。值仍會經過 JSON 來回轉換（以及 `type_`），所以形狀與命中時相同。 |
+| `@cached`、`get_or_set()` | 每次呼叫都執行函式或 factory：不讀取、不加鎖、不寫入。值仍會經過 JSON 來回轉換（以及 `type_`），所以形狀與命中時相同。每次呼叫的[事件](HTTP_CACHING.md#counting-hits-and-misses)都是 `miss`。 |
 | `CacheManager.get()`、`set()`、`add()`、`delete()`、各後端、`CacheLock`、`invalidate()` 與其他清除函式 | 照常運作。 |
 
 最後一列是刻意的。`get()` 與 `set()` 也被用來*儲存*東西：一次性驗證碼、計數器、另一個請求會讀回的旗標。如果開關讓 `get()` 什麼都讀不到，關閉快取就會讓這些功能壞掉，而不只是讓應用程式變慢。代價是：寫成 `get()`、計算、`set()` 的程式碼在開關關閉時仍會回傳已儲存的值；改寫成 `get_or_set()`，它就會跟著開關走。
@@ -102,7 +102,7 @@ def no_cache() -> Iterator[None]:
     set_enabled(True)
 ```
 
-不要在正式環境設定這個變數：每個請求都會執行它的 handler。
+自行建立的 `CacheManager()` 仍然需要先設定後端。不要在正式環境設定這個變數：每個請求都會執行它的 handler。
 
 ## 斷言某個回應確實被快取 {#asserting}
 

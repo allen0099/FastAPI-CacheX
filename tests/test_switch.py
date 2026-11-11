@@ -2,7 +2,11 @@
 
 import importlib
 import logging
+import os
+import subprocess
+import sys
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -73,6 +77,8 @@ def test_a_cached_route_sends_the_same_headers_as_with_caching_on() -> None:
     finally:
         set_enabled(True)
 
+    assert on.headers["x-cache"] == "MISS"
+    assert off.headers["x-cache"] == "BYPASS"
     assert off.headers["cache-control"] == on.headers["cache-control"]
     assert off.headers["etag"] == on.headers["etag"]
     assert off.json() == on.json()
@@ -110,9 +116,35 @@ async def test_get_or_set_runs_the_factory_and_neither_reads_nor_writes(
     assert await manager.get_or_set("report", build, type_=tuple[int, int]) == (1, 2)
 
     assert len(runs) == 2
-    # No value, lock or tag version was written; explicit storage still reads.
+    # No value or tag version was written; explicit storage still reads.
     assert _stored() == before
     assert await manager.get("report") == "stored"
+
+
+class _Unreachable(MemoryBackend):
+    def __getattribute__(self, name: str) -> Any:
+        if name in {"get", "get_many", "set", "set_many", "set_if_absent", "delete"}:
+            raise AssertionError(name)
+        return super().__getattribute__(name)
+
+
+async def test_get_or_set_does_not_touch_the_backend(off: None) -> None:
+    """Not even for the lock or the tags, which would leave no key behind."""
+    manager = CacheManager(backend=_Unreachable(), lock=True)
+
+    assert await manager.get_or_set("report", lambda: 1, tags=["reports"]) == 1
+
+
+def test_the_environment_warning_reaches_stderr_without_logging_set_up() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "import fastapi_cachex"],
+        env={**os.environ, "FASTAPI_CACHEX_DISABLED": "1"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert "Caching is off: FASTAPI_CACHEX_DISABLED is set" in result.stderr
 
 
 async def test_a_cached_function_runs_every_time(off: None) -> None:
