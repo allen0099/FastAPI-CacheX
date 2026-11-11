@@ -362,8 +362,11 @@ The workflow runs in this order:
    the notice, if any, each entry's bold summary and issue links, and a link
    to the full entries on the documentation site. The workflow then appends an
    installation snippet and, when there is a previous tag, a compare link.
-4. **The build.** `uv build`. The bumped files, the release notes and
-   `dist/` are uploaded as one artifact, which the next two jobs download
+4. **The build.** `uv build`, then `scripts/check_wheel.py` on the wheel,
+   installed alone in a throwaway environment: it must hold `py.typed`, the
+   licence and every backend, and import as the version just built. The
+   **Lint** workflow runs the same check on every pull request. The bumped
+   files, the release notes and `dist/` are uploaded as one artifact, which the next two jobs download
    instead of building anything again.
 5. **The permanent part**, kept together at the end: commit the version bump,
    the promoted changelog and the removal of the merged fragments, push it to master, tag, push the tag by refspec,
@@ -383,7 +386,8 @@ at its first step, and the `release` and `publish` jobs check the ref again.
 ### Rehearsing a release
 
 Dispatch it with **dry run** ticked. Everything in `build` runs — the gate,
-the version bump, the tag check, the changelog promotion, `uv build` — and the
+the version bump, the tag check, the changelog promotion, `uv build`, the
+wheel check — and the
 `release` and `publish` jobs, which write somewhere permanent (commit, tag,
 GitHub release, PyPI), are skipped. Until this existed, the first real exercise
 of the release path was a release. A dry run may be dispatched on any branch,

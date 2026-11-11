@@ -61,6 +61,16 @@ jobs:
     - name: Mypy (scripts)
       run: uv run mypy scripts
 
+    # What a release would publish: build the wheel and check it installed on
+    # its own, since everything above runs from the source tree (#241).
+    - name: Build and check the wheel
+      run: |
+        set -euo pipefail
+        uv build --out-dir "$RUNNER_TEMP/dist"
+        wheel="$(ls "$RUNNER_TEMP"/dist/*.whl)"
+        uv run --isolated --no-project --with "$wheel" \
+          python scripts/check_wheel.py "$wheel"
+
     # The hooks contributors run before committing. Renovate automerges hook
     # updates on a green CI, so CI has to run them: otherwise an update that
     # fails on the tree leaves master red locally and green here (#453, #505).
