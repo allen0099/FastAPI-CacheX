@@ -6,9 +6,9 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
-from datetime import timezone
 from decimal import Decimal
 from functools import partial
 from typing import Annotated
@@ -1525,7 +1525,7 @@ class _User(BaseModel):
     tags: frozenset[str] = frozenset()
 
 
-_ALICE = _User(id=1, joined=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc))
+_ALICE = _User(id=1, joined=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
 
 
 async def test_values_pydantic_can_write_are_stored_as_their_json_form(
