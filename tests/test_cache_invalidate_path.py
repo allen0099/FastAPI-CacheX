@@ -232,20 +232,23 @@ async def _store(request: Request, **key_options: bool) -> None:
         ("/items/a%41", "/items/a%41"),
         ("/items/a b", "/items/a b"),
         ("/items/a#b", "/items/a#b"),
-        ("/items/a?b", "/items/a%3Fb"),
+        # However this Starlette writes a literal "?" (newer ones: "%3F").
+        ("/items/a?b", None),
     ],
 )
 async def test_the_path_is_the_decoded_one_the_handler_sees(
-    served: str, given: str
+    served: str, given: str | None
 ) -> None:
     """`TestClient` decodes twice and hides this, so the scopes are built here.
 
     A client that sent ``/items/50%2525`` reaches the handler as
     ``/items/50%25``; decoding that again would look for ``/items/50%``.
     """
-    await _store(Request(_scope("GET", served)))
+    cached = Request(_scope("GET", served))
+    await _store(cached)
 
-    assert await invalidate_path(Request(_scope("PUT", "/other")), given) is True
+    path = cached.url.path if given is None else given
+    assert await invalidate_path(Request(_scope("PUT", "/other")), path) is True
 
 
 async def test_sort_query_is_passed_on() -> None:
