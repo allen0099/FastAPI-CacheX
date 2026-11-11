@@ -32,8 +32,16 @@ R = TypeVar("R")
 # key, as `CacheManager` keys separate their parts.
 _KEY_SEPARATOR = ":"
 
-# ``@cached(type_=...)`` not passed, as opposed to ``type_=None``.
-_UNSET: Any = object()
+
+class _Unset:
+    """``@cached(type_=...)`` not passed, as opposed to ``type_=None``."""
+
+    def __repr__(self) -> str:
+        """Shown as the default in the signature and the API reference."""
+        return "<not passed>"
+
+
+_UNSET: Any = _Unset()
 
 _JSON_SCALARS = (str, int, float, bool, type(None), object)
 
@@ -63,14 +71,16 @@ def _return_annotation(func: Callable[..., Any]) -> Any:
 def _is_json_shaped(annotation: Any) -> bool:
     """Whether validating a JSON value into ``annotation`` could not change it.
 
-    ``dict[str, Any]``, ``list[int]``, ``str | None`` and the like: what
-    ``json.loads`` returns already is that type.
+    ``dict[str, Any]``, ``list[int]``, ``str | None`` and the like, built
+    only from JSON's own types. ``@cached`` returns such a value as
+    ``json.loads`` gave it and never validates it, so an ``int`` returned by
+    a function annotated ``-> float`` stays an ``int``.
     """
     if annotation is Any or annotation in _JSON_SCALARS:
         return True
     origin, args = typing.get_origin(annotation), typing.get_args(annotation)
-    if annotation in (list, dict):
-        return True
+    if annotation in (list, dict) or (origin in (list, dict) and not args):
+        return True  # bare, also as typing.List and typing.Dict
     if origin is list:
         return all(_is_json_shaped(arg) for arg in args)
     if origin is dict:

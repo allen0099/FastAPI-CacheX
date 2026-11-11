@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import typing
 import warnings
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -391,6 +392,7 @@ def test_an_annotation_the_json_form_lacks_warns_at_the_decorators_line(
         tuple[int, int],
         list[_Point],
         dict[str, _Point],
+        dict[int, str],
         _Point | None,
         datetime,
         set[int],
@@ -423,6 +425,9 @@ def test_annotations_validation_would_change_warn(annotation: Any) -> None:
         dict[str, list[str | None]],
         str | None,
         Optional[int],  # noqa: UP045 - the typing.Union spelling
+        typing.List,  # noqa: UP006 - bare, without arguments
+        typing.Dict,  # noqa: UP006
+        typing.Dict[str, int],  # noqa: UP006
         "_DefinedLater",
     ],
 )

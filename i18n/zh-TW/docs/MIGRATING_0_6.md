@@ -86,7 +86,7 @@ FutureWarning: cached return annotation: load_user() is annotated to return <cla
 
 - 有傳入 `type_`，不論值是什麼；
 - 函式沒有回傳型別註記，或註記在套用裝飾器的地方無法解析（指向之後才定義之類別的前向參照、放在 `TYPE_CHECKING` 之下的匯入）；
-- 註記是 JSON 形式本來就具有的型別：`str`、`int`、`float`、`bool`、`None`、`Any`，以及由它們組成的 `list[...]`、`dict[str, ...]` 與 union。
+- 註記只由 JSON 自己的型別組成：`str`、`int`、`float`、`bool`、`None`、`Any`、`object`、`list` 與 `dict`（不帶參數，或寫成 `list[...]`、`dict[str, ...]`），以及它們的 union。這類值會照 JSON 解碼的結果回傳，不會被轉換。
 
 請逐一為函式做出選擇，警告就會消失：
 

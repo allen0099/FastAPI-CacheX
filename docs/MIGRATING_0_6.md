@@ -86,7 +86,7 @@ It is emitted once, where the decorator is applied, and only when the change can
 
 - `type_` is passed, whatever its value;
 - the function has no return annotation, or one that cannot be resolved where the decorator is applied (a forward reference to a class defined later, an import under `TYPE_CHECKING`);
-- the annotation is one the JSON form already has: `str`, `int`, `float`, `bool`, `None`, `Any`, and `list[...]`, `dict[str, ...]` and unions built from them.
+- the annotation is built only from JSON's own types: `str`, `int`, `float`, `bool`, `None`, `Any`, `object`, `list` and `dict` (bare, or as `list[...]` and `dict[str, ...]`), and unions of them. For these the value is returned as JSON decoded it and is never converted.
 
 Choose per function, and the warning goes away:
 
