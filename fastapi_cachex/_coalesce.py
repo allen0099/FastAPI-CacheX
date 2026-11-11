@@ -12,7 +12,6 @@ each other.
 """
 
 import asyncio
-import time
 
 # One future per key being rendered by a leader; done once it has answered.
 _IN_FLIGHT: dict[tuple[int, int, str], asyncio.Future[None]] = {}
@@ -72,26 +71,24 @@ async def _wait_for(leader: asyncio.Future[None]) -> None:
 
 
 # Keys whose stale entry is being replaced after its response was sent
-# (`serve_stale`, #539), with the monotonic time at which the claim lapses.
-# Nobody waits on these: they only keep a second refresh from starting.
-_REFRESHING: dict[tuple[int, str], float] = {}
+# (`serve_stale`, #539). Nobody waits on these: they only keep a second
+# refresh of the same key from running at the same time.
+_REFRESHING: set[tuple[int, str]] = set()
 
 
-def _claim_refresh(backend: object, cache_key: str, lease: float) -> bool:
+def _claim_refresh(backend: object, cache_key: str) -> bool:
     """Whether the caller is the one to refresh ``cache_key`` in this process.
 
-    The claim lapses after ``lease`` seconds, so a refresh that never ran
-    (the connection broke before the response was sent) does not block the
-    key for good.
+    Claimed by the refresh as it starts and released in its ``finally``, so
+    a refresh that never ran holds nothing.
     """
     key = (id(backend), cache_key)
-    now = time.monotonic()
-    if _REFRESHING.get(key, 0.0) > now:
+    if key in _REFRESHING:
         return False
-    _REFRESHING[key] = now + lease
+    _REFRESHING.add(key)
     return True
 
 
 def _release_refresh(backend: object, cache_key: str) -> None:
     """The refresh of ``cache_key`` is over, however it ended."""
-    _REFRESHING.pop((id(backend), cache_key), None)
+    _REFRESHING.discard((id(backend), cache_key))

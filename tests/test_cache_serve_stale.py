@@ -6,6 +6,7 @@ ahead. Starlette's ``TestClient`` returns once the request's background tasks
 have run, so a refresh has finished by the time ``client.get`` returns.
 """
 
+import asyncio
 import logging
 import time
 from collections.abc import Iterator
@@ -17,8 +18,11 @@ from fastapi import BackgroundTasks
 from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import HTTPException
+from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
+from starlette.background import BackgroundTask
+from starlette.background import BackgroundTasks as StarletteBackgroundTasks
 
 from fastapi_cachex import _stored_response as stored_response
 from fastapi_cachex._coalesce import _REFRESHING
@@ -27,6 +31,11 @@ from fastapi_cachex._coalesce import _release_refresh
 from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
+
+try:  # Starlette's TestClient moved to httpx2; the `lowest` env still has httpx.
+    import httpx2 as httpx  # type: ignore[import-not-found, unused-ignore]
+except ImportError:  # pragma: no cover - depends on the installed starlette
+    import httpx  # type: ignore[no-redef, import-not-found, unused-ignore]
 
 TTL = 60
 STALE_TTL = 30
@@ -115,7 +124,7 @@ def test_revalidate_serves_the_old_entry_and_refreshes_after_the_response(
     fresh = client.get("/item")
     assert _seen(fresh) == (200, "run 2", "HIT")
     assert fresh.headers["age"] == "0"
-    assert _REFRESHING == {}
+    assert set() == _REFRESHING
 
 
 def test_the_entry_is_kept_for_the_ttl_plus_the_stale_window(clock: _Clock) -> None:
@@ -179,26 +188,104 @@ def test_only_one_refresh_per_key_at_a_time(clock: _Clock) -> None:
     client.get("/item")
     clock.now += TTL + 1
     # Another request of this process is refreshing the key.
-    assert _claim_refresh(BackendProxy.get(), KEY, lease=STALE_TTL)
+    assert _claim_refresh(BackendProxy.get(), KEY)
 
     assert _seen(client.get("/item")) == (200, "run 1", "STALE")
 
     assert handler.runs == 1
 
 
-def test_a_refresh_claim_lapses(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A refresh that never ran must not block the key for good."""
-    now = [100.0]
-    monkeypatch.setattr("fastapi_cachex._coalesce.time.monotonic", lambda: now[0])
+def test_a_refresh_claim_is_per_backend_and_key() -> None:
     backend = object()
 
-    assert _claim_refresh(backend, "k", lease=30)
-    assert not _claim_refresh(backend, "k", lease=30)
-    assert _claim_refresh(object(), "k", lease=30)  # another backend
-    now[0] += 30
-    assert _claim_refresh(backend, "k", lease=30)
+    assert _claim_refresh(backend, "k")
+    assert not _claim_refresh(backend, "k")
+    assert _claim_refresh(backend, "other")
+    assert _claim_refresh(object(), "k")
     _release_refresh(backend, "k")
-    assert _claim_refresh(backend, "k", lease=30)
+    assert _claim_refresh(backend, "k")
+
+
+async def test_requests_served_stale_together_run_the_handler_once(
+    clock: _Clock,
+) -> None:
+    """Each adds a refresh; the later ones find the key claimed or fresh."""
+    client, handler = _app("revalidate")
+    client.get("/item")
+    clock.now += TTL + 1
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=client.app), base_url="http://testserver"
+    ) as concurrent:
+        responses = await asyncio.gather(*(concurrent.get("/item") for _ in range(8)))
+
+    # The old entry, or for a request that came after the refresh, the new one.
+    assert {_seen(response) for response in responses} <= {
+        (200, "run 1", "STALE"),
+        (200, "run 2", "HIT"),
+    }
+    assert _seen(responses[0]) == (200, "run 1", "STALE")
+    assert handler.runs == 2
+    assert set() == _REFRESHING
+
+
+def test_a_refresh_that_cannot_be_stored_says_so(
+    clock: _Clock, caplog: pytest.LogCaptureFixture
+) -> None:
+    app = FastAPI()
+    cookie: list[int] = []
+
+    @app.get("/item")
+    @cache(ttl=TTL, stale="revalidate", stale_ttl=STALE_TTL, serve_stale=True)
+    async def item(response: Response) -> dict[str, bool]:
+        if cookie:
+            response.set_cookie("seen", "1")
+        return {"ok": True}
+
+    client = TestClient(app)
+    client.get("/item")
+    clock.now += TTL + 1
+    cookie.append(1)
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.cache"):
+        stale = client.get("/item")
+
+    assert "set-cookie" not in stale.headers
+    assert "Refresh not stored" in caplog.text
+
+
+def test_a_background_task_on_the_refreshed_response_runs(clock: _Clock) -> None:
+    ran: list[str] = []
+    app = FastAPI()
+
+    @app.get("/item")
+    @cache(ttl=TTL, stale="revalidate", stale_ttl=STALE_TTL, serve_stale=True)
+    async def item() -> Response:
+        return Response(b"ok", background=BackgroundTask(ran.append, "handler task"))
+
+    client = TestClient(app)
+    client.get("/item")
+    clock.now += TTL + 1
+    ran.clear()
+
+    client.get("/item")
+
+    assert ran == ["handler task"]
+
+
+def test_a_handler_annotated_with_starlettes_background_tasks(clock: _Clock) -> None:
+    """FastAPI fills one such parameter: the decorator must not add another."""
+    app = FastAPI()
+
+    @app.get("/item")
+    @cache(ttl=TTL, stale="revalidate", stale_ttl=STALE_TTL, serve_stale=True)
+    async def item(tasks: StarletteBackgroundTasks) -> dict[str, bool]:
+        return {"ok": True}
+
+    client = TestClient(app)
+    assert client.get("/item").status_code == 200
+    clock.now += TTL + 1
+    assert client.get("/item").status_code == 200
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("boom"), 503])
@@ -214,7 +301,7 @@ def test_a_failed_refresh_is_logged_and_the_stale_entry_stays(
         assert _seen(client.get("/item")) == (200, "run 1", "STALE")
 
     assert "stale entry" in caplog.text
-    assert _REFRESHING == {}
+    assert set() == _REFRESHING
     # Still there, and the next request tries again.
     handler.fail = None
     assert _seen(client.get("/item")) == (200, "run 1", "STALE")
@@ -309,6 +396,26 @@ def test_error_mode_answers_a_failure_from_the_stale_entry(
     # The entry is as it was: once the handler recovers, it is replaced.
     handler.fail = None
     assert _seen(client.get("/item")) == (200, "run 3", "MISS")
+
+
+class _DomainNotFoundError(Exception):
+    """An exception the application maps to a 404 of its own."""
+
+
+def test_error_mode_lets_an_exception_the_app_handles_through(clock: _Clock) -> None:
+    client, handler = _app("error")
+
+    async def not_found(request: Request, error: Exception) -> Response:
+        return Response(b"no such item", status_code=404)
+
+    app: FastAPI = client.app  # type: ignore[assignment]
+    app.add_exception_handler(_DomainNotFoundError, not_found)
+
+    client.get("/item")
+    clock.now += TTL + 1
+    handler.fail = _DomainNotFoundError()
+
+    assert _seen(client.get("/item"))[:2] == (404, "no such item")
 
 
 def test_error_mode_lets_a_client_error_through(clock: _Clock) -> None:

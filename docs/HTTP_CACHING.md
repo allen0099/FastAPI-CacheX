@@ -389,8 +389,12 @@ With `stale="revalidate"`:
   tries again.
 
 With `stale="error"`, an `HTTPException` below 500 is the handler's answer and
-is sent as it is: a 404 is not a failure. Without a stale entry (a cold key,
-or one past the window) the error is sent as it is.
+is sent as it is: a 404 is not a failure. The same goes for an exception the
+application has registered a handler for with `add_exception_handler`, which
+turns it into a response of its own. Without a stale entry (a cold key, or one
+past the window) the error is sent as it is. Each fallback logs one warning
+line. With `coalesce=True`, requests that find the entry stale at the same
+time run the handler once, as for a miss.
 
 `serve_stale=True` needs `stale`, `stale_ttl` and a positive `ttl`, and is
 rejected together with `private=True`, `no_cache=True` or
@@ -398,6 +402,13 @@ rejected together with `private=True`, `no_cache=True` or
 is past its `ttl` is read from the time stored with it, on the clock of the
 server that answers; servers whose clocks differ by seconds will disagree by
 that much about when an entry turns stale.
+
+Two things to know when operating such a route. Entries stay in the backend
+for `ttl + stale_ttl`, so after `serve_stale` is turned off again, entries
+written before may be served as ordinary hits for up to `stale_ttl` past their
+`ttl`; clear the route's entries if that matters. And the
+[monitoring routes](#monitoring-routes) report an entry as valid for as long
+as the backend keeps it, stale or not.
 
 ### Telling a hit from a miss
 

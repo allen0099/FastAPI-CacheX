@@ -26,6 +26,8 @@ from fastapi import BackgroundTasks
 from fastapi import Request
 from fastapi import Response
 from fastapi.params import Depends as DependsParam
+from starlette.background import BackgroundTasks as StarletteBackgroundTasks
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ._cache_control import _NO_STORE
 from ._cache_control import CacheControl
@@ -473,7 +475,10 @@ def _is_background_annotation(annotation: Any) -> bool:
     """Whether an annotation asks for the request's ``BackgroundTasks``."""
     if get_origin(annotation) is Annotated:
         annotation = get_args(annotation)[0]
-    return isinstance(annotation, type) and issubclass(annotation, BackgroundTasks)
+    # Starlette's class: FastAPI fills a parameter annotated with either.
+    return isinstance(annotation, type) and issubclass(
+        annotation, StarletteBackgroundTasks
+    )
 
 
 def _find_param(
@@ -1010,58 +1015,90 @@ class _Route:
     ) -> bool:
         """Arrange for a stale entry to be replaced after this response.
 
-        One GET per key and process at a time starts a refresh; every other
-        request is just answered from the stale entry. False only when the
-        request has no ``BackgroundTasks`` to run it on (the wrapper was not
-        called by FastAPI), in which case the caller renders at once.
+        A GET adds the refresh to the request's background tasks; a HEAD is
+        just answered, since its response is never stored. False only when
+        the request has no ``BackgroundTasks`` to run it on (the wrapper was
+        not called by FastAPI), in which case the caller renders at once.
         """
         if call.background is None:
             return False
-        if call.request.method == "GET" and _claim_refresh(
-            backend, cache_key, lease=self.stale_ttl or 0
-        ):
+        if call.request.method == "GET":
             call.background.add_task(self._refresh, call, backend, cache_key)
         return True
 
     async def _refresh(
         self, call: _Call, backend: BaseCacheBackend, cache_key: str
     ) -> None:
-        """Run the handler and store its response, after the stale one was sent.
+        """Replace a stale entry, after the response it answered was sent.
 
         A background task of the request: its dependencies are still open.
-        Nothing is left to answer, so a failure is logged and the stale entry
-        stays until a later request refreshes it or it expires.
+        One refresh per key and process runs at a time. Nothing is left to
+        answer, so a failure is logged and the stale entry stays until a
+        later request refreshes it or it expires.
         """
-        path = call.request.url.path
+        if not _claim_refresh(backend, cache_key):
+            return
         try:
-            response, body, etag = await self._render(call)
-            if (
-                body is None
-                or etag is None
-                or not _is_cacheable_status(response.status_code)
-            ):
-                logger.warning(
-                    "Refresh gave status %s, not stored; the stale entry stays; "
-                    "path=%s",
-                    response.status_code,
-                    path,
-                )
-                return
+            await self._replace_stale(call, backend, cache_key)
+        except Exception as e:  # noqa: BLE001 - there is no response to fail
+            logger.warning(
+                "Refreshing the stale entry failed (%s: %s); path=%s",
+                type(e).__name__,
+                e,
+                call.request.url.path,
+            )
+        finally:
+            _release_refresh(backend, cache_key)
+
+    async def _replace_stale(
+        self, call: _Call, backend: BaseCacheBackend, cache_key: str
+    ) -> None:
+        """Run the handler and store its response, unless the entry is fresh."""
+        entry, _ = await _read_entry(backend, cache_key, call.request, fail_open=True)
+        if entry is not None and not self._is_stale(entry):
+            # A request served stale just before this one already replaced it.
+            return
+        response, body, etag = await self._render(call)
+        reason = self._skip_reason(call, response)
+        if (
+            body is None
+            or etag is None
+            or not _is_cacheable_status(response.status_code)
+        ):
+            reason = f"status {response.status_code}, or a streamed body"
+        if reason is None:
             await self._store(
                 call,
                 backend,
                 cache_key,
                 stored=None,
                 response=response,
-                etag=etag,
-                body=body,
+                etag=etag,  # type: ignore[arg-type]
+                body=body,  # type: ignore[arg-type]
             )
-        except Exception:
+        else:
             logger.warning(
-                "Refreshing the stale entry failed; path=%s", path, exc_info=True
+                "Refresh not stored (%s); the stale entry stays; path=%s",
+                reason,
+                call.request.url.path,
             )
-        finally:
-            _release_refresh(backend, cache_key)
+        if response.background is not None:
+            # The handler's own task: nothing sends this response to run it.
+            await response.background()
+
+    def _is_failure(self, request: Request, error: Exception) -> bool:
+        """Whether ``error`` is a failure a stale entry may answer for.
+
+        An ``HTTPException`` below 500 is the handler's answer. So is an
+        exception the application has registered a handler for: it turns it
+        into a response of its own choosing, often a 4xx.
+        """
+        if isinstance(error, StarletteHTTPException):
+            return error.status_code >= _SERVER_ERROR
+        handlers = getattr(request.app, "exception_handlers", {})
+        return not any(
+            cls in handlers for cls in type(error).__mro__ if cls is not Exception
+        )
 
     async def _render_unless_failing(
         self, call: _Call, fallback: CacheEntry | None
@@ -1069,18 +1106,20 @@ class _Route:
         """Run the handler; None if it failed and ``fallback`` can answer.
 
         ``fallback`` is the stale entry of a ``stale="error"`` route. A
-        failure is an exception or a 5xx response; an ``HTTPException`` below
-        500 is an answer, not a failure, and is raised as usual.
+        failure is a 5xx response or an exception, other than the ones
+        ``_is_failure`` takes as the handler's answer.
         """
         try:
             rendered = await self._render(call)
         except Exception as e:
-            if fallback is None or getattr(e, "status_code", 500) < _SERVER_ERROR:
+            if fallback is None or not self._is_failure(call.request, e):
                 raise
+            # One line, no traceback: a failing upstream fails every request.
             logger.warning(
-                "Handler failed; serving the stale entry; path=%s",
+                "Handler failed (%s: %s); serving the stale entry; path=%s",
+                type(e).__name__,
+                e,
                 call.request.url.path,
-                exc_info=e,
             )
             return None
         if fallback is not None and rendered[0].status_code >= _SERVER_ERROR:
@@ -1121,7 +1160,12 @@ class _Route:
         # leader could not store its response either. A miss read just
         # before a leader stores may still lead a second render; that
         # window is one backend round trip.
-        if self.coalesce and read_ok and entry is None:
+        # A stale entry that only answers for a failing handler is waited
+        # for like a miss: the leader's render may make it fresh.
+        awaited = entry is None or (
+            self.stale == "error" and self._is_stale(entry) and not self._is_gone(entry)
+        )
+        if self.coalesce and read_ok and awaited:
             leader = call.flight.join(backend, cache_key, may_lead=req.method == "GET")
             if leader is not None:
                 logger.debug("Waiting for a running miss; key=%s", cache_key)

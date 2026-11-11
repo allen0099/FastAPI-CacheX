@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib
+import time
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from typing import Any
@@ -11,6 +12,7 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi import Response
 
+from fastapi_cachex import _stored_response as stored_response
 from fastapi_cachex._coalesce import _IN_FLIGHT
 from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
@@ -411,4 +413,27 @@ async def test_a_client_refresh_waits_for_a_running_miss_and_is_stored_last(
 
     assert (first.json(), refreshed.json()) == ({"n": 1}, {"n": 2})
     assert (await client.get("/items")).json() == {"n": 2}
+    assert _IN_FLIGHT == {}
+
+
+async def test_a_stale_entry_kept_for_errors_is_coalesced_like_a_miss(
+    client_for: Callable[[FastAPI], httpx.AsyncClient],
+    waiters: Waiters,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``stale="error"`` runs the handler past the ttl: once, not per request (#539)."""
+    now = [time.time()]
+    monkeypatch.setattr(stored_response, "_now", lambda: now[0])
+    handler = Handler(waiters)
+    client = client_for(_app(handler, stale="error", stale_ttl=30, serve_stale=True))
+    handler.release.set()
+    await client.get("/items")
+    now[0] += 61
+    handler.release = asyncio.Event()
+
+    leader, followers = await _leader_then_followers(client, handler, waiters)
+
+    await leader
+    assert handler.calls == ["GET", "GET"]
+    assert {r.status_code for r in followers} == {200}
     assert _IN_FLIGHT == {}
