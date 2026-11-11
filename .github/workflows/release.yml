@@ -108,7 +108,7 @@ jobs:
         with:
           enable-cache: false
           # renovate: datasource=pypi depName=uv
-          version: "0.13.4"
+          version: "0.13.7"
 
       # The extras are redundant — the dev group already pins redis, pymemcache
       # and orjson — but they are named anyway. This is the one job where
