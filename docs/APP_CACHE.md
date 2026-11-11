@@ -198,8 +198,9 @@ async def import_users():
 ```
 
 `set()`, `get_or_set()` and `@cached` take `tags=`; `@cached` also takes a
-function that receives the call's arguments and returns the tags
-(`tags=lambda user_id: [f"user:{user_id}"]`). `invalidate_tags()` is also a
+function that receives the call's arguments as they were passed and returns
+the tags (`tags=lambda user_id: [f"user:{user_id}"]`). `set_many()` and
+`add()` take none. `invalidate_tags()` is also a
 method of `CacheManager`. The tags are shared with
 [`@cache(tags=...)`](HTTP_CACHING.md#by-tag) routes on the same backend, so
 one call invalidates cached responses and cached values alike.
@@ -211,15 +212,24 @@ How it works, and what follows from it:
   once any of them has changed. Nothing is scanned or enumerated, so this
   works on every backend, Memcached included.
 - A read of a tagged value costs one extra batched backend read
-  (`get_many`), a write one more. Values without tags pay nothing.
+  (`get_many`), and so does a write; the first write under a tag also stores
+  its version. Values without tags pay nothing.
+- `has()` is false for an invalidated value, and `add()` replaces it.
+- A version is created when a value is stored under the tag, not when one is
+  looked up: a call that stores nothing leaves nothing behind.
 - Invalidated values are not deleted; they leave through their TTL, so give
   tagged values one.
 - With `get_or_set()` and `@cached` the versions are read before the value is
   computed, so a value computed from data that changed meanwhile is not
   served after the invalidation.
-- If a tag's version is lost (Memcached evicts under memory pressure,
-  `flush_all`, a restart), what was written under it reads as a miss. Losing
-  it can cost a miss, never serve an invalidated value.
+- A version is kept for 30 days from when it was set, so a tag per user or
+  per item does not leave a key behind for good. When it expires, what was
+  written under the tag reads as a miss and the next write starts a new
+  version: a tagged value lives at most 30 days, whatever its own TTL.
+- The same happens if a version is lost earlier (Memcached evicts under
+  memory pressure, `flush_all`, a restart, or a `MemoryBackend` with
+  `max_entries`, where the `tag:` keys count as entries and can be evicted).
+  Losing it can cost a miss, never serve an invalidated value.
 - A release before 0.6.1 does not know about tags and serves a tagged value
   until its TTL. Upgrade every worker before relying on `invalidate_tags()`.
 

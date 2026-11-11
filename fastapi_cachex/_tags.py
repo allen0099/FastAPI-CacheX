@@ -7,9 +7,10 @@ current version. Invalidating a tag gives it a new version, so every entry
 written under the old one reads as a miss; they are left to expire.
 
 This needs no key enumeration, so it works on Memcached as well. A tag whose
-version is lost (evicted, or the server restarted) gets a new one on the next
-write, which also invalidates what was written under it: losing state can
-only cost a miss, never serve an invalidated entry.
+version is lost (expired after ``TAG_VERSION_TTL``, evicted, or the server
+restarted) gets a new one on the next write, which also invalidates what was
+written under it: losing state can only cost a miss, never serve an
+invalidated entry.
 """
 
 import secrets
@@ -21,6 +22,11 @@ from .types import CacheEntry
 from .types import TagVersions
 
 TAG_KEY_PREFIX = "tag:"
+# How long a version is kept. Without an expiry a tag per user or per item
+# would leave a key behind for good. When a version expires, what was written
+# under it reads as a miss and the next write starts a new one, so a tagged
+# entry lives at most this long whatever its own ttl.
+TAG_VERSION_TTL = 30 * 24 * 60 * 60
 _TAG_FINGERPRINT = "tag"
 
 
@@ -63,33 +69,66 @@ def validate_tags(tags: object) -> tuple[str, ...]:
     return tuple(sorted(set(names)))
 
 
-async def current_versions(
-    backend: BaseCacheBackend, tags: Iterable[str]
-) -> TagVersions:
-    """The current version of each tag, giving one to a tag that has none.
+# The version each tag had before a value was computed; None for a tag that
+# had none yet.
+VersionsBefore = dict[str, str | None]
 
-    Read before the value is computed: a value computed before an
-    invalidation must not be stored under the version that follows it.
+
+async def versions_before(
+    backend: BaseCacheBackend, tags: Iterable[str]
+) -> VersionsBefore:
+    """The version of each tag, read before the value is computed.
+
+    Before, not after: a value computed from data that an invalidation has
+    since replaced must not be stored under the version that invalidation
+    set. Nothing is created here, so a request that stores nothing (a 404, a
+    failing factory) leaves no key behind.
     """
     names = tuple(tags)
     if not names:
-        return ()
+        return {}
     found = await backend.get_many(_tag_key(name) for name in names)
+    return {name: _version_of(found.get(_tag_key(name))) for name in names}
+
+
+async def versions_to_record(
+    backend: BaseCacheBackend, before: VersionsBefore
+) -> TagVersions | None:
+    """What an entry records as it is stored, or None if it must not be.
+
+    A tag that had no version before the value was computed gets one now. If
+    someone else gave it one meanwhile, that may have been an invalidation,
+    so the value is not stored: the next request computes it again.
+    """
     versions: list[tuple[str, str]] = []
-    for name in names:
-        version = _version_of(found.get(_tag_key(name)))
-        if version is None:
-            fresh = _version_entry()
-            # Another writer may be doing the same: the first one wins.
-            if await backend.set_if_absent(_tag_key(name), fresh):
-                version = _version_of(fresh)
-            else:
-                version = _version_of(await backend.get(_tag_key(name)))
-        if version is None:
-            # Gone again between the two calls: a version nothing will match.
-            version = _version_of(_version_entry())
-        versions.append((name, version or ""))
+    for name, version in before.items():
+        if version is not None:
+            versions.append((name, version))
+            continue
+        fresh = _version_entry()
+        if not await backend.set_if_absent(_tag_key(name), fresh, ttl=TAG_VERSION_TTL):
+            return None
+        versions.append((name, fresh.content.decode("ascii")))
     return tuple(versions)
+
+
+async def current_versions(
+    backend: BaseCacheBackend, tags: Iterable[str]
+) -> TagVersions:
+    """The versions to record for a value that is written as it is given.
+
+    ``CacheManager.set()``: there is nothing to compute, so nothing can be
+    invalidated in between. A tag that gets its first version from another
+    writer at this very moment is read again.
+    """
+    names = tuple(tags)
+    versions = await versions_to_record(backend, await versions_before(backend, names))
+    if versions is None:
+        versions = await versions_to_record(
+            backend, await versions_before(backend, names)
+        )
+    # Twice in a row is a tag that keeps disappearing: versions nothing matches.
+    return versions or tuple((name, secrets.token_hex(8)) for name in names)
 
 
 async def outdated(
@@ -115,4 +154,7 @@ async def invalidate(backend: BaseCacheBackend, tags: Iterable[str]) -> None:
     """Give each tag a new version: what was written under them is a miss."""
     names = validate_tags(tags)
     if names:
-        await backend.set_many({_tag_key(name): _version_entry() for name in names})
+        await backend.set_many(
+            {_tag_key(name): _version_entry() for name in names},
+            ttl=TAG_VERSION_TTL,
+        )

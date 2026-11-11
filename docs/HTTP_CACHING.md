@@ -1040,6 +1040,9 @@ was stored under.
 - A hit on a tagged route costs one extra batched backend read; a route
   without tags pays nothing.
 - Invalidated entries are not deleted; they expire with their `ttl`.
+- A tag's version is created when a response is stored under it. A request
+  whose response is not stored (a 404, a cookie) leaves nothing behind, so
+  tags built from the URL cannot be used to fill the backend.
 - The versions are read before the handler runs, so a response built from
   data that changed meanwhile is not served after the invalidation.
 - The tags are shared with the application cache: see

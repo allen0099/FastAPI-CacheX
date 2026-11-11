@@ -74,7 +74,9 @@ class _Tagged(NamedTuple):
     """What a ``get_or_set`` factory wrapped by ``_tagged`` returns."""
 
     value: Any
-    versions: TagVersions
+    # None: a tag got its version while the value was computed, possibly by an
+    # invalidation, so the value is returned but not stored.
+    versions: TagVersions | None
 
 
 T = TypeVar("T")
@@ -525,9 +527,18 @@ class CacheManager:
         effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         entry = self._encode(value)
 
-        added = await self.backend.set_if_absent(
-            self._cache_key(key), entry, ttl=effective_ttl
-        )
+        cache_key = self._cache_key(key)
+        added = await self.backend.set_if_absent(cache_key, entry, ttl=effective_ttl)
+        if not added:
+            # A value whose tag was invalidated reads as absent, so it does
+            # not keep the key: it is replaced, unless someone else just did.
+            existing = await self.backend.get(cache_key)
+            if existing is not None and await _tags.outdated(
+                self.backend, {key: existing}
+            ):
+                added = await self.backend.set_if_equals(
+                    cache_key, existing, entry, ttl=effective_ttl
+                )
         logger.debug("Cache ADD; key=%s ttl=%s added=%s", key, effective_ttl, added)
         return added
 
@@ -591,9 +602,13 @@ class CacheManager:
             key: Logical cache key (without the manager's prefix).
 
         Returns:
-            True if the key exists and has not expired.
+            True if the key exists, has not expired and none of its tags
+            has been invalidated.
         """
-        return await self.backend.get(self._cache_key(key)) is not None
+        cached = await self.backend.get(self._cache_key(key))
+        return cached is not None and not await _tags.outdated(
+            self.backend, {key: cached}
+        )
 
     async def _lookup(self, key: str, type_: Any) -> Any:
         """``get()`` for ``get_or_set``: the value, or ``_SENTINEL`` on a miss.
@@ -625,11 +640,11 @@ class CacheManager:
         """
 
         async def tagged() -> _Tagged:
-            versions = await _tags.current_versions(self.backend, names)
+            before = await _tags.versions_before(self.backend, names)
             value = factory()
             if inspect.isawaitable(value):
                 value = await value
-            return _Tagged(value, versions)
+            return _Tagged(value, await _tags.versions_to_record(self.backend, before))
 
         return tagged
 
@@ -662,16 +677,17 @@ class CacheManager:
         value = factory()
         if inspect.isawaitable(value):
             value = await value
-        versions: TagVersions = ()
+        versions: TagVersions | None = ()
         if isinstance(value, _Tagged):
             value, versions = value.value, value.versions
 
         effective_ttl = ttl if ttl is not None else self.default_ttl
         entry = self._encode(value)
-        entry.tags = versions
-        await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
-        logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
-        _emit("store", "app", key)
+        if versions is not None:
+            entry.tags = versions
+            await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
+            logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
+            _emit("store", "app", key)
         # What a later hit returns. A factory whose value does not fit type_
         # is a bug in the caller, so this ValidationError is not caught.
         if type_ is None:

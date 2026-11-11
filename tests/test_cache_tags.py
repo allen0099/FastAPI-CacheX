@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Request
 from fastapi.testclient import TestClient
 
@@ -12,6 +13,7 @@ from fastapi_cachex import _stored_response as stored_response
 from fastapi_cachex import cache
 from fastapi_cachex import cached
 from fastapi_cachex import invalidate_tags
+from fastapi_cachex._tags import validate_tags
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.backends.memory import MemoryBackend
@@ -239,3 +241,85 @@ def test_a_document_whose_tags_cannot_be_read_is_a_miss(tags: str) -> None:
     raw = encode_entry(CacheEntry(fingerprint="etag", content=b"x"))[:-1]
 
     assert decode_entry(raw + b', "tags": ' + tags.encode() + b"}") is None
+
+
+def test_a_request_that_stores_nothing_creates_no_tag() -> None:
+    """Otherwise every unknown id in a URL would leave a key behind."""
+    app = FastAPI()
+
+    @app.get("/items/{name}")
+    @cache(ttl=60, tags=lambda request: [f"item:{request.path_params['name']}"])
+    async def item(name: str) -> None:
+        raise HTTPException(status_code=404)
+
+    client = TestClient(app)
+    for name in ("a", "b", "c"):
+        assert client.get(f"/items/{name}").status_code == 404
+
+    assert BackendProxy.get().cache == {}  # type: ignore[attr-defined]
+
+
+def test_a_stale_entry_refreshed_in_the_background_keeps_its_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [stored_response._now()]
+    monkeypatch.setattr(stored_response, "_now", lambda: now[0])
+    client, _ = _app(tags=["users"], stale="revalidate", stale_ttl=30, serve_stale=True)
+    client.get("/users/1")
+    now[0] += 61
+    assert _x_cache(client, "/users/1") == "STALE"  # and refreshed after it
+    assert _x_cache(client, "/users/1") == "HIT"
+
+    client.post("/invalidate/users")
+
+    assert _x_cache(client, "/users/1") == "MISS"
+
+
+class _TagsUnreadable(MemoryBackend):
+    """The entry can be read; the tag versions cannot."""
+
+    async def get_many(self, keys: Any) -> dict[str, CacheEntry]:
+        msg = "backend is down"
+        raise ConnectionError(msg)
+
+
+async def test_a_failed_tag_read_serves_the_response_without_storing_it() -> None:
+    backend = _TagsUnreadable()
+    BackendProxy.set(backend)
+    client, runs = _app(tags=["users"])
+    try:
+        assert client.get("/users/1").status_code == 200
+        assert client.get("/users/1").status_code == 200
+    finally:
+        await backend.aclose()
+
+    assert runs == ["user 1", "user 1"]
+    assert backend.cache == {}
+
+
+async def test_a_failed_tag_read_fails_the_request_when_failing_closed() -> None:
+    backend = _TagsUnreadable()
+    BackendProxy.set(backend)
+    client = TestClient(
+        _app(tags=["users"], fail_open=False)[0].app, raise_server_exceptions=False
+    )
+    try:
+        assert client.get("/users/1").status_code == 500
+    finally:
+        await backend.aclose()
+
+
+def test_a_tags_function_returning_a_bad_value_is_an_error_of_the_route() -> None:
+    client = TestClient(
+        _app(tags=lambda request: [request.headers.get("x-tenant", "")])[0].app,
+        raise_server_exceptions=False,
+    )
+
+    assert client.get("/users/1", headers={"X-Tenant": "acme"}).status_code == 200
+    assert client.get("/users/2").status_code == 500
+
+
+def test_tag_names_are_distinct_and_in_a_stable_order() -> None:
+    assert validate_tags(["b", "a", "b"]) == ("a", "b")
+    assert validate_tags(name for name in ("z", "y")) == ("y", "z")
+    assert validate_tags(None) == ()

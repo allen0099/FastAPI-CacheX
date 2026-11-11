@@ -82,7 +82,6 @@ from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
 from .types import CacheEntry
 from .types import CacheKeyBuilder
-from .types import TagVersions
 from .types import log_ref
 
 # The public names of this module, kept when #422 split it into smaller ones.
@@ -742,9 +741,10 @@ class _Call:
     dependency_status: int | None
     background: BackgroundTasks | None = None
     cache_key: str | None = None
-    # The versions of the route's tags, read before the handler ran; None
-    # when they could not be read, and the response is then not stored.
-    tag_versions: TagVersions | None = ()
+    # The versions of the route's tags, read before the handler ran. None
+    # until then, and when they could not be read: a response of a tagged
+    # route is not stored without them.
+    tags_before: _tags.VersionsBefore | None = None
     flight: _Flight = field(default_factory=_Flight)
     outcome: str | None = None
 
@@ -1096,18 +1096,21 @@ class _Route:
         that invalidation set.
         """
         if not self.tags:
+            call.tags_before = {}
             return
-        names = (
-            _tags.validate_tags(self.tags(call.request))
-            if callable(self.tags)
-            else self.tags
-        )
+        if callable(self.tags):
+            try:
+                names = _tags.validate_tags(self.tags(call.request))
+            except (TypeError, ValueError) as e:
+                msg = f"the tags function of this route returned a bad value: {e}"
+                raise CacheXError(msg) from e
+        else:
+            names = self.tags
         try:
-            call.tag_versions = await _tags.current_versions(backend, names)
+            call.tags_before = await _tags.versions_before(backend, names)
         except Exception as e:
             if not self.fail_open:
                 raise
-            call.tag_versions = None
             _log_backend_failure(
                 "tag read failed; response not stored", call.request, cache_key, e
             )
@@ -1361,11 +1364,17 @@ class _Route:
             stored is not None
             and stored.fingerprint == etag
             and not self._is_stale(stored)
-        ) or call.tag_versions is None:
+        ) or call.tags_before is None:
+            # Without the tag versions read before the handler ran, the entry
+            # could never be invalidated: nothing is stored.
             return
         entry = _entry_for(response, etag, body)
-        entry.tags = call.tag_versions
         try:
+            versions = await _tags.versions_to_record(backend, call.tags_before)
+            if versions is None:
+                logger.debug("A tag got its version meanwhile; key=%s", cache_key)
+                return
+            entry.tags = versions
             await backend.set(cache_key, entry, ttl=self.stored_ttl)
         except Exception as e:
             if not self.fail_open:

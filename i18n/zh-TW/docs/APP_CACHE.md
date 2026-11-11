@@ -113,15 +113,18 @@ async def import_users():
     await invalidate_tags("users")  # 所有以 "users" 寫入的值
 ```
 
-`set()`、`get_or_set()` 與 `@cached` 都接受 `tags=`；`@cached` 還可以傳入一個函式，它會收到該次呼叫的引數並回傳 tag（`tags=lambda user_id: [f"user:{user_id}"]`）。`invalidate_tags()` 也是 `CacheManager` 的方法。這些 tag 與同一個後端上的 [`@cache(tags=...)`](HTTP_CACHING.md#by-tag) 路由共用，因此一次呼叫就能同時讓快取的回應與快取的值失效。
+`set()`、`get_or_set()` 與 `@cached` 都接受 `tags=`；`@cached` 還可以傳入一個函式，它會原樣收到該次呼叫傳入的引數並回傳 tag（`tags=lambda user_id: [f"user:{user_id}"]`）。`set_many()` 與 `add()` 不接受 tag。`invalidate_tags()` 也是 `CacheManager` 的方法。這些 tag 與同一個後端上的 [`@cache(tags=...)`](HTTP_CACHING.md#by-tag) 路由共用，因此一次呼叫就能同時讓快取的回應與快取的值失效。
 
 運作方式，以及由此而來的特性：
 
 - 每個 tag 有一個版本，存放在後端的 `tag:<名稱>` 底下。值在寫入時會記下它各個 tag 的版本，只要其中任何一個變了，讀取時就視為未命中。過程中不掃描也不列舉任何鍵，所以每個後端都能用，包含 Memcached。
-- 讀取帶有 tag 的值會多一次批次的後端讀取（`get_many`），寫入也多一次。沒有 tag 的值沒有任何額外成本。
+- 讀取帶有 tag 的值會多一次批次的後端讀取（`get_many`），寫入也一樣；某個 tag 底下的第一次寫入還會存下它的版本。沒有 tag 的值沒有任何額外成本。
+- 對已失效的值，`has()` 會回傳 false，`add()` 會取代它。
+- 版本是在有值以該 tag 寫入時才建立的，查詢時不會建立：沒有寫入任何東西的呼叫不會留下任何鍵。
 - 失效的值不會被刪除，而是隨 TTL 消失，所以請為帶有 tag 的值設定 TTL。
 - 使用 `get_or_set()` 與 `@cached` 時，版本是在計算值之前讀取的，所以若資料在計算期間改變，算出來的值在失效之後不會被提供。
-- 若某個 tag 的版本遺失（Memcached 在記憶體不足時淘汰項目、`flush_all`、重新啟動），以它寫入的值會視為未命中。版本遺失只會多一次未命中，不會提供已失效的值。
+- 版本從設定起保留 30 天，所以「每個使用者一個」或「每筆資料一個」的 tag 不會永久留下鍵。版本到期後，以該 tag 寫入的值會視為未命中，下一次寫入會開始新的版本：帶有 tag 的值最多存活 30 天，不論它自己的 TTL 多長。
+- 版本提早遺失時也一樣（Memcached 在記憶體不足時淘汰項目、`flush_all`、重新啟動，或設了 `max_entries` 的 `MemoryBackend`：`tag:` 鍵也算項目，可能被淘汰）。版本遺失只會多一次未命中，不會提供已失效的值。
 - 0.6.1 之前的版本不認得 tag，會持續提供帶有 tag 的值直到 TTL 到期。請先把所有 worker 都升級，再依賴 `invalidate_tags()`。
 
 ## Cache stampede 保護 {#stampede-protection}

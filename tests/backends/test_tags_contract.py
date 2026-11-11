@@ -4,6 +4,7 @@ It is built on ``get_many``, ``set_many`` and ``set_if_absent`` only, so it
 needs no key enumeration: Memcached included.
 """
 
+import time
 from collections.abc import AsyncIterator
 
 import pytest
@@ -74,6 +75,40 @@ async def test_a_tag_that_lost_its_version_invalidates_what_it_tagged(
     assert await manager.get("contract:a") is None
 
 
+async def test_reading_versions_creates_nothing(manager: CacheManager) -> None:
+    """A request that stores nothing leaves no key behind."""
+    before = await _tags.versions_before(manager.backend, TAGS[:2])
+
+    assert before == {TAGS[0]: None, TAGS[1]: None}
+    assert await manager.backend.get(f"tag:{TAGS[0]}") is None
+
+
+async def test_a_tag_that_got_its_version_meanwhile_stops_the_store(
+    manager: CacheManager,
+) -> None:
+    """That version may be an invalidation's."""
+    before = await _tags.versions_before(manager.backend, TAGS[:1])
+    await manager.invalidate_tags(TAGS[0])
+
+    assert await _tags.versions_to_record(manager.backend, before) is None
+
+
+async def test_has_and_add_see_an_invalidated_value_as_absent(
+    manager: CacheManager,
+) -> None:
+    await manager.set("contract:a", 1, ttl=60, tags=[TAGS[0]])
+    assert await manager.has("contract:a")
+    assert not await manager.add("contract:a", 2, ttl=60)
+
+    await manager.invalidate_tags(TAGS[0])
+
+    assert not await manager.has("contract:a")
+    assert await manager.add("contract:a", 2, ttl=60)
+    assert await manager.get("contract:a") == 2
+    # Untagged now, and present: a second add is refused as usual.
+    assert not await manager.add("contract:a", 3, ttl=60)
+
+
 async def test_versions_are_created_once_and_then_read(manager: CacheManager) -> None:
     first = await _tags.current_versions(manager.backend, TAGS[:2])
     again = await _tags.current_versions(manager.backend, TAGS[:2])
@@ -134,3 +169,17 @@ async def test_a_version_that_cannot_be_read_back_matches_nothing() -> None:
     assert name == "users"
     assert version
     assert await backend.get("tag:users") is None
+
+
+async def test_a_version_expires_so_a_tag_per_user_leaves_nothing_behind() -> None:
+    backend = MemoryBackend()
+
+    await _tags.current_versions(backend, ["user:1"])
+    await _tags.invalidate(backend, ["user:2"])
+
+    data = await backend.get_cache_data()
+    month = 30 * 24 * 60 * 60
+    for key in ("tag:user:1", "tag:user:2"):
+        expiry = data[key][1]
+        assert expiry is not None
+        assert month - 60 < expiry - time.time() <= month
