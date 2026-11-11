@@ -5,6 +5,7 @@ import logging
 import threading
 import warnings
 from collections.abc import Callable
+from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
@@ -19,6 +20,7 @@ from typing import NamedTuple
 from typing import get_args
 from typing import get_origin
 from typing import get_type_hints
+from urllib.parse import urlencode
 
 from fastapi import Request
 from fastapi import Response
@@ -79,6 +81,7 @@ __all__ = [
     "default_key_builder",
     "get_response",
     "invalidate",
+    "invalidate_path",
     "logger",
 ]
 
@@ -249,9 +252,10 @@ async def invalidate(
     cache for a specific cached route response.
 
     Args:
-        request: The request whose cache key should be invalidated. Typically
-            a request to the same route/method as the cached one (e.g. build
-            it via ``request.app.url_path_for(...)`` for a GET route).
+        request: The request whose cache key should be invalidated: a
+            request with the method, path and query of the cached one. From
+            another handler (a ``PUT`` that changes the resource), use
+            ``invalidate_path()``, which builds that request.
         key_builder: Custom key builder used by the target route's ``@cache``
             decorator, if any. If None, uses ``default_key_builder``. Must be
             a sync callable returning a ``str``, as for ``@cache``.
@@ -289,9 +293,99 @@ async def invalidate(
         return False
 
     if await cache_backend.get_and_delete(cache_key) is None:
+        if key_builder is None and request.method != "GET":
+            # Only GET responses are stored, and the default key holds the
+            # method, so this key can never exist: say so instead of
+            # returning a False that reads like "nothing was cached".
+            logger.warning(
+                "invalidate() was given a %s request: its key cannot match a "
+                "cached GET. Use invalidate_path(request, path) to delete the "
+                "entry of a GET route from another handler.",
+                request.method,
+            )
         return False
     logger.debug("Cache INVALIDATE; key=%s", cache_key)
     return True
+
+
+async def invalidate_path(
+    request: Request,
+    path: str,
+    key_builder: CacheKeyBuilder | None = None,
+    vary: Sequence[str] | None = None,
+    *,
+    query: str | Mapping[str, Any] | Sequence[tuple[str, Any]] | None = None,
+    sort_query: bool | None = None,
+) -> bool:
+    """Invalidate the entry a cached ``GET`` of ``path`` would use.
+
+    For the handler that changes a resource (a ``PUT``, ``POST`` or
+    ``DELETE``) and has to drop the cached ``GET`` of it. ``invalidate()``
+    with that handler's own request deletes nothing, since it builds the key
+    of the ``PUT``. This builds the request ``invalidate()`` needs: the
+    current one with the method ``GET`` and the given path and query, so the
+    host, the scheme and the headers a ``vary`` route keys on stay those of
+    the caller::
+
+        @app.put("/items/{item_id}")
+        async def update_item(item_id: int, request: Request):
+            await save(item_id)
+            await invalidate_path(request, f"/items/{item_id}")
+
+    Args:
+        request: The current request. Its method, path and query are
+            replaced; everything else in its scope (host, scheme, headers,
+            and also ``path_params`` and ``state``, which a custom
+            ``key_builder`` may read) stays the caller's.
+        path: The path of the cached request as its handler sees it in
+            ``request.url.path``: already percent-decoded, so build it from
+            the decoded values (``f"/items/{item_id}"``), and with the prefix
+            of a mounted app included. It may carry a query string
+            (``"/items?page=2"``), so a literal ``?`` inside the path is
+            written as ``request.url.path`` writes it (``%3F`` on current
+            Starlette).
+        key_builder: As for ``invalidate()``.
+        vary: As for ``invalidate()``.
+        query: The query of the cached request, when it is not part of
+            ``path``: a string as it appears in the URL, percent-encoded
+            (``"page=2"``), or a mapping or a sequence of pairs, which
+            ``urllib.parse.urlencode`` encodes. Without one,
+            the entry stored for the path without a query is deleted.
+        sort_query: As for ``invalidate()``.
+
+    Returns:
+        True if a cache entry existed and was deleted, False otherwise.
+
+    Raises:
+        CacheXError: If ``path`` does not start with ``/``, if a query is
+            given both in ``path`` and as ``query``, or as ``invalidate()``
+            raises it.
+    """
+    path, _, embedded_query = path.partition("?")
+    if not path.startswith("/"):
+        msg = f"path must start with '/', got {path!r}"
+        raise CacheXError(msg)
+    if embedded_query and query is not None:
+        msg = "pass the query either in path or as query, not both"
+        raise CacheXError(msg)
+    if query is None:
+        query_string = embedded_query
+    elif isinstance(query, str):
+        query_string = query.removeprefix("?")
+    else:
+        query_string = urlencode(query, doseq=True)
+    scope = {
+        **request.scope,
+        "method": "GET",
+        # Taken as it is: the caller builds it from decoded values, and
+        # decoding again would turn a literal "%25" into "%".
+        "path": path,
+        "raw_path": None,  # the caller's would name another path
+        "query_string": query_string.encode("utf-8"),
+    }
+    return await invalidate(
+        Request(scope, request.receive), key_builder, vary, sort_query=sort_query
+    )
 
 
 def _is_request_annotation(annotation: Any) -> bool:

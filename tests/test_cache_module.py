@@ -21,6 +21,7 @@ EXPORTED = [
     "default_key_builder",
     "get_response",
     "invalidate",
+    "invalidate_path",
     "logger",
 ]
 
@@ -34,7 +35,12 @@ def test_the_module_still_exports(name: str) -> None:
 def test_the_package_reexports_the_same_objects() -> None:
     package = importlib.import_module("fastapi_cachex")
 
-    for name in ("build_cache_key", "default_key_builder", "invalidate"):
+    for name in (
+        "build_cache_key",
+        "default_key_builder",
+        "invalidate",
+        "invalidate_path",
+    ):
         assert getattr(package, name) is getattr(cache_module, name)
     assert package.cache is cache_module.cache
 

@@ -480,13 +480,12 @@ Memcached 無法列舉鍵，因此 `clear_path()` 完全找不到 HTTP 項目：
 
 ### 使單一快取路由失效 {#invalidating-a-single-cached-route}
 
-`clear_path`/`clear_pattern` 作用於一整批鍵。若只想刪除某個 `@cache` 裝飾路由會用到的那一筆項目（通常是在資料變更之後），請呼叫 `invalidate()`，它會以相同的 key builder 重建該路由的鍵並刪除：
+`clear_path`/`clear_pattern` 作用於一整批鍵。若只想刪除某個 `@cache` 裝飾路由會用到的那一筆項目（通常是在資料變更之後），請在變更資料的 handler 中呼叫 `invalidate_path()`。它會以相同的 key builder 重建某個路徑的快取 `GET` 所使用的鍵並刪除：
 
 ```python
 from fastapi import Request
-from starlette.requests import Request as StarletteRequest
 
-from fastapi_cachex import cache, invalidate
+from fastapi_cachex import cache, invalidate_path
 
 
 @app.get("/items/{item_id}")
@@ -495,25 +494,23 @@ async def read_item(item_id: int):
     return await load(item_id)
 
 
-@app.post("/items/{item_id}")
+@app.put("/items/{item_id}")
 async def update_item(item_id: int, request: Request):
     await save(item_id)
-    # 組出快取的 GET 會使用的鍵：相同的主機與標頭、
-    # GET 方法、快取的路徑、沒有查詢字串。
-    scope = dict(request.scope)
-    scope["method"] = "GET"
-    scope["path"] = f"/items/{item_id}"
-    scope["query_string"] = b""
-    return {"invalidated": await invalidate(StarletteRequest(scope))}
+    return {"invalidated": await invalidate_path(request, f"/items/{item_id}")}
 ```
 
-`invalidate(request, key_builder=None, vary=None, *, sort_query=None)` 在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳入的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder`、`vary` 或 `sort_query`，這裡也要傳入相同的值，否則鍵不會相符：`invalidate()` 無法從路由讀取這些設定。使用 `vary` 時，只會刪除請求本身的標頭值所選中的變體，`clear_path()` 則會移除所有變體。預設情況下，請求的查詢會以 `@cache` 相同的方式排序，因此 `?b=2&a=1` 會刪除為 `?a=1&b=2` 儲存的項目；對設定了 `sort_query=False` 的路由，這裡也要傳入 `sort_query=False`。
+`invalidate_path(request, path, key_builder=None, vary=None, *, query=None, sort_query=None)` 的主機、scheme 與標頭取自目前的請求，方法（`GET`）、路徑與查詢則來自它的參數。`path` 是被快取的 handler 在 `request.url.path` 看到的路徑：已經過百分比解碼，所以請像上面那樣用解碼後的值組出來，並包含掛載應用程式的前綴。`request.url_for(...).path` 會給出相同的字串，但有兩個例外：在會移除前綴的 proxy 後方（它會加上 `root_path`，而鍵裡沒有），以及路徑參數含有 `?` 或 `#` 時。快取請求的查詢可以放在 `path` 裡（`"/items?page=2"`）或以 `query` 傳入，形式可以是字串、mapping 或成對的序列；沒有查詢時，刪除的是該路徑不帶查詢所儲存的項目。由於 `path` 中的 `?` 代表查詢的開始，路徑內字面上的 `?` 要照 `request.url.path` 顯示的方式寫（在目前的 Starlette 上是 `%3F`）。
+
+`invalidate(request)` 是同一個操作，用在你手上已經有請求的時候：它直接以該請求組出鍵，方法也包含在內。因此把 `PUT` 請求本身傳給它不會刪除任何東西，並會記錄一則說明原因的警告，因為 `PUT` 的鍵永遠不會與快取的 `GET` 相符。
+
+兩者都在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳給 `invalidate()` 的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder`、`vary` 或 `sort_query`，兩個函式都要傳入相同的值，否則鍵不會相符：它們無法從路由讀取這些設定。使用 `vary` 時，只會刪除請求本身的標頭值所選中的變體，`clear_path()` 則會移除所有變體。預設情況下，請求的查詢會以 `@cache` 相同的方式排序，因此 `?b=2&a=1` 會刪除為 `?a=1&b=2` 儲存的項目；對設定了 `sort_query=False` 的路由，這裡也要傳入 `sort_query=False`。
 
 ### 寫入之後：`invalidate()` 還是 `clear_path()` {#after-a-write-invalidate-or-clear_path}
 
-`invalidate()` 只刪除一個鍵：由你傳入的請求組出的那一個。`PUT /items/42` 之後，它刪的是 `GET /items/42` 不帶查詢字串的項目；在設定了 `vary` 的路由上，則是請求標頭所選中的那一個變體。以其他鍵呈現同一筆資料的項目會繼續提供舊資料，直到過期為止：`/items/42?fields=name`、包含它的 `/items?page=2` 清單，以及你用 `en` 失效時的 `Accept-Language: fr` 變體。
+`invalidate()` 與 `invalidate_path()` 只刪除一個鍵：由你傳入的請求或路徑組出的那一個。`PUT /items/42` 之後，它刪的是 `GET /items/42` 不帶查詢字串的項目；在設定了 `vary` 的路由上，則是請求標頭所選中的那一個變體。以其他鍵呈現同一筆資料的項目會繼續提供舊資料，直到過期為止：`/items/42?fields=name`、包含它的 `/items?page=2` 清單，以及你用 `en` 失效時的 `Accept-Language: fr` 變體。
 
-- 資源只有一個項目，或你只想刪掉那一個時，用 `invalidate(request)`。只需一次後端操作，而且在 Memcached 上也可用。
+- 資源只有一個項目，或你只想刪掉那一個時，用 `invalidate_path(request, path)`（或 `invalidate(request)`）。只需一次後端操作，而且在 Memcached 上也可用。
 - 資源有多個項目時，用 `clear_path(path, include_params=True)`：它會移除該路徑儲存的所有項目，不論查詢字串、`vary` 變體、主機與方法。請對該筆資料本身與包含它的清單都呼叫一次。只支援 Redis 與記憶體後端：Memcached 無法列舉鍵，在它上面只能把每個鍵都交給 `invalidate()`，或改變鍵的組成（見[世代計數器的做法](APP_CACHE.md#group-invalidation-on-memcached)）。
 
 ```python

@@ -867,14 +867,14 @@ What each backend supports is listed under [Backends](BACKENDS.md).
 
 `clear_path`/`clear_pattern` work on ranges of keys. To drop exactly the entry a
 `@cache`-decorated route would use — typically right after a mutation — call
-`invalidate()`, which rebuilds that route's key with the same key builder and
+`invalidate_path()` from the handler that changed the data. It rebuilds the
+key the cached `GET` of a path would use, with the same key builder, and
 deletes it:
 
 ```python
 from fastapi import Request
-from starlette.requests import Request as StarletteRequest
 
-from fastapi_cachex import cache, invalidate
+from fastapi_cachex import cache, invalidate_path
 
 
 @app.get("/items/{item_id}")
@@ -883,25 +883,38 @@ async def read_item(item_id: int):
     return await load(item_id)
 
 
-@app.post("/items/{item_id}")
+@app.put("/items/{item_id}")
 async def update_item(item_id: int, request: Request):
     await save(item_id)
-    # Build the key the cached GET would have used: same host and headers,
-    # GET method, the cached path, no query string.
-    scope = dict(request.scope)
-    scope["method"] = "GET"
-    scope["path"] = f"/items/{item_id}"
-    scope["query_string"] = b""
-    return {"invalidated": await invalidate(StarletteRequest(scope))}
+    return {"invalidated": await invalidate_path(request, f"/items/{item_id}")}
 ```
 
-`invalidate(request, key_builder=None, vary=None, *, sort_query=None)` returns `True` when an entry existed and
+`invalidate_path(request, path, key_builder=None, vary=None, *, query=None, sort_query=None)`
+takes the host, the scheme and the headers from the current request and the
+method (`GET`), path and query from its arguments. `path` is the path the
+cached handler sees in `request.url.path`: already percent-decoded, so build
+it from the decoded values as above, and with the prefix of a mounted app
+included. `request.url_for(...).path` gives the same string except behind a
+proxy that strips a prefix (it adds `root_path`, which the key does not hold)
+and for a path parameter that contains `?` or `#`. The query of the
+cached request goes in `path` (`"/items?page=2"`) or in `query`, as a string, a
+mapping or a sequence of pairs; without one, the entry stored for the path
+with no query is deleted. Because a `?` in `path` starts the query, a literal
+one inside the path is written as `request.url.path` shows it (`%3F` on
+current Starlette).
+
+`invalidate(request)` is the same operation for a request you already have:
+it builds the key from that request as it is, method included. Passing it the
+`PUT` request itself therefore deletes nothing, and logs a warning that says
+so, because the key of a `PUT` never matches a cached `GET`.
+
+Both return `True` when an entry existed and
 was removed, `False` otherwise, including when no backend is configured. An
 error from the backend itself is raised to the caller (see
-[When the backend fails](#when-the-backend-fails)). The request you hand it must produce the cached route's key:
+[When the backend fails](#when-the-backend-fails)). The request you hand `invalidate()` must produce the cached route's key:
 same method, host, path and query string. If the cached route uses a custom
-`key_builder`, `vary` or `sort_query`, pass the same here, or the key will not
-match: `invalidate()` cannot read them from the route. With `vary` only the
+`key_builder`, `vary` or `sort_query`, pass the same to either function, or the key will not
+match: they cannot read them from the route. With `vary` only the
 variant selected by the request's own header values is deleted, and
 `clear_path()` removes all of them. By default the request's query is sorted
 as `@cache` sorts it, so `?b=2&a=1` deletes the entry stored for `?a=1&b=2`;
@@ -909,7 +922,7 @@ for a route with `sort_query=False` pass `sort_query=False` here too.
 
 ### After a write: `invalidate()` or `clear_path()`
 
-`invalidate()` deletes exactly one key, the one built from the request you
+`invalidate()` and `invalidate_path()` delete exactly one key, the one built from the request or path you
 pass. After `PUT /items/42` that is the entry for `GET /items/42` with no
 query string and, on a route with `vary`, the one variant the request's
 headers select. Entries that show the same item under another key keep
@@ -917,7 +930,7 @@ serving the old data until they expire: `/items/42?fields=name`, a list at
 `/items?page=2` that includes it, and the `Accept-Language: fr` variant when
 you invalidated with `en`.
 
-- `invalidate(request)` when the resource has one entry, or you want to drop
+- `invalidate_path(request, path)` (or `invalidate(request)`) when the resource has one entry, or you want to drop
   just that one. One backend operation, and it works on Memcached.
 - `clear_path(path, include_params=True)` when the resource has several
   entries: it removes every entry stored for the path, across query strings,
