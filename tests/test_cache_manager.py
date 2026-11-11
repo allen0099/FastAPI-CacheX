@@ -17,6 +17,7 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
+from pydantic import SecretStr
 from pydantic import ValidationError
 
 from fastapi_cachex.backends.base import BaseCacheBackend
@@ -1686,3 +1687,43 @@ async def test_a_type_that_cannot_be_hashed_is_still_accepted(
     await manager.set("n", "3")
 
     assert await manager.get("n", type_=unhashable) == 3
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(b"raw", id="bytes"),
+        pytest.param(b"\xff\xfe", id="bytes-not-utf8"),
+        pytest.param(bytearray(b"raw"), id="bytearray"),
+        pytest.param(SecretStr("hunter2"), id="secret"),
+        pytest.param(object(), id="object"),
+    ],
+)
+async def test_values_pydantic_would_not_write_faithfully_are_refused(
+    cache_manager: CacheManager, value: object
+) -> None:
+    """Bytes would come back as text and a secret as its mask: still a TypeError."""
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        await cache_manager.set("k", {"nested": value})
+
+    assert await cache_manager.has("k") is False
+
+
+async def test_an_iterator_is_refused_and_not_consumed(
+    cache_manager: CacheManager,
+) -> None:
+    numbers = (n for n in range(3))
+
+    with pytest.raises(TypeError):
+        await cache_manager.set("k", numbers)
+
+    assert list(numbers) == [0, 1, 2]
+
+
+async def test_a_stored_none_needs_a_type_that_allows_it(
+    cache_manager: CacheManager,
+) -> None:
+    await cache_manager.set("user:0", None)
+
+    assert await cache_manager.get("user:0", "fallback", type_=_User) == "fallback"
+    assert await cache_manager.get("user:0", "fallback", type_=_User | None) is None

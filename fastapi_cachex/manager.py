@@ -13,11 +13,14 @@ import time
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any
 from typing import TypeVar
 from typing import overload
 
+from pydantic import SecretBytes
+from pydantic import SecretStr
 from pydantic import TypeAdapter
 from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
@@ -56,17 +59,25 @@ T = TypeVar("T")
 D = TypeVar("D")
 
 
+_NOT_STORED = (Iterator, bytes, bytearray, memoryview, SecretStr, SecretBytes)
+
+
 def _jsonable(value: Any) -> Any:
     """``json.dumps`` fallback: what pydantic would write for ``value``.
 
     Models, dataclasses, ``datetime``, ``Decimal``, ``UUID``, sets and the
-    like. A value pydantic does not know either stays a ``TypeError``, as
-    ``json.dumps`` raises on its own.
+    like. A value pydantic does not know either, or one it would not write
+    faithfully, stays a ``TypeError``, as ``json.dumps`` raises on its own.
     """
+    msg = f"Object of type {type(value).__name__} is not JSON serializable"
+    # pydantic would write each of these, and none of them survives it: an
+    # iterator (a generator, an open file) is consumed, bytes come back as
+    # text, and a secret is stored as its mask.
+    if isinstance(value, _NOT_STORED):
+        raise TypeError(msg)
     try:
         return to_jsonable_python(value)
-    except PydanticSerializationError as e:
-        msg = f"Object of type {type(value).__name__} is not JSON serializable"
+    except (PydanticSerializationError, ValueError) as e:
         raise TypeError(msg) from e
 
 
@@ -211,7 +222,12 @@ class CacheManager:
     async def get(self, key: str, default: Any = None) -> Any: ...
 
     @overload
-    async def get(self, key: str, default: D = ..., *, type_: type[T]) -> T | D: ...
+    async def get(
+        self, key: str, default: None = None, *, type_: type[T]
+    ) -> T | None: ...
+
+    @overload
+    async def get(self, key: str, default: D, *, type_: type[T]) -> T | D: ...
 
     @overload
     async def get(self, key: str, default: Any = None, *, type_: Any) -> Any: ...
@@ -228,7 +244,8 @@ class CacheManager:
                 ``pydantic.TypeAdapter`` accepts. ``await cache.get("user:1",
                 type_=User)`` returns a ``User`` (or ``default``). A stored
                 value that does not fit the type, say one written before a
-                field was added, counts as a decode failure.
+                field was added, counts as a decode failure; so does a stored
+                ``None``, unless the type allows it (``User | None``).
 
         Returns:
             The cached value, or ``default`` on a miss or decode failure.

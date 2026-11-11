@@ -254,7 +254,8 @@ cannot encode is first converted the way pydantic writes it
 | a pydantic model, a dataclass | `dict`, as `model_dump(mode="json")` gives |
 | `datetime`, `date`, `UUID`, `Decimal` | `str`: ISO 8601, `"1.50"` |
 | `set`, `frozenset` | `list` |
-| anything else (an open file, your own class) | `TypeError`, nothing stored |
+| `Enum`, `Path`, `timedelta` and the other types pydantic serialises | their JSON form: the enum's value, `"/tmp/x"`, `"PT1M30S"` |
+| `bytes`, a generator or other iterator, `SecretStr`, your own class | `TypeError`, nothing stored |
 
 `get_or_set()` applies this on a miss too: it encodes the factory's value once,
 stores those bytes and returns them decoded, so the first call returns exactly
@@ -300,6 +301,13 @@ await cache.get("users", type_=list[User])
   pydantic's `ValidationError`.
 - `@cached` does not read the type from the function's annotation; pass
   `type_=` to it. Without it the function returns the JSON form, as before.
+- A stored `None` does not fit `type_=User`. For a value that may be absent,
+  name it: `type_=User | None`.
+- A `SecretStr` field inside a model is stored as pydantic serialises it, as
+  `"**********"`, and reads back as that mask. Keep secrets out of cached
+  models, or cache a `dict` you build yourself.
+- pydantic's `ValidationError` quotes the value it rejected, so the one raised
+  for a `factory` result can put that value into your logs.
 - Validation runs on every read. For large values read often, measure before
   choosing a model over the plain `dict`.
 
