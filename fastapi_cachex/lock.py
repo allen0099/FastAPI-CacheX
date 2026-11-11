@@ -47,6 +47,15 @@ class CacheLock:
         poll_interval: Seconds between retry attempts in blocking mode (default: 0.1)
         backend: Explicit backend instance to use (default: BackendProxy.get())
         key_prefix: Prefix for lock keys (default: "lock:")
+        auto_extend: Renew the lock in the background while it is held, every
+            third of its ``ttl``, until ``release()`` (default: False). For
+            work whose duration is not known in advance. The renewal task
+            runs on the event loop, so it cannot run while the holder blocks
+            that loop; and it runs until ``release()``, so a holder that
+            never releases keeps the lock for as long as its process lives.
+            Use ``async with``, and read ``lost`` to learn that a renewal
+            failed. On Memcached use a ``ttl`` of at least 2 seconds: an
+            entry there lives up to one second less than its ``ttl``.
 
     Raises:
         TTLTypeError: If ``ttl`` is not an ``int`` or a ``timedelta`` (also
@@ -64,6 +73,8 @@ class CacheLock:
         poll_interval: float = 0.1,
         backend: BaseCacheBackend | None = None,
         key_prefix: str = "lock:",
+        *,
+        auto_extend: bool = False,
     ) -> None:
         """Initialize a CacheLock instance."""
         self.name = name
@@ -76,6 +87,23 @@ class CacheLock:
         self._token = secrets.token_hex(16)
         self._entry: CacheEntry = _lock_entry(self._token)
         self._is_held = False
+        self.auto_extend = auto_extend
+        self._lost = False
+        self._renewal: asyncio.Task[None] | None = None
+
+    @property
+    def lost(self) -> bool:
+        """Whether this holder learned that its lock was no longer its own.
+
+        True once ``extend()`` (called by you or by ``auto_extend``) or
+        ``release()`` found the lock expired or taken by someone else, or
+        once ``auto_extend`` could not reach the backend for a whole ``ttl``.
+        The work done since the last successful renewal may have overlapped
+        another holder's. False means only that nothing has been noticed:
+        without a renewal in between, an expiry shows up at ``release()``.
+        Reset by the next ``acquire()``.
+        """
+        return self._lost
 
     @property
     def key(self) -> str:
@@ -121,6 +149,7 @@ class CacheLock:
             raise RuntimeError(msg)
 
         self._is_held = True
+        self._lost = False
         # True while a claim is on its way to the backend: if acquire() is
         # interrupted then, the claim may be stored with nobody to release it.
         claim_in_flight = False
@@ -139,7 +168,9 @@ class CacheLock:
                     self.key, self._entry, ttl=effective_ttl
                 )
                 claim_in_flight = False
-                if not acquired:
+                if acquired:
+                    self._start_renewal(effective_ttl)
+                else:
                     self._is_held = False
                 return acquired
 
@@ -149,6 +180,7 @@ class CacheLock:
                 if await backend.set_if_absent(
                     self.key, self._entry, ttl=effective_ttl
                 ):
+                    self._start_renewal(effective_ttl)
                     return True
                 claim_in_flight = False
                 if effective_timeout is not None:
@@ -207,16 +239,81 @@ class CacheLock:
             self.key,
         )
 
+    def _start_renewal(self, ttl: int) -> None:
+        """Start the ``auto_extend`` task for a lock just acquired with ``ttl``."""
+        if self.auto_extend:
+            self._renewal = asyncio.create_task(self._renew(ttl))
+
+    async def _renew(self, ttl: int) -> None:
+        """Extend the lock every ``ttl / 3`` until it is lost or released.
+
+        A third leaves two more attempts before the lock expires when one
+        fails. A backend error is logged and retried, and an attempt is given
+        no longer than the lock has left, so a call that hangs counts as a
+        failure. Once a whole ``ttl`` has passed since the last renewal was
+        sent, the lock has expired, whatever the backend would say, and the
+        task marks it lost and stops.
+        """
+        interval = ttl / 3
+        renewed_at = time.monotonic()
+        wait = interval
+        while True:
+            await asyncio.sleep(wait)
+            started = time.monotonic()
+            try:
+                renewed = await asyncio.wait_for(
+                    self.extend(ttl), timeout=max(0.0, renewed_at + ttl - started)
+                )
+            except Exception:
+                # Lock names often embed user IDs or e-mails: only a digest.
+                logger.warning(
+                    "CacheLock could not renew its lock; key_ref=%s",
+                    log_ref(self.key),
+                    exc_info=True,
+                )
+                renewed = time.monotonic() - renewed_at < ttl
+                if renewed:  # not expired yet: try again
+                    wait = max(0.0, started + interval - time.monotonic())
+                    continue
+            if not renewed:
+                self._lost = True
+                logger.warning(
+                    "CacheLock lost its lock before release; key_ref=%s",
+                    log_ref(self.key),
+                )
+                return
+            # Counted from when the renewal was sent, and the next one is
+            # due an interval after that, so a slow backend does not stretch
+            # the gap between renewals.
+            renewed_at = started
+            wait = max(0.0, started + interval - time.monotonic())
+
+    async def _stop_renewal(self) -> None:
+        """Cancel the ``auto_extend`` task and wait until it has stopped."""
+        renewal, self._renewal = self._renewal, None
+        if renewal is None or renewal.done():
+            return
+        renewal.cancel()
+        # wait() does not raise the task's CancelledError, so a cancellation
+        # of release() itself still propagates.
+        await asyncio.wait([renewal])
+
     async def release(self) -> bool:
         """Release the lock if still held by this instance.
+
+        Stops ``auto_extend`` first. A False result for a lock this instance
+        held also sets ``lost``.
 
         Returns:
             True if the lock was released, False if expired or owned by another caller
         """
-        self._is_held = False
+        was_held, self._is_held = self._is_held, False
+        await self._stop_renewal()
         backend = self._get_backend()
         released = await backend.delete_if_equals(self.key, self._entry)
         if not released:
+            # A second release(), or one without acquire(), lost nothing.
+            self._lost = self._lost or was_held
             logger.debug(
                 "CacheLock release failed for key=%s (lock lost or expired)",
                 self.key,
@@ -230,12 +327,19 @@ class CacheLock:
             ttl: New TTL in seconds or as a ``timedelta`` (None = use default
                 instance TTL)
 
+        A False result for a lock this instance held also sets ``lost``.
+
         Returns:
             True if the TTL was updated, False if expired or owned by another caller
         """
         effective_ttl = self.ttl if ttl is None else validate_ttl(ttl)
         backend = self._get_backend()
-        return await backend.expire_if_equals(self.key, self._entry, ttl=effective_ttl)
+        extended = await backend.expire_if_equals(
+            self.key, self._entry, ttl=effective_ttl
+        )
+        if not extended:
+            self._lost = self._lost or self._is_held
+        return extended
 
     async def locked(self) -> bool:
         """Check whether the lock is currently held by any holder.
