@@ -437,3 +437,21 @@ async def test_a_stale_entry_kept_for_errors_is_coalesced_like_a_miss(
     assert handler.calls == ["GET", "GET"]
     assert {r.status_code for r in followers} == {200}
     assert _IN_FLIGHT == {}
+
+
+async def test_an_entry_without_the_route_tags_is_coalesced_like_a_miss(
+    client_for: Callable[[FastAPI], httpx.AsyncClient], waiters: Waiters
+) -> None:
+    """The deploy that adds tags must not run the handler once per request (#538)."""
+    handler = Handler(waiters)
+    handler.release.set()
+    await client_for(_app(handler)).get("/items")  # stored without tags
+    handler.release = asyncio.Event()
+    client = client_for(_app(handler, tags=["items"]))
+
+    leader, followers = await _leader_then_followers(client, handler, waiters)
+
+    await leader
+    assert handler.calls == ["GET", "GET"]
+    assert {r.status_code for r in followers} == {200}
+    assert _IN_FLIGHT == {}

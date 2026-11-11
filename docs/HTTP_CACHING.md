@@ -1031,7 +1031,10 @@ async def update_user(user_id: int):
 ```
 
 `tags=` is a list of names, or a plain function that takes the request and
-returns them. An entry is a miss once any of its tags has been invalidated
+returns them. The function runs on every request to the route, hits included,
+and must give the same tags for every request that shares a cache key: build
+them from the path or the query, not from a header the key does not hold, or
+the entry is rendered and stored again each time the tags differ. An entry is a miss once any of its tags has been invalidated
 since it was stored, whatever its query string, `vary` variant or host. It
 works on every backend, Memcached included, because nothing is enumerated:
 each tag has a version in the backend, and an entry remembers the versions it

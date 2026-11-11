@@ -219,7 +219,7 @@ How it works, and what follows from it:
   were added, or under other names, is served until its TTL: delete such
   keys, or wait one TTL, after adding or renaming tags. (`@cache` routes
   handle this themselves; a plain `get()` cannot know which tags a key should
-  have.)
+  have, and `get_or_set()` and `@cached` read through it.)
 - A version is created when a value is stored under the tag, not when one is
   looked up: a call that stores nothing leaves nothing behind.
 - Invalidated values are not deleted; they leave through their TTL, so give

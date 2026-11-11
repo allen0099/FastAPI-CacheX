@@ -1004,7 +1004,6 @@ class _Route:
             await self._after_running_miss(call, backend, cache_key)
         else:
             entry = await self._read(call, backend, cache_key)
-        entry = self._usable(call, entry)
         stale = entry is not None and self._is_stale(entry)
         if entry is not None and not self.no_cache and not stale:
             return self._hit(call, entry, cache_key, cache_control)
@@ -1278,20 +1277,24 @@ class _Route:
     async def _read(
         self, call: _Call, backend: BaseCacheBackend, cache_key: str
     ) -> CacheEntry | None:
-        """The stored entry, after waiting for a running miss if coalescing."""
+        """The usable stored entry, after waiting for a running miss if coalescing.
+
+        An entry the route cannot serve (see ``_usable``) is a miss here
+        already, so that concurrent requests for it are coalesced like any
+        other miss.
+        """
         req = call.request
         entry, read_ok = await _read_entry(
             backend, cache_key, req, fail_open=self.fail_open
         )
+        entry = self._usable(call, entry)
         # A failed read does not wait: the backend is likely down, so the
         # leader could not store its response either. A miss read just
         # before a leader stores may still lead a second render; that
         # window is one backend round trip.
         # A stale entry that only answers for a failing handler is waited
         # for like a miss: the leader's render may make it fresh.
-        awaited = entry is None or (
-            self.stale == "error" and self._is_stale(entry) and not self._is_gone(entry)
-        )
+        awaited = entry is None or (self.stale == "error" and self._is_stale(entry))
         if self.coalesce and read_ok and awaited:
             leader = call.flight.join(backend, cache_key, may_lead=req.method == "GET")
             if leader is not None:
@@ -1300,6 +1303,7 @@ class _Route:
                 entry, _ = await _read_entry(
                     backend, cache_key, req, fail_open=self.fail_open
                 )
+                entry = self._usable(call, entry)
         return entry
 
     def _hit(
@@ -1737,6 +1741,10 @@ def cache(
             ``invalidate_tags()``: a list of strings, or a plain function
             that takes the request and returns them
             (``lambda request: [f"user:{request.path_params['user_id']}"]``).
+            The function runs on every request to the route, and must return
+            the same tags for every request that shares a cache key (so:
+            derive them from the path or query, not from a header the key
+            does not hold), or the entry is stored again on each change.
             An entry is a miss once any of its tags has been invalidated
             since it was stored. A hit on a tagged entry costs one extra
             batched backend read; a route without tags pays nothing.
