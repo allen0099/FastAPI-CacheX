@@ -16,78 +16,55 @@ handler and adding its dependencies' headers) and
 
 ## Overall flow
 
+First, whether the backend is used at all:
+
+```mermaid
+flowchart TD
+    request([Request to a route with @cache]) --> method{GET or HEAD?}
+    method -- no --> plain[Run the handler<br/>no Cache-Control added]
+    method -- yes --> nostore{no_store?}
+    nostore -- yes --> ns[Run the handler<br/>Cache-Control: no-store]
+    nostore -- no --> skipped{Backend skipped?}
+    skipped -- yes --> uncached[Run the handler<br/>backend neither read nor written]
+    skipped -- no --> cached([Cached path, below])
 ```
-HTTP request arrives
-    ↓
-@cache decorator intercepts it (only GET and HEAD go through the cache, HEAD
-reading the GET entry; every other method runs the handler directly and gets
-no Cache-Control header)
-    ↓
-no-store? ── yes → run the handler, neither read nor write the cache,
-    │              respond with Cache-Control: no-store
-    ↓ no
-private, no positive ttl, or Authorization/session data without public/cache_authorized?
-    ── yes → run the handler; compare If-None-Match to decide 304 or 200
-    │        (the shared backend is neither read nor written and the key
-    │        builder does not run; for Authorization or session data,
-    │        Cache-Control says private instead of public)
-    ↓ no
-(cache_authorized with Authorization or session data: the backend is used below,
-but every answer still says private instead of public)
-    ↓
-Build the cache key: key_builder (default http:v2|method|host|path|query_params),
-plus one name=value component per vary header
-    ↓
-Read the backend entry (with fail_open, a backend error counts as a miss;
-an entry one of whose tags was invalidated since it was stored is a miss too)
-    │  with client_cache_control, a request's no-cache or max-age=0 skips the
-    │  read (the handler runs and its response replaces the entry); its
-    │  no-store is decided before the key is built and takes the path of the
-    │  bypass above (no key builder, no backend)
-    ↓
-serve_stale and the entry is past its ttl (it is kept for ttl + stale_ttl)?
-    ├─ stale="revalidate" → answer from the entry at once, as below (a 304
-    │                        for a matching If-None-Match); for a GET the
-    │                        handler runs after the response, as a background
-    │                        task of the request, and its response replaces
-    │                        the entry
-    ├─ stale="error"      → run the handler; if it raises or answers 5xx,
-    │                        respond with the entry instead (an HTTPException
-    │                        below 500, or an exception the app handles, is
-    │                        the handler's answer and is sent as it is)
-    └─ no → continue
-    ↓
-Request carries If-None-Match?
-    ├─ and no-cache → run the handler first to compute the current ETag; match → 304
-    ├─ otherwise    → compare with the cached entry's ETag; match → 304 with Age
-    └─ no match / no header → continue
-    ↓
-Cached entry exists and no-cache is off?
-    ├─ yes → respond with the cached content (including the stored status code
-    │        and headers, plus Age; the handler does **not** run)
-    └─ no  → run the handler
-              ├─ non-2xx (or 206) → return as-is and **do not write**
-              │                     (an existing good entry is not overwritten)
-              ├─ streaming/file response → no ETag can be computed; return as-is, do not write
-              ├─ handler sent Cache-Control private/no-store, or Set-Cookie
-              │     → set the ETag, return it, **do not write** (an existing
-              │       entry is left alone; a private/no-store header is kept)
-              └─ regular response → set the ETag; write to the backend only if it
-                                    differs from the existing entry's ETag
-                                    or that entry was stale, and not if the
-                                    route's tag versions could not be read
-                                    (with fail_open, a failed write is logged
-                                    and the response served unstored)
-              then, If-None-Match matches the fresh ETag (the entry expired,
-              was cleared or evicted, was never stored, or is held by another
-              worker) → 304 instead of the 200, carrying any Set-Cookie and
-              the handler's background task
-    ↓
-Attach Cache-Control to the response (non-2xx responses are returned without it,
-a handler's own private/no-store Cache-Control is never replaced, and a
-Set-Cookie response gets private instead of public); with vary, add the
-names to Vary on every GET or HEAD response
+
+Then, for a request on the cached path:
+
+```mermaid
+flowchart TD
+    key[Build the cache key] --> refresh{"Client asks for<br/>a fresh response?"}
+    refresh -- no --> read[Read the entry]
+    refresh -- yes --> run
+    read --> state{Entry?}
+    state -- fresh --> hit[["Answer from the entry<br/>handler does not run"]]
+    state -- "stale, revalidate" --> stalehit[["Answer from the entry<br/>refresh after the response"]]
+    state -- "stale, error" --> run
+    state -- "none, or no_cache" --> run[Run the handler]
+    run --> result{Result?}
+    result -- "failed, and a stale<br/>entry is kept for errors" --> fallback[["Answer from the stale entry"]]
+    result -- storable --> store[Store the response]
+    result -- "not storable" --> fresh
+    store --> fresh[["Answer with the response"]]
 ```
+
+Every answer then gets its `Cache-Control`, `Vary` and, with
+`debug_header=True`, `X-Cache`. Each step in more detail:
+
+| Step | What happens |
+|---|---|
+| GET or HEAD? | Only GET and HEAD go through the cache, HEAD reading the entry of the GET. Every other method runs the handler directly and gets no `Cache-Control` header. |
+| `no_store`? | The handler runs, the backend is neither read nor written, and the response says `Cache-Control: no-store`. |
+| Backend skipped? | Yes for `private=True`, a route without a positive `ttl`, or a request with `Authorization` or session data on a route without `public` or `cache_authorized`. The key builder does not run; `If-None-Match` is compared with the fresh response to decide between 304 and 200; with credentials, `Cache-Control` says `private` instead of `public`. With `cache_authorized` the backend is used, but every answer still says `private`. |
+| Client asks for a fresh response? | Only on a route with `client_cache_control`. A request's `no-cache` or `max-age=0` skips the read: the handler runs and its response replaces the entry. A request's `no-store` is decided earlier and counts as "backend skipped". |
+| Build the cache key | `key_builder` (default `http:v2\|method\|host\|path\|query`), plus one `name=value` component per `vary` header. |
+| Read the entry | With `fail_open`, a backend error counts as a miss. So does an entry one of whose tags was invalidated since it was stored, and one stored before the route had its tags. With `coalesce=True`, a request that finds nothing waits for a request already rendering the same key, then reads again. |
+| Stale | Only with `serve_stale`, which keeps the entry for `ttl + stale_ttl`. `stale="revalidate"`: the entry answers at once (a 304 for a matching `If-None-Match`), and for a GET the handler runs after the response, as a background task of the request, to replace it. `stale="error"`: the handler runs, and the entry answers only if it raises or returns 5xx; an `HTTPException` below 500, or an exception the application handles, is the handler's answer and is sent as it is. |
+| `no_cache` | The handler runs on every request; a matching `If-None-Match` gets a 304 after the fresh response is compared with it. |
+| Answer from the entry | The stored status code, headers and body, plus `Age`. A request whose `If-None-Match` matches the entry's ETag gets a 304. |
+| Result? | A failure, on a `stale="error"` route with a stale entry, is answered from that entry (see Stale). Otherwise the response is answered as it is, stored or not. Not stored: a non-2xx or 206 response (returned as it is, without the decorator's `Cache-Control`; an existing good entry is not overwritten), a streamed or file response (no ETag can be computed), a response with `Set-Cookie` or its own `private` / `no-store`, the response to a HEAD, and a response of a tagged route whose tag versions could not be read. Otherwise the response gets its ETag and is written, unless the entry already there has the same ETag and is not stale. With `fail_open`, a failed write is logged and the response is served unstored. |
+| Answer with the response | If the client's `If-None-Match` matches the ETag of the fresh response (its entry expired, was cleared or evicted, was never stored, or is held by another worker), the answer is a 304 instead of the 200, carrying any `Set-Cookie` and the handler's background task. |
+| Headers | `Cache-Control` from the decorator's arguments; a handler's own `private` / `no-store` is never replaced, and a response that sets a cookie gets `private` instead of `public`. With `vary`, the names are added to `Vary` on every GET or HEAD response. `X-Cache` with `debug_header=True`. |
 
 ## Detailed steps
 
