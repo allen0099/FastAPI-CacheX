@@ -76,44 +76,35 @@ With `@cache`, a timeout is a backend failure like any other: the request is [an
 
 ## `@cached` validates into the return annotation {#cached-return-annotation}
 
-Until 0.6.0, a function decorated with `@cached` returns the JSON form of its value unless `type_=` is passed: a function annotated `-> User` gets a `dict` back, and one annotated `-> tuple[int, int]` a list, on the first call and on every hit. From 0.6.0, when `type_` is not passed, `@cached` validates the cached value into the function's return annotation ([#533](https://github.com/allen0099/FastAPI-CacheX/issues/533)).
+A function decorated with `@cached` without `type_=` used to return the JSON form of its value: one annotated `-> User` got a `dict` back, and one annotated `-> tuple[int, int]` a list, on the first call and on every hit. In 0.6.0, when `type_` is not passed, `@cached` validates the cached value into the function's return annotation ([#533](https://github.com/allen0099/FastAPI-CacheX/issues/533)), so those functions return a `User` and a tuple.
 
-From 0.5.6 on, applying `@cached` without `type_` to a function this will affect emits a `FutureWarning`:
+0.5.6 and later 0.5.x releases announce this with a `FutureWarning` where the decorator is applied:
 
 ```text
 FutureWarning: cached return annotation: load_user() is annotated to return <class 'app.User'>, and from 0.6.0 @cached validates the cached value into that type ...
 ```
 
-It is emitted once, where the decorator is applied, and only when the change can alter what the function returns. It stays quiet when:
+Nothing changes, and nothing was warned about, when:
 
 - `type_` is passed, whatever its value;
 - the function has no return annotation;
 - the annotation is built only from JSON's own types: `str`, `int`, `float`, `bool`, `None`, `Any`, `object`, `list` and `dict` (bare, or as `list[...]` and `dict[str, ...]`), and unions of them. For these the value is returned as JSON decoded it and is never converted.
 
-A return annotation that cannot be resolved where the decorator is applied gets a warning of its own, with the same prefix. That happens when the type is imported under `if TYPE_CHECKING:` (linters often move imports there) or is a class defined further down the file. 0.6.0 cannot read such an annotation, so that function would keep returning the JSON form while the others change; passing `type_` settles it either way.
+A return annotation that cannot be resolved where the decorator is applied is the one case to look for. That happens when the type is imported under `if TYPE_CHECKING:` (linters often move imports there) or is a class defined further down the file. `@cached` cannot read such an annotation, so the function keeps returning the JSON form, and applying the decorator emits a `UserWarning` that starts with `cached return annotation` (0.5.6 announced these with a `FutureWarning` of the same prefix). Pass `type_=<the type>` to get the type, or `type_=None` to keep the JSON form without the warning.
 
-Choose per function, and the warning goes away:
+To keep the JSON form for a function, say so:
 
 ```python
-@cached(ttl=60, type_=User)  # the 0.6.0 behaviour, now
-async def load_user(user_id: int) -> User: ...
-
-
-@cached(ttl=60, type_=None)  # keep the JSON form, in 0.6.0 too
+@cached(ttl=60, type_=None)
 async def load_user_dict(user_id: int) -> User: ...
 ```
 
-With `type_=User`, a value that was cached as something that no longer fits the type counts as a miss and the function runs again, so a deploy needs no cache flush.
+What to check when upgrading:
 
-To silence the warning for a whole test suite instead:
-
-```toml
-[tool.pytest.ini_options]
-filterwarnings = [
-    "error",
-    "ignore:cached return annotation:FutureWarning",
-]
-```
+- Code that used the result as a `dict` (`user["id"]`) now gets the model (`user.id`).
+- A value cached by 0.5.x that does not fit the annotation counts as a miss and the function runs again, so the upgrade needs no cache flush.
+- If the function returns something its annotation does not allow, the call raises pydantic's `ValidationError`, where before the mismatch went unnoticed.
+- Validation runs on every call, hit or miss. For a large value read very often, `type_=None` avoids it.
 
 ## `/cached-hits` no longer has the `*_hits` fields {#cached-hits-fields}
 
