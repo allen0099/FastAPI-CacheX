@@ -20,6 +20,38 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-11-11
+
+### Added
+
+- **`@cache` can send `s-maxage`, `proxy-revalidate` and `no-transform`.** The
+  new `s_maxage`, `proxy_revalidate` and `no_transform` arguments only shape the
+  `Cache-Control` header: `@cache(ttl=60, s_maxage=300)` lets a CDN keep a
+  response longer than browsers do, while the stored entry still expires after
+  `ttl`. `s-maxage` and `proxy-revalidate` are left out of the `private` header
+  sent for a response that sets a cookie or answers a request with credentials,
+  and are rejected together with `private=True`. ([#144](https://github.com/allen0099/FastAPI-CacheX/issues/144))
+- **`AsyncRedisCacheBackend.from_url()`, and `username`, `ssl` and `url` in
+  `RedisConfig`.** `from_url("rediss://user:secret@host:6380/0")` (or `url=` on
+  the constructor) connects with TLS and an ACL user, as managed Redis services
+  require; `RedisConfig.url` is a `SecretStr`. The docs now show Sentinel through
+  `connection_pool=` and state that Redis Cluster is not supported. ([#244](https://github.com/allen0099/FastAPI-CacheX/issues/244))
+- **`ValueTooLargeError` when Memcached refuses a value as too large.**
+  `MemcachedBackend.set()`, `set_if_absent()` and `set_if_equals()`, and so
+  `CacheManager` and `@cached`, raise it for a value over the server's item size limit (1 MB unless
+  the server was started with `-I`). It is a `CacheXError` whose message gives
+  the encoded size and a digest of the key, and it is also an instance of
+  pymemcache's `MemcacheServerError`, which these calls raised before, so
+  existing handlers keep working. `@cache` still logs it and serves the response
+  unstored. ([#261](https://github.com/allen0099/FastAPI-CacheX/issues/261))
+- **`invalidate_path()` drops a cached `GET` from the handler that changes the
+  data.** `await invalidate_path(request, "/items/1")` builds the key the cached
+  `GET` of that path would use, with the current request's host and headers, so
+  a `PUT` handler no longer has to copy and rewrite the ASGI scope. It takes the
+  same `key_builder`, `vary` and `sort_query` as `invalidate()`, and a `query`.
+  `invalidate()` now logs a warning when it is given a request that is not a
+  `GET` and so cannot match a cached entry. ([#332](https://github.com/allen0099/FastAPI-CacheX/issues/332))
+
 ## [0.5.3] - 2026-11-10
 
 ### Added
@@ -1518,7 +1550,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.0...v0.5.1
