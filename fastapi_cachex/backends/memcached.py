@@ -7,6 +7,8 @@ import time
 import warnings
 from collections.abc import Callable
 from collections.abc import Iterable
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import timedelta
 from typing import Any
 
@@ -37,8 +39,9 @@ def _is_unavailable(error: Exception) -> bool:
 
     A socket error (refused, reset, timed out), a connection the server
     closed mid-reply, and pymemcache's "All servers seem to be down" while a
-    failed server is out of rotation. A ``MemcacheClientError`` (bad input,
-    an item over the size limit) is not about availability and is left as is.
+    failed server is out of rotation. A ``MemcacheClientError`` (bad input)
+    or a ``MemcacheServerError`` (an item over the size limit, see
+    ``_refused_as_too_large``) is not about availability.
     """
     from pymemcache.exceptions import MemcacheError
     from pymemcache.exceptions import MemcacheUnexpectedCloseError
@@ -49,6 +52,26 @@ def _is_unavailable(error: Exception) -> bool:
 
 
 _unavailable = translate_unavailable(_is_unavailable)
+
+
+@contextmanager
+def _refused_as_too_large(key: str, payload: bytes) -> Iterator[None]:
+    """Raise the server's "object too large" as a ``ValueTooLargeError`` (#261)."""
+    from pymemcache.exceptions import MemcacheServerError
+
+    try:
+        yield
+    except MemcacheServerError as e:
+        if "too large" not in str(e):
+            raise
+        # The message reaches error logs and trackers: a digest, not the key.
+        msg = (
+            f"Memcached refused a value of {len(payload)} bytes as too large "
+            f"(key_ref={log_ref(key)}); the item size limit is 1 MB unless "
+            "the server was started with -I"
+        )
+        raise translated(ValueTooLargeError, e, msg) from e
+
 
 # Default Memcached key prefix for fastapi-cachex
 DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
@@ -329,21 +352,9 @@ class MemcachedBackend(BaseCacheBackend):
         ttl: int | None,
     ) -> Any:
         """Send a storage command; a refused value raises ``ValueTooLargeError``."""
-        from pymemcache.exceptions import MemcacheServerError
-
         payload = encode_entry(value)
-        try:
+        with _refused_as_too_large(key, payload):
             return command(self._make_key(key), payload, _expiry(ttl), noreply=False)
-        except MemcacheServerError as e:
-            if "too large" not in str(e):
-                raise
-            # The message reaches error logs and trackers: a digest, not the key.
-            msg = (
-                f"Memcached refused a value of {len(payload)} bytes as too large "
-                f"(key_ref={log_ref(key)}); the item size limit is 1 MB unless "
-                "the server was started with -I"
-            )
-            raise translated(ValueTooLargeError, e, msg) from e
 
     @_unavailable
     async def get_and_delete(self, key: str) -> CacheEntry | None:
@@ -430,9 +441,11 @@ class MemcachedBackend(BaseCacheBackend):
         if raw is None or decode_entry(raw) != expected:
             logger.debug("Memcached %s MISMATCH; key=%s", operation, key)
             return False
-        done = self.client.cas(
-            prefixed_key, new(raw), cas_token, exptime, noreply=False
-        )
+        payload = new(raw)
+        with _refused_as_too_large(key, payload):
+            done = self.client.cas(
+                prefixed_key, payload, cas_token, exptime, noreply=False
+            )
         logger.debug(
             "Memcached %s %s; key=%s", operation, "HIT" if done else "LOST RACE", key
         )

@@ -1392,19 +1392,23 @@ _SECRET_KEY = "user:alice@example.com"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["set", "set_if_absent"])
+@pytest.mark.parametrize("method", ["set", "set_if_absent", "set_if_equals"])
 async def test_memcached_refused_value_raises_value_too_large(method: str) -> None:
-    """The server's refusal names the size and a key digest, on both writers (#261)."""
+    """The server's refusal names the size and a key digest, on every writer (#261)."""
     from pymemcache.exceptions import MemcacheServerError
 
     backend = stubbed_backend()
     refusal = MemcacheServerError(b"object too large for cache")
     backend.client.set.side_effect = refusal
     backend.client.add.side_effect = refusal
+    backend.client.cas.side_effect = refusal
+    old = CacheEntry(fingerprint="etag", content=b"old")
+    backend.client.gets.return_value = (encode_entry(old), b"1")
     entry = CacheEntry(fingerprint="etag", content=b"x" * 2048)
+    args = (old, entry) if method == "set_if_equals" else (entry,)
 
     with pytest.raises(ValueTooLargeError) as excinfo:
-        await getattr(backend, method)(_SECRET_KEY, entry, 60)
+        await getattr(backend, method)(_SECRET_KEY, *args, 60)
 
     error = excinfo.value
     # Still the client's own type, so an older `except` keeps catching it.

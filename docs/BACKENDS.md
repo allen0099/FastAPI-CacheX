@@ -232,9 +232,9 @@ server must not tie up the thread pool.
 - Values larger than the server's item size limit (1 MB by default, `memcached -I`)
   are rejected. `@cache` logs it and serves the response unstored
   (see [When the backend fails](HTTP_CACHING.md#when-the-backend-fails)).
-  `CacheManager` (`set`, `add`, `get_or_set`), `@cached` and direct `set()` /
-  `set_if_absent()` calls raise `ValueTooLargeError`, a `CacheXError` whose
-  message gives the encoded size. Nothing is stored, and the server also drops
+  `CacheManager` (`set`, `add`, `get_or_set`), `@cached` and direct `set()`,
+  `set_if_absent()` and `set_if_equals()` calls raise `ValueTooLargeError`, a
+  `CacheXError` whose message gives the encoded size and a digest of the key. Nothing is stored, and the server also drops
   the value a refused `set()` would have replaced, so the key reads as missing
   afterwards; a refused `set_if_absent()` leaves the existing value. The error
   is chained to pymemcache's `MemcacheServerError` and is

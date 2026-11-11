@@ -34,15 +34,21 @@ _SUBCLASSES: dict[tuple[type[CacheXError], type[Exception]], type[CacheXError]] 
 
 
 def _rebuild(
-    base: type[CacheXError], error_type: type[Exception], args: tuple[Any, ...]
+    error_type: type[Exception],
+    args: tuple[Any, ...],
+    base: type[CacheXError] = BackendUnavailableError,
 ) -> Exception:
-    """Unpickle a translated error: pickle cannot import a runtime class."""
+    """Unpickle a translated error: pickle cannot import a runtime class.
+
+    ``base`` comes last and has a default because a pickle written before
+    0.5.4 carries only the first two arguments.
+    """
     return _subclass_for(base, error_type)(*args)
 
 
 def _reduce(self: BaseException) -> tuple[Any, ...]:
     base, error_type = type(self).__bases__
-    return _rebuild, (base, error_type, self.args), self.__dict__ or None
+    return _rebuild, (error_type, self.args, base), self.__dict__ or None
 
 
 def _subclass_for(base: type[E], error_type: type[Exception]) -> type[E]:
