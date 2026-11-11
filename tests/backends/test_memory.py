@@ -1243,3 +1243,57 @@ def test_memory_backend_stays_quiet_without_several_workers(
         monkeypatch.setenv("WEB_CONCURRENCY", value)
 
     MemoryBackend()  # filterwarnings = error would raise
+
+
+# --- get_many / set_many (#249) ---
+
+
+async def test_memory_set_many_applies_the_ttl_to_every_entry(
+    memory_backend: MemoryBackend, clock: Clock
+) -> None:
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    await memory_backend.set_many({"a": entry, "b": entry}, ttl=10)
+    await memory_backend.set_many({"forever": entry})
+
+    assert memory_backend.cache["forever"].expiry is None
+    clock.advance(9)
+    assert len(await memory_backend.get_many(["a", "b", "forever"])) == 3
+    clock.advance(2)
+    assert await memory_backend.get_many(["a", "b", "forever"]) == {"forever": entry}
+    # The expired entries were dropped on the way, as get() drops them.
+    assert list(memory_backend.cache) == ["forever"]
+
+
+async def test_memory_batches_do_not_share_the_caller_s_entries(
+    memory_backend: MemoryBackend,
+) -> None:
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    await memory_backend.set_many({"a": entry})
+    entry.fingerprint = "changed by the writer"
+
+    found = await memory_backend.get_many(["a"])
+    found["a"].fingerprint = "changed by the reader"
+
+    assert memory_backend.cache["a"].value.fingerprint == "e"
+
+
+async def test_memory_get_many_counts_as_a_use() -> None:
+    backend = MemoryBackend(max_entries=2)
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    await backend.set_many({"old": entry, "new": entry})
+
+    await backend.get_many(["old"])
+    await backend.set("third", entry)
+
+    assert list(backend.cache) == ["old", "third"]
+    backend.stop_cleanup()
+
+
+async def test_memory_set_many_keeps_to_max_entries() -> None:
+    backend = MemoryBackend(max_entries=2)
+    entry = CacheEntry(fingerprint="e", content=b"v")
+
+    await backend.set_many({"a": entry, "b": entry, "c": entry})
+
+    assert list(backend.cache) == ["b", "c"]
+    backend.stop_cleanup()

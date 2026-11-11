@@ -140,7 +140,7 @@ pool = SentinelConnectionPool(
 backend = AsyncRedisCacheBackend(connection_pool=pool)
 ```
 
-**不支援 Redis Cluster。** 後端使用單節點用戶端：`SCAN` 只會看到一個節點，而 `delete_many()` 與 `clear*` 方法背後的多鍵指令在跨 hash slot 時會失敗。
+**不支援 Redis Cluster。** 後端使用單節點用戶端：`SCAN` 只會看到一個節點，而 `delete_many()`、`get_many()`、`set_many()` 與 `clear*` 方法背後的多鍵指令在跨 hash slot 時會失敗。
 
 ### Redis 停止運作時快速失敗 {#failing-fast-when-redis-is-down}
 
@@ -199,7 +199,7 @@ BackendProxy.set(backend)
 - `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間，且每次呼叫都會發出 `RuntimeWarning`。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用層快取](APP_CACHE.md)）
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存，摘要前面仍帶著 `key_prefix`。因此建立後端時會先檢查前綴本身：含空白字元、控制字元或非 ASCII 字元，或長度達 250 位元組以上的前綴會拋出 `ValueError`；超過 186 位元組、放不下 64 個字元摘要的前綴則會發出警告（0.4.1 之前，這類前綴會讓呼叫以 `MemcacheIllegalInputError` 失敗）
 - 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
-- 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）。`CacheManager`（`set`、`add`、`get_or_set`）、`@cached` 以及直接呼叫 `set()`、`set_if_absent()` 與 `set_if_equals()` 則會拋出 `ValueTooLargeError`，它是 `CacheXError`，訊息中會列出編碼後的大小與鍵的摘要。不會儲存任何內容，而且伺服器還會移除被拒絕的 `set()` 原本要取代的值，因此之後讀取該鍵會是不存在；被拒絕的 `set_if_absent()` 則會保留既有的值。這個錯誤會串接 pymemcache 的 `MemcacheServerError`，同時也是該型別的實例，而 0.5.4 之前這些呼叫端收到的就只有後者
+- 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）。`CacheManager`（`set`、`add`、`get_or_set`）、`@cached` 以及直接呼叫 `set()`、`set_if_absent()` 與 `set_if_equals()` 則會拋出 `ValueTooLargeError`，它是 `CacheXError`，訊息中會列出編碼後的大小與鍵的摘要。不會儲存任何內容，而且伺服器還會移除被拒絕的 `set()` 原本要取代的值，因此之後讀取該鍵會是不存在；被拒絕的 `set_if_absent()` 則會保留既有的值。`set_many()` 中只要有一個值超過上限也會拋出這個錯誤，而這一批的其他項目可能已經存入（見[批次讀寫](#batch-reads-and-writes)）。這個錯誤會串接 pymemcache 的 `MemcacheServerError`，同時也是該型別的實例，而 0.5.4 之前這些呼叫端收到的就只有後者
 - 若需要依模式清除快取，請考慮使用 Redis 後端
 
 同步的 pymemcache 用戶端在工作執行緒中執行，並使用連線池，因此並行的請求絕不會共用同一個 socket。寫入會等待伺服器確認（`default_noreply=False`），因此只要 `set()` 返回，就能從連線池中的任何連線讀到該值。每次呼叫只切換到工作執行緒一次，多步驟的[原子操作](#atomic-backend-primitives)也是如此。`delete_many()` 在這一次呼叫中逐一對每個鍵送出 `DELETE`，並回傳實際存在的鍵數；0.3.8 之前它每個鍵都要切換一次執行緒，回傳的是傳入的鍵數。
@@ -291,9 +291,26 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 
 完整可執行範例（英文）：[`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py)。
 
+### 批次讀寫 {#batch-reads-and-writes}
+
+`get_many` 與 `set_many` 對每台伺服器只用一次往返就讀取、寫入多個鍵。`CacheManager.get_many()` 與 `set_many()` 建立在它們之上。
+
+```python
+await backend.set_many({"a": entry_a, "b": entry_b}, ttl=300)
+found = await backend.get_many(["a", "b", "c"])  # {"a": entry_a, "b": entry_b}
+```
+
+- `get_many(keys) -> dict[str, CacheEntry]`：以鍵為索引回傳找到的項目。不存在、已過期，或存放的位元組不是項目的鍵不會出現在結果中；重複傳入的鍵只讀取一次。記憶體後端在鎖內讀取，Redis 送出一個 `MGET`，Memcached 對每台伺服器送出一個帶有所有鍵的 `get`。`keys` 為空時不會有任何 I/O。
+- `set_many(entries, ttl=None) -> None`：儲存 mapping 中的每個項目，全部使用同一個 `ttl`，而 `ttl` 會在寫入任何內容之前先驗證。mapping 為空時不會有任何 I/O。這一批寫入是否具原子性取決於後端：
+    - **記憶體**：具原子性。整批在後端的鎖內儲存。設定了 `max_entries` 時，超過上限的一批只會保留最後 `max_entries` 個項目。
+    - **Redis**：具原子性。在單一 `MULTI`/`EXEC` 中對每個項目各送一個 `SET`（`MSET` 不接受過期時間），一次往返送出。並行的讀取者只會看到整批或完全看不到；被伺服器拒絕的一批（例如已達記憶體上限）不會儲存任何內容。
+    - **Memcached**：不具原子性。項目以每台伺服器一批 `set` 指令送出，伺服器各自儲存每一個。若其中一個值超過項目大小上限，呼叫會拋出 `ValueTooLargeError`，訊息中列出這一批裡最大的值的大小與鍵的摘要，而其他項目可能已經存入。伺服器在途中斷線，或多台伺服器中有一台失敗時也是如此。
+
+兩者在 `BaseCacheBackend` 上都有後備實作，對每個鍵各呼叫一次 `get` 或 `set`，因此第三方後端不必覆寫它們也能運作。`set_many` 的後備實作會在第一個拋出例外的 `set` 停下，在它之前的項目則已存入。
+
 ## TTL 值 {#ttl-values}
 
-每個 `ttl` 參數（`set`、`set_if_absent`、`set_if_equals`、`increment`，以及建立在它們之上的 `CacheManager` 與 `CacheLock` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的秒數，型別可以是 `int` 或整數秒的 `datetime.timedelta`（`timedelta(minutes=5)` 會存成 `300`）。這些檢查都在存取後端之前進行：
+每個 `ttl` 參數（`set`、`set_many`、`set_if_absent`、`set_if_equals`、`increment`，以及建立在它們之上的 `CacheManager` 與 `CacheLock` 方法和預設值）只能是 `None`（表示項目永不過期），或介於 1 到 `MAX_TTL`（2**31 - 1，約 68 年）之間的秒數，型別可以是 `int` 或整數秒的 `datetime.timedelta`（`timedelta(minutes=5)` 會存成 `300`）。這些檢查都在存取後端之前進行：
 
 - 零、負值與更大的值會拋出 `TTLValueError`。底層儲存對 `0` 的解讀各不相同：Memcached 把 exptime `0` 視為「永不過期」，Redis 拒絕 `EX 0`，而行程內的 dict 則會立即讓項目過期。
 - `float`、`bool` 或其他型別會拋出 `TTLTypeError`。float 過去只在記憶體後端上有效，而 `True` 會被當成一秒。帶有小數秒的 `timedelta`（`timedelta(seconds=1.5)`）會拋出 `TTLValueError`，因為每個後端都以整秒計時。

@@ -1696,3 +1696,92 @@ async def test_redis_aclose_disconnects_every_pooled_connection() -> None:
     await backend.aclose()
 
     assert not any(conn.is_connected for conn in connections)
+
+
+# --- get_many / set_many (#249) ---
+
+
+@requires_redis
+async def test_redis_set_many_applies_the_ttl_to_every_key(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    client = async_redis_backend.client
+    make_key = async_redis_backend._make_key
+
+    await async_redis_backend.set_many({"sm-a": entry, "sm-b": entry}, ttl=120)
+    await async_redis_backend.set_many({"sm-forever": entry})
+
+    assert 0 < await client.ttl(make_key("sm-a")) <= 120
+    assert 0 < await client.ttl(make_key("sm-b")) <= 120
+    assert await client.ttl(make_key("sm-forever")) == -1
+
+
+@requires_redis
+async def test_redis_set_many_is_one_transaction(
+    async_redis_backend: AsyncRedisCacheBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MULTI/EXEC, so a reader never sees half a batch."""
+    client = async_redis_backend.client
+    real_pipeline = client.pipeline
+    transactional: list[bool] = []
+
+    def pipeline(transaction: bool = True) -> Any:
+        transactional.append(transaction)
+        return real_pipeline(transaction=transaction)
+
+    monkeypatch.setattr(client, "pipeline", pipeline)
+    entry = CacheEntry(fingerprint="e", content=b"v")
+
+    await async_redis_backend.set_many({"sm-a": entry, "sm-b": entry}, ttl=60)
+
+    assert transactional == [True]
+    assert len(await async_redis_backend.get_many(["sm-a", "sm-b"])) == 2
+
+
+@requires_redis
+async def test_redis_get_many_leaves_out_a_value_it_cannot_decode(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    await async_redis_backend.set("gm-ok", entry)
+    await async_redis_backend.client.set(
+        async_redis_backend._make_key("gm-junk"), b"not an entry"
+    )
+
+    assert await async_redis_backend.get("gm-junk") is None
+    assert await async_redis_backend.get_many(["gm-junk", "gm-ok"]) == {"gm-ok": entry}
+
+
+@requires_redis_package
+async def test_redis_empty_batches_do_no_io() -> None:
+    """Nothing listens on this port, so a command would raise."""
+    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
+
+    assert await backend.get_many([]) == {}
+    await backend.set_many({})
+    with pytest.raises(ValueError, match="ttl must be a positive"):
+        await backend.set_many({}, ttl=0)
+
+
+@requires_redis_package
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda b: b.get_many(["k"]),
+        lambda b: b.set_many({"k": CacheEntry(fingerprint="e", content=b"v")}),
+    ],
+    ids=["get_many", "set_many"],
+)
+async def test_redis_batches_raise_backend_unavailable(call: Any) -> None:
+    from redis.asyncio.retry import Retry
+    from redis.backoff import NoBackoff
+
+    from fastapi_cachex import BackendUnavailableError
+
+    backend = AsyncRedisCacheBackend(
+        host=REDIS_HOST, port=UNCONNECTED_PORT, retry=Retry(NoBackoff(), 0)
+    )
+
+    with pytest.raises(BackendUnavailableError):
+        await call(backend)

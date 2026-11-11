@@ -8,6 +8,7 @@ import warnings
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import timedelta
 from typing import Any
@@ -328,6 +329,58 @@ class MemcachedBackend(BaseCacheBackend):
         payload = encode_entry(value)
         with _refused_as_too_large(key, payload):
             return command(self._make_key(key), payload, _expiry(ttl), noreply=False)
+
+    @_unavailable
+    async def get_many(self, keys: Iterable[str]) -> dict[str, CacheEntry]:
+        """Retrieve the entries stored under ``keys``, one ``get`` per server."""
+        # Namespaced key -> the caller's key, to name the replies.
+        wanted = {self._make_key(key): key for key in keys}
+        if not wanted:
+            return {}
+        raws = await asyncio.to_thread(self.client.get_many, list(wanted))
+        found = {
+            wanted[prefixed]: value
+            for prefixed, raw in raws.items()
+            if (value := decode_entry(raw)) is not None
+        }
+        logger.debug(
+            "Memcached GET_MANY; requested=%s found=%s", len(wanted), len(found)
+        )
+        return found
+
+    @_unavailable
+    async def set_many(
+        self, entries: Mapping[str, CacheEntry], ttl: int | timedelta | None = None
+    ) -> None:
+        """Store every entry in ``entries``, one batch of ``set`` per server.
+
+        Not atomic: Memcached stores each entry on its own, so a failure (a
+        value over the item size limit, a server that goes away) can leave
+        some of the batch stored and the rest not.
+
+        Raises:
+            ValueTooLargeError: If the server refused a value as too large.
+                Other entries of the batch may have been stored.
+        """
+        # Converted up front so a ttl Memcached cannot store fails before I/O.
+        exptime = _expiry(validate_ttl(ttl))
+        if not entries:
+            return
+        await asyncio.to_thread(self._store_many, entries, exptime)
+        logger.debug("Memcached SET_MANY; count=%s ttl=%s", len(entries), ttl)
+
+    def _store_many(self, entries: Mapping[str, CacheEntry], exptime: int) -> None:
+        """Send ``set_many``; a refused value raises ``ValueTooLargeError``."""
+        payloads = {key: encode_entry(value) for key, value in entries.items()}
+        # The server does not say which value it refused; the largest one is
+        # the one over the limit.
+        largest = max(payloads, key=lambda key: len(payloads[key]))
+        with _refused_as_too_large(largest, payloads[largest]):
+            self.client.set_many(
+                {self._make_key(key): payload for key, payload in payloads.items()},
+                exptime,
+                noreply=False,
+            )
 
     @_unavailable
     async def get_and_delete(self, key: str) -> CacheEntry | None:

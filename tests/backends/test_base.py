@@ -106,6 +106,18 @@ async def test_delete_many_fallback_deletes_one_by_one(backend: DictBackend) -> 
     assert backend.store == {}
 
 
+async def test_set_many_fallback_sets_one_by_one_with_the_ttl(
+    backend: DictBackend,
+) -> None:
+    one = CacheEntry(fingerprint="e", content=b"1")
+    two = CacheEntry(fingerprint="e", content=b"2")
+
+    await backend.set_many({"a": one, "b": two}, ttl=timedelta(minutes=1))
+
+    assert backend.store == {"a": (one, 60), "b": (two, 60)}
+    assert await backend.get_many(["b", "missing", "a", "b"]) == {"b": two, "a": one}
+
+
 async def test_set_if_absent_fallback_stores_only_the_first_value(
     backend: DictBackend,
 ) -> None:

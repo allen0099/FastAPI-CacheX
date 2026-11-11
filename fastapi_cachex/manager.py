@@ -14,7 +14,9 @@ import time
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
 from typing import TypeVar
@@ -285,7 +287,11 @@ class CacheManager:
         cached = await self.backend.get(self._cache_key(key))
         if cached is None:
             return default
+        return self._decode(key, cached, default, type_)
 
+    @staticmethod
+    def _decode(key: str, cached: CacheEntry, default: Any, type_: Any) -> Any:
+        """The value in ``cached``, or ``default`` if it cannot be decoded."""
         try:
             if type_ is None:
                 return json.loads(cached.content)
@@ -324,6 +330,62 @@ class CacheManager:
 
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
+
+    async def get_many(
+        self, keys: Iterable[str], *, type_: Any = None
+    ) -> dict[str, Any]:
+        """Retrieve several values in one backend call.
+
+        Args:
+            keys: Logical cache keys (without the manager's prefix). A key
+                given twice is read once.
+            type_: A type to validate each value into, as for ``get()``.
+
+        Returns:
+            The values found, by key. A key that is missing, expired, or
+            whose stored content cannot be decoded (or does not fit
+            ``type_``) is left out, so a stored ``None`` can be told from a
+            miss.
+        """
+        by_cache_key = {self._cache_key(key): key for key in keys}
+        cached = await self.backend.get_many(by_cache_key)
+        values: dict[str, Any] = {}
+        for cache_key, key in by_cache_key.items():
+            if cache_key not in cached:
+                continue
+            value = self._decode(key, cached[cache_key], _SENTINEL, type_)
+            if value is not _SENTINEL:
+                values[key] = value
+        return values
+
+    async def set_many(
+        self, mapping: Mapping[str, Any], ttl: int | timedelta | None = None
+    ) -> None:
+        """JSON-encode and store several values in one backend call.
+
+        Every value is encoded before anything is stored, so a value that
+        cannot be encoded stores nothing. Whether the backend then writes
+        the batch as a whole is up to the backend: memory and Redis do,
+        Memcached does not (see ``BaseCacheBackend.set_many``).
+
+        Args:
+            mapping: Values by logical cache key (without the manager's
+                prefix); each value as for ``set()``.
+            ttl: Time-to-live of every value, in seconds or as a
+                ``timedelta``. If None, uses ``self.default_ttl``.
+
+        Raises:
+            TypeError: If a value cannot be encoded as JSON, or ``ttl`` is
+                not an int or a ``timedelta``.
+            ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
+                or not a whole number of seconds.
+        """
+        effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
+        entries = {
+            self._cache_key(key): self._encode(value) for key, value in mapping.items()
+        }
+        await self.backend.set_many(entries, ttl=effective_ttl)
+        logger.debug("Cache SET_MANY; count=%s ttl=%s", len(entries), effective_ttl)
 
     async def add(
         self, key: str, value: Any, ttl: int | timedelta | None = None

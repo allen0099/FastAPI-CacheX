@@ -28,6 +28,10 @@ user = await manager.get("user:42")  # {"name": "Alice"}
 await manager.delete("user:42")
 await manager.clear_prefix()  # clear everything under "myapp:"
 
+# Several keys in one backend call. Keys that are not cached are left out.
+await manager.set_many({"user:1": {"name": "Ann"}, "user:2": {"name": "Ben"}}, ttl=300)
+users = await manager.get_many(["user:1", "user:2", "user:3"])  # no "user:3"
+
 # Compute-on-miss: `factory` runs only when the key is missing, expired, or
 # undecodable. It may be sync or async.
 profile = await manager.get_or_set("user:42", lambda: load_user(42), ttl=300)
@@ -101,6 +105,17 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
 - `set()` stores what JSON can encode, and what pydantic can turn into JSON
   (models, dataclasses, `datetime`, `Decimal`, `UUID`, sets; see
   [JSON round-trip](#json-round-trip)). Any other value raises `TypeError`.
+- `get_many(keys, type_=None)` and `set_many(mapping, ttl=None)` read and
+  write several keys in one backend call, with the same prefix, encoding and
+  `ttl` rules as `get()` and `set()`. `get_many()` returns a dict of the keys
+  it found. A key that is missing, expired or undecodable (or, with `type_`,
+  holds a value that does not fit) is left out, so a stored `None` is in the
+  dict and a miss is not; a key given twice is read once. `set_many()`
+  encodes every value before it writes anything, so a value that cannot be
+  encoded raises `TypeError` and stores nothing. The write itself is all or
+  nothing on the memory and Redis backends. On Memcached each key is stored
+  on its own, so a failure can leave part of the batch stored (see
+  [Batch reads and writes](BACKENDS.md#batch-reads-and-writes)).
 - `increment(key, delta=1, ttl=None)` adds to a counter atomically and returns
   its new value, for quotas and rate limits. It is the backend's `increment()`
   under the manager's prefix: a missing key counts as 0, `ttl` applies when
