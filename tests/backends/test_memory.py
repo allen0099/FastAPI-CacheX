@@ -1200,17 +1200,25 @@ def test_memory_backend_warns_when_web_concurrency_says_several_workers(
     message = str(record[0].message)
     assert "WEB_CONCURRENCY is 4" in message
     # The message ends with the line that silences it, and that line works.
-    assert "filterwarnings('ignore', message='memory backend with several" in message
+    assert message.endswith(
+        "warnings.filterwarnings('ignore', message='memory backend with several "
+        "workers')."
+    )
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         warnings.filterwarnings("ignore", message="memory backend with several workers")
         MemoryBackend()
 
 
-def test_memory_fallback_warning_names_the_application_line(
+def test_memory_fallback_warns_too(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The fallback is built inside the library; the warning still points here."""
+    """The fallback is built inside the library, where this matters most.
+
+    Called directly, the warning names this file. During a request the
+    dependency is called by FastAPI, so it names a FastAPI line: no
+    application frame is on the stack.
+    """
     from fastapi_cachex.dependencies import get_cache_backend
 
     monkeypatch.setenv("WEB_CONCURRENCY", "2")
