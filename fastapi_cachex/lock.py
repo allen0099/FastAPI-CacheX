@@ -54,7 +54,8 @@ class CacheLock:
             that loop; and it runs until ``release()``, so a holder that
             never releases keeps the lock for as long as its process lives.
             Use ``async with``, and read ``lost`` to learn that a renewal
-            failed.
+            failed. On Memcached use a ``ttl`` of at least 2 seconds: an
+            entry there lives up to one second less than its ``ttl``.
 
     Raises:
         TTLTypeError: If ``ttl`` is not an ``int`` or a ``timedelta`` (also

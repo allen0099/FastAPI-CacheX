@@ -150,6 +150,20 @@ async def test_a_failed_renewal_is_retried() -> None:
     assert await lock.release() is True
 
 
+async def test_the_ttl_without_a_renewal_counts_from_the_last_success() -> None:
+    """An outage late in a long hold is still given a whole ttl."""
+    backend = CountingBackend()
+    lock = CacheLock("job", ttl=1, backend=backend, auto_extend=True)
+    await lock.acquire()
+    await asyncio.sleep(1.1)  # held for longer than the ttl, renewed thrice
+    backend.fail = True
+    await asyncio.sleep(0.4)  # one failed renewal
+
+    assert not _lost(lock)
+    backend.fail = False
+    assert await lock.release() is True
+
+
 async def test_lost_is_set_by_a_manual_extend_or_release_and_reset_by_acquire() -> None:
     backend = MemoryBackend()
     lock = CacheLock("job", ttl=30, backend=backend, blocking=False)
