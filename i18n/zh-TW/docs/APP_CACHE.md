@@ -203,7 +203,7 @@ await cache.get("users", type_=list[User])
 
 - 存入的值若不符合型別（例如在新增欄位之前寫入的），會被當成無法解碼的值：`get()` 記錄一筆警告並回傳預設值，`get_or_set()` 則重新執行 `factory` 並覆寫它。
 - 若 `factory` 回傳的值不符合 `type_`，`get_or_set()` 會拋出 pydantic 的 `ValidationError`。
-- `@cached` 不會從函式的型別註記讀取型別；請傳入 `type_=`。未傳入時，函式回傳的仍是 JSON 形式，與之前相同。
+- `@cached` 目前還不會從函式的型別註記讀取型別；請傳入 `type_=`。未傳入時，函式回傳的是 JSON 形式。從 0.6.0 起，未傳入 `type_` 時會使用回傳型別註記；在那之前，`FutureWarning` 會指出哪些函式將受影響，而 `type_=None` 在兩個版本中都維持 JSON 形式。見[升級至 0.6.0](MIGRATING_0_6.md#cached-return-annotation)。
 - 存入的 `None` 不符合 `type_=User`。值可能不存在時，請明確寫出：`type_=User | None`。
 - 帶有 `SecretStr` 或 `SecretBytes` 欄位的模型或 dataclass（不論巢狀多深）會被拒絕並拋出 `TypeError`。pydantic 會把該欄位寫成 `"**********"`，型別化讀取之後就會交回一個機密值是這串遮罩的模型。請排除該欄位（`user.model_dump(mode="json", exclude={"password"})`），或改為快取你自己組出的 `dict`。
 - pydantic 的 `ValidationError` 會引用它拒絕的值，因此 `factory` 結果不符時拋出的例外可能把該值寫進你的 log。

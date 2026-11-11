@@ -3,9 +3,12 @@
 import asyncio
 import hashlib
 import json
+import warnings
 from collections.abc import AsyncIterator
+from datetime import datetime
 from datetime import timedelta
 from typing import Any
+from typing import Optional
 
 import pytest
 import pytest_asyncio
@@ -199,7 +202,7 @@ async def test_without_ttl_the_managers_default_applies(
 
 
 async def test_the_value_comes_back_as_json_gives_it(manager: CacheManager) -> None:
-    @cached(ttl=60, manager=manager)
+    @cached(ttl=60, manager=manager, type_=None)
     async def pair() -> tuple[int, int]:
         return (1, 2)
 
@@ -347,7 +350,7 @@ async def test_a_model_result_comes_back_as_json_unless_a_type_is_given(
     """Stored as pydantic writes it; `type_` turns it back, on a miss and a hit (#249)."""
     calls = 0
 
-    @cached(ttl=60, manager=manager)
+    @cached(ttl=60, manager=manager, type_=None)
     async def plain() -> _Point:
         return _Point(x=1, y=2)
 
@@ -361,3 +364,112 @@ async def test_a_model_result_comes_back_as_json_unless_a_type_is_given(
     assert await typed() == _Point(x=1, y=2)
     assert await typed() == _Point(x=1, y=2)
     assert calls == 1
+
+
+# --- The 0.6.0 notice for return annotations (#533) ---
+
+
+def test_an_annotation_the_json_form_lacks_warns_at_the_decorators_line(
+    manager: CacheManager,
+) -> None:
+    with pytest.warns(FutureWarning, match="cached return annotation") as record:
+
+        @cached(ttl=60, manager=manager)
+        async def load() -> _Point:
+            return _Point(x=1, y=2)
+
+    assert record[0].filename == __file__
+    message = str(record[0].message)
+    assert "load()" in message
+    assert "type_=None" in message
+    assert "issues/533" in message
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        tuple[int, int],
+        list[_Point],
+        dict[str, _Point],
+        _Point | None,
+        datetime,
+        set[int],
+    ],
+)
+def test_annotations_validation_would_change_warn(annotation: Any) -> None:
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = annotation
+
+    with pytest.warns(FutureWarning, match="cached return annotation"):
+        cached(ttl=60)(load)
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        Any,
+        None,
+        str,
+        int,
+        float,
+        bool,
+        object,
+        list,
+        dict,
+        list[int],
+        dict[str, Any],
+        dict[str, list[str | None]],
+        str | None,
+        Optional[int],  # noqa: UP045 - the typing.Union spelling
+        "_DefinedLater",
+    ],
+)
+def test_annotations_the_json_form_already_has_stay_quiet(annotation: Any) -> None:
+    """Also one that cannot be resolved: there is nothing to validate into."""
+
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = annotation
+
+    cached(ttl=60)(load)  # filterwarnings = error would raise
+
+
+@pytest.mark.parametrize("type_", [None, _Point])
+def test_passing_type_makes_the_choice_and_silences_the_notice(type_: Any) -> None:
+    @cached(ttl=60, type_=type_)
+    async def load() -> _Point:
+        return _Point(x=1, y=2)
+
+
+def test_a_function_without_a_return_annotation_stays_quiet() -> None:
+    @cached(ttl=60)
+    async def load():
+        return 1
+
+
+async def test_not_passing_type_still_returns_the_json_form(
+    manager: CacheManager,
+) -> None:
+    """The notice announces the change; 0.5.x keeps the behaviour."""
+    with pytest.warns(FutureWarning, match="cached return annotation"):
+
+        @cached(ttl=60, manager=manager)
+        async def load() -> _Point:
+            return _Point(x=1, y=2)
+
+    assert await load() == {"x": 1, "y": 2}  # type: ignore[comparison-overlap]
+
+
+def test_the_documented_filter_silences_the_notice() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        warnings.filterwarnings(
+            "ignore", message="cached return annotation", category=FutureWarning
+        )
+
+        @cached(ttl=60)
+        async def load() -> _Point:
+            return _Point(x=1, y=2)

@@ -4,6 +4,9 @@ import hashlib
 import inspect
 import json
 import logging
+import types
+import typing
+import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
 from datetime import timedelta
@@ -28,6 +31,66 @@ R = TypeVar("R")
 # Separates the function's name from the digest of its arguments in a default
 # key, as `CacheManager` keys separate their parts.
 _KEY_SEPARATOR = ":"
+
+# ``@cached(type_=...)`` not passed, as opposed to ``type_=None``.
+_UNSET: Any = object()
+
+_JSON_SCALARS = (str, int, float, bool, type(None), object)
+
+_RETURN_ANNOTATION_NOTICE = (
+    "cached return annotation: {name}() is annotated to return {annotation}, "
+    "and from 0.6.0 @cached validates the cached value into that type instead "
+    "of returning its JSON form (a model comes back as a model, not a dict; "
+    "a tuple as a tuple, not a list). Pass type_=<that type> to get this now, "
+    "or type_=None to keep the JSON form "
+    "(https://github.com/allen0099/FastAPI-CacheX/issues/533)."
+)
+
+
+def _return_annotation(func: Callable[..., Any]) -> Any:
+    """The function's resolved return annotation, or ``_UNSET``.
+
+    ``_UNSET`` when there is none or it cannot be resolved here (a forward
+    reference to a name defined later, an import under ``TYPE_CHECKING``).
+    """
+    try:
+        hints = typing.get_type_hints(func)
+    except Exception:  # noqa: BLE001 - whatever evaluating an annotation raises
+        return _UNSET
+    return hints.get("return", _UNSET)
+
+
+def _is_json_shaped(annotation: Any) -> bool:
+    """Whether validating a JSON value into ``annotation`` could not change it.
+
+    ``dict[str, Any]``, ``list[int]``, ``str | None`` and the like: what
+    ``json.loads`` returns already is that type.
+    """
+    if annotation is Any or annotation in _JSON_SCALARS:
+        return True
+    origin, args = typing.get_origin(annotation), typing.get_args(annotation)
+    if annotation in (list, dict):
+        return True
+    if origin is list:
+        return all(_is_json_shaped(arg) for arg in args)
+    if origin is dict:
+        return args[0] is str and _is_json_shaped(args[1])
+    if origin in (typing.Union, types.UnionType):
+        return all(_is_json_shaped(arg) for arg in args)
+    return False
+
+
+def _warn_about_return_annotation(func: Callable[..., Any]) -> None:
+    """Announce the 0.6.0 change for a function it will affect (#533)."""
+    annotation = _return_annotation(func)
+    if annotation is _UNSET or _is_json_shaped(annotation):
+        return
+    warnings.warn(
+        _RETURN_ANNOTATION_NOTICE.format(name=func.__qualname__, annotation=annotation),
+        FutureWarning,
+        # The line that applies the decorator: cached(...)(func).
+        stacklevel=3,
+    )
 
 
 class CachedFunction(Generic[P, R]):
@@ -199,7 +262,7 @@ def cached(
     key: str | Callable[..., str] | None = None,
     manager: CacheManager | None = None,
     lock: bool | None = None,
-    type_: Any = None,
+    type_: Any = _UNSET,
 ) -> _Decorator:
     """Cache what a plain function returns, keyed on its arguments.
 
@@ -237,11 +300,20 @@ def cached(
         type_: The type to validate the cached value into, usually the
             function's return type (``@cached(ttl=60, type_=User)``,
             ``type_=list[User]``), as for ``CacheManager.get(type_=...)``.
-            It is not read from the annotation. A cached value that does not
-            fit it counts as a miss and the function runs again.
+            A cached value that does not fit it counts as a miss and the
+            function runs again. ``None`` returns the JSON form. Not passing
+            it does the same today; from 0.6.0 it will use the function's
+            return annotation, which is announced by the warning below.
 
     Returns:
         A decorator turning the function into a ``CachedFunction``
+
+    Warns:
+        FutureWarning: When the decorator is applied, if ``type_`` is not
+            passed and the function's return annotation is a type the JSON
+            form does not already have (a model, a ``tuple``, a
+            ``datetime``). From 0.6.0 the cached value is validated into it
+            (#533). Pass ``type_`` to choose now.
 
     Raises:
         TTLTypeError: When the decorator is applied, if ``ttl`` is not an
@@ -264,8 +336,15 @@ def cached(
         raise CacheXError(msg)
 
     def decorator(func: Callable[P, Any]) -> CachedFunction[P, Any]:
+        if type_ is _UNSET:
+            _warn_about_return_annotation(func)
         return CachedFunction(
-            func, ttl=ttl_seconds, key=key, manager=manager, lock=lock, type_=type_
+            func,
+            ttl=ttl_seconds,
+            key=key,
+            manager=manager,
+            lock=lock,
+            type_=None if type_ is _UNSET else type_,
         )
 
     return decorator
