@@ -20,6 +20,49 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-11
+
+### Changed
+
+- **The `redis` extra requires `orjson` 3.8.0 or later.** The floor was 3.4.7,
+  which has no Python 3.11 wheels; 3.8.0 is the first release with them on
+  Linux, macOS and Windows. ([#491](https://github.com/allen0099/FastAPI-CacheX/issues/491))
+- **`MemcachedBackend` timeouts default to 1 second.** `connect_timeout` and
+  `timeout` defaulted to 5 seconds; the 0.5.x releases from 0.5.3 on warned
+  about the change. Pass
+  `connect_timeout=5, timeout=5` to keep the old values. `None`, which
+  those releases accepted as "not passed", now raises `TypeError`. See
+  [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#memcached-timeouts). ([#516](https://github.com/allen0099/FastAPI-CacheX/issues/516))
+- **`@cached` validates the cached value into the function's return
+  annotation.** Without `type_`, a function annotated `-> User` now returns a
+  `User` instead of a `dict`, and one annotated `-> tuple[int, int]` a tuple
+  instead of a list, on the first call and on a hit. `type_=None` keeps the JSON
+  form; functions without an annotation, or with one the JSON form already has
+  (`dict[str, Any]`, `list[int]`), are unchanged; an annotation that cannot be
+  resolved or that pydantic cannot validate keeps the JSON form with a
+  `UserWarning`. 0.5.6 announced this with a
+  `FutureWarning`. See
+  [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#cached-return-annotation). ([#533](https://github.com/allen0099/FastAPI-CacheX/issues/533))
+
+### Removed
+
+- **Python 3.10 is no longer supported.** 0.6.0 requires Python 3.11 or later;
+  Python 3.10 reached its end of life in October 2026, and the 0.5.x
+  releases from 0.5.2 on warned about this at import time. `pip` and `uv` keep
+  installing the last 0.5.x release on Python 3.10. See
+  [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#python-311). ([#491](https://github.com/allen0099/FastAPI-CacheX/issues/491))
+- **`/cached-hits` no longer returns `cached_hits`, `total_hits`, `valid_hits`
+  and `expired_hits`.** They were deprecated in 0.5.1; read `entries`,
+  `total_entries`, `valid_entries` and `expired_entries`, which hold the same
+  values. See
+  [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#cached-hits-fields). ([#507](https://github.com/allen0099/FastAPI-CacheX/issues/507))
+
+### Fixed
+
+- **A typed read accepts a `strict=True` model with a `datetime` or tuple
+  field.** `get(type_=...)`, `get_or_set(type_=...)` and `@cached` validate the
+  stored value as JSON instead of failing validation on it. ([#533](https://github.com/allen0099/FastAPI-CacheX/issues/533))
+
 ## [0.5.6] - 2026-11-11
 
 ### Deprecated
@@ -1609,7 +1652,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.3...v0.5.4
