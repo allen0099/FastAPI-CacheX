@@ -24,8 +24,9 @@ class RedisConfig(BaseModel):
         default=None,
         description=(
             "Connection URL (redis://, rediss:// or unix://). It may hold a "
-            "password, hence the secret type. When set, it replaces host, "
-            "port, password, db, username and ssl."
+            "password, hence the secret type. When set, host and port are "
+            "not used; password, db and username apply only where the URL "
+            "does not name its own; ssl must stay False (use rediss://)."
         ),
     )
     socket_timeout: float = Field(

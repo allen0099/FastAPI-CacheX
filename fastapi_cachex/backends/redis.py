@@ -8,6 +8,8 @@ from collections.abc import Iterable
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from typing import Any
+from urllib.parse import parse_qs
+from urllib.parse import urlsplit
 
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
@@ -122,6 +124,29 @@ def _key_text(key: bytes | str) -> str | None:
         return None
 
 
+def _check_url_arguments(url: str, kwargs: dict[str, Any]) -> None:
+    """Refuse what cannot be combined with ``url``, before any command runs.
+
+    redis-py would accept each of these and fail on the first command, which
+    ``@cache`` logs as a miss for ever. The messages leave the URL out: it
+    may hold a password.
+    """
+    if "connection_pool" in kwargs:
+        msg = "pass either url or connection_pool, not both: a pool names its server"
+        raise CacheXError(msg)
+    if "ssl" in kwargs:
+        msg = "with url, TLS is chosen by the scheme: use rediss:// instead of ssl="
+        raise CacheXError(msg)
+    for name in _REMOVED_KWARGS:
+        if name in parse_qs(urlsplit(url).query, keep_blank_values=True):
+            msg = (
+                f"the Redis URL sets {name!r} in its query string: it was "
+                "removed in version 0.4.0. Remove it; the client reads raw "
+                "bytes and entries are always UTF-8."
+            )
+            raise TypeError(msg)
+
+
 class AsyncRedisCacheBackend(BaseCacheBackend):
     """Async Redis cache backend implementation.
 
@@ -156,8 +181,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             url: A connection URL, as ``redis.asyncio.Redis.from_url`` takes
                 it: ``redis://[user:password@]host[:port][/db]``,
                 ``rediss://`` for TLS, ``unix://`` for a socket. When given,
-                ``host``, ``port``, ``password`` and ``db`` are not used; the
-                URL names them. See also ``from_url()``.
+                ``host`` and ``port`` are not used, and ``password``, ``db``
+                and ``username`` apply only where the URL does not name its
+                own. An option in the URL's query string
+                (``?socket_timeout=5``) wins over the argument of the same
+                name. See also ``from_url()``.
             socket_timeout: Timeout for socket operations (in seconds)
             socket_connect_timeout: Timeout for socket connection (in seconds)
             key_prefix: Prefix for all cache keys (default: 'fastapi_cachex:')
@@ -170,9 +198,13 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
 
         Raises:
             CacheXError: If redis-py is not installed
-            TypeError: If ``encoding`` or ``decode_responses`` is passed; both
-                were removed in 0.4.0. The client always reads raw bytes, and
-                entries are always UTF-8.
+            CacheXError: If ``url`` is passed with ``connection_pool`` (a
+                pool already names its server) or with ``ssl`` (TLS is the
+                ``rediss://`` scheme)
+            TypeError: If ``encoding`` or ``decode_responses`` is passed, as
+                an argument or in the URL's query string; both were removed
+                in 0.4.0. The client always reads raw bytes, and entries are
+                always UTF-8.
         """
         try:
             # Import top-level package first so tests that monkeypatch
@@ -210,6 +242,12 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 host=host, port=port, password=password, db=db, **options
             )
         else:
+            _check_url_arguments(url, kwargs)
+            # As redis-py does: used only where the URL does not say.
+            if password is not None:
+                options["password"] = password
+            if db:
+                options["db"] = db
             # The client owns the pool from_url() builds, so aclose() closes it.
             self.client = AsyncRedis.from_url(url, **options)
         self.key_prefix = key_prefix
@@ -252,14 +290,14 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             "key_prefix": config.key_prefix,
             "protocol": config.protocol,
         }
-        if config.url is not None:
-            return cls(url=config.url.get_secret_value(), **shared)
         # Passed only when set, so a subclass whose __init__ predates these
         # fields keeps working with a config that does not use them.
         if config.username is not None:
             shared["username"] = config.username
         if config.ssl:
             shared["ssl"] = True
+        if config.url is not None:
+            shared["url"] = config.url.get_secret_value()
         return cls(
             host=config.host,
             port=config.port,

@@ -109,7 +109,14 @@ backend = AsyncRedisCacheBackend(
 )
 ```
 
-`from_url(url, **kwargs)` 等同於 `AsyncRedisCacheBackend(url=url, **kwargs)`：URL 取代 `host`、`port`、`password` 與 `db`，而 `key_prefix`、逾時、`protocol` 與 redis-py 的選項照舊傳入。`username`、`ssl` 以及其他 `ssl_*` 選項（`ssl_ca_certs`、`ssl_cert_reqs` 等）是 redis-py 自己的參數，會直接交給它的用戶端。`RedisConfig` 也有 `username`、`ssl` 與 `url` 欄位；`url` 是 `SecretStr`，因為它可能含有密碼，設定後會取代其他連線欄位。
+`from_url(url, **kwargs)` 等同於 `AsyncRedisCacheBackend(url=url, **kwargs)`，而 `key_prefix`、逾時、`protocol` 與 redis-py 的選項照舊傳入。使用 URL 時：
+
+- 不會用到 `host` 與 `port`。`password`、`db` 與 `username` 只在 URL 沒有指定時才套用，所以不含憑證的 URL 可以搭配從 secret store 取得的密碼。
+- TLS 由 `rediss://` scheme 決定。URL 與 `ssl=` 或 `connection_pool=` 一起傳入會拋出 `CacheXError`。
+- URL 查詢字串中的選項（`?socket_timeout=5`）優先於同名的參數。`decode_responses` 與 `encoding` 寫在那裡也會被拒絕，和當作參數傳入時一樣。
+- redis-py 不會對由 URL 建立的用戶端套用預設的重試，因此除非傳入 `retry=`，[快速失敗](#failing-fast-when-redis-is-down)一節的時間會是「不重試」的情況。
+
+`username`、`ssl` 以及其他 `ssl_*` 選項（`ssl_ca_certs`、`ssl_cert_reqs` 等）是 redis-py 自己的參數，會直接交給它的用戶端。`RedisConfig` 也有 `username`、`ssl` 與 `url` 欄位，規則相同；`url` 是 `SecretStr`，因為它可能含有密碼。
 
 使用 **Sentinel** 時，請建立 redis-py 的連線池並以 `connection_pool=` 傳入。此時後端的 `host`、`port`、`password`、`db`、逾時與 `protocol` 都不會用到，所以需要的設定請放在連線池上，並自行關閉連線池（見[關閉後端](#closing-a-backend)）：
 

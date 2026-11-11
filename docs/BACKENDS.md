@@ -155,13 +155,26 @@ backend = AsyncRedisCacheBackend(
 )
 ```
 
-`from_url(url, **kwargs)` is `AsyncRedisCacheBackend(url=url, **kwargs)`: the
-URL replaces `host`, `port`, `password` and `db`, and `key_prefix`, the
-timeouts, `protocol` and redis-py options are passed as before. `username`,
-`ssl` and the other `ssl_*` options (`ssl_ca_certs`, `ssl_cert_reqs`, ...) are
-redis-py's own and go straight to its client. `RedisConfig` has `username`,
-`ssl` and `url` fields too; `url` is a `SecretStr`, since it may hold the
-password, and when set it is used instead of the other connection fields.
+`from_url(url, **kwargs)` is `AsyncRedisCacheBackend(url=url, **kwargs)`, and
+`key_prefix`, the timeouts, `protocol` and redis-py options are passed as
+before. With a URL:
+
+- `host` and `port` are not used. `password`, `db` and `username` apply only
+  where the URL does not name its own, so a URL without credentials can take
+  the password from a secret store.
+- TLS is the `rediss://` scheme. Passing `ssl=`, or a `connection_pool=`,
+  together with a URL raises `CacheXError`.
+- An option in the URL's query string (`?socket_timeout=5`) wins over the
+  argument of the same name. `decode_responses` and `encoding` are refused
+  there as they are as arguments.
+- redis-py does not apply its default retries to a client built from a URL, so
+  the timings under [Failing fast](#failing-fast-when-redis-is-down) are those
+  of "no retries" unless you pass `retry=`.
+
+`username`, `ssl` and the other `ssl_*` options (`ssl_ca_certs`,
+`ssl_cert_reqs`, ...) are redis-py's own and go straight to its client.
+`RedisConfig` has `username`, `ssl` and `url` fields too, with the same rules;
+`url` is a `SecretStr`, since it may hold the password.
 
 For **Sentinel**, build redis-py's pool and pass it as `connection_pool=`. The
 backend's `host`, `port`, `password`, `db`, timeouts and `protocol` are then

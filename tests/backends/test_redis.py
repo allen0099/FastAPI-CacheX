@@ -102,6 +102,52 @@ def test_redis_config_carries_username_ssl_and_url() -> None:
     assert backend.key_prefix == "c:"
 
 
+@requires_redis_package
+@pytest.mark.parametrize(
+    ("url", "kwargs", "error", "message"),
+    [
+        ("redis://h/0", {"connection_pool": object()}, CacheXError, "not both"),
+        ("redis://h/0", {"ssl": True}, CacheXError, "rediss://"),
+        ("redis://h/0?decode_responses=true", {}, TypeError, "decode_responses"),
+        ("redis://h/0?encoding=latin-1", {}, TypeError, "encoding"),
+    ],
+)
+def test_redis_url_refuses_what_would_only_fail_on_the_first_command(
+    url: str, kwargs: dict[str, Any], error: type[Exception], message: str
+) -> None:
+    """redis-py builds a client from each of these; `@cache` would miss for ever."""
+    with pytest.raises(error, match=message) as excinfo:
+        AsyncRedisCacheBackend.from_url(url, **kwargs)
+
+    # The URL may hold a password.
+    assert "redis://" not in str(excinfo.value)
+
+
+@requires_redis_package
+def test_redis_url_takes_password_and_db_where_it_names_none() -> None:
+    _, kwargs = _connection(
+        AsyncRedisCacheBackend(url="redis://h:1", password="kwpw", db=4, protocol=3)
+    )
+    assert (kwargs["password"], kwargs["db"], kwargs["protocol"]) == ("kwpw", 4, 3)
+
+    _, kwargs = _connection(
+        AsyncRedisCacheBackend(url="redis://:urlpw@h:1/2", password="kwpw", db=4)
+    )
+    assert (kwargs["password"], kwargs["db"]) == ("urlpw", 2)
+
+
+@requires_redis_package
+def test_redis_config_url_with_ssl_is_refused_instead_of_dropping_tls() -> None:
+    from pydantic import SecretStr
+
+    from fastapi_cachex.backends.config import RedisConfig
+
+    config = RedisConfig(url=SecretStr("redis://h:1"), ssl=True)
+
+    with pytest.raises(CacheXError, match="rediss://"):
+        AsyncRedisCacheBackend.load_from_config(config)
+
+
 @requires_redis
 @pytest.mark.asyncio
 async def test_redis_from_url_authenticates_as_an_acl_user() -> None:
