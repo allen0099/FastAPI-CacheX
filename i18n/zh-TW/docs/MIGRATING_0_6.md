@@ -114,3 +114,16 @@ filterwarnings = [
     "ignore:cached return annotation:FutureWarning",
 ]
 ```
+
+## `/cached-hits` 不再有 `*_hits` 欄位 {#cached-hits-fields}
+
+監控路由 `GET {prefix}/cached-hits`（見 `add_routes()`）原本把每個值回報兩次：一次放在 `entries`、`total_entries`、`valid_entries` 與 `expired_entries`，另一次放在較舊的 `cached_hits`、`total_hits`、`valid_hits` 與 `expired_hits`。舊名稱讓人以為是由快取回應的請求數，實際上統計的是已儲存的項目。舊名稱在 0.5.1 已棄用，並在 0.6.0 移除（[#507](https://github.com/allen0099/FastAPI-CacheX/issues/507)）。
+
+| 已移除 | 請改讀 |
+|---|---|
+| `cached_hits` | `entries` |
+| `total_hits` | `total_entries` |
+| `valid_hits` | `valid_entries` |
+| `expired_hits` | `expired_entries` |
+
+兩者的值相同，因此讀取這個回應的儀表板或腳本只需要改用新名稱；新名稱從 0.5.1 起就存在，所以可以在升級之前先切換。`unique_routes` 與 `summary` 不變。

@@ -48,10 +48,10 @@ class TestCachedHitsRoute:
         response = client.get("/cached-hits")
         assert response.status_code == 200
         data = response.json()
-        assert data["cached_hits"] == []
-        assert data["total_hits"] == 0
-        assert data["valid_hits"] == 0
-        assert data["expired_hits"] == 0
+        assert data["entries"] == []
+        assert data["total_entries"] == 0
+        assert data["valid_entries"] == 0
+        assert data["expired_entries"] == 0
 
     def test_cached_hits_empty_cache(self, app, client, setup_cache):
         """Test /cached-hits returns empty structure when cache is empty."""
@@ -60,9 +60,9 @@ class TestCachedHitsRoute:
         response = client.get("/cached-hits")
         assert response.status_code == 200
         data = response.json()
-        assert data["cached_hits"] == []
-        assert data["total_hits"] == 0
-        assert data["valid_hits"] == 0
+        assert data["entries"] == []
+        assert data["total_entries"] == 0
+        assert data["valid_entries"] == 0
         assert data["unique_routes"] == 0
 
     def test_cached_hits_with_entries(self, app, client, setup_cache):
@@ -94,19 +94,17 @@ class TestCachedHitsRoute:
         assert response.status_code == 200
         data = response.json()
 
-        assert data["total_hits"] == 2
-        assert data["valid_hits"] == 2
-        assert data["expired_hits"] == 0
+        assert data["total_entries"] == 2
+        assert data["valid_entries"] == 2
+        assert data["expired_entries"] == 0
         assert data["unique_routes"] == 2
-        assert len(data["cached_hits"]) == 2
+        assert len(data["entries"]) == 2
 
         # Check summary
         assert data["summary"]["total_cached_entries"] == 2
         assert data["summary"]["active_entries"] == 2
-        assert set(data["summary"]["cached_paths"]) == {
-            "/api/users",
-            "/api/products",
-        }
+        # Sorted, each path once.
+        assert data["summary"]["cached_paths"] == ["/api/products", "/api/users"]
 
     def test_cached_hits_route_structure(self, app, client, setup_cache):
         """Test that cached hit records have correct structure."""
@@ -123,8 +121,8 @@ class TestCachedHitsRoute:
         assert response.status_code == 200
         data = response.json()
 
-        assert len(data["cached_hits"]) == 1
-        hit = data["cached_hits"][0]
+        assert len(data["entries"]) == 1
+        hit = data["entries"][0]
 
         # Verify structure
         assert "cache_key" in hit
@@ -158,7 +156,7 @@ class TestCachedHitsRoute:
         response = client.get("/admin/cache/cached-hits")
         assert response.status_code == 200
         data = response.json()
-        assert data["total_hits"] == 1
+        assert data["total_entries"] == 1
 
     def test_cached_hits_multiple_query_variations(self, app, client, setup_cache):
         """Test /cached-hits shows different cache keys for query params."""
@@ -177,12 +175,12 @@ class TestCachedHitsRoute:
         assert response.status_code == 200
         data = response.json()
 
-        assert data["total_hits"] == 2
+        assert data["total_entries"] == 2
         assert data["unique_routes"] == 1  # Same path
-        assert len(data["cached_hits"]) == 2
+        assert len(data["entries"]) == 2
 
         # Check that query params are different
-        query_params = {hit["query_params"] for hit in data["cached_hits"]}
+        query_params = {hit["query_params"] for hit in data["entries"]}
         assert "item_id=1" in query_params
         assert "item_id=2" in query_params
 
@@ -480,11 +478,11 @@ class TestRoutesIntegration:
         records_data = records_response.json()
 
         # Both should show 1 cache entry
-        assert hits_data["total_hits"] == 1
+        assert hits_data["total_entries"] == 1
         assert records_data["total_records"] == 1
 
         # Same path should be in both
-        hit_path = hits_data["cached_hits"][0]["path"]
+        hit_path = hits_data["entries"][0]["path"]
         record_path = records_data["cached_records"][0]["path"]
         assert hit_path == record_path == "/api/consistent"
 
@@ -504,8 +502,8 @@ class TestRoutesIntegration:
         # Only the /api/test should be cached
         hits_response = client.get("/cached-hits")
         hits_data = hits_response.json()
-        assert hits_data["total_hits"] == 1
-        assert hits_data["cached_hits"][0]["path"] == "/api/test"
+        assert hits_data["total_entries"] == 1
+        assert hits_data["entries"][0]["path"] == "/api/test"
 
     def test_include_in_schema_parameter(self, app):
         """Test that include_in_schema parameter works."""
@@ -614,9 +612,7 @@ class TestExpiredEntryMonitoring:
         assert response.status_code == 200
         data = response.json()
 
-        expired_records = [
-            r for r in data["cached_hits"] if r["path"] == "/expired-route"
-        ]
+        expired_records = [r for r in data["entries"] if r["path"] == "/expired-route"]
         assert len(expired_records) == 1
         assert expired_records[0]["is_expired"] is True
         assert expired_records[0]["ttl_remaining"] <= 0
@@ -659,7 +655,7 @@ class TestMonitoringEdgeCases:
         hits = client.get("/cached-hits").json()
         records = client.get("/cached-records").json()
 
-        assert [h["path"] for h in hits["cached_hits"]] == ["/route"]
+        assert [h["path"] for h in hits["entries"]] == ["/route"]
         assert [r["path"] for r in records["cached_records"]] == ["/route"]
 
     def test_routes_answer_empty_when_no_backend_is_configured(self, app, client):
@@ -669,7 +665,7 @@ class TestMonitoringEdgeCases:
         hits = client.get("/cached-hits").json()
         records = client.get("/cached-records").json()
 
-        assert hits["total_hits"] == 0
+        assert hits["total_entries"] == 0
         assert hits["summary"]["cached_paths"] == []
         assert records["total_records"] == 0
         assert records["summary"]["estimated_cache_size_kb"] == 0.0
@@ -678,11 +674,11 @@ class TestMonitoringEdgeCases:
 class TestEntryNamedFields:
     """``/cached-hits`` counts entries under entry names (#336).
 
-    The ``cached_hits`` and ``*_hits`` fields stay, with the same values, and
-    are marked deprecated in the OpenAPI schema until 0.6.0 removes them.
+    The ``cached_hits`` and ``*_hits`` fields that held the same values were
+    deprecated in 0.5.1 and removed in 0.6.0 (#507).
     """
 
-    def test_new_fields_list_and_count_the_entries(
+    def test_the_hits_fields_are_gone(
         self, app: FastAPI, client: TestClient, setup_cache: MemoryBackend
     ) -> None:
         add_routes(app, dependencies=[])
@@ -705,11 +701,9 @@ class TestEntryNamedFields:
         assert data["valid_entries"] == 2
         assert data["expired_entries"] == 0
         assert {e["path"] for e in data["entries"]} == {"/a", "/b"}
-        # The deprecated names carry the same values.
-        assert data["cached_hits"] == data["entries"]
-        assert data["total_hits"] == data["total_entries"]
-        assert data["valid_hits"] == data["valid_entries"]
-        assert data["expired_hits"] == data["expired_entries"]
+        # The deprecated names are gone.
+        for name in ("cached_hits", "total_hits", "valid_hits", "expired_hits"):
+            assert name not in data, name
 
     def test_an_expired_entry_is_counted_as_expired(
         self, app: FastAPI, client: TestClient, setup_cache: MemoryBackend
@@ -726,9 +720,11 @@ class TestEntryNamedFields:
         assert data["total_entries"] == 1
         assert data["valid_entries"] == 0
         assert data["expired_entries"] == 1
-        assert data["expired_hits"] == 1
+        # An expired entry is not a cached route.
+        assert data["unique_routes"] == 0
+        assert data["summary"]["cached_paths"] == []
 
-    def test_openapi_marks_only_the_hits_fields_deprecated(
+    def test_openapi_has_only_the_entry_fields(
         self, app: FastAPI, client: TestClient
     ) -> None:
         add_routes(app, include_in_schema=True, dependencies=[])
@@ -736,7 +732,12 @@ class TestEntryNamedFields:
         schema = client.get("/openapi.json").json()["components"]["schemas"]
         properties = schema["CacheHitsResponse"]["properties"]
 
-        for name in ("cached_hits", "total_hits", "valid_hits", "expired_hits"):
-            assert properties[name]["deprecated"] is True, name
-        for name in ("entries", "total_entries", "valid_entries", "expired_entries"):
-            assert "deprecated" not in properties[name], name
+        assert set(properties) == {
+            "entries",
+            "total_entries",
+            "valid_entries",
+            "expired_entries",
+            "unique_routes",
+            "summary",
+        }
+        assert not any("deprecated" in value for value in properties.values())
