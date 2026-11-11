@@ -4,74 +4,54 @@
 
 ## 整體流程 {#overall-flow}
 
+首先，決定要不要使用後端：
+
+```mermaid
+flowchart TD
+    request([請求進入有 @cache 的路由]) --> method{GET 或 HEAD？}
+    method -- 否 --> plain[執行 handler<br/>不加上 Cache-Control]
+    method -- 是 --> nostore{no_store？}
+    nostore -- 是 --> ns[執行 handler<br/>Cache-Control: no-store]
+    nostore -- 否 --> skipped{略過後端？}
+    skipped -- 是 --> uncached[執行 handler<br/>不讀取也不寫入後端]
+    skipped -- 否 --> cached([使用快取的流程，見下圖])
 ```
-HTTP 請求抵達
-    ↓
-@cache 裝飾器攔截請求（只有 GET 與 HEAD 會經過快取，HEAD
-讀取 GET 的項目；其他所有方法直接執行 handler，也不會帶上
-Cache-Control 標頭）
-    ↓
-no-store？ ── 是 → 執行 handler，既不讀取也不寫入快取，
-    │              回應帶上 Cache-Control: no-store
-    ↓ 否
-private、沒有正數的 ttl，或帶有 Authorization／Session 資料且未設定 public／cache_authorized？
-    ── 是 → 執行 handler；比對 If-None-Match 決定回傳 304 或 200
-    │        （共用後端既不讀取也不寫入，key builder 也不會執行；
-    │         Authorization 或 Session 資料的情況下 Cache-Control 以 private 取代 public）
-    ↓ 否
-（設定 cache_authorized 且帶有 Authorization 或 Session 資料：下方照常使用後端，
-但每個回應仍以 private 取代 public）
-    ↓
-建立快取鍵：key_builder（預設為 http:v2|method|host|path|query_params），
-再為每個 vary 標頭附加一個 name=value 段
-    ↓
-讀取後端項目（fail_open 時，後端錯誤視為未命中；
-儲存之後有任何一個 tag 被失效的項目也視為未命中）
-    │  設定 client_cache_control 時，請求的 no-cache 或 max-age=0 會略過
-    │  讀取（handler 執行，它的回應取代該項目）；請求的 no-store 則是在
-    │  建立鍵之前就決定，走上方 bypass 的路徑（不執行 key builder，也不
-    │  使用後端）
-    ↓
-設定 serve_stale 且項目已超過 ttl（項目會保留 ttl + stale_ttl）？
-    ├─ stale="revalidate" → 立刻以該項目回應，方式同下（If-None-Match
-    │                        相符時回 304）；GET 請求的 handler 會在回應
-    │                        送出之後，以該請求的背景工作執行，它的回應
-    │                        取代該項目
-    ├─ stale="error"      → 執行 handler；若它拋出例外或回應 5xx，就改以
-    │                        該項目回應（低於 500 的 HTTPException，或應用
-    │                        程式自己處理的例外，是 handler 的答案，會原樣
-    │                        送出）
-    └─ 否 → 繼續
-    ↓
-請求帶有 If-None-Match？
-    ├─ 且為 no-cache → 先執行 handler 計算目前的 ETag；相符 → 304
-    ├─ 其他情況      → 與快取項目的 ETag 比對；相符 → 帶 Age 的 304
-    └─ 不相符／沒有此標頭 → 繼續
-    ↓
-快取項目存在，且未啟用 no-cache？
-    ├─ 是 → 以快取內容回應（包含儲存的狀態碼
-    │        與標頭，並加上 Age；handler **不會**執行）
-    └─ 否 → 執行 handler
-              ├─ 非 2xx（或 206）→ 原樣回傳且**不寫入**
-              │                    （不會覆寫既有的正常項目）
-              ├─ 串流／檔案回應 → 無法計算 ETag；原樣回傳，不寫入
-              ├─ handler 送出 Cache-Control private／no-store，或 Set-Cookie
-              │     → 設定 ETag 後回傳，**不寫入**（既有項目保持不變；
-              │       private／no-store 標頭保留原樣）
-              └─ 一般回應 → 設定 ETag；只有與既有項目的 ETag
-                            不同，或既有項目已過期時才寫入後端；
-                            讀不到路由的 tag 版本時不寫入
-                            （fail_open 時，寫入失敗會記錄警告，
-                            回應照常送出但不儲存）
-              接著，若 If-None-Match 與新的 ETag 相符（項目已過期、
-              已清除或被淘汰、從未儲存，或存在另一個 worker 中）
-              → 以 304 取代 200，並帶上 Set-Cookie 與 handler 的背景任務
-    ↓
-在回應中附加 Cache-Control（非 2xx 回應回傳時不帶此標頭，
-handler 自己送出的 private／no-store Cache-Control 永遠不會被取代，
-設定 Set-Cookie 的回應則以 private 取代 public）；設定 vary 時，
-會把這些名稱加入每個 GET 或 HEAD 回應的 Vary
+
+接著是使用快取的請求：
+
+```mermaid
+flowchart TD
+    key[建立快取鍵] --> refresh{"用戶端要求<br/>最新的回應？"}
+    refresh -- 否 --> read[讀取項目]
+    refresh -- 是 --> run
+    read --> state{有項目嗎？}
+    state -- 有效 --> hit[["以該項目回應<br/>handler 不執行"]]
+    state -- "過期，revalidate" --> stalehit[["以該項目回應<br/>回應之後再更新"]]
+    state -- "過期，error" --> run
+    state -- "沒有，或 no_cache" --> run[執行 handler]
+    run --> result{結果？}
+    result -- "失敗，且有為錯誤<br/>保留的過期項目" --> fallback[["以過期的項目回應"]]
+    result -- 可儲存 --> store[儲存回應]
+    result -- 不可儲存 --> fresh
+    store --> fresh[["送出該回應"]]
 ```
+
+之後每個回應都會加上 `Cache-Control`、`Vary`，設定 `debug_header=True` 時還有 `X-Cache`。各步驟的細節：
+
+| 步驟 | 發生的事 |
+|---|---|
+| GET 或 HEAD？ | 只有 GET 與 HEAD 會經過快取，HEAD 讀取的是 GET 的項目。其他方法直接執行 handler，也不會有 `Cache-Control` 標頭。 |
+| `no_store`？ | 執行 handler，不讀取也不寫入後端，回應帶有 `Cache-Control: no-store`。 |
+| 略過後端？ | 以下情況為「是」：`private=True`、路由沒有正的 `ttl`，或請求帶有 `Authorization` 或 session 資料而路由沒有設定 `public` 或 `cache_authorized`。此時不執行 key builder；以新產生的回應與 `If-None-Match` 比對，決定回 304 還是 200；帶有憑證時，`Cache-Control` 以 `private` 取代 `public`。設定 `cache_authorized` 時會使用後端，但每個回應仍然是 `private`。 |
+| 用戶端要求最新的回應？ | 只有設定 `client_cache_control` 的路由才會判斷。請求的 `no-cache` 或 `max-age=0` 會略過讀取：handler 執行，它的回應取代該項目。請求的 `no-store` 在更早的地方就決定了，算在「略過後端」。 |
+| 建立快取鍵 | `key_builder`（預設為 `http:v2\|method\|host\|path\|query`），再為每個 `vary` 標頭附加一個 `name=value` 段。 |
+| 讀取項目 | 設定 `fail_open` 時，後端錯誤視為未命中。儲存之後有任何 tag 被失效的項目，以及在路由有這些 tag 之前就儲存的項目，也視為未命中。設定 `coalesce=True` 時，沒有讀到項目的請求會等待正在產生同一個鍵的請求，然後再讀一次。 |
+| 過期 | 只有設定 `serve_stale` 時才會出現，項目會保留 `ttl + stale_ttl`。`stale="revalidate"`：立刻以該項目回應（`If-None-Match` 相符時回 304），GET 請求的 handler 會在回應送出之後，以該請求的背景工作執行並取代該項目。`stale="error"`：先執行 handler，只有它拋出例外或回應 5xx 時才以該項目回應；低於 500 的 `HTTPException`，或應用程式自己處理的例外，是 handler 的答案，會原樣送出。 |
+| `no_cache` | 每個請求都執行 handler；`If-None-Match` 相符時，在與新產生的回應比對之後回 304。 |
+| 以該項目回應 | 儲存的狀態碼、標頭與本文，加上 `Age`。請求的 `If-None-Match` 與項目的 ETag 相符時回 304。 |
+| 結果？ | 在 `stale="error"` 的路由上，若有過期的項目，失敗時會以該項目回應（見「過期」）。否則原樣回應，不論有沒有儲存。不會儲存的情況：非 2xx 或 206 的回應（原樣回傳，不帶裝飾器的 `Cache-Control`；既有的正常項目不會被覆寫）、串流或檔案回應（無法計算 ETag）、帶有 `Set-Cookie` 或自己的 `private`／`no-store` 的回應、HEAD 的回應，以及讀不到 tag 版本的帶 tag 路由的回應。其他情況下會為回應設定 ETag 並寫入，除非既有的項目有相同的 ETag 而且沒有過期。設定 `fail_open` 時，寫入失敗會記錄下來，回應照常送出但不儲存。 |
+| 送出該回應 | 若用戶端的 `If-None-Match` 與新回應的 ETag 相符（它的項目已過期、被清除或淘汰、從未儲存，或在另一個 worker 手上），就回 304 而不是 200，並保留 `Set-Cookie` 與 handler 的背景工作。 |
+| 標頭 | `Cache-Control` 來自裝飾器的參數；handler 自己的 `private`／`no-store` 不會被取代，設定 cookie 的回應會以 `private` 取代 `public`。設定 `vary` 時，每個 GET 或 HEAD 回應的 `Vary` 都會加上那些名稱。設定 `debug_header=True` 時有 `X-Cache`。 |
 
 ## 詳細步驟 {#detailed-steps}
 

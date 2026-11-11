@@ -115,7 +115,12 @@ pymdownx.highlight.anchor_linenums = true
 pymdownx.highlight.line_spans = "__span"
 pymdownx.highlight.pygments_lang_class = true
 pymdownx.inlinehilite = {}
-pymdownx.superfences = {}
+# ```mermaid fences become diagrams, as they do on GitHub. A page that has
+# one makes the reader's browser load mermaid.js from unpkg.com (the theme's
+# doing); pages without a diagram load nothing extra.
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
 pymdownx.tabbed.alternate_style = true
 pymdownx.tasklist.custom_checkbox = true
 # `--8<--` includes files from outside docs/ (README.md, CHANGELOG.md), so
