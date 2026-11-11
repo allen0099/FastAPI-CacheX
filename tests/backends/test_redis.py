@@ -140,7 +140,8 @@ def _retry(backend: AsyncRedisCacheBackend) -> tuple[Any, ...] | None:
     retry = _connection(backend)[1].get("retry")
     if retry is None:
         return None
-    return (type(retry), retry.get_retries(), type(retry._backoff))
+    # Private attributes: redis-py at our floor has no getters for them.
+    return (type(retry), retry._retries, type(retry._backoff))
 
 
 @requires_redis_package
