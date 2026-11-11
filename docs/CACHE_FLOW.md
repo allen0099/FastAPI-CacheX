@@ -38,7 +38,19 @@ but every answer still says private instead of public)
 Build the cache key: key_builder (default http:v2|method|host|path|query_params),
 plus one name=value component per vary header
     ↓
-Read the backend entry (with fail_open, a backend error counts as a miss)
+Read the backend entry (with fail_open, a backend error counts as a miss;
+an entry one of whose tags was invalidated since it was stored is a miss too)
+    │  with client_cache_control, a request's no-cache or max-age=0 skips the
+    │  read (the handler runs and its response replaces the entry), and its
+    │  no-store runs the handler without reading or writing the backend
+    ↓
+serve_stale and the entry is past its ttl (it is kept for ttl + stale_ttl)?
+    ├─ stale="revalidate" → respond with the entry at once; the handler runs
+    │                        after the response, as a background task of the
+    │                        request, and its response replaces the entry
+    ├─ stale="error"      → run the handler; if it raises or answers 5xx,
+    │                        respond with the entry instead
+    └─ no → continue
     ↓
 Request carries If-None-Match?
     ├─ and no-cache → run the handler first to compute the current ETag; match → 304
@@ -162,6 +174,11 @@ The decorator arguments control both the server-side behaviour and the
 @cache(ttl=60, must_revalidate=True)                        # must-revalidate
 @cache(ttl=60, stale="revalidate", stale_ttl=30)            # stale-while-revalidate=30
 @cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
+
+# Opt-in server-side behaviour
+@cache(ttl=60, stale="revalidate", stale_ttl=30, serve_stale=True)  # serve the expired entry, refresh after the response
+@cache(ttl=60, client_cache_control=True)   # honour a request's no-cache and no-store
+@cache(ttl=60, tags=["users"])              # invalidated by invalidate_tags("users")
 ```
 
 Arguments are validated when the decorator is applied, and a `CacheXError` is
@@ -426,6 +443,10 @@ and the standard library `json` otherwise:
 - `headers` is a list of `[name, value]` lines, so a header sent more than once
   keeps every line. The object 0.3.x wrote (one value per name) still decodes.
   Anything else there makes the whole entry a miss.
+- An entry stored with tags also has `"tags": {"users": "<version>"}`: the
+  version each tag had when the entry was stored. An entry without tags is
+  written exactly as before. If `tags` cannot be read the entry is a miss,
+  never served as if it had none.
 - Any decode failure (broken JSON, missing fields, wrong types) is treated as a
   **cache miss** and returns `None` instead of raising.
 - `increment()` leaves a **bare integer** behind (written by the Redis/Memcached

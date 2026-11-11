@@ -25,7 +25,18 @@ private、沒有正數的 ttl，或帶有 Authorization／Session 資料且未�
 建立快取鍵：key_builder（預設為 http:v2|method|host|path|query_params），
 再為每個 vary 標頭附加一個 name=value 段
     ↓
-讀取後端項目（fail_open 時，後端錯誤視為未命中）
+讀取後端項目（fail_open 時，後端錯誤視為未命中；
+儲存之後有任何一個 tag 被失效的項目也視為未命中）
+    │  設定 client_cache_control 時，請求的 no-cache 或 max-age=0 會略過
+    │  讀取（handler 執行，它的回應取代該項目），請求的 no-store 則會在
+    │  不讀取也不寫入後端的情況下執行 handler
+    ↓
+設定 serve_stale 且項目已超過 ttl（項目會保留 ttl + stale_ttl）？
+    ├─ stale="revalidate" → 立刻以該項目回應；handler 在回應送出之後，
+    │                        以該請求的背景工作執行，它的回應取代該項目
+    ├─ stale="error"      → 執行 handler；若它拋出例外或回應 5xx，
+    │                        就改以該項目回應
+    └─ 否 → 繼續
     ↓
 請求帶有 If-None-Match？
     ├─ 且為 no-cache → 先執行 handler 計算目前的 ETag；相符 → 304
@@ -120,6 +131,11 @@ cache_key = "|".join(
 @cache(ttl=60, must_revalidate=True)                        # must-revalidate
 @cache(ttl=60, stale="revalidate", stale_ttl=30)            # stale-while-revalidate=30
 @cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
+
+# 選擇性啟用的伺服器端行為
+@cache(ttl=60, stale="revalidate", stale_ttl=30, serve_stale=True)  # 先以過期的項目回應，回應之後再更新
+@cache(ttl=60, client_cache_control=True)   # 遵循請求的 no-cache 與 no-store
+@cache(ttl=60, tags=["users"])              # 可用 invalidate_tags("users") 讓它失效
 ```
 
 參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 或 `stale_ttl` 不是 `int` 或整數秒的 `timedelta`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起傳入，`key_builder` 是 `async` 可呼叫物件，`coalesce` 不是 `bool`、未搭配正的 `ttl` 或與 `private`、`no_cache` 一起設定，或 `debug_header` 不是 `bool`，會拋出 `CacheXError`。
@@ -309,6 +325,7 @@ Redis 與 Memcached 共用同一套 JSON 編解碼器；若已安裝 `orjson` �
 - `content` 使用 **latin-1 來回轉換**，而不是 base64：latin-1 與位元組一一對應，因此任何位元組序列都能放進 JSON 文字中，並原封不動地還原。
 - 舊版本寫入、沒有 `status_code`／`headers` 欄位的項目仍可讀取，解碼後為 `200` 且沒有額外標頭。沒有 `stored_at` 的項目（0.3.9 之前）解碼後為 `stored_at=None`，送出時不帶 `Age` 標頭。
 - `headers` 是 `[name, value]` 行組成的清單，因此重複送出的標頭會保留每一行。0.3.x 寫入的物件（每個名稱一個值）仍可解碼。其他任何形式都會讓整個項目視為未命中。
+- 帶有 tag 儲存的項目還會有 `"tags": {"users": "<版本>"}`：項目儲存當下每個 tag 的版本。沒有 tag 的項目寫入的內容與以往完全相同。若 `tags` 無法讀取，該項目視為未命中，不會被當成沒有 tag 來提供。
 - 任何解碼失敗（損壞的 JSON、缺少欄位、型別錯誤）都視為**快取未命中**，回傳 `None` 而不是拋出例外。
 - `increment()` 會留下一個**單純的整數**（由 Redis／Memcached 的 INCR 系列指令寫入）；它會解碼成 fingerprint 為 `counter` 的 `CacheEntry`。
 

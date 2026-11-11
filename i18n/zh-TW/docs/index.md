@@ -20,9 +20,10 @@ FastAPI-CacheX 是 FastAPI 的高效能快取擴充套件：提供支援 `Cache-
 
 ## 功能特點 {#features}
 
-- **HTTP 快取**：GET 路由專用的 `@cache` 裝飾器，支援 `Cache-Control`、`ETag` / `If-None-Match`（304）與單一路由的快取失效。
-- **應用層快取**：`CacheManager` 可在自己的程式碼中快取任意 JSON 值，提供未命中時才計算的 `get_or_set()` 與原子性的「不存在才寫入」`add()`。
-- **後端**：記憶體、Redis 與 Memcached，支援原子操作的計數器、一次性取值與鎖。
+- **HTTP 快取**：GET 路由專用的 `@cache` 裝飾器，支援 `Cache-Control`、`ETag` / `If-None-Match`（304）、依路由或依 tag 的快取失效，並可選擇在更新期間或 handler 失敗時提供過期的回應。
+- **應用層快取**：`CacheManager` 可在自己的程式碼中快取任意 JSON 值，提供未命中時才計算的 `get_or_set()`、原子性的「不存在才寫入」`add()`、批次讀寫、透過 pydantic 的型別化讀取，以及用於一般函式、以引數為鍵的 `@cached`。
+- **後端**：記憶體、Redis 與 Memcached，支援原子操作的計數器、一次性取值與鎖。tag 在三者上都能使用。
+- **可觀測性**：可把命中、未命中、寫入與後端錯誤回報給你自己的指標的事件 hook，以及監控路由。
 
 ## 安裝 {#installation}
 
@@ -91,8 +92,8 @@ async def report(cache: AppCache):
 - [遷移至 0.4.0](MIGRATING_0_4.md)：0.4.0 的變更，以及如何從 0.3.x 升級
 - [從 fastapi-cache2 遷移](MIGRATING_FROM_FASTAPI_CACHE2.md)：它的 API 對應到本套件的哪些功能，以及行為上的差異
 - [何時使用](COMPARISON.md)：與 fastapi-cache2、cashews、aiocache 及 CDN 的比較，以及什麼時候其他選擇更合適
-- [HTTP 快取](HTTP_CACHING.md)：`@cache` 裝飾器、Cache-Control 指令、快取鍵、快取失效與監控路由
-- [應用層快取](APP_CACHE.md)：`CacheManager`
+- [HTTP 快取](HTTP_CACHING.md)：`@cache` 裝飾器、Cache-Control 指令、快取鍵、快取失效、提供過期的回應、事件 hook 與監控路由
+- [應用層快取](APP_CACHE.md)：`CacheManager`、`@cached`、型別化讀取、tag
 - [後端](BACKENDS.md)：選擇與設定後端、原子操作的基本功能
 - [分散式鎖](LOCK.md)：以 `CacheLock` 在多個行程之間互斥
 - [測試你的應用程式](TESTING.md)：每個測試一份全新的快取、證明隔離有效、在 lifespan 內建立 Redis
