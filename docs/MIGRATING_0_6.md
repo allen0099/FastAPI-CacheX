@@ -88,9 +88,11 @@ Nothing changes, and nothing was warned about, when:
 
 - `type_` is passed, whatever its value;
 - the function has no return annotation;
-- the annotation is built only from JSON's own types: `str`, `int`, `float`, `bool`, `None`, `Any`, `object`, `list` and `dict` (bare, or as `list[...]` and `dict[str, ...]`), and unions of them. For these the value is returned as JSON decoded it and is never converted.
+- the annotation is built only from JSON's own types: `str`, `int`, `float`, `bool`, `None`, `Any`, `object`, `list` and `dict` (bare, or as `list[...]` and `dict[str, ...]`), and unions of them. For these the value is returned as JSON decoded it and is never converted. `Annotated[...]` around such a type changes nothing either: the metadata is not applied, so `-> Annotated[int, Field(gt=0)]` is not checked. Pass it as `type_=` to have it checked.
 
 A return annotation that cannot be resolved where the decorator is applied is the one case to look for. That happens when the type is imported under `if TYPE_CHECKING:` (linters often move imports there) or is a class defined further down the file. `@cached` cannot read such an annotation, so the function keeps returning the JSON form, and applying the decorator emits a `UserWarning` that starts with `cached return annotation` (0.5.6 announced these with a `FutureWarning` of the same prefix). Pass `type_=<the type>` to get the type, or `type_=None` to keep the JSON form without the warning.
+
+The same `UserWarning` and JSON form apply to a return annotation pydantic cannot validate: `Iterator[int]`, `Self`, `NoReturn`, a `Response`, a protocol or a plain class. Validating into one would raise on every call.
 
 To keep the JSON form for a function, say so:
 
@@ -104,6 +106,9 @@ What to check when upgrading:
 - Code that used the result as a `dict` (`user["id"]`) now gets the model (`user.id`).
 - A value cached by 0.5.x that does not fit the annotation counts as a miss and the function runs again, so the upgrade needs no cache flush.
 - If the function returns something its annotation does not allow, the call raises pydantic's `ValidationError`, where before the mismatch went unnoticed.
+- The value is rebuilt from its JSON form, so a model that does not accept its own JSON raises `ValidationError` on every call. That is the case for a `strict=True` model with a `datetime` or tuple field, a `computed_field` on a model with `extra="forbid"`, and a required field with `Field(exclude=True)`. Use `type_=None` for such a function.
+- The result is exactly the annotated type. A function annotated `-> User` that returns a subclass of `User` gets a `User` back, without the subclass's extra fields; with `-> Cat | Dog` pydantic picks the member the JSON fits, so give look-alike models a discriminator.
+- `-> Iterable[int]` gives a one-shot iterator rather than a list. Annotate `list[int]`.
 - Validation runs on every call, hit or miss. For a large value read very often, `type_=None` avoids it.
 
 ## `/cached-hits` no longer has the `*_hits` fields {#cached-hits-fields}

@@ -14,6 +14,8 @@ from typing import Optional
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
+from pydantic import Field
+from starlette.responses import Response
 
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import CachedFunction
@@ -574,3 +576,53 @@ def test_an_alias_of_a_model_is_validated_into() -> None:
     exec("type Points = list[Point]\ndef load() -> Points: ...\n", namespace)  # noqa: S102
 
     assert cached(ttl=60)(namespace["load"])._type is namespace["Points"]
+
+
+class _NotForPydantic:
+    """A plain class: pydantic cannot build a validator for it."""
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [typing.Iterator[int], _NotForPydantic, Response, typing.NoReturn],
+    ids=["iterator", "plain-class", "response", "noreturn"],
+)
+async def test_an_annotation_pydantic_cannot_validate_warns_and_keeps_the_json_form(
+    manager: CacheManager, annotation: Any
+) -> None:
+    """Validating into it would raise on every call, hit or miss (#533)."""
+
+    async def load() -> Any:
+        return [1, 2]
+
+    load.__annotations__["return"] = annotation
+
+    with pytest.warns(UserWarning, match="cached return annotation") as record:
+        decorated = cached(ttl=60, manager=manager)(load)
+
+    assert "pydantic cannot validate" in str(record[0].message)
+    assert record[0].filename == __file__
+    assert decorated._type is None
+    assert await decorated() == [1, 2]  # the miss
+    assert await decorated() == [1, 2]  # the hit
+    assert cached(ttl=60, type_=None)(load)._type is None  # no warning
+
+
+def test_annotated_metadata_is_kept_for_a_type_that_is_validated() -> None:
+    annotation = typing.Annotated[_Point, Field(title="a point")]
+
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = annotation
+
+    assert cached(ttl=60)(load)._type == annotation
+
+
+def test_an_annotated_json_type_is_not_validated() -> None:
+    """As 0.5.6 announced: only the type decides, not its metadata."""
+
+    def load() -> typing.Annotated[int, Field(gt=0)]:
+        return -5
+
+    assert cached(ttl=60)(load)._type is None

@@ -23,6 +23,7 @@ from .backends.base import validate_ttl
 from .dependencies import get_app_cache
 from .exceptions import CacheXError
 from .manager import CacheManager
+from .manager import _adapter
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,14 @@ _UNRESOLVED_ANNOTATION_WARNING = (
     "form without this warning."
 )
 
+_UNSUPPORTED_ANNOTATION_WARNING = (
+    "cached return annotation: {name}() is annotated to return {annotation}, "
+    "a type pydantic cannot validate, so @cached cannot validate the cached "
+    "value into it and this function returns the JSON form. Pass type_=None "
+    "to keep the JSON form without this warning, or type_=<a type pydantic "
+    "can validate>."
+)
+
 
 def _return_annotation(func: Callable[..., Any]) -> Any:
     """The function's resolved return annotation.
@@ -77,7 +86,8 @@ def _return_annotation(func: Callable[..., Any]) -> Any:
     stub.__annotations__ = {"return": annotations["return"]}
     namespace = getattr(inspect.unwrap(func), "__globals__", None)
     try:
-        return typing.get_type_hints(stub, globalns=namespace)["return"]
+        hints = typing.get_type_hints(stub, globalns=namespace, include_extras=True)
+        return hints["return"]
     except Exception:  # noqa: BLE001 - whatever evaluating an annotation raises
         return _UNRESOLVED
 
@@ -119,6 +129,8 @@ def _is_json_shaped(annotation: Any, aliases: tuple[Any, ...] = ()) -> bool:
     ``json.loads`` gave it and never validates it, so an ``int`` returned by
     a function annotated ``-> float`` stays an ``int``.
     """
+    while typing.get_origin(annotation) is typing.Annotated:
+        annotation = typing.get_args(annotation)[0]  # the metadata is not applied
     if isinstance(annotation, _TYPE_ALIAS):
         return _is_json_alias(annotation, aliases)
     origin, args = typing.get_origin(annotation), typing.get_args(annotation)
@@ -156,22 +168,28 @@ def _type_from_annotation(func: Callable[..., Any]) -> Any:
     """The type ``@cached`` validates into when ``type_`` is not passed (#533).
 
     The return annotation, or ``None`` (no validation) when there is none or
-    the JSON form already is that type. One that cannot be resolved also
-    gives ``None``, with a warning: the function would otherwise differ from
-    its neighbours without a sign.
+    the JSON form already is that type. One that cannot be resolved, or that
+    pydantic cannot validate (``Iterator[int]``, a ``Response``, a plain
+    class), also gives ``None``, with a warning: the function would otherwise
+    differ from its neighbours without a sign, or raise on every call.
     """
     annotation = _return_annotation(func)
-    if annotation is _UNRESOLVED:
-        warnings.warn(
-            _UNRESOLVED_ANNOTATION_WARNING.format(name=func.__qualname__),
-            UserWarning,
-            # The line that applies the decorator: cached(...)(func).
-            stacklevel=3,
-        )
-        return None
     if annotation is _UNSET or _is_json_shaped(annotation):
         return None
-    return annotation
+    if annotation is _UNRESOLVED:
+        message = _UNRESOLVED_ANNOTATION_WARNING.format(name=func.__qualname__)
+    else:
+        try:
+            _adapter(annotation)
+        except Exception:  # noqa: BLE001 - whatever pydantic raises for the type
+            message = _UNSUPPORTED_ANNOTATION_WARNING.format(
+                name=func.__qualname__, annotation=annotation
+            )
+        else:
+            return annotation
+    # stacklevel: the line that applies the decorator, cached(...)(func).
+    warnings.warn(message, UserWarning, stacklevel=3)
+    return None
 
 
 class CachedFunction(Generic[P, R]):
