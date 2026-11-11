@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
 from typing import Concatenate
+from typing import NamedTuple
 from typing import ParamSpec
 from typing import TypeVar
 from typing import overload
@@ -33,6 +34,7 @@ from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 from pydantic_core import to_jsonable_python
 
+from . import _tags
 from .backends.base import BaseCacheBackend
 from .backends.base import validate_ttl
 from .cache_key import GLOB_SPECIAL
@@ -44,6 +46,7 @@ from .exceptions import LockTimeoutError
 from .lock import CacheLock
 from .proxy import BackendProxy
 from .types import CacheEntry
+from .types import TagVersions
 from .types import log_ref
 
 logger = logging.getLogger(__name__)
@@ -65,6 +68,14 @@ _JITTER_RATIO: float = 0.1
 
 _system_random = secrets.SystemRandom()
 _SENTINEL = object()
+
+
+class _Tagged(NamedTuple):
+    """What a ``get_or_set`` factory wrapped by ``_tagged`` returns."""
+
+    value: Any
+    versions: TagVersions
+
 
 T = TypeVar("T")
 D = TypeVar("D")
@@ -337,6 +348,12 @@ class CacheManager:
         """
         try:
             cached = await self.backend.get(self._cache_key(key))
+            if (
+                cached is not None
+                and cached.tags
+                and await _tags.outdated(self.backend, {key: cached})
+            ):
+                cached = None
         except BackendUnavailableError as e:
             # Inline, not ``_reports_backend_errors``: the overloads above
             # need the implementation's own signature.
@@ -372,7 +389,12 @@ class CacheManager:
 
     @_reports_backend_errors
     async def set(
-        self, key: str, value: Any, ttl: int | timedelta | None = None
+        self,
+        key: str,
+        value: Any,
+        ttl: int | timedelta | None = None,
+        *,
+        tags: Iterable[str] | None = None,
     ) -> None:
         """JSON-encode and store a value in the cache.
 
@@ -382,6 +404,9 @@ class CacheManager:
                 turn into JSON (a model, a ``datetime``, a ``UUID``, a set).
             ttl: Time-to-live in seconds or as a ``timedelta``. If None, uses
                 ``self.default_ttl`` (which itself defaults to no expiry).
+            tags: Names the value can be invalidated by, with
+                ``invalidate_tags()``. It reads as a miss once any of them
+                has been invalidated since it was written.
 
         Raises:
             TypeError: If ``value`` cannot be encoded as JSON, or ``ttl`` is
@@ -391,6 +416,9 @@ class CacheManager:
         """
         effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
         entry = self._encode(value)
+        entry.tags = await _tags.current_versions(
+            self.backend, _tags.validate_tags(tags)
+        )
 
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
@@ -423,9 +451,10 @@ class CacheManager:
             raise TypeError(msg)
         by_cache_key = {self._cache_key(key): key for key in keys}
         cached = await self.backend.get_many(by_cache_key)
+        invalidated = await _tags.outdated(self.backend, cached)
         values: dict[str, Any] = {}
         for cache_key, key in by_cache_key.items():
-            if cache_key not in cached:
+            if cache_key not in cached or cache_key in invalidated:
                 continue
             value = self._decode(key, cached[cache_key], _SENTINEL, type_)
             if value is not _SENTINEL:
@@ -583,6 +612,43 @@ class CacheManager:
             _emit("hit", "app", key)
         return cached
 
+    def _tagged(
+        self,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        names: tuple[str, ...],
+    ) -> Callable[[], Awaitable["_Tagged"]]:
+        """``factory``, with the versions of ``names`` read before it runs.
+
+        Before, not after: a value computed from data that an invalidation
+        has since replaced must not be stored under the version that
+        invalidation set.
+        """
+
+        async def tagged() -> _Tagged:
+            versions = await _tags.current_versions(self.backend, names)
+            value = factory()
+            if inspect.isawaitable(value):
+                value = await value
+            return _Tagged(value, versions)
+
+        return tagged
+
+    async def invalidate_tags(self, *tags: str) -> None:
+        """Invalidate every value stored under any of ``tags``.
+
+        Values written with ``tags=`` read as a miss from now on, on every
+        backend, Memcached included; they stay in the backend until they
+        expire. The tags are shared with ``@cache(tags=...)`` routes on the
+        same backend, so this is the same as ``fastapi_cachex.invalidate_tags``
+        on this manager's backend.
+
+        Raises:
+            TypeError: If a tag is not a ``str``.
+            ValueError: If a tag is empty.
+        """
+        await _tags.invalidate(self.backend, tags)
+        logger.debug("Cache INVALIDATE_TAGS; tags=%s", tags)
+
     async def _compute_and_store(
         self,
         key: str,
@@ -596,9 +662,13 @@ class CacheManager:
         value = factory()
         if inspect.isawaitable(value):
             value = await value
+        versions: TagVersions = ()
+        if isinstance(value, _Tagged):
+            value, versions = value.value, value.versions
 
         effective_ttl = ttl if ttl is not None else self.default_ttl
         entry = self._encode(value)
+        entry.tags = versions
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
         _emit("store", "app", key)
@@ -713,6 +783,7 @@ class CacheManager:
         wait_timeout: float | None = None,
         raise_on_timeout: bool = False,
         type_: Any = None,
+        tags: Iterable[str] | None = None,
     ) -> Any:
         """Get a cached value, computing and storing it via ``factory`` on a miss.
 
@@ -766,6 +837,9 @@ class CacheManager:
             type_: A type to validate the value into, as for ``get()``. A
                 cached value that does not fit it counts as a miss and is
                 recomputed.
+            tags: Names the value can be invalidated by, as for ``set()``.
+                Their versions are read before ``factory`` runs, so a value
+                computed before an invalidation is not served after it.
 
         Returns:
             The cached value (existing or newly created), JSON-decoded in
@@ -785,6 +859,9 @@ class CacheManager:
         ttl, lock_ttl, validated_wait_timeout = _validate_get_or_set_args(
             lock, ttl, lock_ttl, wait_timeout
         )
+        names = _tags.validate_tags(tags)
+        if names:
+            factory = self._tagged(factory, names)
         cached = await self._lookup(key, type_)
         if cached is not _SENTINEL:
             return cached

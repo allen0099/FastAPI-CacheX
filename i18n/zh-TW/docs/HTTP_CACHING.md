@@ -558,6 +558,41 @@ Memcached 無法列舉鍵，因此 `clear_path()` 完全找不到 HTTP 項目：
 
 各後端支援的功能列於[後端](BACKENDS.md)。
 
+### 依 tag {#by-tag}
+
+當同一筆資料出現在多個路由時，可以為路由加上 tag，之後讓 tag 失效，不必逐一列出路徑：
+
+```python
+from fastapi_cachex import cache, invalidate_tags
+
+
+@app.get("/users")
+@cache(ttl=300, tags=["users"])
+async def list_users(): ...
+
+
+@app.get("/users/{user_id}")
+@cache(
+    ttl=300,
+    tags=lambda request: ["users", f"user:{request.path_params['user_id']}"],
+)
+async def read_user(user_id: int): ...
+
+
+@app.put("/users/{user_id}")
+async def update_user(user_id: int):
+    await save_user(user_id)
+    await invalidate_tags(f"user:{user_id}")  # 該使用者的項目
+    # await invalidate_tags("users") 則會讓清單與每個使用者都失效
+```
+
+`tags=` 是名稱的 list，或是一個接收請求並回傳名稱的一般函式。項目儲存之後，只要它的任何一個 tag 被失效，就視為未命中，不論查詢字串、`vary` 變體或主機為何。它在每個後端上都能用，包含 Memcached，因為不需要列舉任何鍵：每個 tag 在後端有一個版本，項目會記住自己儲存時的版本。
+
+- 帶有 tag 的路由命中時會多一次批次的後端讀取；沒有 tag 的路由沒有任何額外成本。
+- 失效的項目不會被刪除，而是隨 `ttl` 到期。
+- 版本是在 handler 執行之前讀取的，所以若資料在產生回應期間改變，該回應在失效之後不會被提供。
+- 這些 tag 與應用層快取共用：見[用 tag 讓一組值失效](APP_CACHE.md#group-invalidation-on-memcached)，其中也說明了 tag 的版本遺失時，以及從沒有 tag 的版本升級期間會發生什麼事。
+
 ### 使單一快取路由失效 {#invalidating-a-single-cached-route}
 
 `clear_path`/`clear_pattern` 作用於一整批鍵。若只想刪除某個 `@cache` 裝飾路由會用到的那一筆項目（通常是在資料變更之後），請在變更資料的 handler 中呼叫 `invalidate_path()`。它會以相同的 key builder 重建某個路徑的快取 `GET` 所使用的鍵並刪除：
@@ -591,7 +626,8 @@ async def update_item(item_id: int, request: Request):
 `invalidate()` 與 `invalidate_path()` 只刪除一個鍵：由你傳入的請求或路徑組出的那一個。`PUT /items/42` 之後，它刪的是 `GET /items/42` 不帶查詢字串的項目；在設定了 `vary` 的路由上，則是請求標頭所選中的那一個變體。以其他鍵呈現同一筆資料的項目會繼續提供舊資料，直到過期為止：`/items/42?fields=name`、包含它的 `/items?page=2` 清單，以及你用 `en` 失效時的 `Accept-Language: fr` 變體。
 
 - 資源只有一個項目，或你只想刪掉那一個時，用 `invalidate_path(request, path)`（或 `invalidate(request)`）。只需一次後端操作，而且在 Memcached 上也可用。
-- 資源有多個項目時，用 `clear_path(path, include_params=True)`：它會移除該路徑儲存的所有項目，不論查詢字串、`vary` 變體、主機與方法。請對該筆資料本身與包含它的清單都呼叫一次。只支援 Redis 與記憶體後端：Memcached 無法列舉鍵，在它上面只能把每個鍵都交給 `invalidate()`，或改變鍵的組成（見[世代計數器的做法](APP_CACHE.md#group-invalidation-on-memcached)）。
+- 資源有多個項目時，用 `clear_path(path, include_params=True)`：它會移除該路徑儲存的所有項目，不論查詢字串、`vary` 變體、主機與方法。請對該筆資料本身與包含它的清單都呼叫一次。只支援 Redis 與記憶體後端：Memcached 無法列舉鍵。
+- 資料出現在多個路徑底下，或後端是 Memcached 時，用 [`invalidate_tags(...)`](#by-tag)：為路由加上 tag，一次呼叫就能讓該 tag 底下儲存的所有項目失效。
 
 ```python
 from fastapi_cachex import CacheBackend

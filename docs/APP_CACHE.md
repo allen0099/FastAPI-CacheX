@@ -168,47 +168,60 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
 > on Memcached: `MemcachedBackend.clear()` issues `flush_all` and wipes the whole
 > server, HTTP responses, locks and other applications' keys included.
 
-### Group invalidation on Memcached {#group-invalidation-on-memcached}
+### Invalidating a group of values with tags {#group-invalidation-on-memcached}
 
-Without key enumeration, the way to drop a group of keys at once is to stop
-looking for them: keep a generation number for the group, put it into every
-key of the group, and bump it to invalidate. The old entries are never read
-again and leave through their TTL.
+A value can be written under one or more tags, and every value under a tag
+invalidated at once, without knowing their keys:
 
 ```python
-from fastapi_cachex import AppCache, CacheBackend
-from fastapi_cachex.backends.base import BaseCacheBackend
-
-# A counter in the backend. It is read through the backend, not the manager,
-# so it carries no "cache:" prefix.
-USERS_GENERATION = "gen:users"
-
-
-async def user_key(backend: BaseCacheBackend, user_id: int) -> str:
-    # increment(..., 0) reads the counter atomically, creating it at 0.
-    generation = await backend.increment(USERS_GENERATION, 0)
-    return f"user:{generation}:{user_id}"
+from fastapi_cachex import AppCache, cached, invalidate_tags
 
 
 @app.get("/users/{user_id}")
-async def read_user(user_id: int, cache: AppCache, backend: CacheBackend):
-    key = await user_key(backend, user_id)
-    return await cache.get_or_set(key, lambda: load_user(user_id), ttl=300)
+async def read_user(user_id: int, cache: AppCache):
+    return await cache.get_or_set(
+        f"user:{user_id}",
+        lambda: load_user(user_id),
+        ttl=300,
+        tags=["users", f"user:{user_id}"],
+    )
+
+
+@cached(ttl=300, tags=["users"])
+async def count_users() -> int: ...
 
 
 @app.post("/users/import")
-async def import_users(backend: CacheBackend):
+async def import_users():
     await run_import()
-    # Every user:<old generation>:* entry is unreachable from now on.
-    await backend.increment(USERS_GENERATION)
+    await invalidate_tags("users")  # every value written under "users"
 ```
 
-This works on every backend and costs one extra backend read per lookup.
-Give the entries a TTL, since nothing deletes them. The counter itself has
-none; if the backend can lose it (Memcached evicts under memory pressure,
-and `flush_all` clears everything), bump it by a large step instead,
-`increment(USERS_GENERATION, int(time.time()))`, so a counter that restarts
-at 0 never reuses a generation that live entries may still carry.
+`set()`, `get_or_set()` and `@cached` take `tags=`; `@cached` also takes a
+function that receives the call's arguments and returns the tags
+(`tags=lambda user_id: [f"user:{user_id}"]`). `invalidate_tags()` is also a
+method of `CacheManager`. The tags are shared with
+[`@cache(tags=...)`](HTTP_CACHING.md#by-tag) routes on the same backend, so
+one call invalidates cached responses and cached values alike.
+
+How it works, and what follows from it:
+
+- Each tag has a version, kept in the backend under `tag:<name>`. A value
+  records the versions of its tags when it is written, and reads as a miss
+  once any of them has changed. Nothing is scanned or enumerated, so this
+  works on every backend, Memcached included.
+- A read of a tagged value costs one extra batched backend read
+  (`get_many`), a write one more. Values without tags pay nothing.
+- Invalidated values are not deleted; they leave through their TTL, so give
+  tagged values one.
+- With `get_or_set()` and `@cached` the versions are read before the value is
+  computed, so a value computed from data that changed meanwhile is not
+  served after the invalidation.
+- If a tag's version is lost (Memcached evicts under memory pressure,
+  `flush_all`, a restart), what was written under it reads as a miss. Losing
+  it can cost a miss, never serve an invalidated value.
+- A release before 0.6.1 does not know about tags and serves a tagged value
+  until its TTL. Upgrade every worker before relying on `invalidate_tags()`.
 
 ## Stampede protection
 

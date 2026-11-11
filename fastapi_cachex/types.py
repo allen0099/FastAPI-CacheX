@@ -88,6 +88,10 @@ def _header_pairs(
     return tuple((name, value) for name, value in pairs)
 
 
+# The version each tag of an entry had when the entry was written.
+TagVersions = tuple[tuple[str, str], ...]
+
+
 @dataclass
 class CacheEntry:
     """A cached response: fingerprint, raw body bytes, and how to replay it.
@@ -107,6 +111,10 @@ class CacheEntry:
     process or host may be served by another. It drives the ``Age`` header on
     a hit; ``None`` (entries written by older releases, and anything not
     stored by ``@cache``) sends no ``Age``.
+
+    ``tags`` holds the version each of the entry's tags had when it was
+    written, as ``(name, version)`` pairs. The entry is served only while
+    those are still the current versions (see ``invalidate_tags``).
     """
 
     fingerprint: str
@@ -115,10 +123,12 @@ class CacheEntry:
     status_code: int = DEFAULT_STATUS_CODE
     headers: HeaderPairs = ()
     stored_at: float | None = None
+    tags: TagVersions = ()
 
     def __post_init__(self) -> None:
-        """Store ``headers`` as a tuple of pairs, whatever it was given as."""
+        """Store ``headers`` and ``tags`` as tuples of pairs."""
         self.headers = _header_pairs(self.headers)
+        self.tags = tuple((str(name), str(version)) for name, version in self.tags)
 
 
 @dataclass
