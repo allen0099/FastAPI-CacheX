@@ -382,3 +382,33 @@ def test_coalesce_must_be_a_bool(value: object) -> None:
 def test_no_store_warns_that_it_overrides_coalesce() -> None:
     with pytest.warns(UserWarning, match="coalesce"):
         cache(no_store=True, coalesce=True)(lambda: None)
+
+
+async def test_a_client_refresh_waits_for_a_running_miss_and_is_stored_last(
+    client_for: Callable[[FastAPI], httpx.AsyncClient], waiters: Waiters
+) -> None:
+    """Otherwise the older render would overwrite the refresh (#541)."""
+    handler = Handler(waiters)
+    app = FastAPI()
+
+    @app.get("/items")
+    @cache(ttl=60, coalesce=True, client_cache_control=True)
+    async def items() -> dict[str, int]:
+        started = len(handler.calls) + 1
+        await handler.run("GET")
+        return {"n": started}
+
+    client = client_for(app)
+    leader = asyncio.ensure_future(client.get("/items"))
+    await waiters.until(lambda: bool(handler.calls))
+    refresh = asyncio.ensure_future(
+        client.get("/items", headers={"Cache-Control": "no-cache"})
+    )
+    await waiters.until(lambda: waiters.count == 1)
+    handler.release.set()
+
+    first, refreshed = await _settle(leader, refresh)
+
+    assert (first.json(), refreshed.json()) == ({"n": 1}, {"n": 2})
+    assert (await client.get("/items")).json() == {"n": 2}
+    assert _IN_FLIGHT == {}

@@ -13,7 +13,7 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 | 快取的對象 | FastAPI 的 GET 回應；JSON 值；函式結果（`@cached`，0.5.0） | 端點與一般函式的回傳值 | 任何非同步函式的回傳值 | 任何非同步函式的回傳值；鍵值 API |
 | 快取鍵的來源 | 請求的方法、主機、路徑與查詢字串 | 函式的模組、名稱與引數 | 函式名稱與引數，或樣板 | 函式名稱與引數，或 key builder |
 | `Cache-Control`、`ETag`、`304` | 依裝飾器的參數產生；`If-None-Match` 相符時回 `304` | 端點接收 `Response` 時，送出 `max-age`、弱 `ETag` 並回 `304` | 透過它的 `CacheRequestControlMiddleware` 與 `CacheEtagMiddleware` | 無 |
-| 用戶端請求的 `Cache-Control` 標頭 | 忽略，用戶端無法略過快取 | 遵循 `no-store` 與 `no-cache` | 由中介軟體遵循（`no-cache`、`no-store`、`max-age`） | — |
+| 用戶端請求的 `Cache-Control` 標頭 | 預設忽略，用戶端無法略過快取；路由可用 `client_cache_control` 選擇開放（0.6.1） | 遵循 `no-store` 與 `no-cache` | 由中介軟體遵循（`no-cache`、`no-store`、`max-age`） | — |
 | 帶 `Authorization` 或 Session 的請求 | 略過共用快取，除非明確選擇共用 | 和其他請求一樣被快取 | 取決於你的快取鍵和中介軟體設定 | — |
 | 序列化 | JSON，不用 pickle；透過 pydantic 讓值以原本的型別回傳（`type_=`，或 `@cached` 的回傳型別註記，0.6.0） | 預設 JSON，可選 pickle | 預設 pickle，可選 HMAC 簽章；可選 JSON | pickle、JSON、msgpack、字串或不序列化 |
 | 後端 | 記憶體、Redis、Memcached | 記憶體、Redis、Memcached、DynamoDB | 記憶體、Redis（含 cluster 與 client-side caching）、diskcache | 記憶體、Redis、Memcached |
