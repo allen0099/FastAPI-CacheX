@@ -78,44 +78,40 @@ filterwarnings = [
 
 ## `@cached` 會驗證成回傳型別註記的型別 {#cached-return-annotation}
 
-在 0.6.0 之前，以 `@cached` 裝飾的函式除非傳入 `type_=`，否則回傳的是值的 JSON 形式：標註 `-> User` 的函式拿回 `dict`，標註 `-> tuple[int, int]` 的拿回 list，第一次呼叫和之後每次命中都一樣。從 0.6.0 起，未傳入 `type_` 時，`@cached` 會把快取的值驗證成函式的回傳型別註記（[#533](https://github.com/allen0099/FastAPI-CacheX/issues/533)）。
+以 `@cached` 裝飾、且未傳入 `type_=` 的函式，過去回傳的是值的 JSON 形式：標註 `-> User` 的拿回 `dict`，標註 `-> tuple[int, int]` 的拿回 list，第一次呼叫和之後每次命中都一樣。在 0.6.0 中，未傳入 `type_` 時，`@cached` 會把快取的值驗證成函式的回傳型別註記（[#533](https://github.com/allen0099/FastAPI-CacheX/issues/533)），因此這些函式會回傳 `User` 與 tuple。
 
-從 0.5.6 起，對會受影響的函式套用未帶 `type_` 的 `@cached` 時，會發出 `FutureWarning`：
+0.5.6 與之後的 0.5.x 版本會在套用裝飾器的地方以 `FutureWarning` 預告這項變更：
 
 ```text
 FutureWarning: cached return annotation: load_user() is annotated to return <class 'app.User'>, and from 0.6.0 @cached validates the cached value into that type ...
 ```
 
-它只在套用裝飾器的地方發出一次，而且只在這項變更可能改變函式回傳值時才發出。以下情況不會發出：
+以下情況沒有任何改變，先前也不會收到警告：
 
 - 有傳入 `type_`，不論值是什麼；
 - 函式沒有回傳型別註記；
-- 註記只由 JSON 自己的型別組成：`str`、`int`、`float`、`bool`、`None`、`Any`、`object`、`list` 與 `dict`（不帶參數，或寫成 `list[...]`、`dict[str, ...]`），以及它們的 union。這類值會照 JSON 解碼的結果回傳，不會被轉換。
+- 註記只由 JSON 自己的型別組成：`str`、`int`、`float`、`bool`、`None`、`Any`、`object`、`list` 與 `dict`（不帶參數，或寫成 `list[...]`、`dict[str, ...]`），以及它們的 union。這類值會照 JSON 解碼的結果回傳，不會被轉換。把這類型別包在 `Annotated[...]` 裡也不會改變任何事：其中的中繼資料不會套用，所以 `-> Annotated[int, Field(gt=0)]` 不會被檢查。要檢查的話請以 `type_=` 傳入。
 
-在套用裝飾器的地方無法解析的回傳型別註記，會收到另一則前綴相同的警告。這發生在型別是放在 `if TYPE_CHECKING:` 底下匯入（linter 常會把匯入搬到那裡），或是檔案後面才定義的類別時。0.6.0 讀不到這種註記，所以該函式會繼續回傳 JSON 形式，而其他函式卻改變了；明確傳入 `type_` 就能確定行為。
+唯一需要特別留意的情況，是在套用裝飾器的地方無法解析的回傳型別註記。這發生在型別是放在 `if TYPE_CHECKING:` 底下匯入（linter 常會把匯入搬到那裡），或是檔案後面才定義的類別時。`@cached` 讀不到這種註記，所以該函式會繼續回傳 JSON 形式，而套用裝飾器時會發出以 `cached return annotation` 開頭的 `UserWarning`（0.5.6 是以相同前綴的 `FutureWarning` 預告）。傳入 `type_=<該型別>` 可取得該型別，傳入 `type_=None` 則維持 JSON 形式且不再警告。
 
-請逐一為函式做出選擇，警告就會消失：
+pydantic 無法驗證的回傳型別註記也會得到相同的 `UserWarning` 與 JSON 形式：`Iterator[int]`、`Self`、`NoReturn`、`Response`、protocol 或一般類別。若驗證成這類型別，每次呼叫都會拋出例外。
+
+若要讓某個函式維持 JSON 形式，請明確寫出：
 
 ```python
-@cached(ttl=60, type_=User)  # 現在就採用 0.6.0 的行為
-async def load_user(user_id: int) -> User: ...
-
-
-@cached(ttl=60, type_=None)  # 維持 JSON 形式，到 0.6.0 也一樣
+@cached(ttl=60, type_=None)
 async def load_user_dict(user_id: int) -> User: ...
 ```
 
-使用 `type_=User` 時，先前快取、但已不符合該型別的值會視為未命中，函式會重新執行，因此部署時不需要清空快取。
+升級時請檢查：
 
-若想改為在整個測試套件中關閉這個警告：
-
-```toml
-[tool.pytest.ini_options]
-filterwarnings = [
-    "error",
-    "ignore:cached return annotation:FutureWarning",
-]
-```
+- 把結果當成 `dict` 使用的程式碼（`user["id"]`）現在會拿到模型（`user.id`）。
+- 0.5.x 快取下來、但不符合註記的值會視為未命中，函式會重新執行，因此升級時不需要清空快取。
+- 若函式回傳的值不符合它的註記，呼叫會拋出 pydantic 的 `ValidationError`；過去這種不一致不會被發現。
+- 值是從它的 JSON 形式重建的，因此無法接受自身 JSON 的模型每次呼叫都會拋出 `ValidationError`。這包括在 `extra="forbid"` 模型上的 `computed_field`，以及設了 `Field(exclude=True)` 的必填欄位。這類函式請使用 `type_=None`。
+- 結果就是註記的型別本身。註記為 `-> User` 卻回傳 `User` 子類別的函式會拿回 `User`，子類別多出的欄位不會保留；`-> Cat | Dog` 則由 pydantic 挑選 JSON 符合的成員，因此長得一樣的模型請加上 discriminator。
+- `-> Iterable[int]` 會得到只能走訪一次的 iterator，而不是 list。請註記為 `list[int]`。
+- 每次呼叫都會執行驗證，不論命中與否。對於非常頻繁讀取的大型值，`type_=None` 可以避免這項成本。
 
 ## `/cached-hits` 不再有 `*_hits` 欄位 {#cached-hits-fields}
 

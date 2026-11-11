@@ -5,7 +5,6 @@ import hashlib
 import json
 import sys
 import typing
-import warnings
 from collections.abc import AsyncIterator
 from datetime import datetime
 from datetime import timedelta
@@ -15,6 +14,8 @@ from typing import Optional
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
+from pydantic import Field
+from starlette.responses import Response
 
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import CachedFunction
@@ -368,45 +369,64 @@ async def test_a_model_result_comes_back_as_json_unless_a_type_is_given(
     assert calls == 1
 
 
-# --- The 0.6.0 notice for return annotations (#533) ---
+# --- The return annotation is the type (#533) ---
 
 
-def test_an_annotation_the_json_form_lacks_warns_at_the_decorators_line(
+async def test_a_model_annotation_gives_the_model_on_a_miss_and_on_a_hit(
     manager: CacheManager,
 ) -> None:
-    with pytest.warns(FutureWarning, match="cached return annotation") as record:
+    calls = 0
 
-        @cached(ttl=60, manager=manager)
-        async def load() -> _Point:
-            return _Point(x=1, y=2)
+    @cached(ttl=60, manager=manager)
+    async def load() -> _Point:
+        nonlocal calls
+        calls += 1
+        return _Point(x=1, y=2)
 
-    assert record[0].filename == __file__
-    message = str(record[0].message)
-    assert "load()" in message
-    assert "type_=None" in message
-    assert "issues/533" in message
+    assert await load() == _Point(x=1, y=2)
+    assert await load() == _Point(x=1, y=2)
+    assert calls == 1
 
 
-@pytest.mark.parametrize(
-    "annotation",
-    [
-        tuple[int, int],
-        list[_Point],
-        dict[str, _Point],
-        dict[int, str],
-        _Point | None,
-        datetime,
-        set[int],
-    ],
-)
-def test_annotations_validation_would_change_warn(annotation: Any) -> None:
-    def load() -> Any:
-        return None
+async def test_a_sync_function_and_a_tuple_annotation(manager: CacheManager) -> None:
+    @cached(ttl=60, manager=manager)
+    def pair() -> tuple[int, int]:
+        return (1, 2)
 
-    load.__annotations__["return"] = annotation
+    assert await pair() == (1, 2)
+    assert await pair() == (1, 2)
 
-    with pytest.warns(FutureWarning, match="cached return annotation"):
-        cached(ttl=60)(load)
+
+async def test_type_none_keeps_the_json_form(manager: CacheManager) -> None:
+    @cached(ttl=60, manager=manager, type_=None)
+    async def load() -> _Point:
+        return _Point(x=1, y=2)
+
+    assert await load() == {"x": 1, "y": 2}  # type: ignore[comparison-overlap]
+
+
+async def test_an_explicit_type_wins_over_the_annotation(
+    manager: CacheManager,
+) -> None:
+    @cached(ttl=60, manager=manager, type_=tuple[int, int])
+    async def pair() -> list[int]:
+        return [1, 2]
+
+    assert await pair() == (1, 2)  # type: ignore[comparison-overlap]
+
+
+async def test_a_cached_value_from_before_the_annotation_is_recomputed(
+    manager: CacheManager,
+) -> None:
+    """A deploy that adds or changes the annotation needs no cache flush."""
+
+    @cached(ttl=60, manager=manager, key="point")
+    async def load() -> _Point:
+        return _Point(x=1, y=2)
+
+    await manager.set("point", {"x": "not a number"})
+
+    assert await load() == _Point(x=1, y=2)
 
 
 @pytest.mark.parametrize(
@@ -431,84 +451,44 @@ def test_annotations_validation_would_change_warn(annotation: Any) -> None:
         typing.Dict[str, int],  # noqa: UP006
     ],
 )
-def test_annotations_the_json_form_already_has_stay_quiet(annotation: Any) -> None:
+def test_annotations_the_json_form_already_has_are_not_validated(
+    annotation: Any,
+) -> None:
     def load() -> Any:
         return None
 
     load.__annotations__["return"] = annotation
 
-    cached(ttl=60)(load)  # filterwarnings = error would raise
+    assert cached(ttl=60)(load)._type is None
 
 
-@pytest.mark.parametrize("type_", [None, _Point])
-def test_passing_type_makes_the_choice_and_silences_the_notice(type_: Any) -> None:
-    @cached(ttl=60, type_=type_)
-    async def load() -> _Point:
-        return _Point(x=1, y=2)
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        tuple[int, int],
+        list[_Point],
+        dict[str, _Point],
+        dict[int, str],
+        _Point | None,
+        datetime,
+        set[int],
+    ],
+)
+def test_other_annotations_become_the_type(annotation: Any) -> None:
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = annotation
+
+    assert cached(ttl=60)(load)._type == annotation
 
 
-def test_a_function_without_a_return_annotation_stays_quiet() -> None:
+def test_a_function_without_a_return_annotation_is_not_validated() -> None:
     @cached(ttl=60)
     async def load():
         return 1
 
-
-async def test_not_passing_type_still_returns_the_json_form(
-    manager: CacheManager,
-) -> None:
-    """The notice announces the change; 0.5.x keeps the behaviour."""
-    with pytest.warns(FutureWarning, match="cached return annotation"):
-
-        @cached(ttl=60, manager=manager)
-        async def load() -> _Point:
-            return _Point(x=1, y=2)
-
-    assert await load() == {"x": 1, "y": 2}  # type: ignore[comparison-overlap]
-
-
-def test_the_documented_filter_silences_the_notice() -> None:
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        warnings.filterwarnings(
-            "ignore", message="cached return annotation", category=FutureWarning
-        )
-
-        @cached(ttl=60)
-        async def load() -> _Point:
-            return _Point(x=1, y=2)
-
-
-def test_an_annotation_that_cannot_be_resolved_is_named_too() -> None:
-    """A model imported under TYPE_CHECKING, or defined further down (#533).
-
-    0.6.0 cannot read it, so the function would keep the JSON form while its
-    neighbours change: say so now.
-    """
-
-    def load() -> Any:
-        return None
-
-    load.__annotations__["return"] = "_DefinedLater"
-
-    with pytest.warns(FutureWarning, match="cached return annotation") as record:
-        cached(ttl=60)(load)
-
-    message = str(record[0].message)
-    assert "cannot be resolved" in message
-    assert "TYPE_CHECKING" in message
-    assert record[0].filename == __file__
-    # Either choice silences it.
-    cached(ttl=60, type_=None)(load)
-    cached(ttl=60, type_=_Point)(load)
-
-
-def test_an_unresolvable_parameter_alone_is_not_about_the_return_type() -> None:
-    def load(point):
-        return None
-
-    load.__annotations__["point"] = "_DefinedLater"
-
-    cached(ttl=60, key="k")(load)  # filterwarnings = error would raise
+    assert load._type is None
 
 
 @pytest.mark.parametrize(
@@ -532,16 +512,31 @@ def test_an_unresolvable_parameter_alone_is_not_about_the_return_type() -> None:
         ),
     ],
 )
-def test_real_modules_with_unresolvable_annotations_are_named(source: str) -> None:
-    """As a linter leaves the import, and as Python 3.14 defers the annotation."""
+def test_an_annotation_that_cannot_be_resolved_warns_and_keeps_the_json_form(
+    source: str,
+) -> None:
+    """Otherwise this function would differ from its neighbours without a sign."""
     namespace: dict[str, Any] = {"__name__": "some_app"}
     exec(source, namespace)  # noqa: S102 - the test's own source
 
-    with pytest.warns(FutureWarning, match="cannot be resolved"):
-        cached(ttl=60)(namespace["load"])
-    # With the choice made the function is decorated without a warning (on
-    # Python 3.14+ this used to raise NameError from inspect.signature).
-    assert cached(ttl=60, type_=None)(namespace["load"]).cache_key() != ""
+    with pytest.warns(UserWarning, match="cached return annotation") as record:
+        decorated = cached(ttl=60)(namespace["load"])
+
+    assert "cannot be resolved" in str(record[0].message)
+    assert record[0].filename == __file__
+    assert decorated._type is None
+    # Either choice is made without a warning.
+    assert cached(ttl=60, type_=None)(namespace["load"])._type is None
+    assert cached(ttl=60, type_=int)(namespace["load"])._type is int
+
+
+def test_an_unresolvable_parameter_alone_is_not_about_the_return_type() -> None:
+    def load(point):
+        return None
+
+    load.__annotations__["point"] = "_DefinedLater"
+
+    assert cached(ttl=60, key="k")(load)._type is None
 
 
 @pytest.mark.parametrize(
@@ -571,13 +566,63 @@ def test_real_modules_with_json_return_annotations_stay_quiet(source: str) -> No
     namespace: dict[str, Any] = {"__name__": "some_app"}
     exec(source, namespace)  # noqa: S102 - the test's own source
 
-    cached(ttl=60, key="k")(namespace["load"])  # filterwarnings = error would raise
+    # No warning (filterwarnings = error would raise), and nothing to validate.
+    assert cached(ttl=60, key="k")(namespace["load"])._type is None
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="the type statement is 3.12+")
-def test_an_alias_of_a_model_is_still_named() -> None:
+def test_an_alias_of_a_model_is_validated_into() -> None:
     namespace: dict[str, Any] = {"__name__": "some_app", "Point": _Point}
     exec("type Points = list[Point]\ndef load() -> Points: ...\n", namespace)  # noqa: S102
 
-    with pytest.warns(FutureWarning, match="cached return annotation"):
-        cached(ttl=60)(namespace["load"])
+    assert cached(ttl=60)(namespace["load"])._type is namespace["Points"]
+
+
+class _NotForPydantic:
+    """A plain class: pydantic cannot build a validator for it."""
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [typing.Iterator[int], _NotForPydantic, Response, typing.NoReturn],
+    ids=["iterator", "plain-class", "response", "noreturn"],
+)
+async def test_an_annotation_pydantic_cannot_validate_warns_and_keeps_the_json_form(
+    manager: CacheManager, annotation: Any
+) -> None:
+    """Validating into it would raise on every call, hit or miss (#533)."""
+
+    async def load() -> Any:
+        return [1, 2]
+
+    load.__annotations__["return"] = annotation
+
+    with pytest.warns(UserWarning, match="cached return annotation") as record:
+        decorated = cached(ttl=60, manager=manager)(load)
+
+    assert "pydantic cannot validate" in str(record[0].message)
+    assert record[0].filename == __file__
+    assert decorated._type is None
+    assert await decorated() == [1, 2]  # the miss
+    assert await decorated() == [1, 2]  # the hit
+    assert cached(ttl=60, type_=None)(load)._type is None  # no warning
+
+
+def test_annotated_metadata_is_kept_for_a_type_that_is_validated() -> None:
+    annotation = typing.Annotated[_Point, Field(title="a point")]
+
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = annotation
+
+    assert cached(ttl=60)(load)._type == annotation
+
+
+def test_an_annotated_json_type_is_not_validated() -> None:
+    """As 0.5.6 announced: only the type decides, not its metadata."""
+
+    def load() -> typing.Annotated[int, Field(gt=0)]:
+        return -5
+
+    assert cached(ttl=60)(load)._type is None

@@ -287,8 +287,11 @@ class CacheManager:
             return default
 
         try:
-            value = json.loads(cached.content)
-            return value if type_ is None else _adapter(type_).validate_python(value)
+            if type_ is None:
+                return json.loads(cached.content)
+            # As JSON, not as the decoded Python value: a strict model takes
+            # a datetime or a tuple from JSON, and refuses a str or a list.
+            return _adapter(type_).validate_json(cached.content)
         except (*_DECODE_ERRORS, ValidationError):
             # Keys often embed user IDs or e-mails: only a digest at WARNING.
             key_ref = log_ref(key)
@@ -446,10 +449,11 @@ class CacheManager:
         entry = self._encode(value)
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
-        stored = json.loads(entry.content)
         # What a later hit returns. A factory whose value does not fit type_
         # is a bug in the caller, so this ValidationError is not caught.
-        return stored if type_ is None else _adapter(type_).validate_python(stored)
+        if type_ is None:
+            return json.loads(entry.content)
+        return _adapter(type_).validate_json(entry.content)
 
     async def _execute_as_winner(
         self,

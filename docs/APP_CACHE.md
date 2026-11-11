@@ -59,8 +59,9 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
 - The decorated function is always `await`-ed, even if it was `def` (a sync
   function then runs on the event loop, as a `get_or_set()` factory does).
   Its result goes through the manager's [JSON round-trip](#json-round-trip),
-  so it comes back as JSON gives it, on the first call too; pass `type_=` for
-  a [typed read](#typed-reads).
+  and is then validated into the function's return annotation (a
+  [typed read](#typed-reads)), on the first call too; `type_=None` returns the
+  JSON form.
 - `ttl` takes seconds or a `timedelta`; without it the manager's
   `default_ttl` applies. `manager=` names the `CacheManager` to store
   through; without it the application's is used (what `AppCache` returns),
@@ -299,11 +300,11 @@ await cache.get("users", type_=list[User])
   the default, and `get_or_set()` runs `factory` again and overwrites it.
 - If the value `factory` returns does not fit `type_`, `get_or_set()` raises
   pydantic's `ValidationError`.
-- `@cached` does not read the type from the function's annotation yet; pass
-  `type_=` to it. Without it the function returns the JSON form. From 0.6.0
-  the return annotation is used when `type_` is not passed, and until then a
-  `FutureWarning` names the functions this will change; `type_=None` keeps
-  the JSON form in both. See
+- `@cached` uses the function's return annotation when `type_` is not passed,
+  so `async def load_user(...) -> User` returns a `User`. `type_=None` returns
+  the JSON form instead, as do a function without an annotation and one whose
+  annotation the JSON form already has (`dict[str, Any]`, `list[int]`). Before
+  0.6.0 the annotation was not read; see
   [Migrating to 0.6.0](MIGRATING_0_6.md#cached-return-annotation).
 - A stored `None` does not fit `type_=User`. For a value that may be absent,
   name it: `type_=User | None`.

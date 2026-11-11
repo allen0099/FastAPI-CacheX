@@ -23,6 +23,7 @@ from .backends.base import validate_ttl
 from .dependencies import get_app_cache
 from .exceptions import CacheXError
 from .manager import CacheManager
+from .manager import _adapter
 
 logger = logging.getLogger(__name__)
 
@@ -50,23 +51,21 @@ _UNRESOLVED: Any = object()
 
 _JSON_SCALARS = (str, int, float, bool, type(None), object)
 
-_RETURN_ANNOTATION_NOTICE = (
-    "cached return annotation: {name}() is annotated to return {annotation}, "
-    "and from 0.6.0 @cached validates the cached value into that type instead "
-    "of returning its JSON form (a model comes back as a model, not a dict; "
-    "a tuple as a tuple, not a list). Pass type_=<that type> to get this now, "
-    "or type_=None to keep the JSON form "
-    "(https://github.com/allen0099/FastAPI-CacheX/issues/533)."
-)
-
-_UNRESOLVED_ANNOTATION_NOTICE = (
+_UNRESOLVED_ANNOTATION_WARNING = (
     "cached return annotation: the annotations of {name}() cannot be resolved "
     "where @cached is applied (a name imported under TYPE_CHECKING, or a "
-    "class defined further down). From 0.6.0 @cached validates the cached "
-    "value into the return annotation; it cannot read this one, so this "
-    "function will keep returning the JSON form while others change. Pass "
-    "type_=<the type> or type_=None to say which you want "
-    "(https://github.com/allen0099/FastAPI-CacheX/issues/533)."
+    "class defined further down), so @cached cannot validate the cached "
+    "value into the return type and this function returns the JSON form. "
+    "Pass type_=<the type> to get the type, or type_=None to keep the JSON "
+    "form without this warning."
+)
+
+_UNSUPPORTED_ANNOTATION_WARNING = (
+    "cached return annotation: {name}() is annotated to return {annotation}, "
+    "a type pydantic cannot validate, so @cached cannot validate the cached "
+    "value into it and this function returns the JSON form. Pass type_=None "
+    "to keep the JSON form without this warning, or type_=<a type pydantic "
+    "can validate>."
 )
 
 
@@ -87,7 +86,8 @@ def _return_annotation(func: Callable[..., Any]) -> Any:
     stub.__annotations__ = {"return": annotations["return"]}
     namespace = getattr(inspect.unwrap(func), "__globals__", None)
     try:
-        return typing.get_type_hints(stub, globalns=namespace)["return"]
+        hints = typing.get_type_hints(stub, globalns=namespace, include_extras=True)
+        return hints["return"]
     except Exception:  # noqa: BLE001 - whatever evaluating an annotation raises
         return _UNRESOLVED
 
@@ -129,6 +129,8 @@ def _is_json_shaped(annotation: Any, aliases: tuple[Any, ...] = ()) -> bool:
     ``json.loads`` gave it and never validates it, so an ``int`` returned by
     a function annotated ``-> float`` stays an ``int``.
     """
+    while typing.get_origin(annotation) is typing.Annotated:
+        annotation = typing.get_args(annotation)[0]  # the metadata is not applied
     if isinstance(annotation, _TYPE_ALIAS):
         return _is_json_alias(annotation, aliases)
     origin, args = typing.get_origin(annotation), typing.get_args(annotation)
@@ -162,22 +164,32 @@ def _is_json_alias(alias: Any, aliases: tuple[Any, ...]) -> bool:
         return False
 
 
-def _warn_about_return_annotation(func: Callable[..., Any]) -> None:
-    """Announce the 0.6.0 change for a function it will affect (#533)."""
+def _type_from_annotation(func: Callable[..., Any]) -> Any:
+    """The type ``@cached`` validates into when ``type_`` is not passed (#533).
+
+    The return annotation, or ``None`` (no validation) when there is none or
+    the JSON form already is that type. One that cannot be resolved, or that
+    pydantic cannot validate (``Iterator[int]``, a ``Response``, a plain
+    class), also gives ``None``, with a warning: the function would otherwise
+    differ from its neighbours without a sign, or raise on every call.
+    """
     annotation = _return_annotation(func)
     if annotation is _UNSET or _is_json_shaped(annotation):
-        return
-    notice = (
-        _UNRESOLVED_ANNOTATION_NOTICE
-        if annotation is _UNRESOLVED
-        else _RETURN_ANNOTATION_NOTICE
-    )
-    warnings.warn(
-        notice.format(name=func.__qualname__, annotation=annotation),
-        FutureWarning,
-        # The line that applies the decorator: cached(...)(func).
-        stacklevel=3,
-    )
+        return None
+    if annotation is _UNRESOLVED:
+        message = _UNRESOLVED_ANNOTATION_WARNING.format(name=func.__qualname__)
+    else:
+        try:
+            _adapter(annotation)
+        except Exception:  # noqa: BLE001 - whatever pydantic raises for the type
+            message = _UNSUPPORTED_ANNOTATION_WARNING.format(
+                name=func.__qualname__, annotation=annotation
+            )
+        else:
+            return annotation
+    # stacklevel: the line that applies the decorator, cached(...)(func).
+    warnings.warn(message, UserWarning, stacklevel=3)
+    return None
 
 
 class CachedFunction(Generic[P, R]):
@@ -361,10 +373,12 @@ def cached(
     stored. A sync function runs on the event loop, as a ``get_or_set``
     factory does; wrap blocking I/O in ``run_in_threadpool`` yourself.
 
-    The value goes through the manager's JSON round-trip, so the function
-    returns what JSON gives back (a tuple as a list, integer dict keys as
-    strings, a pydantic model as a ``dict``), on the first call too. Pass
-    ``type_`` to get the function's own type back instead.
+    The value goes through the manager's JSON round-trip and is then
+    validated into the function's return annotation, so a function annotated
+    ``-> User`` returns a ``User`` and one annotated ``-> tuple[int, int]`` a
+    tuple, on the first call and on a hit. Without an annotation, or with
+    ``type_=None``, the function returns what JSON gives back (a tuple as a
+    list, integer dict keys as strings, a pydantic model as a ``dict``).
 
     The decorated function has ``cache_key(*args, **kwargs)`` for the key a
     call uses and ``await invalidate(*args, **kwargs)`` to drop its value.
@@ -389,18 +403,20 @@ def cached(
             ``type_=list[User]``), as for ``CacheManager.get(type_=...)``.
             A cached value that does not fit it counts as a miss and the
             function runs again. ``None`` returns the JSON form. Not passing
-            it does the same today; from 0.6.0 it will use the function's
-            return annotation, which is announced by the warning below.
+            it uses the function's return annotation, read when the
+            decorator is applied; a missing annotation, or one built only
+            from JSON's own types (``dict[str, Any]``, ``list[int]``,
+            ``str | None``), means no validation. Before 0.6.0 not passing
+            it always returned the JSON form.
 
     Returns:
         A decorator turning the function into a ``CachedFunction``
 
     Warns:
-        FutureWarning: When the decorator is applied, if ``type_`` is not
-            passed and the function's return annotation is a type the JSON
-            form does not already have (a model, a ``tuple``, a
-            ``datetime``). From 0.6.0 the cached value is validated into it
-            (#533). Pass ``type_`` to choose now.
+        UserWarning: When the decorator is applied, if ``type_`` is not
+            passed and the function's annotations cannot be resolved there
+            (a type imported under ``TYPE_CHECKING``, a class defined
+            further down). The function then returns the JSON form.
 
     Raises:
         TTLTypeError: When the decorator is applied, if ``ttl`` is not an
@@ -423,15 +439,13 @@ def cached(
         raise CacheXError(msg)
 
     def decorator(func: Callable[P, Any]) -> CachedFunction[P, Any]:
-        if type_ is _UNSET:
-            _warn_about_return_annotation(func)
         return CachedFunction(
             func,
             ttl=ttl_seconds,
             key=key,
             manager=manager,
             lock=lock,
-            type_=None if type_ is _UNSET else type_,
+            type_=_type_from_annotation(func) if type_ is _UNSET else type_,
         )
 
     return decorator
