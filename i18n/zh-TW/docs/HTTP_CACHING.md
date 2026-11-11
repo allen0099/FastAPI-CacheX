@@ -497,11 +497,10 @@ async def read_item(item_id: int):
 @app.put("/items/{item_id}")
 async def update_item(item_id: int, request: Request):
     await save(item_id)
-    path = request.url_for("read_item", item_id=item_id).path
-    return {"invalidated": await invalidate_path(request, path)}
+    return {"invalidated": await invalidate_path(request, f"/items/{item_id}")}
 ```
 
-`invalidate_path(request, path, key_builder=None, vary=None, *, query=None, sort_query=None)` 的主機、scheme 與標頭取自目前的請求，方法（`GET`）、路徑與查詢則來自它的參數。`path` 是 URL 路徑，也就是 `request.url_for(...).path` 回傳的形式；在掛載於某個前綴之下的應用程式中，它包含該前綴，而 `app.url_path_for()` 不會帶上前綴。快取請求的查詢可以放在 `path` 裡（`"/items?page=2"`）或以 `query` 傳入，形式可以是字串、mapping 或成對的序列；沒有查詢時，刪除的是該路徑不帶查詢所儲存的項目。
+`invalidate_path(request, path, key_builder=None, vary=None, *, query=None, sort_query=None)` 的主機、scheme 與標頭取自目前的請求，方法（`GET`）、路徑與查詢則來自它的參數。`path` 是被快取的 handler 在 `request.url.path` 看到的路徑：已經過百分比解碼，所以請像上面那樣用解碼後的值組出來，並包含掛載應用程式的前綴。`request.url_for(...).path` 會給出相同的字串，但有兩個例外：在會移除前綴的 proxy 後方（它會加上 `root_path`，而鍵裡沒有），以及路徑參數含有 `?` 或 `#` 時。快取請求的查詢可以放在 `path` 裡（`"/items?page=2"`）或以 `query` 傳入，形式可以是字串、mapping 或成對的序列；沒有查詢時，刪除的是該路徑不帶查詢所儲存的項目。由於 `path` 中的 `?` 代表查詢的開始，路徑內字面上的 `?` 要寫成 `%3F`。
 
 `invalidate(request)` 是同一個操作，用在你手上已經有請求的時候：它直接以該請求組出鍵，方法也包含在內。因此把 `PUT` 請求本身傳給它不會刪除任何東西，並會記錄一則說明原因的警告，因為 `PUT` 的鍵永遠不會與快取的 `GET` 相符。
 

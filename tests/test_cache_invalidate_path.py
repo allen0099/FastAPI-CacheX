@@ -14,11 +14,13 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+from fastapi_cachex import BackendProxy
 from fastapi_cachex import build_cache_key
 from fastapi_cachex import cache
 from fastapi_cachex import invalidate
 from fastapi_cachex import invalidate_path
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.types import CacheEntry
 
 
 def make_app() -> tuple[FastAPI, dict[str, int]]:
@@ -33,8 +35,8 @@ def make_app() -> tuple[FastAPI, dict[str, int]]:
 
     @app.put("/items/{name:path}")
     async def update_item(name: str, request: Request) -> dict[str, bool]:
-        # `url_for` includes the prefix an app is mounted under.
-        path = request.url_for("read_item", name=name).path
+        # The mount prefix is part of the key, and of `request.url.path`.
+        path = f"{request.scope.get('root_path', '')}/items/{name}"
         query = request.url.query or None
         return {"invalidated": await invalidate_path(request, path, query=query)}
 
@@ -203,4 +205,73 @@ async def test_a_get_that_finds_nothing_does_not_warn(
     with caplog.at_level(logging.WARNING, logger="fastapi_cachex.cache"):
         assert await invalidate(request) is False
 
+    assert caplog.text == ""
+
+
+def _scope(method: str, path: str, query: bytes = b"") -> dict[str, object]:
+    """A scope as a server delivers it: ``path`` already percent-decoded."""
+    return {
+        "type": "http",
+        "method": method,
+        "path": path,
+        "raw_path": b"/unrelated",
+        "query_string": query,
+        "headers": [(b"host", b"testserver")],
+    }
+
+
+async def _store(request: Request, **key_options: bool) -> None:
+    key = build_cache_key(request, **key_options)
+    await BackendProxy.get().set(key, CacheEntry(fingerprint="etag", content=b"x"), 60)
+
+
+@pytest.mark.parametrize(
+    ("served", "given"),
+    [
+        ("/items/50%25", "/items/50%25"),
+        ("/items/a%41", "/items/a%41"),
+        ("/items/a b", "/items/a b"),
+        ("/items/a#b", "/items/a#b"),
+        ("/items/a?b", "/items/a%3Fb"),
+    ],
+)
+async def test_the_path_is_the_decoded_one_the_handler_sees(
+    served: str, given: str
+) -> None:
+    """`TestClient` decodes twice and hides this, so the scopes are built here.
+
+    A client that sent ``/items/50%2525`` reaches the handler as
+    ``/items/50%25``; decoding that again would look for ``/items/50%``.
+    """
+    await _store(Request(_scope("GET", served)))
+
+    assert await invalidate_path(Request(_scope("PUT", "/other")), given) is True
+
+
+async def test_sort_query_is_passed_on() -> None:
+    await _store(Request(_scope("GET", "/q", b"b=2&a=1")), sort_query=False)
+    caller = Request(_scope("PUT", "/other"))
+
+    # Sorted (the default) builds the key of ?a=1&b=2, which was never stored.
+    assert await invalidate_path(caller, "/q?b=2&a=1") is False
+    assert await invalidate_path(caller, "/q?b=2&a=1", sort_query=False) is True
+
+
+async def test_a_list_value_becomes_repeated_parameters() -> None:
+    await _store(Request(_scope("GET", "/q", b"tag=a&tag=b")))
+
+    caller = Request(_scope("PUT", "/other"))
+    assert await invalidate_path(caller, "/q", query={"tag": ["a", "b"]}) is True
+
+
+async def test_a_custom_key_builder_is_not_told_its_key_cannot_match(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only the default key holds the method; a custom one may match a PUT."""
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.cache"):
+        missing = await invalidate(
+            Request(_scope("PUT", "/thing")), lambda request: "custom"
+        )
+
+    assert missing is False
     assert caplog.text == ""

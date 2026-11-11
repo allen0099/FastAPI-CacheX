@@ -20,7 +20,6 @@ from typing import NamedTuple
 from typing import get_args
 from typing import get_origin
 from typing import get_type_hints
-from urllib.parse import unquote
 from urllib.parse import urlencode
 
 from fastapi import Request
@@ -253,9 +252,10 @@ async def invalidate(
     cache for a specific cached route response.
 
     Args:
-        request: The request whose cache key should be invalidated. Typically
-            a request to the same route/method as the cached one (e.g. build
-            it via ``request.app.url_path_for(...)`` for a GET route).
+        request: The request whose cache key should be invalidated: a
+            request with the method, path and query of the cached one. From
+            another handler (a ``PUT`` that changes the resource), use
+            ``invalidate_path()``, which builds that request.
         key_builder: Custom key builder used by the target route's ``@cache``
             decorator, if any. If None, uses ``default_key_builder``. Must be
             a sync callable returning a ``str``, as for ``@cache``.
@@ -333,19 +333,22 @@ async def invalidate_path(
             await invalidate_path(request, f"/items/{item_id}")
 
     Args:
-        request: The current request. Only its host, scheme and headers are
-            used.
-        path: The path of the cached route as it appears in a URL, such as
-            ``request.url_for("read_item", item_id=1).path`` returns: it is
-            percent-decoded the way a server decodes a request path. In an
-            app mounted under a prefix it is the full path, prefix included
-            (which ``request.url_for`` gives, and ``app.url_path_for`` does
-            not). It may carry a query string (``"/items?page=2"``).
+        request: The current request. Its method, path and query are
+            replaced; everything else in its scope (host, scheme, headers,
+            and also ``path_params`` and ``state``, which a custom
+            ``key_builder`` may read) stays the caller's.
+        path: The path of the cached request as its handler sees it in
+            ``request.url.path``: already percent-decoded, so build it from
+            the decoded values (``f"/items/{item_id}"``), and with the prefix
+            of a mounted app included. It may carry a query string
+            (``"/items?page=2"``), so a literal ``?`` inside the path is
+            written ``%3F``, as ``request.url.path`` writes it.
         key_builder: As for ``invalidate()``.
         vary: As for ``invalidate()``.
         query: The query of the cached request, when it is not part of
-            ``path``: a string (``"page=2"``), a mapping or a sequence of
-            pairs, encoded as ``urllib.parse.urlencode`` does. Without one,
+            ``path``: a string as it appears in the URL, percent-encoded
+            (``"page=2"``), or a mapping or a sequence of pairs, which
+            ``urllib.parse.urlencode`` encodes. Without one,
             the entry stored for the path without a query is deleted.
         sort_query: As for ``invalidate()``.
 
@@ -373,8 +376,10 @@ async def invalidate_path(
     scope = {
         **request.scope,
         "method": "GET",
-        "path": unquote(path),
-        "raw_path": path.encode("utf-8"),
+        # Taken as it is: the caller builds it from decoded values, and
+        # decoding again would turn a literal "%25" into "%".
+        "path": path,
+        "raw_path": None,  # the caller's would name another path
         "query_string": query_string.encode("utf-8"),
     }
     return await invalidate(

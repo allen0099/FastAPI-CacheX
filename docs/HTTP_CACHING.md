@@ -886,18 +886,21 @@ async def read_item(item_id: int):
 @app.put("/items/{item_id}")
 async def update_item(item_id: int, request: Request):
     await save(item_id)
-    path = request.url_for("read_item", item_id=item_id).path
-    return {"invalidated": await invalidate_path(request, path)}
+    return {"invalidated": await invalidate_path(request, f"/items/{item_id}")}
 ```
 
 `invalidate_path(request, path, key_builder=None, vary=None, *, query=None, sort_query=None)`
 takes the host, the scheme and the headers from the current request and the
-method (`GET`), path and query from its arguments. `path` is a URL path, as
-`request.url_for(...).path` returns it; in an app mounted under a prefix that
-includes the prefix, which `app.url_path_for()` leaves out. The query of the
+method (`GET`), path and query from its arguments. `path` is the path the
+cached handler sees in `request.url.path`: already percent-decoded, so build
+it from the decoded values as above, and with the prefix of a mounted app
+included. `request.url_for(...).path` gives the same string except behind a
+proxy that strips a prefix (it adds `root_path`, which the key does not hold)
+and for a path parameter that contains `?` or `#`. The query of the
 cached request goes in `path` (`"/items?page=2"`) or in `query`, as a string, a
 mapping or a sequence of pairs; without one, the entry stored for the path
-with no query is deleted.
+with no query is deleted. Because a `?` in `path` starts the query, a literal
+one inside the path is written `%3F`.
 
 `invalidate(request)` is the same operation for a request you already have:
 it builds the key from that request as it is, method included. Passing it the
