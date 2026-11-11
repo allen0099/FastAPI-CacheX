@@ -2,19 +2,18 @@
 
 ## Supported versions
 
-Security fixes are released for the latest release line only. 0.5.x is the
-latest released line, but releases come only from `master`, which now carries
-0.6.0: no further 0.5.x release is possible, so a fix ships in 0.6.0. Upgrade
-to the newest release before reporting, and check whether the problem is
-still there.
+Security fixes are released for the latest release line only, which is
+0.6.x. Releases come only from `master`, so 0.5.x and earlier lines get no
+further releases. Upgrade to the newest release before reporting, and check
+whether the problem is still there.
 
 | Version           | Supported                       |
 |-------------------|---------------------------------|
-| Latest 0.5.x      | Until 0.6.0 is released         |
-| Older releases    | No                              |
+| Latest 0.6.x      | Yes                             |
+| 0.5.x and earlier | No                              |
 
 A fix ships in the next release from `master`; earlier releases are not
-patched. To prepare for 0.6.0, see
+patched. To upgrade from 0.5.x, see
 [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/).
 
 ## Supported Python versions

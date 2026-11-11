@@ -1,6 +1,6 @@
 # Migrating to 0.6.0 {#migrating-to-060}
 
-0.6.0 is not released yet. Its breaking changes are collected in the [0.6.0 milestone](https://github.com/allen0099/FastAPI-CacheX/issues?q=milestone%3A0.6.0), and this page grows as they land.
+This page lists what 0.6.0 changes for code written for 0.5.x. Every change was announced in a 0.5.x release, so upgrade to 0.5.6 (the last 0.5.x) first and clear the warnings it shows; what remains is described here.
 
 ## Python 3.11 or later {#python-311}
 

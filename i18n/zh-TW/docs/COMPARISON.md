@@ -6,7 +6,7 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 
 ## 一覽 {#at-a-glance}
 
-其他函式庫的資訊取自最後一列所列版本（各自的最新版本）的原始碼。標示 0.5.0 的功能需要 FastAPI-CacheX 0.5.0 以上。
+其他函式庫的資訊取自最後一列所列版本（各自的最新版本）的原始碼。標示版本號的功能需要該版本以上的 FastAPI-CacheX。
 
 | | FastAPI-CacheX | fastapi-cache2 | cashews | aiocache |
 |---|---|---|---|---|
@@ -15,12 +15,12 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 | `Cache-Control`、`ETag`、`304` | 依裝飾器的參數產生；`If-None-Match` 相符時回 `304` | 端點接收 `Response` 時，送出 `max-age`、弱 `ETag` 並回 `304` | 透過它的 `CacheRequestControlMiddleware` 與 `CacheEtagMiddleware` | 無 |
 | 用戶端請求的 `Cache-Control` 標頭 | 忽略，用戶端無法略過快取 | 遵循 `no-store` 與 `no-cache` | 由中介軟體遵循（`no-cache`、`no-store`、`max-age`） | — |
 | 帶 `Authorization` 或 Session 的請求 | 略過共用快取，除非明確選擇共用 | 和其他請求一樣被快取 | 取決於你的快取鍵和中介軟體設定 | — |
-| 序列化 | JSON，不用 pickle | 預設 JSON，可選 pickle | 預設 pickle，可選 HMAC 簽章；可選 JSON | pickle、JSON、msgpack、字串或不序列化 |
+| 序列化 | JSON，不用 pickle；透過 pydantic 讓值以原本的型別回傳（`type_=`，或 `@cached` 的回傳型別註記，0.6.0） | 預設 JSON，可選 pickle | 預設 pickle，可選 HMAC 簽章；可選 JSON | pickle、JSON、msgpack、字串或不序列化 |
 | 後端 | 記憶體、Redis、Memcached | 記憶體、Redis、Memcached、DynamoDB | 記憶體、Redis（含 cluster 與 client-side caching）、diskcache | 記憶體、Redis、Memcached |
 | Stampede 防護 | `get_or_set()` 搭配分散式鎖；`@cache` 的 `coalesce=True` 在單一行程內合併（0.5.0） | 無 | `locked`、`early`、`soft`、`thunder_protection` | `cached_stampede`（以鎖實作） |
 | 標籤、提前更新、指標 | 無 | 無 | 標籤、early 與 soft 提前更新、Prometheus 中介軟體、回呼 | 命中率與計時外掛 |
 | 其他功能 | `CacheLock`、原子計數器、監控路由 | — | 速率限制、斷路器、Bloom filter、鎖 | `RedLock`、`OptimisticLock`、`multi_cached` |
-| 比較的版本 | 0.5.0；Python 3.10–3.15、FastAPI 0.128.2+ | 0.2.2（2024-07-24）；Python 3.8+ | 7.6.0（2026-09-17）；Python 3.10+ | 0.12.3（2024-09-25） |
+| 比較的版本 | 0.6.0；Python 3.11–3.15、FastAPI 0.128.2+ | 0.2.2（2024-07-24）；Python 3.8+ | 7.6.0（2026-09-17）；Python 3.10+ | 0.12.3（2024-09-25） |
 
 ## FastAPI-CacheX {#fastapi-cachex}
 

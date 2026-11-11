@@ -14,8 +14,8 @@ If something here is out of date, please
 ## At a glance
 
 Facts about the other libraries are from their source code at the release
-named in the last row (the latest release of each). A feature marked 0.5.0 needs FastAPI-CacheX 0.5.0
-or newer.
+named in the last row (the latest release of each). A feature marked with a version needs that
+FastAPI-CacheX version or newer.
 
 | | FastAPI-CacheX | fastapi-cache2 | cashews | aiocache |
 |---|---|---|---|---|
@@ -24,12 +24,12 @@ or newer.
 | `Cache-Control`, `ETag`, `304` | Written from the decorator's arguments; `304` on a matching `If-None-Match` | `max-age`, a weak `ETag` and `304` when the endpoint takes a `Response` | With its `CacheRequestControlMiddleware` and `CacheEtagMiddleware` | None |
 | A client's `Cache-Control` request header | Ignored, so clients cannot skip the cache | `no-store` and `no-cache` are honoured | Honoured by the middleware (`no-cache`, `no-store`, `max-age`) | — |
 | Requests with `Authorization` or a session | Bypass the shared cache unless you opt in | Cached like any other request | Your choice of key and middleware settings | — |
-| Serialization | JSON, no pickle | JSON by default, pickle optional | Pickle by default, optionally HMAC-signed; JSON optional | Pickle, JSON, msgpack, string or none |
+| Serialization | JSON, no pickle; values come back as their type through pydantic (`type_=`, or the return annotation of `@cached`, 0.6.0) | JSON by default, pickle optional | Pickle by default, optionally HMAC-signed; JSON optional | Pickle, JSON, msgpack, string or none |
 | Backends | Memory, Redis, Memcached | Memory, Redis, Memcached, DynamoDB | Memory, Redis (incl. cluster and client-side caching), diskcache | Memory, Redis, Memcached |
 | Stampede protection | `get_or_set()` with a distributed lock; `coalesce=True` per process on `@cache` (0.5.0) | None | `locked`, `early`, `soft`, `thunder_protection` | `cached_stampede` (lock based) |
 | Tags, early refresh, metrics | No | No | Tags, early and soft refresh, Prometheus middleware, callbacks | Hit/miss and timing plugins |
 | Also included | `CacheLock`, atomic counters, monitoring routes | — | Rate limiting, circuit breaker, Bloom filters, locks | `RedLock`, `OptimisticLock`, `multi_cached` |
-| Version compared | 0.5.0; Python 3.10–3.15, FastAPI 0.128.2+ | 0.2.2 (2024-07-24); Python 3.8+ | 7.6.0 (2026-09-17); Python 3.10+ | 0.12.3 (2024-09-25) |
+| Version compared | 0.6.0; Python 3.11–3.15, FastAPI 0.128.2+ | 0.2.2 (2024-07-24); Python 3.8+ | 7.6.0 (2026-09-17); Python 3.10+ | 0.12.3 (2024-09-25) |
 
 ## FastAPI-CacheX
 
