@@ -1031,7 +1031,10 @@ async def update_user(user_id: int):
 ```
 
 `tags=` is a list of names, or a plain function that takes the request and
-returns them. An entry is a miss once any of its tags has been invalidated
+returns them. The function runs on every request to the route, hits included,
+and must give the same tags for every request that shares a cache key: build
+them from the path or the query, not from a header the key does not hold, or
+the entry is rendered and stored again each time the tags differ. An entry is a miss once any of its tags has been invalidated
 since it was stored, whatever its query string, `vary` variant or host. It
 works on every backend, Memcached included, because nothing is enumerated:
 each tag has a version in the backend, and an entry remembers the versions it
@@ -1040,6 +1043,10 @@ was stored under.
 - A hit on a tagged route costs one extra batched backend read; a route
   without tags pays nothing.
 - Invalidated entries are not deleted; they expire with their `ttl`.
+- An entry stored before the route had these tags (before `tags=` was added,
+  or under other names) is not served: the handler runs and stores it again,
+  tagged. So `invalidate_tags()` can be relied on from the first deploy with
+  tags, once every worker runs it.
 - A tag's version is created when a response is stored under it. A request
   whose response is not stored (a 404, a cookie) leaves nothing behind, so
   tags built from the URL cannot be used to fill the backend.
