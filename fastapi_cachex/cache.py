@@ -342,7 +342,8 @@ async def invalidate_path(
             the decoded values (``f"/items/{item_id}"``), and with the prefix
             of a mounted app included. It may carry a query string
             (``"/items?page=2"``), so a literal ``?`` inside the path is
-            written ``%3F``, as ``request.url.path`` writes it.
+            written as ``request.url.path`` writes it (``%3F`` on current
+            Starlette).
         key_builder: As for ``invalidate()``.
         vary: As for ``invalidate()``.
         query: The query of the cached request, when it is not part of

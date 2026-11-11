@@ -900,7 +900,8 @@ and for a path parameter that contains `?` or `#`. The query of the
 cached request goes in `path` (`"/items?page=2"`) or in `query`, as a string, a
 mapping or a sequence of pairs; without one, the entry stored for the path
 with no query is deleted. Because a `?` in `path` starts the query, a literal
-one inside the path is written `%3F`.
+one inside the path is written as `request.url.path` shows it (`%3F` on
+current Starlette).
 
 `invalidate(request)` is the same operation for a request you already have:
 it builds the key from that request as it is, method included. Passing it the
