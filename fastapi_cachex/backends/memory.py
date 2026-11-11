@@ -203,6 +203,15 @@ class MemoryBackend(BaseCacheBackend):
         )
         return self._lock
 
+    @lock.setter
+    def lock(self, value: asyncio.Lock) -> None:
+        warnings.warn(
+            "MemoryBackend.lock is deprecated and will be removed in version 0.7.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._lock = value
+
     def start_cleanup(self) -> None:
         """Deprecated: start the cleanup task; removed in 0.7.0 (#504).
 
@@ -493,10 +502,14 @@ class MemoryBackend(BaseCacheBackend):
         Returns:
             Number of cache entries cleared
         """
-        # `key == path`: a direct key (a custom format, not an HTTP key).
-        cleared_count = await self._evict(
-            lambda key: key == path or CacheKey.is_for_path(key, path, include_params)
-        )
+
+        def matches(key: str) -> bool:
+            if CacheKey.parse(key) is None:
+                # Direct key match (custom key format without separators)
+                return key == path
+            return CacheKey.is_for_path(key, path, include_params)
+
+        cleared_count = await self._evict(matches)
         logger.debug(
             "Memory cache CLEAR_PATH; path=%s include_params=%s removed=%s",
             path,

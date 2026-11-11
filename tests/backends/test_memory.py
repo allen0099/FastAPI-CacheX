@@ -1310,7 +1310,24 @@ async def test_lock_and_start_cleanup_are_deprecated(memory_backend: MemoryBacke
         assert not write.done()
     await write
 
+    # Assigning it, as a subclass could, still replaces the lock taken.
+    with pytest.warns(DeprecationWarning, match="lock is deprecated"):
+        memory_backend.lock = asyncio.Lock()
+    with pytest.warns(DeprecationWarning, match="lock is deprecated"):
+        assert memory_backend.lock is memory_backend._lock is not lock
+
     memory_backend.stop_cleanup()
     with pytest.warns(DeprecationWarning, match=r"start_cleanup\(\) is deprecated"):
         memory_backend.start_cleanup()
     assert memory_backend._cleanup_task is not None
+
+
+async def test_clear_path_does_not_take_an_http_key_as_a_path(
+    memory_backend: MemoryBackend,
+):
+    """A whole HTTP key given as ``path`` matches nothing, as on Redis."""
+    key = "http:v2|GET|testserver|/items|a=1"
+    await memory_backend.set(key, CacheEntry(fingerprint="e", content=b"v"))
+
+    assert await memory_backend.clear_path(key, include_params=True) == 0
+    assert await memory_backend.clear_path("/items", include_params=True) == 1
