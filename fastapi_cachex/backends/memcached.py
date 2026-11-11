@@ -8,16 +8,19 @@ import warnings
 from collections.abc import Callable
 from collections.abc import Iterable
 from datetime import timedelta
+from typing import Any
 
 from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import TTLValueError
+from fastapi_cachex.exceptions import ValueTooLargeError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import log_ref
 
 from ._unavailable import translate_unavailable
+from ._unavailable import translated
 from .base import BaseCacheBackend
 from .base import require_ttl
 from .base import validate_delta
@@ -315,10 +318,32 @@ class MemcachedBackend(BaseCacheBackend):
             ttl: Time to live in seconds
         """
         ttl = validate_ttl(ttl)
-        await asyncio.to_thread(
-            self.client.set, self._make_key(key), encode_entry(value), _expiry(ttl)
-        )
+        await asyncio.to_thread(self._store, self.client.set, key, value, ttl)
         logger.debug("Memcached SET; key=%s ttl=%s", key, ttl)
+
+    def _store(
+        self,
+        command: Callable[..., Any],
+        key: str,
+        value: CacheEntry,
+        ttl: int | None,
+    ) -> Any:
+        """Send a storage command; a refused value raises ``ValueTooLargeError``."""
+        from pymemcache.exceptions import MemcacheServerError
+
+        payload = encode_entry(value)
+        try:
+            return command(self._make_key(key), payload, _expiry(ttl), noreply=False)
+        except MemcacheServerError as e:
+            if "too large" not in str(e):
+                raise
+            # The message reaches error logs and trackers: a digest, not the key.
+            msg = (
+                f"Memcached refused a value of {len(payload)} bytes as too large "
+                f"(key_ref={log_ref(key)}); the item size limit is 1 MB unless "
+                "the server was started with -I"
+            )
+            raise translated(ValueTooLargeError, e, msg) from e
 
     @_unavailable
     async def get_and_delete(self, key: str) -> CacheEntry | None:
@@ -376,13 +401,7 @@ class MemcachedBackend(BaseCacheBackend):
         Memcached's ``ADD`` is exactly this operation.
         """
         ttl = validate_ttl(ttl)
-        stored = await asyncio.to_thread(
-            self.client.add,
-            self._make_key(key),
-            encode_entry(value),
-            _expiry(ttl),
-            noreply=False,
-        )
+        stored = await asyncio.to_thread(self._store, self.client.add, key, value, ttl)
         logger.debug(
             "Memcached SET_IF_ABSENT %s; key=%s ttl=%s",
             "STORED" if stored else "EXISTS",

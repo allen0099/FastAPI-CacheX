@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import pickle
 import socket
 import sys
 import warnings
@@ -20,6 +21,7 @@ from fastapi_cachex.backends.memcached import _CAS_MAX_RETRIES
 from fastapi_cachex.backends.memcached import _DEAD_TIMEOUT
 from fastapi_cachex.backends.memcached import _expiry
 from fastapi_cachex.exceptions import CacheXError
+from fastapi_cachex.exceptions import ValueTooLargeError
 from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.types import CacheEntry
@@ -1384,3 +1386,68 @@ def test_memcached_with_both_timeouts_does_not_warn() -> None:
         MemcachedBackend([MEMCACHED_SERVER], connect_timeout=5, timeout=5)
 
     assert caught == []
+
+
+_SECRET_KEY = "user:alice@example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["set", "set_if_absent"])
+async def test_memcached_refused_value_raises_value_too_large(method: str) -> None:
+    """The server's refusal names the size and a key digest, on both writers (#261)."""
+    from pymemcache.exceptions import MemcacheServerError
+
+    backend = stubbed_backend()
+    refusal = MemcacheServerError(b"object too large for cache")
+    backend.client.set.side_effect = refusal
+    backend.client.add.side_effect = refusal
+    entry = CacheEntry(fingerprint="etag", content=b"x" * 2048)
+
+    with pytest.raises(ValueTooLargeError) as excinfo:
+        await getattr(backend, method)(_SECRET_KEY, entry, 60)
+
+    error = excinfo.value
+    # Still the client's own type, so an older `except` keeps catching it.
+    assert isinstance(error, MemcacheServerError)
+    assert error.__cause__ is refusal
+    assert f"{len(encode_entry(entry))} bytes" in str(error)
+    assert log_ref(_SECRET_KEY) in str(error)
+    assert _SECRET_KEY not in str(error)
+    restored = pickle.loads(pickle.dumps(error))  # noqa: S301 - our own bytes
+    assert type(restored) is type(error)
+    assert str(restored) == str(error)
+
+
+@pytest.mark.asyncio
+async def test_memcached_other_server_errors_are_left_alone() -> None:
+    from pymemcache.exceptions import MemcacheServerError
+
+    backend = stubbed_backend()
+    backend.client.set.side_effect = MemcacheServerError(b"out of memory")
+
+    with pytest.raises(MemcacheServerError) as excinfo:
+        await backend.set("k", CacheEntry(fingerprint="etag", content=b"x"))
+
+    assert type(excinfo.value) is MemcacheServerError
+
+
+@requires_memcached
+@pytest.mark.asyncio
+async def test_memcached_server_refuses_a_value_over_its_item_size(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """Against a real server: the backend, and `CacheManager` on top of it."""
+    small = CacheEntry(fingerprint="etag", content=b"old")
+    entry = CacheEntry(fingerprint="etag", content=b"x" * (2 * 1024 * 1024))
+    await memcached_backend.set("big", small)
+
+    # A refused ADD leaves the value that was there.
+    with pytest.raises(ValueTooLargeError):
+        await memcached_backend.set_if_absent("big", entry)
+    assert await memcached_backend.get("big") == small
+    # A refused SET makes the server drop it (documented in BACKENDS.md).
+    with pytest.raises(ValueTooLargeError):
+        await memcached_backend.set("big", entry)
+    assert await memcached_backend.get("big") is None
+    with pytest.raises(ValueTooLargeError):
+        await CacheManager(memcached_backend).set("big", "x" * (2 * 1024 * 1024))

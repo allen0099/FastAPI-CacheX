@@ -143,7 +143,7 @@ BackendProxy.set(backend)
 - `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間，且每次呼叫都會發出 `RuntimeWarning`。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用層快取](APP_CACHE.md)）
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存，摘要前面仍帶著 `key_prefix`。因此建立後端時會先檢查前綴本身：含空白字元、控制字元或非 ASCII 字元，或長度達 250 位元組以上的前綴會拋出 `ValueError`；超過 186 位元組、放不下 64 個字元摘要的前綴則會發出警告（0.4.1 之前，這類前綴會讓呼叫以 `MemcacheIllegalInputError` 失敗）
 - 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
-- 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕並拋出錯誤。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）；其他呼叫端則會收到該錯誤
+- 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）。`CacheManager`（`set`、`add`、`get_or_set`）、`@cached` 以及直接呼叫 `set()`／`set_if_absent()` 則會拋出 `ValueTooLargeError`，它是 `CacheXError`，訊息中會列出編碼後的大小。不會儲存任何內容，而且伺服器還會移除被拒絕的 `set()` 原本要取代的值，因此之後讀取該鍵會是不存在；被拒絕的 `set_if_absent()` 則會保留既有的值。這個錯誤會串接 pymemcache 的 `MemcacheServerError`，同時也是該型別的實例，而 0.5.4 之前這些呼叫端收到的就只有後者
 - 若需要依模式清除快取，請考慮使用 Redis 後端
 
 同步的 pymemcache 用戶端在工作執行緒中執行，並使用連線池，因此並行的請求絕不會共用同一個 socket。寫入會等待伺服器確認（`default_noreply=False`），因此只要 `set()` 返回，就能從連線池中的任何連線讀到該值。每次呼叫只切換到工作執行緒一次，多步驟的[原子操作](#atomic-backend-primitives)也是如此。`delete_many()` 在這一次呼叫中逐一對每個鍵送出 `DELETE`，並回傳實際存在的鍵數；0.3.8 之前它每個鍵都要切換一次執行緒，回傳的是傳入的鍵數。
@@ -191,7 +191,7 @@ async def report(cache: AppCache) -> dict[str, int]:
         return build_report()  # 快取無法使用時，直接產生不經快取的結果
 ```
 
-這個錯誤會串接用戶端原本的例外（`__cause__`），而且同時也是該例外型別的實例：Memcached 的連線被拒絕時，它既是 `BackendUnavailableError` 也是 `ConnectionRefusedError`；Redis 的則既是 `BackendUnavailableError` 也是 `redis.exceptions.ConnectionError`。0.5.1 之前寫好、直接捕捉用戶端例外的 `except` 仍然有效。與連線無關的錯誤維持原樣：無效的參數、Memcached 因過大而拒絕的值、存放了其他內容的鍵。
+這個錯誤會串接用戶端原本的例外（`__cause__`），而且同時也是該例外型別的實例：Memcached 的連線被拒絕時，它既是 `BackendUnavailableError` 也是 `ConnectionRefusedError`；Redis 的則既是 `BackendUnavailableError` 也是 `redis.exceptions.ConnectionError`。0.5.1 之前寫好、直接捕捉用戶端例外的 `except` 仍然有效。與連線無關的錯誤不會被轉換成它：無效的參數、存放了其他內容的鍵、Memcached 因過大而拒絕的值（這是 `ValueTooLargeError`，見 [Memcached](#memcached)）。
 
 `@cache` 不受影響：遇到任何後端錯誤（包括這個）都會 [fail open](HTTP_CACHING.md#when-the-backend-fails)。`CacheManager`、`CacheLock` 與直接呼叫後端時，則會把它往外拋出。
 
