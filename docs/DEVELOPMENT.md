@@ -392,6 +392,10 @@ before the release:
   zh-TW copy): its introduction says the release is still to come until then.
 - `README.md` and `i18n/zh-TW/docs/index.md`: the line that links the guide.
 - `docs/COMPARISON.md` and its zh-TW copy: the "Version compared" row.
+- `zensical.toml` and `zensical.zh-TW.toml`: the guide's entry under
+  "Migration guides", when the guide is new.
+- `CLAUDE.md`: the paragraph that says which line `master` carries, and its
+  list of migration guides.
 
 ### Rehearsing a release
 

@@ -92,6 +92,14 @@
       groupName: "uv",
     },
     {
+      // Renovate itself releases several times a day; one pull request a
+      // week for these pins is enough.
+      description: "Group the tools pinned on a command line (customManagers)",
+      matchManagers: ["custom.regex"],
+      groupName: "command-line tools",
+      schedule: ["before 6am on monday"],
+    },
+    {
       description: "Automerge non-major updates once CI passes",
       matchUpdateTypes: ["minor", "patch", "pin", "digest"],
       automerge: true,
