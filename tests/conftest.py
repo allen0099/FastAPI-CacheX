@@ -20,6 +20,11 @@ from fastapi_cachex.backends.redis import AsyncRedisCacheBackend
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import BackendProxy
 
+# A developer's shell or a CI image may set it; every `MemoryBackend()` would
+# then warn, and `filterwarnings = error` would fail the whole suite (#395).
+# The tests of that warning set it themselves.
+os.environ.pop("WEB_CONCURRENCY", None)
+
 _PENDING_TASK_MESSAGE = "Task was destroyed but it is pending!"
 
 

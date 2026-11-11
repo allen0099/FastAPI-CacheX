@@ -17,7 +17,7 @@ Redis 與 Memcached 後端會以前綴為鍵建立命名空間（預設為 `fast
 
 若未指定後端，FastAPI-CacheX 預設會使用記憶體快取。這適合開發與測試用途。此後端會自動執行清理工作，每 60 秒移除一次已過期的項目（`MemoryBackend(cleanup_interval=60)`；間隔必須大於 0）。它存入與回傳的都是 `CacheEntry` 的副本，因此修改讀到或寫入的項目不會改變快取內容，與每次讀取都解碼出新項目的 Redis、Memcached 一致（0.4.1 之前，記憶體後端會直接交出存放的物件本身）。
 
-當 `@cache`、`CacheBackend` 或 `AppCache` 因為尚未設定後端而註冊這個後備後端時，`fastapi_cachex.proxy` logger 會在每個行程記錄一次 `WARNING`，因為它的快取是每個行程各自一份：在多個 worker 下，快取失效只會傳到其中一個 worker。在啟動時明確設定後端即可消除這個警告；明確設定的 `MemoryBackend` 不會發出警告：
+當 `@cache`、`CacheBackend` 或 `AppCache` 因為尚未設定後端而註冊這個後備後端時，`fastapi_cachex.proxy` logger 會在每個行程記錄一次 `WARNING`，因為它的快取是每個行程各自一份：在多個 worker 下，快取失效只會傳到其中一個 worker。在啟動時明確設定後端即可消除這個警告；明確設定的 `MemoryBackend` 不會記錄這則訊息：
 
 ```python
 from fastapi_cachex.backends import MemoryBackend
@@ -29,6 +29,14 @@ BackendProxy.set(backend)
 
 > [!NOTE]
 > 記憶體快取不適合用於多行程的正式環境。每個行程都各自維護獨立的快取。
+
+建立 `MemoryBackend` 時（不論是明確建立或作為後備後端），如果環境變數 `WEB_CONCURRENCY` 是大於 1 的整數，就會發出 `UserWarning`。uvicorn（`--workers`）與 gunicorn（`-w`）都以這個變數作為預設的 worker 數，Heroku 等平台也會設定它。在多個 worker 下，`invalidate()` 與 `clear*` 方法只會作用於其中一個 worker，`CacheLock` 與 `get_or_set(lock=True)` 只在單一 worker 內互斥，計數器也是每個 worker 各自一份。這項檢查只是提示而非保證：只在命令列指定的 worker 數，或多個單一 worker 的副本，都偵測不到。如果設定了這個變數，但該行程確實是唯一的 worker，可以這樣關閉警告：
+
+```python
+import warnings
+
+warnings.filterwarnings("ignore", message="memory backend with several workers")
+```
 
 清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束（參見[關閉後端](#closing-a-backend)）；`stop_cleanup()` 只會要求取消。
 

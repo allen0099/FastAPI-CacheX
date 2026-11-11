@@ -2,6 +2,7 @@ import asyncio
 import ntpath
 import os
 import time
+import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
+from fastapi_cachex import BackendProxy
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import COUNTER_FINGERPRINT
@@ -1181,3 +1183,55 @@ async def test_the_limit_survives_clear() -> None:
     await backend.set("c", _entry("c"))
 
     assert list(backend.cache) == ["c"]
+
+
+def test_memory_backend_warns_when_web_concurrency_says_several_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each worker would have its own cache; the line named is the caller's (#395)."""
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+
+    with pytest.warns(
+        UserWarning, match="memory backend with several workers"
+    ) as record:
+        MemoryBackend()
+
+    assert record[0].filename == __file__
+    message = str(record[0].message)
+    assert "WEB_CONCURRENCY is 4" in message
+    # The message ends with the line that silences it, and that line works.
+    assert "filterwarnings('ignore', message='memory backend with several" in message
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        warnings.filterwarnings("ignore", message="memory backend with several workers")
+        MemoryBackend()
+
+
+def test_memory_fallback_warning_names_the_application_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback is built inside the library; the warning still points here."""
+    from fastapi_cachex.dependencies import get_cache_backend
+
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    BackendProxy.set(None)
+
+    with pytest.warns(
+        UserWarning, match="memory backend with several workers"
+    ) as record:
+        get_cache_backend()
+
+    assert record[0].filename == __file__
+
+
+@pytest.mark.parametrize("value", [None, "", "1", "0", "abc", "2.5"])
+def test_memory_backend_stays_quiet_without_several_workers(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    """Unset, one worker, or not an integer: no warning and no error."""
+    if value is None:
+        monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    else:
+        monkeypatch.setenv("WEB_CONCURRENCY", value)
+
+    MemoryBackend()  # filterwarnings = error would raise

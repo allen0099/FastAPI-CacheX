@@ -4,12 +4,15 @@ import asyncio
 import copy
 import fnmatch
 import logging
+import os
 import time
+import warnings
 from collections import OrderedDict
 from collections.abc import Callable
 from collections.abc import Iterable
 from datetime import timedelta
 
+from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.cache_key import CacheKey
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import CacheItem
@@ -65,6 +68,39 @@ def _validate_max_entries(max_entries: int | None) -> int | None:
     return max_entries
 
 
+_WORKERS_WARNING = (
+    "memory backend with several workers: WEB_CONCURRENCY is {workers}, and a "
+    "MemoryBackend lives in one process, so each worker has its own cache. "
+    "invalidate(), clear_path() and the other clear methods reach one worker "
+    "only while the others keep serving stale entries, CacheLock and "
+    "get_or_set(lock=True) exclude only within one worker, and counters are "
+    "per worker. Use the Redis or Memcached backend to share them. If this "
+    "process is the only worker, silence this with "
+    "warnings.filterwarnings('ignore', message='memory backend with several "
+    "workers')."
+)
+
+
+def _warn_if_several_workers() -> None:
+    """Warn when ``WEB_CONCURRENCY`` says the app runs in several workers (#395).
+
+    uvicorn and gunicorn both read it as their default worker count, and
+    platforms set it. It is the only signal used: a parent-process check
+    would flag ``uvicorn --reload``, which runs one worker in a child. A
+    count given only on the command line is missed.
+    """
+    try:
+        workers = int(os.environ.get("WEB_CONCURRENCY", ""))
+    except ValueError:
+        return
+    if workers > 1:
+        warnings.warn(
+            _WORKERS_WARNING.format(workers=workers),
+            UserWarning,
+            stacklevel=caller_stacklevel(),
+        )
+
+
 class MemoryBackend(BaseCacheBackend):
     """In-memory cache backend implementation.
 
@@ -108,6 +144,7 @@ class MemoryBackend(BaseCacheBackend):
         self.cleanup_interval = cleanup_interval
         self.max_entries = _validate_max_entries(max_entries)
         self._cleanup_task: asyncio.Task[None] | None = None
+        _warn_if_several_workers()
 
     def _touch(self, key: str) -> None:
         """Mark ``key`` as the most recently used entry. Call under the lock."""
