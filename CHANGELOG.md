@@ -20,6 +20,46 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-11-11
+
+### Added
+
+- **`CacheManager` stores pydantic models and reads them back typed, and has
+  `increment()`.** `set()`, `add()`, `get_or_set()` and `@cached` now store what
+  pydantic can turn into JSON (models, dataclasses, `datetime`, `Decimal`,
+  `UUID`, sets) instead of raising `TypeError`. `get()`, `get_or_set()` and
+  `@cached` take `type_=` and validate the cached value into that type, so
+  `await cache.get("user:1", type_=User)` returns a `User`. `increment(key,
+  delta=1, ttl=None)` is the backend's atomic counter under the manager's
+  prefix. ([#249](https://github.com/allen0099/FastAPI-CacheX/issues/249))
+- **`CacheLock(auto_extend=True)` renews the lock while it is held, and
+  `lock.lost` reports a lock that was lost.** With `auto_extend`, a background
+  task extends the lock every third of its `ttl` until `release()`, for work
+  whose duration is not known in advance. `lost` becomes `True` when `extend()`
+  or `release()` finds the lock expired or taken by someone else, which the
+  `async with` form could not tell you before. `docs/LOCK.md` now also says that
+  the lock has no fencing tokens. ([#250](https://github.com/allen0099/FastAPI-CacheX/issues/250))
+- **`@cache(vary={name: normaliser})` keys on what a header means, not on its
+  raw value.** `vary={"Accept-Language": pick_locale}` calls
+  `pick_locale(value)` and puts its result into the key, so `en-US,en;q=0.9` and
+  `en` share one entry instead of each client-chosen value creating its own. The
+  list form and its keys are unchanged, the `Vary` response header still names
+  the header, and `invalidate()` and `invalidate_path()` take the same mapping. ([#310](https://github.com/allen0099/FastAPI-CacheX/issues/310))
+- **`MemoryBackend` warns when `WEB_CONCURRENCY` says the app runs in several
+  workers.** Each worker has its own in-memory cache, so invalidation reaches one
+  worker only and `CacheLock` excludes only within one. Creating a
+  `MemoryBackend` while `WEB_CONCURRENCY` is an integer greater than 1 now emits a
+  `UserWarning` that says so and ends with the `warnings.filterwarnings` line
+  that silences it. ([#395](https://github.com/allen0099/FastAPI-CacheX/issues/395))
+
+### Fixed
+
+- **A Redis backend built from a URL retries like one built from host and
+  port.** `AsyncRedisCacheBackend.from_url()`, `url=` and `RedisConfig.url` got no
+  retry policy in 0.5.4, because redis-py applies its default (10 attempts with
+  backoff in redis-py 8) only to a client built from host and port. They now get
+  that default too; an explicit `retry=` still wins. ([#527](https://github.com/allen0099/FastAPI-CacheX/issues/527))
+
 ## [0.5.4] - 2026-11-11
 
 ### Added
@@ -1550,7 +1590,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.1...v0.5.2
