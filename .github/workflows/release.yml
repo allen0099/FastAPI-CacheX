@@ -58,6 +58,9 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The gate takes a few minutes; a service container that hangs would
+    # otherwise hold the run for six hours.
+    timeout-minutes: 30
 
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -294,6 +297,7 @@ jobs:
     needs: build
     if: ${{ !inputs.dry_run && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
 
@@ -359,6 +363,7 @@ jobs:
     needs: [build, release]
     if: ${{ !inputs.dry_run && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # The trusted publisher can be tied to this environment, and the
     # environment can carry protection rules (required reviewers, a wait).
     environment:
