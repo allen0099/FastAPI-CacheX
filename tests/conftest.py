@@ -89,7 +89,7 @@ _PROXIES = (CacheManagerProxy,)
 @pytest_asyncio.fixture
 async def memory_backend():
     backend = MemoryBackend()
-    backend.start_cleanup()  # Start cleanup task
+    backend._ensure_cleanup_started()  # Start cleanup task
     yield backend
     backend.stop_cleanup()  # Stop cleanup task
 
@@ -102,7 +102,7 @@ async def setup_default_backend() -> AsyncGenerator[None, None]:
     still open; see `close_memory_backends`.
     """
     backend = MemoryBackend()
-    backend.start_cleanup()
+    backend._ensure_cleanup_started()
     BackendProxy.set(backend)
     yield
     await backend.aclose()

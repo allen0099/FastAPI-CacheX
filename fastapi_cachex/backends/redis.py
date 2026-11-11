@@ -623,11 +623,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         pattern = self._prefix_pattern + CacheKey.path_glob(path)
 
         def matches(key: str) -> bool:
-            parsed = CacheKey.parse(key.removeprefix(self.key_prefix))
-            return (
-                parsed is not None
-                and parsed.path == path
-                and (include_params or not parsed.query)
+            return CacheKey.is_for_path(
+                key.removeprefix(self.key_prefix), path, include_params
             )
 
         cleared_count = await self._delete_matching(pattern, matches)

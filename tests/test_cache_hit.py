@@ -284,7 +284,7 @@ def test_cache_hit_preserves_content_type():
 
     backend = MemoryBackend()
     BackendProxy.set(backend)
-    backend.start_cleanup()
+    backend._ensure_cleanup_started()
 
     try:
         local_app = FastAPI()

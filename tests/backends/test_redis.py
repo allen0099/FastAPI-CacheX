@@ -1785,3 +1785,16 @@ async def test_redis_batches_raise_backend_unavailable(call: Any) -> None:
 
     with pytest.raises(BackendUnavailableError):
         await call(backend)
+
+
+@pytest.mark.parametrize("field", ["socket_timeout", "socket_connect_timeout"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_redis_config_refuses_a_timeout_that_is_not_positive(
+    field: str, value: float
+) -> None:
+    from pydantic import ValidationError
+
+    from fastapi_cachex.backends.config import RedisConfig
+
+    with pytest.raises(ValidationError, match=field):
+        RedisConfig(**{field: value})

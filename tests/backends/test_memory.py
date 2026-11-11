@@ -149,23 +149,23 @@ async def test_memory_backend_cleanup(memory_backend: MemoryBackend, clock: Cloc
 
 
 async def test_memory_backend_start_cleanup(memory_backend: MemoryBackend):
-    memory_backend.start_cleanup()
+    memory_backend._ensure_cleanup_started()
     assert memory_backend._cleanup_task is not None
     assert not memory_backend._cleanup_task.done()
     memory_backend.stop_cleanup()  # Clean up after test
 
 
 async def test_memory_backend_stop_cleanup(memory_backend: MemoryBackend):
-    memory_backend.start_cleanup()
+    memory_backend._ensure_cleanup_started()
     assert memory_backend._cleanup_task is not None
     memory_backend.stop_cleanup()
     assert memory_backend._cleanup_task is None
 
 
 async def test_memory_backend_double_start_cleanup(memory_backend: MemoryBackend):
-    memory_backend.start_cleanup()
+    memory_backend._ensure_cleanup_started()
     original_task = memory_backend._cleanup_task
-    memory_backend.start_cleanup()  # Start again
+    memory_backend._ensure_cleanup_started()  # Start again
     assert memory_backend._cleanup_task is original_task  # Should be the same task
     memory_backend.stop_cleanup()  # Clean up after test
 
@@ -181,7 +181,7 @@ def _run(loop: asyncio.AbstractEventLoop, backend: MemoryBackend) -> None:
     """Start the backend's cleanup task on ``loop`` and return."""
 
     async def start() -> None:
-        backend.start_cleanup()
+        backend._ensure_cleanup_started()
 
     loop.run_until_complete(start())
 
@@ -253,7 +253,7 @@ def test_cleanup_moving_loops_cancels_the_task_on_a_loop_still_open():
 
 
 async def test_aclose_waits_for_the_cleanup_task(memory_backend: MemoryBackend):
-    memory_backend.start_cleanup()
+    memory_backend._ensure_cleanup_started()
     task = memory_backend._cleanup_task
     assert task is not None
 
@@ -312,7 +312,7 @@ async def test_memory_backend_cleanup_task_impl(
     await backend.set("expiring", expiring, ttl=1)
     await backend.set("surviving", surviving, ttl=60)
     clock.advance(1.5)
-    backend.start_cleanup()
+    backend._ensure_cleanup_started()
 
     try:
         await _until(lambda: "expiring" not in backend.cache)
@@ -1297,3 +1297,16 @@ async def test_memory_set_many_keeps_to_max_entries() -> None:
 
     assert list(backend.cache) == ["b", "c"]
     backend.stop_cleanup()
+
+
+async def test_lock_and_start_cleanup_are_deprecated(memory_backend: MemoryBackend):
+    """Both still work in 0.6.x and warn about their removal in 0.7.0 (#504)."""
+    with pytest.warns(DeprecationWarning, match=r"lock is deprecated.*0\.7\.0"):
+        lock = memory_backend.lock
+    async with lock:
+        pass
+
+    memory_backend.stop_cleanup()
+    with pytest.warns(DeprecationWarning, match=r"start_cleanup\(\) is deprecated"):
+        memory_backend.start_cleanup()
+    assert memory_backend._cleanup_task is not None

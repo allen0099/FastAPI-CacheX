@@ -32,7 +32,7 @@ def setup_cache():
     """Setup cache backend before test and cleanup after."""
     backend = MemoryBackend()
     BackendProxy.set(backend)
-    backend.start_cleanup()
+    backend._ensure_cleanup_started()
     yield backend
     backend.stop_cleanup()
     BackendProxy.set(None)
