@@ -38,7 +38,24 @@ but every answer still says private instead of public)
 Build the cache key: key_builder (default http:v2|method|host|path|query_params),
 plus one name=value component per vary header
     ↓
-Read the backend entry (with fail_open, a backend error counts as a miss)
+Read the backend entry (with fail_open, a backend error counts as a miss;
+an entry one of whose tags was invalidated since it was stored is a miss too)
+    │  with client_cache_control, a request's no-cache or max-age=0 skips the
+    │  read (the handler runs and its response replaces the entry); its
+    │  no-store is decided before the key is built and takes the path of the
+    │  bypass above (no key builder, no backend)
+    ↓
+serve_stale and the entry is past its ttl (it is kept for ttl + stale_ttl)?
+    ├─ stale="revalidate" → answer from the entry at once, as below (a 304
+    │                        for a matching If-None-Match); for a GET the
+    │                        handler runs after the response, as a background
+    │                        task of the request, and its response replaces
+    │                        the entry
+    ├─ stale="error"      → run the handler; if it raises or answers 5xx,
+    │                        respond with the entry instead (an HTTPException
+    │                        below 500, or an exception the app handles, is
+    │                        the handler's answer and is sent as it is)
+    └─ no → continue
     ↓
 Request carries If-None-Match?
     ├─ and no-cache → run the handler first to compute the current ETag; match → 304
@@ -57,6 +74,8 @@ Cached entry exists and no-cache is off?
               │       entry is left alone; a private/no-store header is kept)
               └─ regular response → set the ETag; write to the backend only if it
                                     differs from the existing entry's ETag
+                                    or that entry was stale, and not if the
+                                    route's tag versions could not be read
                                     (with fail_open, a failed write is logged
                                     and the response served unstored)
               then, If-None-Match matches the fresh ETag (the entry expired,
@@ -162,6 +181,11 @@ The decorator arguments control both the server-side behaviour and the
 @cache(ttl=60, must_revalidate=True)                        # must-revalidate
 @cache(ttl=60, stale="revalidate", stale_ttl=30)            # stale-while-revalidate=30
 @cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
+
+# Opt-in server-side behaviour
+@cache(ttl=60, stale="revalidate", stale_ttl=30, serve_stale=True)  # serve the expired entry, refresh after the response
+@cache(ttl=60, client_cache_control=True)   # honour a request's no-cache and no-store
+@cache(ttl=60, tags=["users"])              # invalidated by invalidate_tags("users")
 ```
 
 Arguments are validated when the decorator is applied, and a `CacheXError` is
@@ -172,7 +196,11 @@ list of header field names, if `sort_query` is
 not a `bool` or is passed with a custom `key_builder`, if `key_builder` is
 an `async` callable, if `coalesce` is not a `bool`, or is set without a
 positive `ttl` or together with `private` or `no_cache`, or if `debug_header`
-is not a `bool`.
+is not a `bool`. So do `serve_stale` that is not a `bool`, is set without
+`stale` or a positive `ttl`, or together with `private`, `no_cache` or
+`must_revalidate`; `client_cache_control` that is neither a `bool` nor a plain
+function; and `tags` that is a single `str`, holds something that is not a
+non-empty `str`, or is an `async` function.
 
 The header value is built once per decorated route:
 
@@ -261,20 +289,40 @@ if bypass or (credential and not cache_authorized):
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
 # HEAD: key_builder sees the request with method GET
+asked = client_asks(
+    request
+)  # client_cache_control only: "no-cache" (also for max-age=0), "no-store" or None
+if asked == "no-store":
+    ...  # as the bypass above: render, backend neither read nor written
+
 cache_key = key_builder(request) + vary_components(request)  # built only here
-entry = await backend.get(cache_key)  # expired entries are already skipped here
+# expired entries are already skipped here; an entry whose tags were invalidated since it was stored is skipped too
+entry = None if asked == "no-cache" else await backend.get(cache_key)
 if coalesce and entry is None and (leader := running_miss(cache_key)):
     await leader  # GET only leads; HEAD only waits
     entry = await backend.get(cache_key)  # None: render below, without waiting
+
+stale = (
+    serve_stale and entry and age(entry) >= ttl
+)  # serve_stale: kept for ttl + stale_ttl, stale once past ttl
+if stale and stale_mode == "revalidate":
+    background.add_task(
+        refresh, cache_key
+    )  # GET only; runs after the response, with the request's dependencies still open
+    stale = False  # answered from the entry below, as X-Cache: STALE
 
 if client_etag and no_cache:
     fresh = await render()  # no-cache: always re-render first
     if etag_matches(client_etag, fresh.etag):
         return not_modified(...)  # 304
-elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
-    return not_modified(..., age_headers(entry, ttl))  # 304, handler does not run
+elif (
+    client_etag and entry and not stale and etag_matches(client_etag, entry.fingerprint)
+):
+    return not_modified(
+        ..., age_headers(entry, stored_ttl)
+    )  # 304, handler does not run
 
-if entry and not no_cache:
+if entry and not no_cache and not stale:
     hit = Response(  # 200, handler does not run
         content=entry.content,
         status_code=entry.status_code,
@@ -283,9 +331,13 @@ if entry and not no_cache:
     for name, value in entry.headers:  # every stored line, in order
         hit.headers.append(name, value)
     hit.headers["ETag"] = entry.fingerprint  # then ETag, Cache-Control and
-    ...  # Age: now - stored_at, clamped to 0..ttl
+    ...  # Age: now - stored_at, clamped to 0..stored_ttl (ttl, or ttl + stale_ttl)
     return hit
 
+tags_before = await tag_versions(
+    route_tags
+)  # read before the handler runs; None if they cannot be read
+# stale="error": if this raises or answers 5xx, the stale entry answers instead
 response, body, etag = await render()  # miss (reused if no-cache already rendered)
 if not is_cacheable_status(response.status_code):
     return response  # non-2xx: returned as-is, not written
@@ -296,8 +348,15 @@ shareable = not (
     or "set-cookie" in response.headers
     or request.method == "HEAD"
 )  # one caller's response, or a HEAD one, is not written
-if shareable and (not entry or entry.fingerprint != etag):
-    await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
+# also when the stored entry was stale; not when the tag versions are unknown
+if (
+    shareable
+    and tags_before is not None
+    and (not entry or entry.fingerprint != etag or stale)
+):
+    await backend.set(
+        cache_key, CacheEntry(..., stored_at=time.time(), tags=...), ttl=stored_ttl
+    )
 if etag_matches(client_etag, etag):
     return not_modified(...)  # 304: the client's copy is still current;
     # it keeps the response's Set-Cookie lines and background task
@@ -307,7 +366,8 @@ return response
 > [!NOTE]
 > **`Age` on responses served from the backend.** A hit and a 304 answered from
 > the stored ETag carry `Age: <seconds since stored_at>`, clamped to `0`–`ttl`
-> against clock skew between hosts; `Cache-Control` keeps `max-age=<ttl>`, and
+> (`0`–`ttl + stale_ttl` with `serve_stale`, where a stale answer carries an
+> `Age` above `max-age`) against clock skew between hosts; `Cache-Control` keeps `max-age=<ttl>`, and
 > a downstream cache subtracts `Age` from it (RFC 9111 §4.2.3). Responses the
 > handler just rendered, including every `no_cache` response and every bypass,
 > carry no `Age`, and neither do entries without `stored_at`.
@@ -426,6 +486,10 @@ and the standard library `json` otherwise:
 - `headers` is a list of `[name, value]` lines, so a header sent more than once
   keeps every line. The object 0.3.x wrote (one value per name) still decodes.
   Anything else there makes the whole entry a miss.
+- An entry stored with tags also has `"tags": {"users": "<version>"}`: the
+  version each tag had when the entry was stored. An entry without tags is
+  written exactly as before. If `tags` cannot be read the entry is a miss,
+  never served as if it had none.
 - Any decode failure (broken JSON, missing fields, wrong types) is treated as a
   **cache miss** and returns `None` instead of raising.
 - `increment()` leaves a **bare integer** behind (written by the Redis/Memcached

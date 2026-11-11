@@ -21,12 +21,17 @@ A high-performance caching extension for FastAPI: a server-side response cache w
 ## Features
 
 - **HTTP caching** — a `@cache` decorator for GET routes with `Cache-Control`,
-  `ETag` / `If-None-Match` (304) and per-route invalidation.
+  `ETag` / `If-None-Match` (304), invalidation by route or by tag, and
+  optional serving of a stale response while it is refreshed or when the
+  handler fails.
 - **Application cache** — `CacheManager` for caching arbitrary JSON values in
-  your own code, with compute-on-miss `get_or_set()` and atomic store-if-absent `add()`,
-  and `@cached` for a plain function, keyed on its arguments.
+  your own code, with compute-on-miss `get_or_set()`, atomic store-if-absent
+  `add()`, batch reads and writes, typed values through pydantic, and
+  `@cached` for a plain function, keyed on its arguments.
 - **Backends** — in-memory, Redis and Memcached, with atomic counters,
-  one-shot values and locks.
+  one-shot values and locks. Tags work on all three.
+- **Observability** — an event hook that reports hits, misses, stores and
+  backend errors to your own metrics, and monitoring routes.
 
 ## Installation
 
@@ -108,8 +113,8 @@ block links the example file).
 - [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x
 - [Migrating from fastapi-cache2](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_FROM_FASTAPI_CACHE2/) — its API mapped onto this one, and the behaviour that differs
 - [When to use it](https://fastapi-cachex.readthedocs.io/en/stable/COMPARISON/) — how it compares with fastapi-cache2, cashews, aiocache and a CDN, and when another one fits better
-- [HTTP caching](https://fastapi-cachex.readthedocs.io/en/stable/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation and monitoring routes
-- [Application cache](https://fastapi-cachex.readthedocs.io/en/stable/APP_CACHE/) — `CacheManager`
+- [HTTP caching](https://fastapi-cachex.readthedocs.io/en/stable/HTTP_CACHING/) — the `@cache` decorator, Cache-Control directives, cache keys, invalidation, serving stale responses, the event hook and monitoring routes
+- [Application cache](https://fastapi-cachex.readthedocs.io/en/stable/APP_CACHE/) — `CacheManager`, `@cached`, typed reads, tags
 - [Backends](https://fastapi-cachex.readthedocs.io/en/stable/BACKENDS/) — choosing and configuring a backend, atomic primitives
 - [Distributed lock](https://fastapi-cachex.readthedocs.io/en/stable/LOCK/) — `CacheLock` for multi-process mutual exclusion
 - [Testing your app](https://fastapi-cachex.readthedocs.io/en/stable/TESTING/) — a fresh cache per test, proving isolation, Redis in the lifespan
