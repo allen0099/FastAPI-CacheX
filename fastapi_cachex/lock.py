@@ -248,15 +248,22 @@ class CacheLock:
         """Extend the lock every ``ttl / 3`` until it is lost or released.
 
         A third leaves two more attempts before the lock expires when one
-        fails. A backend error is logged and retried; once a whole ``ttl``
-        has passed without a renewal the lock has expired, whatever the
-        backend would say, and the task marks it lost and stops.
+        fails. A backend error is logged and retried, and an attempt is given
+        no longer than the lock has left, so a call that hangs counts as a
+        failure. Once a whole ``ttl`` has passed since the last renewal was
+        sent, the lock has expired, whatever the backend would say, and the
+        task marks it lost and stops.
         """
+        interval = ttl / 3
         renewed_at = time.monotonic()
+        wait = interval
         while True:
-            await asyncio.sleep(ttl / 3)
+            await asyncio.sleep(wait)
+            started = time.monotonic()
             try:
-                renewed = await self.extend(ttl)
+                renewed = await asyncio.wait_for(
+                    self.extend(ttl), timeout=max(0.0, renewed_at + ttl - started)
+                )
             except Exception:
                 # Lock names often embed user IDs or e-mails: only a digest.
                 logger.warning(
@@ -264,9 +271,10 @@ class CacheLock:
                     log_ref(self.key),
                     exc_info=True,
                 )
-                if time.monotonic() - renewed_at < ttl:
+                renewed = time.monotonic() - renewed_at < ttl
+                if renewed:  # not expired yet: try again
+                    wait = max(0.0, started + interval - time.monotonic())
                     continue
-                renewed = False
             if not renewed:
                 self._lost = True
                 logger.warning(
@@ -274,7 +282,11 @@ class CacheLock:
                     log_ref(self.key),
                 )
                 return
-            renewed_at = time.monotonic()
+            # Counted from when the renewal was sent, and the next one is
+            # due an interval after that, so a slow backend does not stretch
+            # the gap between renewals.
+            renewed_at = started
+            wait = max(0.0, started + interval - time.monotonic())
 
     async def _stop_renewal(self) -> None:
         """Cancel the ``auto_extend`` task and wait until it has stopped."""

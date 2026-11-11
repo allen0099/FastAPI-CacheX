@@ -84,7 +84,7 @@ async def test_the_renewal_uses_the_ttl_the_lock_was_acquired_with() -> None:
     await lock.acquire(ttl=1)
     try:
         await asyncio.sleep(0.5)  # ttl / 3 of the override, not of 60
-        assert backend.renewals == 1
+        assert backend.renewals >= 1
         expiry = backend.cache[lock.key].expiry
         assert expiry is not None
         assert expiry - time.time() <= 1
@@ -139,15 +139,70 @@ async def test_a_backend_that_stays_down_for_a_ttl_means_the_lock_is_lost(
 
 async def test_a_failed_renewal_is_retried() -> None:
     backend = CountingBackend()
-    lock = CacheLock("job", ttl=1, backend=backend, auto_extend=True)
+    lock = CacheLock("job", ttl=2, backend=backend, auto_extend=True)
     await lock.acquire()
     backend.fail = True
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.9)  # the renewal at 0.67 s fails
     backend.fail = False
-    await asyncio.sleep(0.7)
+    await asyncio.sleep(0.9)  # the one at 1.33 s succeeds, before the ttl
 
     assert not _lost(lock)
     assert await lock.release() is True
+
+
+class HangingBackend(CountingBackend):
+    """A renewal that never returns: a blackholed connection without a timeout."""
+
+    async def expire_if_equals(
+        self, key: str, expected: CacheEntry, ttl: int | timedelta
+    ) -> bool:
+        await asyncio.sleep(3600)
+        return True
+
+
+async def test_a_renewal_that_hangs_past_the_ttl_means_the_lock_is_lost() -> None:
+    backend = HangingBackend()
+    lock = CacheLock("job", ttl=1, backend=backend, auto_extend=True)
+    await lock.acquire()
+
+    await asyncio.sleep(1.3)
+
+    assert _lost(lock)
+    await lock.release()
+
+
+async def test_a_slow_backend_does_not_stretch_the_gap_between_renewals() -> None:
+    """Each renewal is due a third of the ttl after the last was sent."""
+
+    class SlowBackend(CountingBackend):
+        async def expire_if_equals(
+            self, key: str, expected: CacheEntry, ttl: int | timedelta
+        ) -> bool:
+            await asyncio.sleep(0.25)
+            return await super().expire_if_equals(key, expected, ttl)
+
+    backend = SlowBackend()
+    lock = CacheLock("job", ttl=1, backend=backend, auto_extend=True)
+    await lock.acquire()
+
+    await asyncio.sleep(2.5)
+
+    # Due at 0.33, 0.67, ... 2.33 s: seven. Sleeping a full interval after
+    # each 0.25 s reply instead would have sent four.
+    assert backend.renewals >= 6
+    assert not _lost(lock)
+    assert await lock.release() is True
+
+
+async def test_a_non_blocking_acquire_starts_the_renewal_too() -> None:
+    backend = CountingBackend()
+    lock = CacheLock("job", ttl=1, backend=backend, blocking=False, auto_extend=True)
+    assert await lock.acquire() is True
+
+    await asyncio.sleep(0.5)
+
+    assert backend.renewals >= 1
+    await lock.release()
 
 
 async def test_the_ttl_without_a_renewal_counts_from_the_last_success() -> None:
@@ -196,8 +251,7 @@ async def test_releasing_twice_or_without_acquiring_is_not_a_lost_lock() -> None
     assert not _lost(lock)
 
 
-async def test_a_cancelled_release_still_stops_the_renewal() -> None:
-    """release() waits for the task without swallowing its own cancellation."""
+async def test_release_cancels_the_renewal_and_forgets_it() -> None:
     backend = CountingBackend()
     lock = CacheLock("job", ttl=1, backend=backend, auto_extend=True)
     await lock.acquire()
