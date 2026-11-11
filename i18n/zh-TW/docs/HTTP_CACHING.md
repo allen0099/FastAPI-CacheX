@@ -50,8 +50,8 @@ async def items(): ...
 | `public`                 | `public=True`                            | :white_check_mark: | 帶有 `Authorization` 或 Session 資料的請求仍會使用後端（否則會繞過後端）。                                     |
 | `immutable`              | `immutable=True`                         | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
-| `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | 無（僅寫入標頭）：伺服器端快取不會回傳過期內容。                                                               |
-| `stale-if-error`         | `stale="error", stale_ttl=N`             | :white_check_mark: | 無（僅寫入標頭）：handler 失敗時不會改用快取回應。                                                             |
+| `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | 預設僅寫入標頭；設定 `serve_stale=True` 後，會先以過期的項目回應，之後再執行 handler。見[提供過期的回應](#serving-stale-responses)。 |
+| `stale-if-error`         | `stale="error", stale_ttl=N`             | :white_check_mark: | 預設僅寫入標頭；設定 `serve_stale=True` 後，handler 失敗時會改以過期的項目回應。見[提供過期的回應](#serving-stale-responses)。 |
 | `s-maxage`               | `s_maxage=N`                             | :white_check_mark: | 無（僅寫入標頭）：已儲存的回應仍在 `ttl` 之後到期。                                                            |
 | `proxy-revalidate`       | `proxy_revalidate=True`                  | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `no-transform`           | `no_transform=True`                      | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
@@ -173,6 +173,38 @@ async def report() -> dict[str, int]: ...
 - HEAD 請求會等待同一個快取鍵正在執行的 GET，但永遠不會讓其他請求等它，因為它的回應不會儲存。
 - 它需要正的 `ttl`。搭配永遠不會以儲存的項目回應的 `private=True` 或 `no_cache=True` 時，裝飾器會拋出 `CacheXError`；搭配 `no_store=True` 時則會被忽略，並發出一般的警告。帶有憑證而繞過後端的請求不會被合併。
 
+### 提供過期的回應 {#serving-stale-responses}
+
+預設情況下，`stale=` 與 `stale_ttl=` 只會把 `stale-while-revalidate` 或 `stale-if-error` 寫進 `Cache-Control`，給下游的快取使用。設定 `serve_stale=True` 後，這台伺服器自己的快取也會照做：
+
+```python
+@app.get("/report")
+@cache(ttl=60, stale="revalidate", stale_ttl=300, serve_stale=True)
+async def report() -> dict: ...
+```
+
+快取項目會保留 `ttl + stale_ttl`（這裡是 360 秒）。前 `ttl` 秒是一般的命中；之後的 `stale_ttl` 秒內：
+
+| `stale=` | 項目超過 `ttl` 之後，請求會得到 |
+|---|---|
+| `"revalidate"` | 立刻得到已儲存的回應。handler 在該回應送出之後才執行，結果會取代快取項目，因此沒有人需要等待 handler。 |
+| `"error"` | 先執行 handler。若它拋出例外或回應 5xx 狀態碼，就改送已儲存的回應；否則照常儲存並送出新的回應。 |
+
+過期的回應會帶有大於 `ttl` 的 `Age`，設定 `debug_header=True` 時還會有 `X-Cache: STALE`。超過 `ttl + stale_ttl` 後項目就不存在了，請求會是一般的未命中。
+
+使用 `stale="revalidate"` 時：
+
+- 更新是「發現項目過期的那個請求」的背景工作。handler 執行時該請求的依賴仍然開啟，請求的其他背景工作照常執行，接收 `BackgroundTasks` 的 handler 會拿到同一個物件。以 `Depends(..., scope="function")` 宣告的依賴在那時已經關閉；需要這種依賴的 handler 不應該把 `stale="revalidate"` 與 `serve_stale` 一起使用。
+- 每個行程中，同一個鍵一次只會有一個更新在執行。有多個 worker 時，每個 worker 可能各執行一個。
+- `HEAD` 請求會以過期的項目回應，但不會啟動更新，因為它的回應不會被儲存。
+- 若更新失敗（handler 拋出例外，或它的回應屬於不會被儲存的那一類），會記錄一則警告，過期的項目維持原狀，下一個請求會再試一次。
+
+使用 `stale="error"` 時，低於 500 的 `HTTPException` 是 handler 的答案，會原樣送出：404 不算失敗。應用程式以 `add_exception_handler` 註冊了處理函式的例外也一樣，因為應用程式會把它轉成自己的回應。沒有過期項目可用時（冷鍵，或已超過保留時間），錯誤會原樣送出。每次改用過期項目回應都會記錄一行警告。搭配 `coalesce=True` 時，同時發現項目過期的請求只會執行一次 handler，和未命中時一樣。
+
+`serve_stale=True` 需要 `stale`、`stale_ttl` 與正的 `ttl`，而且不能與 `private=True`、`no_cache=True` 或 `must_revalidate=True` 一起使用，因為它們不允許過期的回應。項目是否超過 `ttl`，是依照與它一起儲存的時間、以回應請求的那台伺服器的時鐘來判斷；時鐘相差幾秒的伺服器，對項目何時過期的判斷也會相差那麼多。
+
+維運這種路由時有兩件事要知道。項目會在後端保留 `ttl + stale_ttl`，因此把 `serve_stale` 關掉之後，先前寫入的項目在超過 `ttl` 後最多還會被當成一般命中提供 `stale_ttl` 那麼久；若這會造成問題，請清除該路由的項目。另外，[監控路由](#monitoring-routes)會在後端保留項目的期間都把它回報為有效，不論是否已過期。
+
 ### 分辨命中與未命中 {#telling-a-hit-from-a-miss}
 
 回應本身看不出 handler 是否執行過，除非在 handler 裡加計數器。`debug_header=True` 會在每個 GET 或 HEAD 回應送出 `X-Cache`：
@@ -189,6 +221,7 @@ async def items() -> list[str]: ...
 | `MISS`    | 查過後端，且 handler 執行了：冷鍵或已過期的鍵、`no_cache=True`，或回應沒有儲存（設定了 cookie、錯誤狀態碼、串流本文）。 |
 | `BYPASS`  | 既沒有讀取也沒有寫入後端：`no_store=True`、`private=True`、沒有正的 `ttl`、帶有憑證的請求打到沒有 `public` 或 `cache_authorized` 的路由，或請求帶有 `no-store` 且路由設定了 `client_cache_control`。 |
 | `REFRESH` | 在設定了 [`client_cache_control`](#the-requests-cache-control-is-ignored) 的路由上，請求的 `no-cache` 或 `max-age=0` 略過了快取項目：handler 已執行，它的回應取代了該項目，除非那是不會被儲存的回應（見 `MISS`）。 |
+| `STALE`   | 在設定了 [`serve_stale`](#serving-stale-responses) 的路由上，以超過 `ttl` 的項目回應：立刻回應、之後再執行 handler（`stale="revalidate"`），或因為 handler 失敗（`stale="error"`）。 |
 
 預設關閉，因為它會向用戶端透露伺服器快取了什麼；請在開發時或內部路由上開啟。這個標頭不會隨項目儲存，並會取代 handler 自己設定的 `X-Cache`。其他方法不會得到這個標頭，就像它們也不會得到 `Cache-Control`。
 

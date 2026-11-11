@@ -68,3 +68,27 @@ async def _wait_for(leader: asyncio.Future[None]) -> None:
     the leader's future for the other followers.
     """
     await asyncio.shield(leader)
+
+
+# Keys whose stale entry is being replaced after its response was sent
+# (`serve_stale`, #539). Nobody waits on these: they only keep a second
+# refresh of the same key from running at the same time.
+_REFRESHING: set[tuple[int, str]] = set()
+
+
+def _claim_refresh(backend: object, cache_key: str) -> bool:
+    """Whether the caller is the one to refresh ``cache_key`` in this process.
+
+    Claimed by the refresh as it starts and released in its ``finally``, so
+    a refresh that never ran holds nothing.
+    """
+    key = (id(backend), cache_key)
+    if key in _REFRESHING:
+        return False
+    _REFRESHING.add(key)
+    return True
+
+
+def _release_refresh(backend: object, cache_key: str) -> None:
+    """The refresh of ``cache_key`` is over, however it ended."""
+    _REFRESHING.discard((id(backend), cache_key))

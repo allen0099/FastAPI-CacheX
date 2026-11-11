@@ -27,7 +27,7 @@ FastAPI-CacheX version or newer.
 | Serialization | JSON, no pickle; values come back as their type through pydantic (`type_=`, or the return annotation of `@cached`, 0.6.0) | JSON by default, pickle optional | Pickle by default, optionally HMAC-signed; JSON optional | Pickle, JSON, msgpack, string or none |
 | Backends | Memory, Redis, Memcached | Memory, Redis, Memcached, DynamoDB | Memory, Redis (incl. cluster and client-side caching), diskcache | Memory, Redis, Memcached |
 | Stampede protection | `get_or_set()` with a distributed lock; `coalesce=True` per process on `@cache` (0.5.0) | None | `locked`, `early`, `soft`, `thunder_protection` | `cached_stampede` (lock based) |
-| Tags, early refresh, metrics | No | No | Tags, early and soft refresh, Prometheus middleware, callbacks | Hit/miss and timing plugins |
+| Tags, early refresh, metrics | Stale entries served while the handler refreshes, or when it fails (`serve_stale`, 0.6.1); no tags or metrics | No | Tags, early and soft refresh, Prometheus middleware, callbacks | Hit/miss and timing plugins |
 | Also included | `CacheLock`, atomic counters, monitoring routes | — | Rate limiting, circuit breaker, Bloom filters, locks | `RedLock`, `OptimisticLock`, `multi_cached` |
 | Version compared | 0.6.0; Python 3.11–3.15, FastAPI 0.128.2+ | 0.2.2 (2024-07-24); Python 3.8+ | 7.6.0 (2026-09-17); Python 3.10+ | 0.12.3 (2024-09-25) |
 
@@ -65,8 +65,9 @@ What it does not do, or does only simply:
   serving of stale values while one caller refreshes, no metrics hooks.
 - Three backends: memory, Redis and Memcached. Memcached cannot enumerate
   keys, so pattern and path clearing do nothing there.
-- The server-side cache never serves stale content; `stale-while-revalidate`
-  and `stale-if-error` are only written into the header for downstream caches.
+- The server-side cache serves stale content only where a route asks for it
+  with `serve_stale=True` (0.6.1); otherwise `stale-while-revalidate` and
+  `stale-if-error` are only written into the header for downstream caches.
 
 ## fastapi-cache2
 
