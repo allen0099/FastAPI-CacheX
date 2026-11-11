@@ -255,7 +255,7 @@ cannot encode is first converted the way pydantic writes it
 | `datetime`, `date`, `UUID`, `Decimal` | `str`: ISO 8601, `"1.50"` |
 | `set`, `frozenset` | `list` |
 | `Enum`, `Path`, `timedelta` and the other types pydantic serialises | their JSON form: the enum's value, `"/tmp/x"`, `"PT1M30S"` |
-| `bytes`, a generator or other iterator, `SecretStr`, your own class | `TypeError`, nothing stored |
+| `bytes`, a generator or other iterator, `SecretStr` (also as a field of a model), your own class | `TypeError`, nothing stored |
 
 `get_or_set()` applies this on a miss too: it encodes the factory's value once,
 stores those bytes and returns them decoded, so the first call returns exactly
@@ -303,9 +303,11 @@ await cache.get("users", type_=list[User])
   `type_=` to it. Without it the function returns the JSON form, as before.
 - A stored `None` does not fit `type_=User`. For a value that may be absent,
   name it: `type_=User | None`.
-- A `SecretStr` field inside a model is stored as pydantic serialises it, as
-  `"**********"`, and reads back as that mask. Keep secrets out of cached
-  models, or cache a `dict` you build yourself.
+- A model or dataclass with a `SecretStr` or `SecretBytes` field, at any
+  depth, is refused with `TypeError`. pydantic would write the field as
+  `"**********"`, and a typed read would then hand back a model whose secret
+  is that mask. Exclude the field (`user.model_dump(mode="json",
+  exclude={"password"})`) or cache a `dict` you build yourself.
 - pydantic's `ValidationError` quotes the value it rejected, so the one raised
   for a `factory` result can put that value into your logs.
 - Validation runs on every read. For large values read often, measure before

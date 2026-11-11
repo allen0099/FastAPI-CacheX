@@ -1,6 +1,7 @@
 """Tests for CacheManager application-level caching."""
 
 import asyncio
+import dataclasses
 import logging
 import time
 from collections.abc import AsyncGenerator
@@ -17,6 +18,7 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
+from pydantic import Field
 from pydantic import SecretStr
 from pydantic import ValidationError
 
@@ -1727,3 +1729,56 @@ async def test_a_stored_none_needs_a_type_that_allows_it(
 
     assert await cache_manager.get("user:0", "fallback", type_=_User) == "fallback"
     assert await cache_manager.get("user:0", "fallback", type_=_User | None) is None
+
+
+class _Credentials(BaseModel):
+    user: str
+    password: SecretStr
+
+
+class _Account(BaseModel):
+    logins: list[_Credentials]
+
+
+@dataclasses.dataclass
+class _Token:
+    value: SecretStr
+
+
+_HUNTER = _Credentials(user="a", password=SecretStr("hunter2"))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(_HUNTER, id="model"),
+        pytest.param(_Account(logins=[_HUNTER]), id="nested-model"),
+        pytest.param(_Token(value=SecretStr("t")), id="dataclass"),
+        pytest.param({"accounts": [_HUNTER]}, id="model-in-a-dict"),
+    ],
+)
+async def test_a_model_with_a_secret_field_is_refused(
+    cache_manager: CacheManager, value: object
+) -> None:
+    """Stored as its mask, a typed read would return "**********" as the secret."""
+    with pytest.raises(TypeError, match="would be stored as its mask") as excinfo:
+        await cache_manager.set("k", value)
+
+    assert "hunter2" not in str(excinfo.value)
+    assert await cache_manager.has("k") is False
+    with pytest.raises(TypeError, match="would be stored as its mask"):
+        await cache_manager.get_or_set("k", lambda: value)
+
+
+async def test_a_model_without_its_secret_field_is_stored(
+    cache_manager: CacheManager,
+) -> None:
+    class Public(BaseModel):
+        user: str
+        password: SecretStr = Field(exclude=True)
+
+    await cache_manager.set("a", Public(user="a", password=SecretStr("hunter2")))
+    await cache_manager.set("b", _HUNTER.model_dump(mode="json", exclude={"password"}))
+
+    assert await cache_manager.get("a") == {"user": "a"}
+    assert await cache_manager.get("b") == {"user": "a"}

@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import dataclasses
 import fnmatch
 import functools
 import hashlib
@@ -19,6 +20,7 @@ from typing import Any
 from typing import TypeVar
 from typing import overload
 
+from pydantic import BaseModel
 from pydantic import SecretBytes
 from pydantic import SecretStr
 from pydantic import TypeAdapter
@@ -62,6 +64,26 @@ D = TypeVar("D")
 _NOT_STORED = (Iterator, bytes, bytearray, memoryview, SecretStr, SecretBytes)
 
 
+def _holds_a_secret(value: Any) -> bool:
+    """Whether a model or dataclass has a secret field, at any depth.
+
+    Dumped in python mode, where the secret objects survive (the JSON form
+    has already masked them). An excluded field is not in the dump, and is
+    not stored either.
+    """
+    if isinstance(value, BaseModel) or (
+        dataclasses.is_dataclass(value) and not isinstance(value, type)
+    ):
+        value = _adapter(type(value)).dump_python(value)
+    if isinstance(value, (SecretStr, SecretBytes)):
+        return True
+    if isinstance(value, dict):
+        return any(_holds_a_secret(item) for item in value.values())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_holds_a_secret(item) for item in value)
+    return False
+
+
 def _jsonable(value: Any) -> Any:
     """``json.dumps`` fallback: what pydantic would write for ``value``.
 
@@ -74,6 +96,16 @@ def _jsonable(value: Any) -> Any:
     # iterator (a generator, an open file) is consumed, bytes come back as
     # text, and a secret is stored as its mask.
     if isinstance(value, _NOT_STORED):
+        raise TypeError(msg)
+    if _holds_a_secret(value):
+        # Stored as "**********", it would be read back, and validated by
+        # type_=, as if that were the secret.
+        msg = (
+            f"Object of type {type(value).__name__} is not JSON serializable: "
+            "it has a SecretStr or SecretBytes field, which would be stored as "
+            "its mask. Exclude the field (model_dump(exclude=...)) or cache a "
+            "dict you build yourself"
+        )
         raise TypeError(msg)
     try:
         return to_jsonable_python(value)

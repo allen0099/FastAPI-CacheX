@@ -167,7 +167,7 @@ manager = CacheManager(lock=False)  # 每次並行未命中都各自計算
 | `datetime`、`date`、`UUID`、`Decimal` | `str`：ISO 8601、`"1.50"` |
 | `set`、`frozenset` | `list` |
 | `Enum`、`Path`、`timedelta` 以及 pydantic 能序列化的其他型別 | 它們的 JSON 形式：enum 的值、`"/tmp/x"`、`"PT1M30S"` |
-| `bytes`、generator 或其他 iterator、`SecretStr`、你自己的類別 | `TypeError`，不會儲存任何內容 |
+| `bytes`、generator 或其他 iterator、`SecretStr`（作為模型的欄位時也一樣）、你自己的類別 | `TypeError`，不會儲存任何內容 |
 
 `get_or_set()` 在未命中時也套用同樣的規則：它將 `factory` 的值編碼一次、儲存這些位元組，並回傳其解碼結果，因此第一次呼叫的回傳值與之後命中時完全相同。無法編碼的值要等到 `factory` 執行後才會拋出 `TypeError`，因為在那之前這個值還不存在。
 
@@ -205,7 +205,7 @@ await cache.get("users", type_=list[User])
 - 若 `factory` 回傳的值不符合 `type_`，`get_or_set()` 會拋出 pydantic 的 `ValidationError`。
 - `@cached` 不會從函式的型別註記讀取型別；請傳入 `type_=`。未傳入時，函式回傳的仍是 JSON 形式，與之前相同。
 - 存入的 `None` 不符合 `type_=User`。值可能不存在時，請明確寫出：`type_=User | None`。
-- 模型中的 `SecretStr` 欄位會依 pydantic 的序列化方式儲存成 `"**********"`，讀回來也是這個遮罩。請不要把機密放進要快取的模型，或改為快取你自己組出的 `dict`。
+- 帶有 `SecretStr` 或 `SecretBytes` 欄位的模型或 dataclass（不論巢狀多深）會被拒絕並拋出 `TypeError`。pydantic 會把該欄位寫成 `"**********"`，型別化讀取之後就會交回一個機密值是這串遮罩的模型。請排除該欄位（`user.model_dump(mode="json", exclude={"password"})`），或改為快取你自己組出的 `dict`。
 - pydantic 的 `ValidationError` 會引用它拒絕的值，因此 `factory` 結果不符時拋出的例外可能把該值寫進你的 log。
 - 每次讀取都會執行驗證。對於經常讀取的大型值，選擇模型而非單純的 `dict` 之前請先量測。
 
