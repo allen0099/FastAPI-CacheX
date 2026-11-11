@@ -20,6 +20,25 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-11-11
+
+### Deprecated
+
+- **`@cached` without `type_` on a function with a return annotation: the JSON
+  form it returns today changes in 0.6.0.** From 0.6.0 the cached value is
+  validated into the function's return annotation, so a function annotated
+  `-> User` returns a `User` instead of a `dict`. Applying `@cached` to a
+  function this will affect now emits a `FutureWarning`; pass `type_=<the type>`
+  to get the new behaviour now, or `type_=None` to keep the JSON form. See
+  [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/#cached-return-annotation). ([#533](https://github.com/allen0099/FastAPI-CacheX/issues/533))
+
+### Fixed
+
+- **`@cached` on Python 3.14 or later no longer raises `NameError` for an
+  annotation that cannot be resolved.** A function whose annotation names a type
+  imported under `if TYPE_CHECKING:` could not be decorated there, because
+  annotations are evaluated lazily and reading the signature evaluated them. ([#533](https://github.com/allen0099/FastAPI-CacheX/issues/533))
+
 ## [0.5.5] - 2026-11-11
 
 ### Added
@@ -1590,7 +1609,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.2...v0.5.3
