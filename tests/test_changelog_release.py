@@ -278,7 +278,7 @@ def test_main_defaults_the_date_to_today(tmp_path: Path):
 
     import datetime as dt
 
-    today = dt.datetime.now(tz=dt.timezone.utc).date().isoformat()
+    today = dt.datetime.now(tz=dt.UTC).date().isoformat()
     assert f"## [0.3.5] - {today}" in changelog.read_text(encoding="utf-8")
 
 

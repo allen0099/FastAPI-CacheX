@@ -4,7 +4,7 @@
 
 ## Python 3.11 或更新版本 {#python-311}
 
-Python 3.10 已在 2026 年 10 月結束生命週期（end of life），0.6.0 需要 Python 3.11 或更新版本（[#491](https://github.com/allen0099/FastAPI-CacheX/issues/491)）。從下一個 0.5.x 版本起，在 Python 3.10 上匯入 `fastapi_cachex` 時，每個行程會發出一次 `FutureWarning`：
+Python 3.10 已在 2026 年 10 月結束生命週期（end of life），0.6.0 需要 Python 3.11 或更新版本（[#491](https://github.com/allen0099/FastAPI-CacheX/issues/491)）。0.5.2 起的 0.5.x 版本會先預告：在 Python 3.10 上匯入 `fastapi_cachex` 時，每個行程會發出一次 `FutureWarning`：
 
 ```text
 FutureWarning: fastapi-cachex 0.6.0 will require Python 3.11 or later; ...
@@ -37,6 +37,8 @@ import fastapi_cachex  # noqa: E402
 ```
 
 或在環境中設定 `PYTHONWARNINGS="ignore:fastapi-cachex 0.6.0 will require Python 3.11:FutureWarning"`。
+
+`redis` extra 現在需要 `orjson` 3.8.0 或更新版本（原本是 3.4.7）：3.8.0 是第一個在 Linux、macOS 與 Windows 上都提供 Python 3.11 wheel 的版本。若你的環境將 `orjson` 固定在較舊的版本，需要調高。
 
 ## Memcached 逾時預設為 1 秒 {#memcached-timeouts}
 

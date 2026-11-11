@@ -2,7 +2,7 @@
 
 [fastapi-cache2](https://github.com/long2ice/fastapi-cache) (imported as `fastapi_cache`) is the most installed FastAPI cache; its latest release, 0.2.2, is from July 2024. This page maps its API onto FastAPI-CacheX, lists the behaviour that differs, and names what has no equivalent. It describes fastapi-cache2 0.2.2 and FastAPI-CacheX 0.5.0. If you are still deciding whether to switch, see [When to use it](COMPARISON.md).
 
-FastAPI-CacheX needs Python 3.10 or newer and FastAPI 0.128.2 or newer.
+FastAPI-CacheX needs FastAPI 0.128.2 or newer, and Python 3.11 or newer from 0.6.0 on (0.5.x: Python 3.10).
 
 ## A route, before and after {#before-and-after}
 

@@ -30,9 +30,10 @@ from .base import validate_ttl
 from .base import warn_if_path_shaped
 
 if TYPE_CHECKING:
+    from typing import Self
+
     from redis.asyncio import Redis as AsyncRedis
     from redis.commands.core import AsyncScript
-    from typing_extensions import Self
 
 logger = logging.getLogger(__name__)
 

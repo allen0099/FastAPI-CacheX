@@ -227,7 +227,8 @@ def test_a_normaliser_that_returns_a_coroutine_is_named_as_such() -> None:
 
 
 async def test_enum_members_are_keyed_on_their_value() -> None:
-    class Locale(str, enum.Enum):
+    # A str mixin, not StrEnum: str() of its member is "Locale.EN", not "en".
+    class Locale(str, enum.Enum):  # noqa: UP042
         EN = "en"
 
     class Tier(enum.IntEnum):

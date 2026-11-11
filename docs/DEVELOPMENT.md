@@ -133,7 +133,7 @@ Worth doing whenever a test is written for something security-relevant.
 
 ## Using tox
 
-tox ensures the code works across different Python versions (3.10-3.15, the
+tox ensures the code works across different Python versions (3.11-3.15, the
 `env_list` in `tox.ini`). Each environment installs the `redis` and `memcached`
 extras through `tox-uv` and passes the `CACHEX_TEST_*` and
 `CACHEX_REQUIRE_LIVE_SERVERS` variables through, so the opt-in rules above apply
@@ -143,7 +143,7 @@ tox is for local runs. CI runs the same versions as a job matrix in the
 **Test** workflow (`.github/workflows/test.yml`), one job per version, so it
 does not run tox as well.
 
-1. Install all Python versions (`uv python install 3.10 3.11 3.12 3.13 3.14 3.15`)
+1. Install all Python versions (`uv python install 3.11 3.12 3.13 3.14 3.15`)
 2. Run tox:
 
 ```bash
@@ -153,7 +153,7 @@ uv run tox
 To run for a specific Python version:
 
 ```bash
-uv run tox -e py310  # only run for Python 3.10
+uv run tox -e py311  # only run for Python 3.11
 ```
 
 ### The lowest supported dependencies
@@ -161,7 +161,8 @@ uv run tox -e py310  # only run for Python 3.10
 The `py3*` environments install the versions in `uv.lock`, which are the newest
 ones. The `lowest` environment instead resolves every direct dependency of the
 package, extras included, to the lower bound in `pyproject.toml`
-(`uv_resolution = lowest-direct`) and runs the suite on Python 3.10. Starlette
+(`uv_resolution = lowest-direct`) and runs the suite on Python 3.11, the oldest
+supported version. Starlette
 is not a direct dependency, so `tox.ini` lists it in the env's `deps` at the
 oldest release the `fastapi` floor accepts; raise the two together. It is not in
 `env_list`; the **Lowest dependencies** workflow runs it with live servers.
@@ -253,15 +254,12 @@ Read the Docs serves two versions of each language: `stable`, built from the
 latest release tag and served by default, and `latest`, which follows
 `master`. Absolute links into the docs point at `stable`: the README (which is
 also the PyPI description), the zh-TW links to English pages, `site_url` and
-the Python 3.10 warning. That way a reader of a release sees the released
+the links in runtime warnings. That way a reader of a release sees the released
 behaviour (#330). A page added on `master` is therefore reachable through those
 links only after the next release. Zensical cannot tell which version it
 builds, so on `latest` the language switcher and the zh-TW "may be outdated"
 banner also lead to the other language's `stable`. Files read only on GitHub by
 contributors, such as `changelog.d/README.md`, link to `latest`.
-
-Zensical needs Python 3.11 or later, so on 3.10 the `docs` group
-installs without it.
 
 ```bash
 uv sync --group docs

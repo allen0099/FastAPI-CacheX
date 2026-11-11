@@ -4,7 +4,7 @@
 
 ## Python 3.11 or later {#python-311}
 
-Python 3.10 reached its end of life in October 2026, and 0.6.0 requires Python 3.11 or later ([#491](https://github.com/allen0099/FastAPI-CacheX/issues/491)). From the next 0.5.x release on, importing `fastapi_cachex` under Python 3.10 emits a `FutureWarning` once per process:
+Python 3.10 reached its end of life in October 2026, and 0.6.0 requires Python 3.11 or later ([#491](https://github.com/allen0099/FastAPI-CacheX/issues/491)). The 0.5.x releases from 0.5.2 on say so first: importing `fastapi_cachex` under Python 3.10 emits a `FutureWarning` once per process:
 
 ```text
 FutureWarning: fastapi-cachex 0.6.0 will require Python 3.11 or later; ...
@@ -37,6 +37,8 @@ import fastapi_cachex  # noqa: E402
 ```
 
 or set `PYTHONWARNINGS="ignore:fastapi-cachex 0.6.0 will require Python 3.11:FutureWarning"` in the environment.
+
+The `redis` extra now needs `orjson` 3.8.0 or later (it was 3.4.7): 3.8.0 is the first release with Python 3.11 wheels on Linux, macOS and Windows. An environment that pins an older `orjson` has to raise the pin.
 
 ## Memcached timeouts default to 1 second {#memcached-timeouts}
 
