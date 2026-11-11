@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import CacheEvent
 from fastapi_cachex import CacheReason
+from fastapi_cachex import invalidate_tags
 from fastapi_cachex import set_event_handler
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.cache import cache
@@ -175,3 +176,56 @@ def test_the_docs_list_exactly_the_reasons(page: str) -> None:
     listed = [code for row in rows for code in re.findall(r"`([a-z-]+)`", row)]
 
     assert sorted(listed) == sorted(get_args(CacheReason))
+
+
+def test_session_data_is_named() -> None:
+    client = _client(ttl=60)
+    inner = client.app
+
+    async def with_session(scope: Any, receive: Any, send: Any) -> None:
+        scope["session"] = {"user": 1}
+        await inner(scope, receive, send)
+
+    response = TestClient(with_session).get("/items")
+
+    assert _reason(response) == "session"
+
+
+def test_a_status_set_by_a_dependency_is_named() -> None:
+    app = FastAPI()
+
+    def created(response: Response) -> None:
+        response.status_code = 201
+
+    @app.get("/items", dependencies=[Depends(created)])
+    @cache(ttl=60, debug_header=True)
+    async def items() -> dict[str, int]:
+        return {"n": 1}
+
+    assert _reason(TestClient(app).get("/items")) == "dependency-status"
+
+
+class _FailingBatchReads(MemoryBackend):
+    async def get_many(self, keys: Any) -> dict[str, CacheEntry]:
+        raise ConnectionError
+
+
+def test_unreadable_tag_versions_are_named() -> None:
+    BackendProxy.set(_FailingBatchReads())
+
+    response = _client(ttl=60, tags=["items"]).get("/items")
+
+    assert response.status_code == 200
+    assert _reason(response) == "tag-read-failed"
+
+
+def test_a_tag_invalidated_while_the_handler_ran_is_named() -> None:
+    app = FastAPI()
+
+    @app.get("/items")
+    @cache(ttl=60, tags=["items"], debug_header=True)
+    async def items() -> dict[str, int]:
+        await invalidate_tags("items")
+        return {"n": 1}
+
+    assert _reason(TestClient(app).get("/items")) == "tag-invalidated"
