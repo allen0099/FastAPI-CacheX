@@ -32,7 +32,7 @@ def fresh_cache() -> Iterator[MemoryBackend]:
     backend.stop_cleanup()
 ```
 
-`BackendProxy.set(None)` only unregisters a backend; it does not empty or close it. Here the backend is dropped with the test, and `stop_cleanup()` cancels its background task. Clearing `CacheManagerProxy` matters as much: a manager kept from an earlier test still writes to that test's backend.
+`BackendProxy.set(None)` only unregisters a backend; it does not empty or close it. Here the backend is dropped with the test. `stop_cleanup()` cancels its cleanup task if that task's event loop is still open and, unlike `aclose()`, needs no `await`, so a sync fixture can call it. Clearing `CacheManagerProxy` matters as much: a manager kept from an earlier test still writes to that test's backend. Resetting the proxies does not reach a backend or manager you pass explicitly (`CacheManager(backend=...)`, `@cached(manager=...)`, `CacheLock(backend=...)`); those need their own fixture.
 
 Prove the isolation before relying on it. The first test of a suite should be one that would fail if entries leaked: two apps that answer the same request differently.
 
@@ -74,13 +74,30 @@ Without the fixture the second test gets `{"answer": "run-a"}` as a `HIT`: both 
 
 `debug_header=True` makes `@cache` say how each GET or HEAD request was answered, in an `X-Cache` header: `HIT` (served from the stored entry), `MISS` (the handler ran and the backend was consulted) or `BYPASS` (the backend was neither read nor written). That is a steadier thing to assert than a call counter in the handler. Leave it off in production unless you want clients to see it; a test can turn it on through a setting.
 
-To test expiry, do not sleep through a TTL. Remove the entry instead (`await invalidate(request)`, `await backend.clear_path("/answer")`, or `await backend.clear()` on the fixture's backend) and assert that the next request is a `MISS`.
+To test expiry, do not sleep through a TTL. Remove the entry and assert that the next request is a `MISS`. The backend methods are coroutines, so a sync test runs them with `asyncio.run`:
+
+```python
+import asyncio
+
+
+def test_entry_is_gone_after_clear(fresh_cache: MemoryBackend) -> None:
+    client = TestClient(make_app("run-a"))
+    client.get("/answer")
+
+    asyncio.run(fresh_cache.clear())
+
+    assert client.get("/answer").headers["X-Cache"] == "MISS"
+```
+
+`fresh_cache.clear_path("/answer")` removes one path instead; it leaves entries stored with a query string unless you pass `include_params=True`. Inside the app, a handler can call `await invalidate(request)`.
+
+`app.dependency_overrides[get_cache_backend]` is not a substitute for the fixture: it changes only what the `CacheBackend` dependency returns, while `@cache` keeps reading `BackendProxy`.
 
 ## Redis {#redis}
 
 Two more things matter with a network backend.
 
-**Create the backend inside the lifespan.** The Redis client binds its connections to the event loop it first runs on. A backend created at import time and shared by tests that each run their own loop fails with errors about a closed or different loop. Built in the lifespan, it lives exactly as long as the app instance, as in [Closing a backend](BACKENDS.md#closing-a-backend). `TestClient` runs the lifespan only when it is used as a context manager.
+**Create the backend inside the lifespan.** The Redis client binds its connections to the event loop it first runs on. A backend created at import time and shared by tests that each run their own loop fails with errors about a closed or different loop. Built in the lifespan, it lives exactly as long as the app instance, as in [Closing a backend](BACKENDS.md#closing-a-backend). `TestClient` runs the lifespan only when it is used as a context manager, and `httpx.AsyncClient` with `ASGITransport` does not run it at all.
 
 **Isolate the keys, not just the proxy.** Clearing `BackendProxy` leaves every key in Redis, where the next test (or the next run) finds them. Give each test its own `key_prefix` and clear it on shutdown; `clear()` deletes only the keys under the backend's prefix.
 
@@ -107,10 +124,14 @@ def make_app(answer: str, key_prefix: str) -> FastAPI:
             key_prefix=key_prefix,
         )
         BackendProxy.set(backend)
-        yield
-        BackendProxy.set(None)  # unregister
-        await backend.clear()  # delete this test's keys
-        await backend.aclose()  # close the connection pool
+        try:
+            yield
+        finally:
+            BackendProxy.set(None)  # unregister
+            try:
+                await backend.clear()  # delete this test's keys
+            finally:
+                await backend.aclose()  # close the connection pool
 
     app = FastAPI(lifespan=lifespan)
 
@@ -134,9 +155,9 @@ def test_runs_are_isolated(answer: str, key_prefix: str) -> None:
         assert client.get("/answer").headers["X-Cache"] == "HIT"
 ```
 
-The three steps of the teardown do three different things: unregistering stops later code from finding the backend, clearing removes what it stored, and closing releases its sockets. Skip the last and the suite ends with `ResourceWarning`s for unclosed connections.
+The three steps of the teardown do three different things: unregistering stops later code from finding the backend, clearing removes what it stored, and closing releases its sockets. Skip the last and the suite ends with `ResourceWarning`s for unclosed connections; the `finally` blocks make sure a failing test or a failing `clear()` does not skip it.
 
-Point such tests at a Redis that exists for them (a container started by the suite or by CI), never at one an application uses. In your own app, take the prefix from a setting so tests can override it. Memcached cannot enumerate keys, so there `clear()` flushes the whole server: give Memcached tests a server of their own.
+Point such tests at a Redis that exists for them (a container started by the suite or by CI), never at one an application uses. In your own app, take the prefix from a setting so tests can override it. Memcached cannot enumerate keys, so there `clear()` flushes the whole server and says so with a `RuntimeWarning`: give Memcached tests a server of their own, and expect the warning (`pytest.warns`) if your suite turns warnings into errors.
 
 ## Checklist {#checklist}
 
