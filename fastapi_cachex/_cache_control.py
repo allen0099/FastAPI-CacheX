@@ -44,44 +44,49 @@ def _build_cache_control(
     private: bool,
     immutable: bool,
     must_revalidate: bool,
+    s_maxage: int | None = None,
+    proxy_revalidate: bool = False,
+    no_transform: bool = False,
 ) -> str:
     """The ``Cache-Control`` value for a ``@cache`` route's arguments.
 
-    ``no_cache`` sends only ``no-cache`` (plus ``must-revalidate``); otherwise
-    the directives follow in a fixed order: scope, ``max-age``,
-    ``must-revalidate``, the stale directive, ``immutable``.
+    ``no_cache`` sends only ``no-cache`` (plus ``must-revalidate``,
+    ``proxy-revalidate`` and ``no-transform``); otherwise the directives
+    follow in a fixed order: scope, ``max-age``, ``s-maxage``,
+    ``must-revalidate``, ``proxy-revalidate``, the stale directive,
+    ``immutable``, ``no-transform``.
     """
-    cache_control = CacheControl()
+    directive = DirectiveType
+    parts: list[tuple[object, DirectiveType | None, int | None]]
     if no_cache:
-        cache_control.add(DirectiveType.NO_CACHE)
-        if must_revalidate:
-            cache_control.add(DirectiveType.MUST_REVALIDATE)
-        return str(cache_control)
+        parts = [
+            (True, directive.NO_CACHE, None),
+            (must_revalidate, directive.MUST_REVALIDATE, None),
+            (proxy_revalidate, directive.PROXY_REVALIDATE, None),
+            (no_transform, directive.NO_TRANSFORM, None),
+        ]
+    else:
+        # stale_ttl is validated at decoration time.
+        stale_directive = {
+            "revalidate": directive.STALE_WHILE_REVALIDATE,
+            "error": directive.STALE_IF_ERROR,
+        }.get(stale or "")
+        parts = [
+            (public, directive.PUBLIC, None),
+            (private and not public, directive.PRIVATE, None),
+            (ttl is not None, directive.MAX_AGE, ttl),
+            (s_maxage is not None, directive.S_MAXAGE, s_maxage),
+            (must_revalidate, directive.MUST_REVALIDATE, None),
+            (proxy_revalidate, directive.PROXY_REVALIDATE, None),
+            (stale_directive is not None, stale_directive, stale_ttl),
+            (immutable, directive.IMMUTABLE, None),
+            (no_transform, directive.NO_TRANSFORM, None),
+        ]
 
-    # 1. Access scope (public/private)
-    if public:
-        cache_control.add(DirectiveType.PUBLIC)
-    elif private:
-        cache_control.add(DirectiveType.PRIVATE)
-
-    # 2. Cache time settings
-    if ttl is not None:
-        cache_control.add(DirectiveType.MAX_AGE, ttl)
-
-    # 3. Validation related
-    if must_revalidate:
-        cache_control.add(DirectiveType.MUST_REVALIDATE)
-
-    # 4. Stale response handling (stale_ttl is validated at decoration time)
-    if stale == "revalidate":
-        cache_control.add(DirectiveType.STALE_WHILE_REVALIDATE, stale_ttl)
-    elif stale == "error":
-        cache_control.add(DirectiveType.STALE_IF_ERROR, stale_ttl)
-
-    # 5. Special flags
-    if immutable:
-        cache_control.add(DirectiveType.IMMUTABLE)
-
+    cache_control = CacheControl()
+    for include, name, value in parts:
+        if include and name is not None:
+            cache_control.add(name, value)
     return str(cache_control)
 
 

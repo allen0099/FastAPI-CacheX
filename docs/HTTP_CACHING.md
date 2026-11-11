@@ -72,18 +72,31 @@ header, and the server-side cache behaves the same with or without them.
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | None (header only).                                                                                            |
 | `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | None (header only): the server-side cache never serves stale content.                                         |
 | `stale-if-error`         | `stale="error", stale_ttl=N`             | :white_check_mark: | None (header only): a failing handler is not answered from the cache.                                          |
-| `s-maxage`               | —                                        | :x:                | —                                                                                                              |
-| `proxy-revalidate`       | —                                        | :x:                | —                                                                                                              |
-| `no-transform`           | —                                        | :x:                | —                                                                                                              |
+| `s-maxage`               | `s_maxage=N`                             | :white_check_mark: | None (header only): the stored response still expires after `ttl`.                                             |
+| `proxy-revalidate`       | `proxy_revalidate=True`                  | :white_check_mark: | None (header only).                                                                                            |
+| `no-transform`           | `no_transform=True`                      | :white_check_mark: | None (header only).                                                                                            |
 | `must-understand`        | —                                        | :x:                | —                                                                                                              |
 
+`s-maxage` and `proxy-revalidate` speak to shared caches (a CDN or reverse
+proxy), so `s_maxage` lets one keep a response for a different time than
+browsers do, with or without a `ttl`: `@cache(ttl=60, s_maxage=300)` sends
+`max-age=60, s-maxage=300`. Neither is sent on a response meant for one caller
+(the `private` header a response gets when it sets a cookie or answers a
+request with credentials), and combining either with `private=True` is
+rejected when the decorator is applied. `no-transform` is sent in every case.
+`must-understand` is not produced: it belongs with `no-store`, which
+`no_store=True` sends alone. A shared cache that honours `s-maxage` treats the
+response as `proxy-revalidate` too (RFC 9111 §5.2.2.10), so it does not serve
+it stale: `stale=...` then only reaches browsers.
+
 `no_cache=True` and `no_store=True` replace the rest of the header: with
-`no_cache` only `no-cache` (and `must-revalidate`, when set) is sent, and with
-`no_store` only `no-store`. How the other arguments combine is described in
+`no_cache` only `no-cache` (and `must-revalidate`, `proxy-revalidate` and
+`no-transform`, when set) is sent, and with `no_store` only `no-store`. How the other arguments combine is described in
 [Cache flow](CACHE_FLOW.md#2-cache-control-directives).
 
 `no_store=True` together with any other caching argument (`ttl`, `stale`,
-`no_cache`, `public`, `private`, `immutable`, `must_revalidate`) emits a
+`no_cache`, `public`, `private`, `immutable`, `must_revalidate`, `s_maxage`,
+`proxy_revalidate`, `no_transform`) emits a
 `UserWarning` pointing at your `@cache(...)` line when the decorator is
 applied: `no_store` overrides them, and the warning names them.
 
@@ -171,7 +184,8 @@ A response that belongs to one caller is never stored either (#296):
   shared cache, the backend is bypassed, as with `private=True`: nothing is
   read or written, the handler runs, and `If-None-Match` is compared against
   the fresh render. The response (and a 304) is sent with `private` in place
-  of `public`, keeping the decorator's other directives (`private, no-cache`
+  of `public`, keeping the decorator's other directives except `s-maxage` and
+  `proxy-revalidate` (`private, no-cache`
   on a `no_cache` route), so a CDN or proxy does not store it either.
   `public=True` routes are exempt. Routes with `cache_authorized=True`, the
   opt-in for a key builder that includes the caller's identity (see
@@ -200,7 +214,8 @@ A response that belongs to one caller is never stored either (#296):
   and the handler's header is sent unchanged instead of the decorator's.
 - **The response sets a cookie.** It is served, `Set-Cookie` included, but not
   stored, and it (and a 304) is sent with `private` in place of `public`,
-  keeping the other directives, so a shared cache downstream does not store it
+  keeping the other directives except `s-maxage` and `proxy-revalidate`, so a
+  shared cache downstream does not store it
   either. A 304 for a fresh render carries the `Set-Cookie` lines too, and the
   handler's background task still runs (before 0.4.1 the 304s on bypassed and
   `no_cache` requests dropped both, #233).

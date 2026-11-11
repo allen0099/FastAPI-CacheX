@@ -129,9 +129,9 @@ cache_key = "|".join(
 | 參數 | 送出的 `Cache-Control` |
 |------|------------------------|
 | `no_store=True` | `no-store`（覆蓋其他所有設定） |
-| `no_cache=True` | `no-cache`，若有要求則加上 `must-revalidate`；省略 `public`／`private`／`max-age`／`stale-*`／`immutable` |
+| `no_cache=True` | `no-cache`，若有要求則加上 `must-revalidate`、`proxy-revalidate` 與 `no-transform`；省略 `public`／`private`／`max-age`／`s-maxage`／`stale-*`／`immutable` |
 | 無（不帶參數的 `@cache()`） | 不送出自己的標頭；保留 handler 的標頭（若有）（遇到 Cookie 或憑證時送出 `private`，與其他路由相同） |
-| 其他情況 | 依序為：`public` 或 `private`、`max-age=<ttl>`、`must-revalidate`、`stale-while-revalidate=<n>` 或 `stale-if-error=<n>`、`immutable` |
+| 其他情況 | 依序為：`public` 或 `private`、`max-age=<ttl>`、`s-maxage=<n>`、`must-revalidate`、`proxy-revalidate`、`stale-while-revalidate=<n>` 或 `stale-if-error=<n>`、`immutable`、`no-transform` |
 
 > [!NOTE]
 > 沒有設定 `ttl`（或設定 `ttl=0`，此時會送出 `max-age=0`）時，既不讀取也不寫入後端：每個請求都會執行 handler，相符的 `If-None-Match` 只有在與新產生的回應比對之後才會以 `304` 回應。請設定正數的 `ttl`，讓伺服器儲存並重播回應。
@@ -238,7 +238,7 @@ return response
 > 「非 2xx 不寫入」是刻意的設計：暫時性的錯誤不應抹除最後一次正常的快取回應，也不應在之後被當成 200 重播。`206 Partial Content` 同樣不會快取，因為它的內容只對產生它的那個 `Range` 請求有意義。非 2xx 回應也永遠不會以 `304` 回應，且回傳時不帶裝飾器的 `Cache-Control` 標頭（只有 `no_store=True` 會在每個回應加上 `no-store`）。
 
 > [!NOTE]
-> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），帶有不是空的 `request.session`（來自任何 Session 中介軟體）的請求也一樣，除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及任何帶有 `Authorization` 或 Session 資料的請求的回應（無論繞過後端，或設定 `cache_authorized` 而由後端回應；200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 之前這類回應會被儲存並重播給每位呼叫者（#296）；帶有 Session 的請求在 0.3.9 之前也不會繞過（#319）。
+> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），帶有不是空的 `request.session`（來自任何 Session 中介軟體）的請求也一樣，除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及任何帶有 `Authorization` 或 Session 資料的請求的回應（無論繞過後端，或設定 `cache_authorized` 而由後端回應；200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`s-maxage` 與 `proxy-revalidate` 除外；`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 之前這類回應會被儲存並重播給每位呼叫者（#296）；帶有 Session 的請求在 0.3.9 之前也不會繞過（#319）。
 
 ### 4. ETag 產生與驗證 {#4-etag-generation-and-validation}
 

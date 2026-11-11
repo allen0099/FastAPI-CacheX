@@ -52,14 +52,16 @@ async def items(): ...
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | 無（僅寫入標頭）：伺服器端快取不會回傳過期內容。                                                               |
 | `stale-if-error`         | `stale="error", stale_ttl=N`             | :white_check_mark: | 無（僅寫入標頭）：handler 失敗時不會改用快取回應。                                                             |
-| `s-maxage`               | —                                        | :x:                | —                                                                                                              |
-| `proxy-revalidate`       | —                                        | :x:                | —                                                                                                              |
-| `no-transform`           | —                                        | :x:                | —                                                                                                              |
+| `s-maxage`               | `s_maxage=N`                             | :white_check_mark: | 無（僅寫入標頭）：已儲存的回應仍在 `ttl` 之後到期。                                                            |
+| `proxy-revalidate`       | `proxy_revalidate=True`                  | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
+| `no-transform`           | `no_transform=True`                      | :white_check_mark: | 無（僅寫入標頭）。                                                                                             |
 | `must-understand`        | —                                        | :x:                | —                                                                                                              |
 
-`no_cache=True` 與 `no_store=True` 會取代標頭的其餘內容：使用 `no_cache` 時只送出 `no-cache`（若有設定，再加上 `must-revalidate`），使用 `no_store` 時只送出 `no-store`。其他參數如何組合，請見[快取流程](CACHE_FLOW.md#2-cache-control-directives)。
+`s-maxage` 與 `proxy-revalidate` 是給共用快取（CDN 或反向 proxy）看的，因此 `s_maxage` 可以讓共用快取保留回應的時間與瀏覽器不同，不論有沒有設定 `ttl`：`@cache(ttl=60, s_maxage=300)` 會送出 `max-age=60, s-maxage=300`。只給單一呼叫者的回應（回應設定 Cookie，或回應帶有憑證的請求時所送出的 `private` 標頭）不會帶這兩個指令，而且把任一個與 `private=True` 一起使用，會在套用裝飾器時被拒絕。`no-transform` 則在所有情況下都會送出。`must-understand` 不會產生：它應該與 `no-store` 一起出現，而 `no_store=True` 只會單獨送出 `no-store`。遵守 `s-maxage` 的共用快取也會把回應視為帶有 `proxy-revalidate`（RFC 9111 §5.2.2.10），因此不會提供過期的回應：此時 `stale=...` 只對瀏覽器有效。
 
-`no_store=True` 搭配其他任何快取參數（`ttl`、`stale`、`no_cache`、`public`、`private`、`immutable`、`must_revalidate`）時，套用裝飾器時 `@cache` 會發出指向你 `@cache(...)` 那一行的 `UserWarning`：`no_store` 會覆蓋這些參數，警告會列出它們。
+`no_cache=True` 與 `no_store=True` 會取代標頭的其餘內容：使用 `no_cache` 時只送出 `no-cache`（若有設定，再加上 `must-revalidate`、`proxy-revalidate` 與 `no-transform`），使用 `no_store` 時只送出 `no-store`。其他參數如何組合，請見[快取流程](CACHE_FLOW.md#2-cache-control-directives)。
+
+`no_store=True` 搭配其他任何快取參數（`ttl`、`stale`、`no_cache`、`public`、`private`、`immutable`、`must_revalidate`、`s_maxage`、`proxy_revalidate`、`no_transform`）時，套用裝飾器時 `@cache` 會發出指向你 `@cache(...)` 那一行的 `UserWarning`：`no_store` 會覆蓋這些參數，警告會列出它們。
 
 不帶參數的 `@cache()`，既沒有 `ttl` 也沒有任何指令，不會儲存任何內容，也沒有自己的 `Cache-Control`。它會加上 ETag，以 `304` 回應相符的 `If-None-Match`，並保留 handler 自己的 `Cache-Control`（沒有就不送）。與其他路由一樣，設定 Cookie 的回應，或回應帶有 `Authorization` 或 Session 資料的請求時，仍會送出 `private`。
 
@@ -104,9 +106,9 @@ GET /items  → 200, Cache-Control: max-age=60, Age: 42（儲存後 42 秒送出
 
 屬於單一呼叫者的回應同樣不會被儲存（#296）：
 
-- **請求帶有 `Authorization` 或 Session 資料。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限。設定 `cache_authorized=True`（給包含呼叫者身分的 key builder 使用的明確選項，見[需驗證身分的端點](#authenticated-endpoints)）的路由會為這類請求讀寫後端，但回應仍帶有 `private`：項目只在後端依呼叫者區分，CDN 則只以 URL 為鍵（0.3.9 之前會原樣送出裝飾器的標頭，#372）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。沒有正數 `ttl` 的路由本來就不經過後端，但它對這類請求的回應仍會加上 `private`（0.3.9 之前不會加，#362）；`private=True` 的路由本來就會送出 `private`。請求「帶有 Session 資料」是指在任何 Session 中介軟體（例如 Starlette 的 `SessionMiddleware`）下 `request.session` 不是空的。空的 Session 不算，單獨的 `Cookie` 標頭也不算。0.3.9 之前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。0.5.0 之前，已移除的 `FastAPICacheXSessionMiddleware` 載入的 Session（來自 `X-Session-Token`、Bearer 權杖或它的 Cookie）也算，請參閱[遷移至 0.5.0](MIGRATING_0_5.md#cache-session-token)。會讀取後端的路由第一次繞過時，會以 `WARNING` 等級記錄（見[帶有憑證的請求](#requests-with-credentials)）。
+- **請求帶有 `Authorization` 或 Session 資料。** 依照 RFC 9111 §3.5 對共用快取的要求，這類請求會像 `private=True` 一樣繞過後端：不讀取也不寫入，handler 照常執行，`If-None-Match` 與新產生的回應比對。回應（以及 304）會以 `private` 取代 `public` 送出，並保留裝飾器的其他指令（`s-maxage` 與 `proxy-revalidate` 除外；`no_cache` 路由則為 `private, no-cache`），讓 CDN 或代理也不會儲存它。`public=True` 的路由不受此限。設定 `cache_authorized=True`（給包含呼叫者身分的 key builder 使用的明確選項，見[需驗證身分的端點](#authenticated-endpoints)）的路由會為這類請求讀寫後端，但回應仍帶有 `private`：項目只在後端依呼叫者區分，CDN 則只以 URL 為鍵（0.3.9 之前會原樣送出裝飾器的標頭，#372）。`must_revalidate=True` 不會解除繞過：RFC 9111 允許共用快取在 `must-revalidate` 下重複使用這類回應，但本函式庫要求明確選擇啟用。沒有正數 `ttl` 的路由本來就不經過後端，但它對這類請求的回應仍會加上 `private`（0.3.9 之前不會加，#362）；`private=True` 的路由本來就會送出 `private`。請求「帶有 Session 資料」是指在任何 Session 中介軟體（例如 Starlette 的 `SessionMiddleware`）下 `request.session` 不是空的。空的 Session 不算，單獨的 `Cookie` 標頭也不算。0.3.9 之前只有 `Authorization` 會觸發繞過，讀取 Session 的路由只加上 `@cache` 時，會把一位訪客的回應提供給下一位（#319）。0.5.0 之前，已移除的 `FastAPICacheXSessionMiddleware` 載入的 Session（來自 `X-Session-Token`、Bearer 權杖或它的 Cookie）也算，請參閱[遷移至 0.5.0](MIGRATING_0_5.md#cache-session-token)。會讀取後端的路由第一次繞過時，會以 `WARNING` 等級記錄（見[帶有憑證的請求](#requests-with-credentials)）。
 - **handler 自己的 `Cache-Control` 含有 `private` 或 `no-store`**（完整指令，不分大小寫）。回應照常送出但不儲存，而且 handler 的標頭會原樣送出，不會被裝飾器的標頭取代。
-- **回應設定了 cookie。** 回應照常送出（包含 `Set-Cookie`），但不儲存；它（以及 304）會以 `private` 取代 `public` 送出並保留其他指令，讓下游的共用快取也不會儲存它。針對新產生回應的 304 同樣帶有 `Set-Cookie`，handler 的背景任務也照常執行（0.4.1 之前，繞過後端的請求與 `no_cache` 路由的 304 會遺失兩者，#233）。
+- **回應設定了 cookie。** 回應照常送出（包含 `Set-Cookie`），但不儲存；它（以及 304）會以 `private` 取代 `public` 送出並保留其他指令（`s-maxage` 與 `proxy-revalidate` 除外），讓下游的共用快取也不會儲存它。針對新產生回應的 304 同樣帶有 `Set-Cookie`，handler 的背景任務也照常執行（0.4.1 之前，繞過後端的請求與 `no_cache` 路由的 304 會遺失兩者，#233）。
 
 後兩種情況下，該鍵下已儲存的項目保持不變，而找到有效項目的請求仍會在 handler 執行前由該項目回應。handler 自己的 `private`／`no-store` 標頭一律優先，`no_store=True` 仍只送出 `no-store`。每次略過都會以 `DEBUG` 等級記錄。
 

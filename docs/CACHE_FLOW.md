@@ -179,9 +179,9 @@ The header value is built once per decorated route:
 | Arguments | `Cache-Control` sent |
 |-----------|----------------------|
 | `no_store=True` | `no-store` (overrides everything else) |
-| `no_cache=True` | `no-cache`, plus `must-revalidate` if requested; `public`/`private`/`max-age`/`stale-*`/`immutable` are omitted |
+| `no_cache=True` | `no-cache`, plus `must-revalidate`, `proxy-revalidate` and `no-transform` if requested; `public`/`private`/`max-age`/`s-maxage`/`stale-*`/`immutable` are omitted |
 | none (a bare `@cache()`) | none of its own; the handler's header, if any, is kept (`private` for a cookie or credentials, as on every route) |
-| anything else | in order: `public` or `private`, `max-age=<ttl>`, `must-revalidate`, `stale-while-revalidate=<n>` or `stale-if-error=<n>`, `immutable` |
+| anything else | in order: `public` or `private`, `max-age=<ttl>`, `s-maxage=<n>`, `must-revalidate`, `proxy-revalidate`, `stale-while-revalidate=<n>` or `stale-if-error=<n>`, `immutable`, `no-transform` |
 
 > [!NOTE]
 > Without `ttl` (or with `ttl=0`, which sends `max-age=0`), the backend is
@@ -332,7 +332,8 @@ return response
 > sent unchanged instead of the decorator's. A cookie response, and the answer
 > to any `Authorization` or session-data request (bypassed or, with
 > `cache_authorized`, served from the backend), are sent (200 or 304) with `private`
-> in place of `public` and the decorator's other directives kept (`private,
+> in place of `public` and the decorator's other directives kept, except
+> `s-maxage` and `proxy-revalidate` (`private,
 > no-cache` on a `no_cache` route), so a downstream shared cache does not
 > store them either. `must_revalidate=True` does not lift the `Authorization`
 > bypass, although RFC 9111 would allow reuse under `must-revalidate`: the
