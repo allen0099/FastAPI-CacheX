@@ -24,6 +24,7 @@ from ._callables import _is_coroutine_callable
 from ._stored_response import _etag_for
 from ._stored_response import _get_response_body
 from ._stored_response import _is_cacheable_status
+from .events import CacheReason
 from .exceptions import CacheXError
 
 if TYPE_CHECKING:
@@ -72,13 +73,13 @@ def _cache_control_values(lines: Iterable[tuple[bytes, bytes]]) -> list[str]:
 
 def _dependency_unshareable_reason(
     dependency_lines: Iterable[tuple[bytes, bytes]],
-) -> str | None:
+) -> CacheReason | None:
     """Why the dependencies' lines keep a response out of the backend, if they do."""
     lines = list(dependency_lines)
     if _has_unshareable_directive(_cache_control_values(lines)):
-        return "a dependency's Cache-Control is private or no-store"
+        return "private-response"
     if _sets_cookie(lines):
-        return "a dependency sets a cookie"
+        return "set-cookie"
     return None
 
 

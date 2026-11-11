@@ -434,6 +434,33 @@ on while developing or behind an internal route. The header is never stored
 with the entry, and it replaces an `X-Cache` the handler sets itself. Other
 methods get no header, as they get no `Cache-Control`.
 
+#### Why a response was not cached {#why-not-cached}
+
+`BYPASS`, and a `MISS` that is never followed by a `HIT`, each have several
+causes. With `debug_header=True` such a response also carries
+`X-Cache-Reason`:
+
+| `X-Cache-Reason` | Sent with | Cause |
+|------------------|-----------|-------|
+| `no-store` | `BYPASS` | The route is `no_store`. |
+| `private` | `BYPASS` | The route is `private`. |
+| `no-ttl` | `BYPASS` | The route has no `ttl`, or `ttl=0`. |
+| `authorization`, `session` | `BYPASS` | A [request with credentials](#requests-with-credentials) (an `Authorization` header, or session data) on a route without `public` or `cache_authorized`. |
+| `request-no-store` | `BYPASS` | The request's `Cache-Control` asked, on a route with `client_cache_control`. |
+| `status` | `MISS`, `REFRESH` | The handler answered with something other than a 2xx (or with 206). |
+| `streamed` | `MISS`, `REFRESH` | A `StreamingResponse` or `FileResponse`: there is no body to store. |
+| `set-cookie` | `MISS`, `REFRESH` | The handler or a dependency set a cookie: a stored copy would hand one visitor's cookie to the next. A middleware that adds its cookie later is not seen here. |
+| `private-response` | `MISS`, `REFRESH` | The handler or a dependency sent `Cache-Control: private` or `no-store` on this response. |
+| `dependency-status` | `MISS`, `REFRESH` | A dependency set the status code, which may hold for this request only. |
+| `head` | `MISS` | A `HEAD` request found no entry; only a `GET` response is stored. |
+| `tag-read-failed`, `tag-invalidated` | `MISS`, `REFRESH` | A [tagged](#by-tag) route whose tag versions could not be read, or changed while the handler ran: storing the response could leave an entry that an invalidation missed. |
+| `write-failed` | `MISS`, `REFRESH` | The backend refused the write or could not be reached, and the route has `fail_open=True`. |
+
+A response without the header used the cache as usual. The same value is on
+the [event](#counting-hits-and-misses) of the request as `reason`, typed as
+`fastapi_cachex.CacheReason`. The values are part of the public API, so they
+can be a metric label: one is renamed or removed only as a breaking change.
+
 ### Requests with credentials
 
 A single-page app that sends `Authorization` on every request, or a site where
@@ -1183,7 +1210,8 @@ Each event has a `source` (`"http"` or `"app"`), the `key` (None when the
 backend was not consulted, or the call was not about one key), for a request to a `@cache` route the `route` as
 its path template (`/api/users/{user_id}`, with the prefix of an included
 router or a mounted application), and on the events that answer a request the
-`duration` in seconds. Use `route` as a metric label, not `key`: a key holds
+`duration` in seconds, and a `reason` when the backend was bypassed or the
+response was not stored ([the values of `X-Cache-Reason`](#why-not-cached)). Use `route` as a metric label, not `key`: a key holds
 the query string, other client input and whatever a custom key builder adds,
 and has no bound. For the same reason, do not log it as it is.
 

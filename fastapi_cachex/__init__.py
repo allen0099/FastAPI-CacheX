@@ -19,6 +19,7 @@ from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_app_cache as get_app_cache
 from .dependencies import get_cache_backend as get_cache_backend
 from .events import CacheEvent as CacheEvent
+from .events import CacheReason as CacheReason
 from .events import set_event_handler as set_event_handler
 from .exceptions import BackendNotFoundError as BackendNotFoundError
 from .exceptions import BackendUnavailableError as BackendUnavailableError
@@ -70,6 +71,7 @@ __all__ = [
     "CacheLock",
     "CacheManager",
     "CacheManagerProxy",
+    "CacheReason",
     "CacheXError",
     "CachedFunction",
     "InvalidTTLError",

@@ -294,8 +294,8 @@ def test_no_store_decorator_overrides_the_handler_header():
     ("headers", "cache_control", "set_cookie", "expected"),
     [
         ({"Authorization": "Bearer a"}, None, False, "Authorization header present"),
-        ({}, "private", False, "response Cache-Control is private or no-store"),
-        ({}, None, True, "response sets a cookie"),
+        ({}, "private", False, "private-response"),
+        ({}, None, True, "set-cookie"),
     ],
 )
 def test_each_skip_is_logged_at_debug(
