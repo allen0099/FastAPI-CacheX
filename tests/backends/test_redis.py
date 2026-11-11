@@ -107,18 +107,18 @@ def test_redis_config_carries_username_ssl_and_url() -> None:
 async def test_redis_from_url_authenticates_as_an_acl_user() -> None:
     """Against a real server: a user created for the test, then removed."""
     admin = AsyncRedisCacheBackend(host=REDIS_HOST, port=REDIS_PORT)
-    await admin.client.acl_setuser(
-        "cachex-url-test",
-        enabled=True,
-        passwords=["+pw"],
-        keys=["*"],
-        categories=["+@all"],
-    )
     backend = AsyncRedisCacheBackend.from_url(
         f"redis://cachex-url-test:pw@{REDIS_HOST}:{REDIS_PORT}/0",
         key_prefix="url-test:",
     )
     try:
+        await admin.client.acl_setuser(
+            "cachex-url-test",
+            enabled=True,
+            passwords=["+pw"],
+            keys=["*"],
+            categories=["+@all"],
+        )
         entry = CacheEntry(fingerprint="etag", content=b"x")
         await backend.set("k", entry, 5)
         assert await backend.get("k") == entry
@@ -127,8 +127,8 @@ async def test_redis_from_url_authenticates_as_an_acl_user() -> None:
             "cachex-url-test",
             b"cachex-url-test",
         }
-    finally:
         await backend.clear()
+    finally:
         await backend.aclose()
         await admin.client.acl_deluser("cachex-url-test")
         await admin.aclose()
