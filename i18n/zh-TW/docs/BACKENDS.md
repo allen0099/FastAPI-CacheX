@@ -122,7 +122,7 @@ backend = AsyncRedisCacheBackend(
 - 不會用到 `host` 與 `port`。`password`、`db` 與 `username` 只在 URL 沒有指定時才套用，所以不含憑證的 URL 可以搭配從 secret store 取得的密碼。
 - TLS 由 `rediss://` scheme 決定。URL 與 `ssl=` 或 `connection_pool=` 一起傳入會拋出 `CacheXError`。
 - URL 查詢字串中的選項（`?socket_timeout=5`）優先於同名的參數。`decode_responses` 與 `encoding` 寫在那裡也會被拒絕，和當作參數傳入時一樣。
-- redis-py 不會對由 URL 建立的用戶端套用預設的重試，因此除非傳入 `retry=`，[快速失敗](#failing-fast-when-redis-is-down)一節的時間會是「不重試」的情況。
+- 重試策略與用 `host`、`port` 建立的後端相同（redis-py 的預設值，見[快速失敗](#failing-fast-when-redis-is-down)），除非傳入 `retry=`。在 0.5.4 中，由 URL 建立的後端不會重試。
 
 `username`、`ssl` 以及其他 `ssl_*` 選項（`ssl_ca_certs`、`ssl_cert_reqs` 等）是 redis-py 自己的參數，會直接交給它的用戶端。`RedisConfig` 也有 `username`、`ssl` 與 `url` 欄位，規則相同；`url` 是 `SecretStr`，因為它可能含有密碼。
 
