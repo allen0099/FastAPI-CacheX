@@ -542,3 +542,42 @@ def test_real_modules_with_unresolvable_annotations_are_named(source: str) -> No
     # With the choice made the function is decorated without a warning (on
     # Python 3.14+ this used to raise NameError from inspect.signature).
     assert cached(ttl=60, type_=None)(namespace["load"]).cache_key() != ""
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "from __future__ import annotations\n"
+            "from typing import TYPE_CHECKING, Any\n"
+            "if TYPE_CHECKING:\n"
+            "    from decimal import Decimal\n"
+            "def load(amount: Decimal) -> dict[str, Any]: ...\n",
+            id="unresolvable-parameter",
+        ),
+        pytest.param(
+            "from typing import Any\n"
+            "type Json = dict[str, Any] | list[Json] | None\n"
+            "def load() -> Json: ...\n",
+            id="type-alias",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 12), reason="the type statement is 3.12+"
+            ),
+        ),
+    ],
+)
+def test_real_modules_with_json_return_annotations_stay_quiet(source: str) -> None:
+    """Only the return annotation counts, and an alias is read through."""
+    namespace: dict[str, Any] = {"__name__": "some_app"}
+    exec(source, namespace)  # noqa: S102 - the test's own source
+
+    cached(ttl=60, key="k")(namespace["load"])  # filterwarnings = error would raise
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="the type statement is 3.12+")
+def test_an_alias_of_a_model_is_still_named() -> None:
+    namespace: dict[str, Any] = {"__name__": "some_app", "Point": _Point}
+    exec("type Points = list[Point]\ndef load() -> Points: ...\n", namespace)  # noqa: S102
+
+    with pytest.warns(FutureWarning, match="cached return annotation"):
+        cached(ttl=60)(namespace["load"])

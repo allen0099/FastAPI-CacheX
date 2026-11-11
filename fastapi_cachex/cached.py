@@ -74,14 +74,22 @@ def _return_annotation(func: Callable[..., Any]) -> Any:
     """The function's resolved return annotation.
 
     ``_UNSET`` when there is none, and ``_UNRESOLVED`` when there is one but
-    the function's annotations cannot be evaluated here (a forward reference
-    to a name defined later, an import under ``TYPE_CHECKING``).
+    it cannot be evaluated here (a forward reference to a name defined later,
+    an import under ``TYPE_CHECKING``). A parameter's annotation is never
+    evaluated: one that cannot be resolved says nothing about the return type.
     """
+    annotations = _raw_annotations(func)
+    if "return" not in annotations:
+        return _UNSET
+
+    def stub() -> None: ...
+
+    stub.__annotations__ = {"return": annotations["return"]}
+    namespace = getattr(inspect.unwrap(func), "__globals__", None)
     try:
-        hints = typing.get_type_hints(func)
+        return typing.get_type_hints(stub, globalns=namespace)["return"]
     except Exception:  # noqa: BLE001 - whatever evaluating an annotation raises
-        return _UNRESOLVED if _has_return_annotation(func) else _UNSET
-    return hints.get("return", _UNSET)
+        return _UNRESOLVED
 
 
 def _signature(func: Callable[..., Any]) -> inspect.Signature:
@@ -100,22 +108,20 @@ def _signature(func: Callable[..., Any]) -> inspect.Signature:
     return inspect.signature(func)
 
 
-def _has_return_annotation(func: Callable[..., Any]) -> bool:
-    """Whether ``func`` is annotated with a return type, without evaluating it."""
+def _raw_annotations(func: Callable[..., Any]) -> dict[str, Any]:
+    """The annotations of ``func`` as written, without evaluating them."""
     if sys.version_info >= (3, 14):
         # Annotations are evaluated lazily: reading __annotations__ would
         # raise for the very annotation that could not be resolved.
         import annotationlib  # noqa: PLC0415 - not there before 3.14
 
-        annotations = annotationlib.get_annotations(
+        return annotationlib.get_annotations(
             func, format=annotationlib.Format.FORWARDREF
         )
-    else:
-        annotations = getattr(func, "__annotations__", {})
-    return "return" in annotations
+    return getattr(func, "__annotations__", {})
 
 
-def _is_json_shaped(annotation: Any) -> bool:
+def _is_json_shaped(annotation: Any, aliases: tuple[Any, ...] = ()) -> bool:
     """Whether validating a JSON value into ``annotation`` could not change it.
 
     ``dict[str, Any]``, ``list[int]``, ``str | None`` and the like, built
@@ -123,18 +129,37 @@ def _is_json_shaped(annotation: Any) -> bool:
     ``json.loads`` gave it and never validates it, so an ``int`` returned by
     a function annotated ``-> float`` stays an ``int``.
     """
-    if annotation is Any or annotation in _JSON_SCALARS:
-        return True
+    if isinstance(annotation, _TYPE_ALIAS):
+        return _is_json_alias(annotation, aliases)
     origin, args = typing.get_origin(annotation), typing.get_args(annotation)
-    if annotation in (list, dict) or (origin in (list, dict) and not args):
-        return True  # bare, also as typing.List and typing.Dict
+    if (
+        annotation is Any
+        or annotation in _JSON_SCALARS
+        or annotation in (list, dict)
+        or (origin in (list, dict) and not args)  # typing.List, typing.Dict
+    ):
+        return True
     if origin is list:
-        return all(_is_json_shaped(arg) for arg in args)
+        return all(_is_json_shaped(arg, aliases) for arg in args)
     if origin is dict:
-        return args[0] is str and _is_json_shaped(args[1])
+        return args[0] is str and _is_json_shaped(args[1], aliases)
     if origin in (typing.Union, types.UnionType):
-        return all(_is_json_shaped(arg) for arg in args)
+        return all(_is_json_shaped(arg, aliases) for arg in args)
     return False
+
+
+# ``type Json = dict[str, Json] | None`` (Python 3.12+).
+_TYPE_ALIAS: Any = getattr(typing, "TypeAliasType", ())
+
+
+def _is_json_alias(alias: Any, aliases: tuple[Any, ...]) -> bool:
+    """``_is_json_shaped`` for an alias, which is lazy and may name itself."""
+    if alias in aliases:
+        return True
+    try:
+        return _is_json_shaped(alias.__value__, (*aliases, alias))
+    except NameError:
+        return False
 
 
 def _warn_about_return_annotation(func: Callable[..., Any]) -> None:
