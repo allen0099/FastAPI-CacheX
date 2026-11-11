@@ -669,9 +669,14 @@ async def greeting(request: Request):
 - `invalidate()` and `invalidate_path()` take the same mapping and build the
   same component. Passing the list form for a route that uses a normaliser
   builds another key and deletes nothing.
-- The function runs on every request to the route, before the backend is
-  read, so keep it cheap. It is your code: an exception it raises fails the
-  request and is not covered by `fail_open`.
+- The function must be a plain `def` (an `async def` is rejected when the
+  decorator is applied). It runs once for every GET or HEAD request that is
+  looked up in the cache, before the backend is read, so keep it cheap; it is
+  not called for other methods or for a request that bypasses the cache. It is
+  your code: an exception it raises fails the request and is not covered by
+  `fail_open`.
+- To annotate one, import `VaryNormaliser` from `fastapi_cachex`
+  (`Callable[[str], str | int]`).
 - A credential header's normalised value is still [hashed](#credential-headers-are-hashed),
   and `Cookie` with a normaliser does not emit the warning described there.
 

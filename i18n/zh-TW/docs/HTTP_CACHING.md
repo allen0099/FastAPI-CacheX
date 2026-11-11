@@ -354,7 +354,8 @@ async def greeting(request: Request):
 - 對應到 `None` 的名稱會以它自己的值作為鍵，和清單形式完全相同，因此 `vary={"Accept-Language": locale, "Origin": None}` 可以混用兩者。
 - `Vary` 回應標頭仍然列出該標頭。應用程式前方的快取無法執行你的函式，所以它仍會為每個原始值各保留一份；這個上限只適用於本函式庫的後端。
 - `invalidate()` 與 `invalidate_path()` 接受相同的 mapping，並建立相同的鍵元件。對使用正規化函式的路由傳入清單形式，會組出另一個鍵，什麼也不會刪除。
-- 函式會在每個送到該路由的請求上執行，而且在讀取後端之前，所以請保持輕量。它是你的程式碼：它拋出的例外會讓請求失敗，不在 `fail_open` 的範圍內。
+- 函式必須是一般的 `def`（`async def` 會在套用裝飾器時被拒絕）。每個會查詢快取的 GET 或 HEAD 請求都會執行它一次，而且在讀取後端之前，所以請保持輕量；其他方法或略過快取的請求不會呼叫它。它是你的程式碼：它拋出的例外會讓請求失敗，不在 `fail_open` 的範圍內。
+- 若要為它加上型別註記，請從 `fastapi_cachex` 匯入 `VaryNormaliser`（`Callable[[str], str | int]`）。
 - 憑證標頭經正規化後的值仍然會被[雜湊](#credential-headers-are-hashed)，而帶有正規化函式的 `Cookie` 不會發出該節所述的警告。
 
 #### 憑證標頭會雜湊 {#credential-headers-are-hashed}

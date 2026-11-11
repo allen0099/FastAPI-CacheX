@@ -278,10 +278,12 @@ async def invalidate(
         True if a cache entry existed and was deleted, False otherwise.
 
     Raises:
-        CacheXError: If ``vary`` is not a list of header names, if
-            ``sort_query`` is not a ``bool`` or is passed with
-            ``key_builder``, if ``key_builder`` is an ``async`` callable, or
-            if it returns something other than a ``str``. Raised before the
+        CacheXError: If ``vary`` is not a list of header names or a mapping
+            of names to normalisers, if a normaliser returns something other
+            than a ``str`` or an ``int``, if ``sort_query`` is not a ``bool``
+            or is passed with ``key_builder``, if ``key_builder`` is an
+            ``async`` callable, or if it returns something other than a
+            ``str``. Raised before the
             backend is touched.
     """
     builder = _resolve_key_builder(key_builder, sort_query)
@@ -1117,8 +1119,9 @@ def cache(
             ``pick_locale(value)`` and puts what it returns (a ``str`` or an
             ``int``) into the key, while ``Vary`` still names the header. A
             name mapped to ``None`` behaves as in a list. The normaliser
-            runs on every request to the route, before the backend is read,
-            and an exception it raises fails the request. The credential
+            must be a sync function; it runs once for every GET or HEAD
+            request that is looked up in the cache, before the backend is
+            read, and an exception it raises fails the request. The credential
             headers ``Authorization``, ``Proxy-Authorization``, ``Cookie``
             and ``X-Session-Token`` are keyed on ``sha256:<hex digest>`` of
             the value rather than the value, so no token or session cookie

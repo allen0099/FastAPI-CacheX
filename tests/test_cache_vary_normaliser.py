@@ -1,5 +1,6 @@
 """``@cache(vary={name: normaliser})`` bounds the entries a header creates (#310)."""
 
+import enum
 import hashlib
 import warnings
 from typing import Any
@@ -200,3 +201,68 @@ async def test_a_normalised_credential_header_is_still_hashed() -> None:
 def test_cookie_without_a_normaliser_still_warns() -> None:
     with pytest.warns(UserWarning, match="cache vary on Cookie"):
         cache(ttl=60, vary={"Cookie": None})(lambda: None)
+
+
+def test_an_async_normaliser_is_rejected_at_decoration() -> None:
+    async def pick(value: str) -> str:
+        return value
+
+    with pytest.raises(CacheXError, match="async normaliser is not supported"):
+        cache(ttl=60, vary={"Accept-Language": pick})(lambda: None)  # type: ignore[dict-item]
+
+
+def test_a_normaliser_that_returns_a_coroutine_is_named_as_such() -> None:
+    """A lambda around an async function passes the check at decoration."""
+
+    async def pick(value: str) -> str:
+        return value
+
+    client, _ = _app(
+        vary={"Accept-Language": lambda value: pick(value)}  # noqa: PLW0108
+    )
+
+    # filterwarnings = error: an unclosed coroutine would fail this test.
+    with pytest.raises(CacheXError, match="async normaliser is not supported"):
+        client.get("/greet")
+
+
+async def test_enum_members_are_keyed_on_their_value() -> None:
+    class Locale(str, enum.Enum):
+        EN = "en"
+
+    class Tier(enum.IntEnum):
+        GOLD = 3
+
+    client, _ = _app(
+        vary={"X-Locale": lambda value: Locale.EN, "X-Tier": lambda value: Tier.GOLD}
+    )
+
+    client.get("/greet")
+
+    assert await BackendProxy.get().get_all_keys() == [
+        f"{BASE_KEY}|x-locale=en|x-tier=3"
+    ]
+
+
+def test_the_normaliser_is_not_called_for_requests_that_skip_the_cache() -> None:
+    seen: list[str] = []
+
+    def record(value: str) -> str:
+        seen.append(value)
+        return "x"
+
+    app = FastAPI()
+
+    @app.api_route("/greet", methods=["GET", "HEAD", "POST"])
+    @cache(ttl=60, vary={"Accept-Language": record})
+    async def greet() -> dict[str, str]:
+        return {}
+
+    client = TestClient(app)
+    client.post("/greet")
+    client.get("/greet", headers={"Authorization": "Bearer t"})
+    assert seen == []
+
+    client.get("/greet")
+    client.head("/greet")
+    assert seen == ["", ""]
