@@ -102,9 +102,6 @@ filterwarnings = [
     # deprecates. Later starlette releases no longer use it; nothing in this
     # package or its tests does.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
-    # A MemcachedBackend built without timeouts warns until 0.6.0 changes
-    # their default (#516); tests/backends/test_memcached.py checks that warning.
-    "ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning",
 ]
 
 [tool.ruff.lint]

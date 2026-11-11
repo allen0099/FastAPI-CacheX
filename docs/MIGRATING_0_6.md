@@ -42,25 +42,27 @@ The `redis` extra now needs `orjson` 3.8.0 or later (it was 3.4.7): 3.8.0 is the
 
 ## Memcached timeouts default to 1 second {#memcached-timeouts}
 
-`MemcachedBackend` waits 5 seconds for a connection and for each reply unless told otherwise. In 0.6.0 both defaults become 1 second, as on the Redis backend ([#516](https://github.com/allen0099/FastAPI-CacheX/issues/516)): every Memcached call holds a worker thread until the server answers or the timeout passes, so a long default lets an unreachable server tie up the thread pool your sync handlers and dependencies share.
+`MemcachedBackend` waited 5 seconds for a connection and for each reply unless told otherwise. In 0.6.0 both defaults are 1 second, as on the Redis backend ([#516](https://github.com/allen0099/FastAPI-CacheX/issues/516)): every Memcached call holds a worker thread until the server answers or the timeout passes, so a long default lets an unreachable server tie up the thread pool your sync handlers and dependencies share.
 
-From 0.5.3 on, building the backend without both arguments emits a `FutureWarning`:
+The 0.5.x releases from 0.5.3 on announce this: on those versions, building the backend without both arguments emits a `FutureWarning`:
 
 ```text
 FutureWarning: MemcachedBackend timeouts will default to 1 second in fastapi-cachex 0.6.0; ...
 ```
 
-Pass both to choose the values now; that also silences the warning:
+On 0.5.x, pass both to choose the values and silence the warning. On 0.6.0 they are only needed for a value other than 1 second, such as the old 5:
 
 ```python
 backend = MemcachedBackend(
     servers=["localhost:11211"],
-    connect_timeout=1.0,  # or 5.0 to keep today's behaviour
+    connect_timeout=1.0,  # or 5.0, the default before 0.6.0
     timeout=1.0,
 )
 ```
 
-A test suite that turns warnings into errors (`filterwarnings = ["error"]`) fails on 0.5.3 and later 0.5.x releases wherever it builds the backend without both arguments. If the backend is built by code you cannot change, ignore this one warning instead:
+`None`, which 0.5.x accepted as "not passed", raises `TypeError` in 0.6.0; leave the argument out instead.
+
+A test suite that turns warnings into errors (`filterwarnings = ["error"]`) fails on those 0.5.x releases wherever it builds the backend without both arguments. If the backend is built by code you cannot change, ignore this one warning instead:
 
 ```toml
 [tool.pytest.ini_options]
