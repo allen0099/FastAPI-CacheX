@@ -3,6 +3,7 @@
 import inspect
 import logging
 import threading
+import time
 import warnings
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -68,6 +69,7 @@ from ._vary import _vary_components
 from .backends.base import MAX_TTL
 from .backends.base import BaseCacheBackend
 from .directives import DirectiveType
+from .events import _emit
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
 from .exceptions import RequestNotFoundError
@@ -165,6 +167,36 @@ def _log_backend_failure(
         error,
     )
     logger.debug("Cache backend %s; key_ref=%s key=%s", what, key_ref, cache_key)
+    _emit("error", "http", cache_key, route=_route_template(request))
+
+
+def _route_template(request: Request) -> str | None:
+    """The path template of the route answering ``request``, if it has one.
+
+    The whole path, as a label that does not grow with the data:
+    ``/api/users/{user_id}``. The matched route only knows its own part when
+    it was included with a prefix or lives in a mounted application, so what
+    precedes that part in the request's path is put back in front of it, with
+    the values of any path parameters there replaced by their names.
+    """
+    route = request.scope.get("route")
+    template = getattr(route, "path", None)
+    path_format = getattr(route, "path_format", None)
+    if not isinstance(template, str) or not isinstance(path_format, str):
+        return None
+    params = request.path_params
+    try:
+        own = path_format.format(**params)
+    except (KeyError, IndexError, ValueError):
+        return template
+    path = request.url.path
+    if own == path or not path.endswith(own):
+        return template
+    prefix = path[: len(path) - len(own)]
+    for name, value in params.items():
+        if f"{{{name}" not in path_format:
+            prefix = prefix.replace(f"/{value}", f"/{{{name}}}", 1)
+    return prefix + template
 
 
 async def _read_entry(
@@ -346,6 +378,7 @@ async def invalidate(
             )
         return False
     logger.debug("Cache INVALIDATE; key=%s", cache_key)
+    _emit("invalidate", "http", cache_key)
     return True
 
 
@@ -672,6 +705,7 @@ class _Call:
     dependency_lines: list[tuple[bytes, bytes]]
     dependency_status: int | None
     background: BackgroundTasks | None = None
+    cache_key: str | None = None
     flight: _Flight = field(default_factory=_Flight)
     outcome: str | None = None
 
@@ -920,6 +954,7 @@ class _Route:
             _vary_components(req, self.vary_names),
         )
 
+        call.cache_key = cache_key
         # Decided below: a hit is served from the entry, anything else runs
         # the handler.
         call.outcome = _REFRESH if refresh else _MISS
@@ -1274,6 +1309,7 @@ class _Route:
             logger.debug(
                 "Updated cache entry; key=%s ttl=%s", cache_key, self.stored_ttl
             )
+            _emit("store", "http", cache_key, route=_route_template(call.request))
 
 
 def _check_client_cache_control(value: object) -> None:
@@ -1772,11 +1808,22 @@ def cache(
                 ),
                 background=background,
             )
+            started = time.perf_counter()
             try:
                 response = await route.respond(call, backend)
             finally:
                 # Releases the requests waiting on this one (#252).
                 call.flight.finish()
+                # Also when the handler raised: that request was a miss or a
+                # bypass all the same.
+                if call.outcome is not None:
+                    _emit(
+                        call.outcome.lower(),  # type: ignore[arg-type]
+                        "http",
+                        call.cache_key,
+                        route=_route_template(request),
+                        duration=time.perf_counter() - started,
+                    )
             if debug_header and call.outcome is not None:
                 # Set after the entry was built, so it is never stored.
                 response.headers[_DEBUG_HEADER] = call.outcome

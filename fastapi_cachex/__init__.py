@@ -17,6 +17,8 @@ from .dependencies import AppCache as AppCache
 from .dependencies import CacheBackend as CacheBackend
 from .dependencies import get_app_cache as get_app_cache
 from .dependencies import get_cache_backend as get_cache_backend
+from .events import CacheEvent as CacheEvent
+from .events import set_event_handler as set_event_handler
 from .exceptions import BackendNotFoundError as BackendNotFoundError
 from .exceptions import BackendUnavailableError as BackendUnavailableError
 from .exceptions import CacheXError as CacheXError
@@ -61,6 +63,7 @@ __all__ = [
     "BackendProxy",
     "BackendUnavailableError",
     "CacheBackend",
+    "CacheEvent",
     "CacheKey",
     "CacheKeyBuilder",
     "CacheLock",
@@ -86,4 +89,5 @@ __all__ = [
     "get_cache_backend",
     "invalidate",
     "invalidate_path",
+    "set_event_handler",
 ]
