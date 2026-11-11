@@ -294,7 +294,7 @@ def test_no_store_decorator_overrides_the_handler_header():
     ("headers", "cache_control", "set_cookie", "expected"),
     [
         ({"Authorization": "Bearer a"}, None, False, "Authorization header present"),
-        ({}, "private", False, "private-response"),
+        ({}, "private", False, "response-cache-control"),
         ({}, None, True, "set-cookie"),
     ],
 )

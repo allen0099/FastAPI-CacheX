@@ -1443,11 +1443,15 @@ class _Route:
 def _add_debug_headers(response: Response, call: _Call) -> None:
     """``X-Cache`` and ``X-Cache-Reason`` for a GET or HEAD response.
 
-    Set after the entry was built, so they are never stored.
+    Set after the entry was built, so they are never stored. They replace
+    what the handler, a dependency or a stored entry put under these names.
     """
-    if call.outcome is not None:
-        response.headers[_DEBUG_HEADER] = call.outcome
-    if call.reason is not None:
+    if call.outcome is None:
+        return
+    response.headers[_DEBUG_HEADER] = call.outcome
+    if call.reason is None:
+        del response.headers[_REASON_HEADER]
+    else:
         response.headers[_REASON_HEADER] = call.reason
 
 
@@ -1996,8 +2000,6 @@ def cache(
                         duration=time.perf_counter() - started,
                         reason=call.reason,
                     )
-            if debug_header:
-                _add_debug_headers(response, call)
             cacheable_request = request.method in _CACHED_METHODS
             response = _with_dependency_headers(
                 response,
@@ -2006,6 +2008,10 @@ def cache(
                 route.private_cache_control,
                 cacheable_request=cacheable_request,
             )
+            if debug_header:
+                # Last, so that neither a dependency's line nor a stored one
+                # stands in for this request's.
+                _add_debug_headers(response, call)
             if vary_names and cacheable_request:
                 # Every GET or HEAD answer, served from the backend or not: a
                 # shared cache downstream keys on these headers too.

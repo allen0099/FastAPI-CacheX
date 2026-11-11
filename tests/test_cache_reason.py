@@ -1,6 +1,7 @@
 """``X-Cache-Reason`` and ``CacheEvent.reason``: why a request was not cached."""
 
 import re
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from fastapi.testclient import TestClient
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import CacheEvent
 from fastapi_cachex import CacheReason
+from fastapi_cachex import _stored_response
 from fastapi_cachex import invalidate_tags
 from fastapi_cachex import set_event_handler
 from fastapi_cachex.backends import MemoryBackend
@@ -81,7 +83,7 @@ def test_a_bypass_says_why(
         (_with_cookie, "set-cookie"),
         (
             lambda: Response(b"{}", headers={"Cache-Control": "private"}),
-            "private-response",
+            "response-cache-control",
         ),
     ],
 )
@@ -229,3 +231,39 @@ def test_a_tag_invalidated_while_the_handler_ran_is_named() -> None:
         return {"n": 1}
 
     assert _reason(TestClient(app).get("/items")) == "tag-invalidated"
+
+
+def test_a_reason_of_the_handler_or_a_dependency_is_not_passed_on() -> None:
+    """Like ``X-Cache``: only this request's own reason is sent, also on a hit."""
+    app = FastAPI()
+
+    def named(response: Response) -> None:
+        response.headers["X-Cache-Reason"] = "dependency"
+
+    @app.get("/items", dependencies=[Depends(named)])
+    @cache(ttl=60, debug_header=True)
+    async def items() -> Response:
+        return Response(b"{}", headers={"X-Cache-Reason": "handler"})
+
+    client = TestClient(app)
+    for outcome in ("MISS", "HIT"):
+        response = client.get("/items")
+        assert response.headers["x-cache"] == outcome
+        assert _reason(response) is None
+
+
+def test_a_stale_answer_for_a_failing_handler_has_no_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    answers = iter([Response(b"{}"), Response(b"down", status_code=503)])
+    client = _client(
+        lambda: next(answers), ttl=1, stale_ttl=60, serve_stale=True, stale="error"
+    )
+    client.get("/items")
+    later = time.time() + 5
+    monkeypatch.setattr(_stored_response, "_now", lambda: later)
+
+    response = client.get("/items")
+
+    assert response.headers["x-cache"] == "STALE"
+    assert _reason(response) is None

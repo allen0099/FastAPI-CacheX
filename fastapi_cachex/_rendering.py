@@ -77,7 +77,7 @@ def _dependency_unshareable_reason(
     """Why the dependencies' lines keep a response out of the backend, if they do."""
     lines = list(dependency_lines)
     if _has_unshareable_directive(_cache_control_values(lines)):
-        return "private-response"
+        return "response-cache-control"
     if _sets_cookie(lines):
         return "set-cookie"
     return None

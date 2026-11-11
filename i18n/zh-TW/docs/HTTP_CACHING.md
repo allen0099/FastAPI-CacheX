@@ -223,7 +223,7 @@ async def items() -> list[str]: ...
 | `REFRESH` | 在設定了 [`client_cache_control`](#the-requests-cache-control-is-ignored) 的路由上，請求的 `no-cache` 或 `max-age=0` 略過了快取項目：handler 已執行，它的回應取代了該項目，除非那是不會被儲存的回應（見 `MISS`）。 |
 | `STALE`   | 在設定了 [`serve_stale`](#serving-stale-responses) 的路由上，以超過 `ttl` 的項目回應：立刻回應、之後再執行 handler（`stale="revalidate"`），或因為 handler 失敗（`stale="error"`）。 |
 
-預設關閉，因為它會向用戶端透露伺服器快取了什麼；請在開發時或內部路由上開啟。這個標頭不會隨項目儲存，並會取代 handler 自己設定的 `X-Cache`。其他方法不會得到這個標頭，就像它們也不會得到 `Cache-Control`。
+預設關閉，因為它會向用戶端透露伺服器快取了什麼；請在開發時或內部路由上開啟。這個標頭不會隨項目儲存，並會取代 handler 自己設定的 `X-Cache`。加上 `X-Cache-Reason`（見下）後，它還會透露請求帶有 session 資料，或後端發生了錯誤。其他方法不會得到這個標頭，就像它們也不會得到 `Cache-Control`。
 
 #### 為什麼回應沒有被快取 {#why-not-cached}
 
@@ -239,13 +239,13 @@ async def items() -> list[str]: ...
 | `status` | `MISS`、`REFRESH` | handler 回應的不是 2xx（或是 206）。 |
 | `streamed` | `MISS`、`REFRESH` | `StreamingResponse` 或 `FileResponse`：沒有可儲存的內容。 |
 | `set-cookie` | `MISS`、`REFRESH` | handler 或某個 dependency 設定了 cookie：儲存的副本會把某位訪客的 cookie 交給下一位。之後才由 middleware 加上的 cookie 在這裡看不到。 |
-| `private-response` | `MISS`、`REFRESH` | handler 或某個 dependency 在這個回應送出了 `Cache-Control: private` 或 `no-store`。 |
+| `response-cache-control` | `MISS`、`REFRESH` | handler 或某個 dependency 在這個回應送出了 `Cache-Control: private` 或 `no-store`。 |
 | `dependency-status` | `MISS`、`REFRESH` | 某個 dependency 設定了狀態碼，它可能只對這個請求成立。 |
-| `head` | `MISS` | `HEAD` 請求沒有找到項目；只有 `GET` 的回應會被儲存。 |
+| `head` | `MISS`、`REFRESH` | handler 為 `HEAD` 請求執行了；只有 `GET` 的回應會被儲存。 |
 | `tag-read-failed`、`tag-invalidated` | `MISS`、`REFRESH` | [有 tag](#by-tag) 的路由，其 tag 版本讀取失敗，或在 handler 執行期間改變：儲存這個回應可能留下一個失效操作沒有涵蓋到的項目。 |
 | `write-failed` | `MISS`、`REFRESH` | 後端拒絕寫入或無法連線，而路由為 `fail_open=True`。 |
 
-沒有這個標頭的回應，就是照常使用了快取。同一個值也會出現在該請求[事件](#counting-hits-and-misses)的 `reason` 上，型別為 `fastapi_cachex.CacheReason`。這些值屬於公開 API，所以可以當作指標的 label：只有在破壞性變更時才會改名或移除。
+沒有這個標頭的回應，就是照常使用了快取。handler 以拋出例外代替回傳回應時也沒有原因：它的事件是不帶 `reason` 的 `miss` 或 `bypass`。同一個值也會出現在該請求[事件](#counting-hits-and-misses)的 `reason` 上，型別為 `fastapi_cachex.CacheReason`。這些值屬於公開 API，所以可以當作指標的 label：只有在破壞性變更時才會改名或移除。
 
 ### 帶有憑證的請求 {#requests-with-credentials}
 

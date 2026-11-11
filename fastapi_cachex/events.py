@@ -40,7 +40,7 @@ CacheReason = Literal[
     "status",
     "streamed",
     "set-cookie",
-    "private-response",
+    "response-cache-control",
     "dependency-status",
     "head",
     "tag-read-failed",

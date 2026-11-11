@@ -119,7 +119,7 @@ def _has_unshareable_directive(cache_control: Iterable[str]) -> bool:
 def _unshareable_reason(response: Response) -> CacheReason | None:
     """Why a rendered response must not be stored, or None when it may be."""
     if _marked_unshareable(response):
-        return "private-response"
+        return "response-cache-control"
     if "set-cookie" in response.headers:
         return "set-cookie"
     return None

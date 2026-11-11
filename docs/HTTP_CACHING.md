@@ -431,7 +431,9 @@ async def items() -> list[str]: ...
 
 It is off by default, since it tells clients what the server caches; turn it
 on while developing or behind an internal route. The header is never stored
-with the entry, and it replaces an `X-Cache` the handler sets itself. Other
+with the entry, and it replaces an `X-Cache` the handler sets itself. With
+`X-Cache-Reason` (below) it also tells them that a request carried session
+data, or that the backend failed. Other
 methods get no header, as they get no `Cache-Control`.
 
 #### Why a response was not cached {#why-not-cached}
@@ -450,13 +452,15 @@ causes. With `debug_header=True` such a response also carries
 | `status` | `MISS`, `REFRESH` | The handler answered with something other than a 2xx (or with 206). |
 | `streamed` | `MISS`, `REFRESH` | A `StreamingResponse` or `FileResponse`: there is no body to store. |
 | `set-cookie` | `MISS`, `REFRESH` | The handler or a dependency set a cookie: a stored copy would hand one visitor's cookie to the next. A middleware that adds its cookie later is not seen here. |
-| `private-response` | `MISS`, `REFRESH` | The handler or a dependency sent `Cache-Control: private` or `no-store` on this response. |
+| `response-cache-control` | `MISS`, `REFRESH` | The handler or a dependency sent `Cache-Control: private` or `no-store` on this response. |
 | `dependency-status` | `MISS`, `REFRESH` | A dependency set the status code, which may hold for this request only. |
-| `head` | `MISS` | A `HEAD` request found no entry; only a `GET` response is stored. |
+| `head` | `MISS`, `REFRESH` | The handler ran for a `HEAD` request; only a `GET` response is stored. |
 | `tag-read-failed`, `tag-invalidated` | `MISS`, `REFRESH` | A [tagged](#by-tag) route whose tag versions could not be read, or changed while the handler ran: storing the response could leave an entry that an invalidation missed. |
 | `write-failed` | `MISS`, `REFRESH` | The backend refused the write or could not be reached, and the route has `fail_open=True`. |
 
-A response without the header used the cache as usual. The same value is on
+A response without the header used the cache as usual. A handler that
+raises instead of returning a response has no reason either: its event is a
+`miss` or a `bypass` without one. The same value is on
 the [event](#counting-hits-and-misses) of the request as `reason`, typed as
 `fastapi_cachex.CacheReason`. The values are part of the public API, so they
 can be a metric label: one is renamed or removed only as a breaking change.
