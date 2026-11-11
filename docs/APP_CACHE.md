@@ -299,8 +299,12 @@ await cache.get("users", type_=list[User])
   the default, and `get_or_set()` runs `factory` again and overwrites it.
 - If the value `factory` returns does not fit `type_`, `get_or_set()` raises
   pydantic's `ValidationError`.
-- `@cached` does not read the type from the function's annotation; pass
-  `type_=` to it. Without it the function returns the JSON form, as before.
+- `@cached` does not read the type from the function's annotation yet; pass
+  `type_=` to it. Without it the function returns the JSON form. From 0.6.0
+  the return annotation is used when `type_` is not passed, and until then a
+  `FutureWarning` names the functions this will change; `type_=None` keeps
+  the JSON form in both. See
+  [Migrating to 0.6.0](MIGRATING_0_6.md#cached-return-annotation).
 - A stored `None` does not fit `type_=User`. For a value that may be absent,
   name it: `type_=User | None`.
 - A model or dataclass with a `SecretStr` or `SecretBytes` field, at any

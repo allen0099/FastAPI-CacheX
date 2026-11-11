@@ -4,6 +4,10 @@ import hashlib
 import inspect
 import json
 import logging
+import sys
+import types
+import typing
+import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
 from datetime import timedelta
@@ -28,6 +32,152 @@ R = TypeVar("R")
 # Separates the function's name from the digest of its arguments in a default
 # key, as `CacheManager` keys separate their parts.
 _KEY_SEPARATOR = ":"
+
+
+class _Unset:
+    """``@cached(type_=...)`` not passed, as opposed to ``type_=None``."""
+
+    def __repr__(self) -> str:
+        """Shown as the default in the signature and the API reference."""
+        return "<not passed>"
+
+
+_UNSET: Any = _Unset()
+
+# A return annotation that is there but cannot be evaluated where the
+# decorator is applied.
+_UNRESOLVED: Any = object()
+
+_JSON_SCALARS = (str, int, float, bool, type(None), object)
+
+_RETURN_ANNOTATION_NOTICE = (
+    "cached return annotation: {name}() is annotated to return {annotation}, "
+    "and from 0.6.0 @cached validates the cached value into that type instead "
+    "of returning its JSON form (a model comes back as a model, not a dict; "
+    "a tuple as a tuple, not a list). Pass type_=<that type> to get this now, "
+    "or type_=None to keep the JSON form "
+    "(https://github.com/allen0099/FastAPI-CacheX/issues/533)."
+)
+
+_UNRESOLVED_ANNOTATION_NOTICE = (
+    "cached return annotation: the annotations of {name}() cannot be resolved "
+    "where @cached is applied (a name imported under TYPE_CHECKING, or a "
+    "class defined further down). From 0.6.0 @cached validates the cached "
+    "value into the return annotation; it cannot read this one, so this "
+    "function will keep returning the JSON form while others change. Pass "
+    "type_=<the type> or type_=None to say which you want "
+    "(https://github.com/allen0099/FastAPI-CacheX/issues/533)."
+)
+
+
+def _return_annotation(func: Callable[..., Any]) -> Any:
+    """The function's resolved return annotation.
+
+    ``_UNSET`` when there is none, and ``_UNRESOLVED`` when there is one but
+    it cannot be evaluated here (a forward reference to a name defined later,
+    an import under ``TYPE_CHECKING``). A parameter's annotation is never
+    evaluated: one that cannot be resolved says nothing about the return type.
+    """
+    annotations = _raw_annotations(func)
+    if "return" not in annotations:
+        return _UNSET
+
+    def stub() -> None: ...
+
+    stub.__annotations__ = {"return": annotations["return"]}
+    namespace = getattr(inspect.unwrap(func), "__globals__", None)
+    try:
+        return typing.get_type_hints(stub, globalns=namespace)["return"]
+    except Exception:  # noqa: BLE001 - whatever evaluating an annotation raises
+        return _UNRESOLVED
+
+
+def _signature(func: Callable[..., Any]) -> inspect.Signature:
+    """``inspect.signature`` without evaluating the annotations.
+
+    Only the parameters are used, to bind a call's arguments. From Python
+    3.14 annotations are evaluated lazily, and ``inspect.signature`` would
+    raise ``NameError`` for a name imported under ``TYPE_CHECKING``.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib  # noqa: PLC0415 - not there before 3.14
+
+        return inspect.signature(
+            func, annotation_format=annotationlib.Format.FORWARDREF
+        )
+    return inspect.signature(func)
+
+
+def _raw_annotations(func: Callable[..., Any]) -> dict[str, Any]:
+    """The annotations of ``func`` as written, without evaluating them."""
+    if sys.version_info >= (3, 14):
+        # Annotations are evaluated lazily: reading __annotations__ would
+        # raise for the very annotation that could not be resolved.
+        import annotationlib  # noqa: PLC0415 - not there before 3.14
+
+        return annotationlib.get_annotations(
+            func, format=annotationlib.Format.FORWARDREF
+        )
+    return getattr(func, "__annotations__", {})
+
+
+def _is_json_shaped(annotation: Any, aliases: tuple[Any, ...] = ()) -> bool:
+    """Whether validating a JSON value into ``annotation`` could not change it.
+
+    ``dict[str, Any]``, ``list[int]``, ``str | None`` and the like, built
+    only from JSON's own types. ``@cached`` returns such a value as
+    ``json.loads`` gave it and never validates it, so an ``int`` returned by
+    a function annotated ``-> float`` stays an ``int``.
+    """
+    if isinstance(annotation, _TYPE_ALIAS):
+        return _is_json_alias(annotation, aliases)
+    origin, args = typing.get_origin(annotation), typing.get_args(annotation)
+    if (
+        annotation is Any
+        or annotation in _JSON_SCALARS
+        or annotation in (list, dict)
+        or (origin in (list, dict) and not args)  # typing.List, typing.Dict
+    ):
+        return True
+    if origin is list:
+        return all(_is_json_shaped(arg, aliases) for arg in args)
+    if origin is dict:
+        return args[0] is str and _is_json_shaped(args[1], aliases)
+    if origin in (typing.Union, types.UnionType):
+        return all(_is_json_shaped(arg, aliases) for arg in args)
+    return False
+
+
+# ``type Json = dict[str, Json] | None`` (Python 3.12+).
+_TYPE_ALIAS: Any = getattr(typing, "TypeAliasType", ())
+
+
+def _is_json_alias(alias: Any, aliases: tuple[Any, ...]) -> bool:
+    """``_is_json_shaped`` for an alias, which is lazy and may name itself."""
+    if alias in aliases:
+        return True
+    try:
+        return _is_json_shaped(alias.__value__, (*aliases, alias))
+    except NameError:
+        return False
+
+
+def _warn_about_return_annotation(func: Callable[..., Any]) -> None:
+    """Announce the 0.6.0 change for a function it will affect (#533)."""
+    annotation = _return_annotation(func)
+    if annotation is _UNSET or _is_json_shaped(annotation):
+        return
+    notice = (
+        _UNRESOLVED_ANNOTATION_NOTICE
+        if annotation is _UNRESOLVED
+        else _RETURN_ANNOTATION_NOTICE
+    )
+    warnings.warn(
+        notice.format(name=func.__qualname__, annotation=annotation),
+        FutureWarning,
+        # The line that applies the decorator: cached(...)(func).
+        stacklevel=3,
+    )
 
 
 class CachedFunction(Generic[P, R]):
@@ -56,7 +206,7 @@ class CachedFunction(Generic[P, R]):
     ) -> None:
         """Wrap ``func``; ``cached()`` builds these."""
         self.__wrapped__ = func
-        self._signature = inspect.signature(func)
+        self._signature = _signature(func)
         self._ttl = ttl
         self._key = key
         self._manager = manager
@@ -199,7 +349,7 @@ def cached(
     key: str | Callable[..., str] | None = None,
     manager: CacheManager | None = None,
     lock: bool | None = None,
-    type_: Any = None,
+    type_: Any = _UNSET,
 ) -> _Decorator:
     """Cache what a plain function returns, keyed on its arguments.
 
@@ -237,11 +387,20 @@ def cached(
         type_: The type to validate the cached value into, usually the
             function's return type (``@cached(ttl=60, type_=User)``,
             ``type_=list[User]``), as for ``CacheManager.get(type_=...)``.
-            It is not read from the annotation. A cached value that does not
-            fit it counts as a miss and the function runs again.
+            A cached value that does not fit it counts as a miss and the
+            function runs again. ``None`` returns the JSON form. Not passing
+            it does the same today; from 0.6.0 it will use the function's
+            return annotation, which is announced by the warning below.
 
     Returns:
         A decorator turning the function into a ``CachedFunction``
+
+    Warns:
+        FutureWarning: When the decorator is applied, if ``type_`` is not
+            passed and the function's return annotation is a type the JSON
+            form does not already have (a model, a ``tuple``, a
+            ``datetime``). From 0.6.0 the cached value is validated into it
+            (#533). Pass ``type_`` to choose now.
 
     Raises:
         TTLTypeError: When the decorator is applied, if ``ttl`` is not an
@@ -264,8 +423,15 @@ def cached(
         raise CacheXError(msg)
 
     def decorator(func: Callable[P, Any]) -> CachedFunction[P, Any]:
+        if type_ is _UNSET:
+            _warn_about_return_annotation(func)
         return CachedFunction(
-            func, ttl=ttl_seconds, key=key, manager=manager, lock=lock, type_=type_
+            func,
+            ttl=ttl_seconds,
+            key=key,
+            manager=manager,
+            lock=lock,
+            type_=None if type_ is _UNSET else type_,
         )
 
     return decorator

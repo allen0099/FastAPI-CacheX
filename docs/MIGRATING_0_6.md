@@ -71,3 +71,44 @@ filterwarnings = [
 Outside pytest, `warnings.filterwarnings("ignore", message="MemcachedBackend timeouts will default to 1 second", category=FutureWarning)` before the backend is built does the same, as does `PYTHONWARNINGS="ignore:MemcachedBackend timeouts will default to 1 second:FutureWarning"` in the environment.
 
 With `@cache`, a timeout is a backend failure like any other: the request is [answered without the cache](HTTP_CACHING.md#when-the-backend-fails). A server that regularly takes longer than a second to answer needs the larger value spelled out.
+
+## `@cached` validates into the return annotation {#cached-return-annotation}
+
+Until 0.6.0, a function decorated with `@cached` returns the JSON form of its value unless `type_=` is passed: a function annotated `-> User` gets a `dict` back, and one annotated `-> tuple[int, int]` a list, on the first call and on every hit. From 0.6.0, when `type_` is not passed, `@cached` validates the cached value into the function's return annotation ([#533](https://github.com/allen0099/FastAPI-CacheX/issues/533)).
+
+From 0.5.6 on, applying `@cached` without `type_` to a function this will affect emits a `FutureWarning`:
+
+```text
+FutureWarning: cached return annotation: load_user() is annotated to return <class 'app.User'>, and from 0.6.0 @cached validates the cached value into that type ...
+```
+
+It is emitted once, where the decorator is applied, and only when the change can alter what the function returns. It stays quiet when:
+
+- `type_` is passed, whatever its value;
+- the function has no return annotation;
+- the annotation is built only from JSON's own types: `str`, `int`, `float`, `bool`, `None`, `Any`, `object`, `list` and `dict` (bare, or as `list[...]` and `dict[str, ...]`), and unions of them. For these the value is returned as JSON decoded it and is never converted.
+
+A return annotation that cannot be resolved where the decorator is applied gets a warning of its own, with the same prefix. That happens when the type is imported under `if TYPE_CHECKING:` (linters often move imports there) or is a class defined further down the file. 0.6.0 cannot read such an annotation, so that function would keep returning the JSON form while the others change; passing `type_` settles it either way.
+
+Choose per function, and the warning goes away:
+
+```python
+@cached(ttl=60, type_=User)  # the 0.6.0 behaviour, now
+async def load_user(user_id: int) -> User: ...
+
+
+@cached(ttl=60, type_=None)  # keep the JSON form, in 0.6.0 too
+async def load_user_dict(user_id: int) -> User: ...
+```
+
+With `type_=User`, a value that was cached as something that no longer fits the type counts as a miss and the function runs again, so a deploy needs no cache flush.
+
+To silence the warning for a whole test suite instead:
+
+```toml
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+    "ignore:cached return annotation:FutureWarning",
+]
+```

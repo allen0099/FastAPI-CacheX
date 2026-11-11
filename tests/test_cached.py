@@ -3,9 +3,14 @@
 import asyncio
 import hashlib
 import json
+import sys
+import typing
+import warnings
 from collections.abc import AsyncIterator
+from datetime import datetime
 from datetime import timedelta
 from typing import Any
+from typing import Optional
 
 import pytest
 import pytest_asyncio
@@ -199,7 +204,7 @@ async def test_without_ttl_the_managers_default_applies(
 
 
 async def test_the_value_comes_back_as_json_gives_it(manager: CacheManager) -> None:
-    @cached(ttl=60, manager=manager)
+    @cached(ttl=60, manager=manager, type_=None)
     async def pair() -> tuple[int, int]:
         return (1, 2)
 
@@ -347,7 +352,7 @@ async def test_a_model_result_comes_back_as_json_unless_a_type_is_given(
     """Stored as pydantic writes it; `type_` turns it back, on a miss and a hit (#249)."""
     calls = 0
 
-    @cached(ttl=60, manager=manager)
+    @cached(ttl=60, manager=manager, type_=None)
     async def plain() -> _Point:
         return _Point(x=1, y=2)
 
@@ -361,3 +366,218 @@ async def test_a_model_result_comes_back_as_json_unless_a_type_is_given(
     assert await typed() == _Point(x=1, y=2)
     assert await typed() == _Point(x=1, y=2)
     assert calls == 1
+
+
+# --- The 0.6.0 notice for return annotations (#533) ---
+
+
+def test_an_annotation_the_json_form_lacks_warns_at_the_decorators_line(
+    manager: CacheManager,
+) -> None:
+    with pytest.warns(FutureWarning, match="cached return annotation") as record:
+
+        @cached(ttl=60, manager=manager)
+        async def load() -> _Point:
+            return _Point(x=1, y=2)
+
+    assert record[0].filename == __file__
+    message = str(record[0].message)
+    assert "load()" in message
+    assert "type_=None" in message
+    assert "issues/533" in message
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        tuple[int, int],
+        list[_Point],
+        dict[str, _Point],
+        dict[int, str],
+        _Point | None,
+        datetime,
+        set[int],
+    ],
+)
+def test_annotations_validation_would_change_warn(annotation: Any) -> None:
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = annotation
+
+    with pytest.warns(FutureWarning, match="cached return annotation"):
+        cached(ttl=60)(load)
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        Any,
+        None,
+        str,
+        int,
+        float,
+        bool,
+        object,
+        list,
+        dict,
+        list[int],
+        dict[str, Any],
+        dict[str, list[str | None]],
+        str | None,
+        Optional[int],  # noqa: UP045 - the typing.Union spelling
+        typing.List,  # noqa: UP006 - bare, without arguments
+        typing.Dict,  # noqa: UP006
+        typing.Dict[str, int],  # noqa: UP006
+    ],
+)
+def test_annotations_the_json_form_already_has_stay_quiet(annotation: Any) -> None:
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = annotation
+
+    cached(ttl=60)(load)  # filterwarnings = error would raise
+
+
+@pytest.mark.parametrize("type_", [None, _Point])
+def test_passing_type_makes_the_choice_and_silences_the_notice(type_: Any) -> None:
+    @cached(ttl=60, type_=type_)
+    async def load() -> _Point:
+        return _Point(x=1, y=2)
+
+
+def test_a_function_without_a_return_annotation_stays_quiet() -> None:
+    @cached(ttl=60)
+    async def load():
+        return 1
+
+
+async def test_not_passing_type_still_returns_the_json_form(
+    manager: CacheManager,
+) -> None:
+    """The notice announces the change; 0.5.x keeps the behaviour."""
+    with pytest.warns(FutureWarning, match="cached return annotation"):
+
+        @cached(ttl=60, manager=manager)
+        async def load() -> _Point:
+            return _Point(x=1, y=2)
+
+    assert await load() == {"x": 1, "y": 2}  # type: ignore[comparison-overlap]
+
+
+def test_the_documented_filter_silences_the_notice() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        warnings.filterwarnings(
+            "ignore", message="cached return annotation", category=FutureWarning
+        )
+
+        @cached(ttl=60)
+        async def load() -> _Point:
+            return _Point(x=1, y=2)
+
+
+def test_an_annotation_that_cannot_be_resolved_is_named_too() -> None:
+    """A model imported under TYPE_CHECKING, or defined further down (#533).
+
+    0.6.0 cannot read it, so the function would keep the JSON form while its
+    neighbours change: say so now.
+    """
+
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = "_DefinedLater"
+
+    with pytest.warns(FutureWarning, match="cached return annotation") as record:
+        cached(ttl=60)(load)
+
+    message = str(record[0].message)
+    assert "cannot be resolved" in message
+    assert "TYPE_CHECKING" in message
+    assert record[0].filename == __file__
+    # Either choice silences it.
+    cached(ttl=60, type_=None)(load)
+    cached(ttl=60, type_=_Point)(load)
+
+
+def test_an_unresolvable_parameter_alone_is_not_about_the_return_type() -> None:
+    def load(point):
+        return None
+
+    load.__annotations__["point"] = "_DefinedLater"
+
+    cached(ttl=60, key="k")(load)  # filterwarnings = error would raise
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "from __future__ import annotations\n"
+            "from typing import TYPE_CHECKING\n"
+            "if TYPE_CHECKING:\n"
+            "    from decimal import Decimal\n"
+            "def load() -> Decimal: ...\n",
+            id="type-checking-import",
+        ),
+        pytest.param(
+            "def load() -> NeverDefined: ...\n",
+            id="lazy-annotation",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 14),
+                reason="annotations are evaluated when the function is defined",
+            ),
+        ),
+    ],
+)
+def test_real_modules_with_unresolvable_annotations_are_named(source: str) -> None:
+    """As a linter leaves the import, and as Python 3.14 defers the annotation."""
+    namespace: dict[str, Any] = {"__name__": "some_app"}
+    exec(source, namespace)  # noqa: S102 - the test's own source
+
+    with pytest.warns(FutureWarning, match="cannot be resolved"):
+        cached(ttl=60)(namespace["load"])
+    # With the choice made the function is decorated without a warning (on
+    # Python 3.14+ this used to raise NameError from inspect.signature).
+    assert cached(ttl=60, type_=None)(namespace["load"]).cache_key() != ""
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "from __future__ import annotations\n"
+            "from typing import TYPE_CHECKING, Any\n"
+            "if TYPE_CHECKING:\n"
+            "    from decimal import Decimal\n"
+            "def load(amount: Decimal) -> dict[str, Any]: ...\n",
+            id="unresolvable-parameter",
+        ),
+        pytest.param(
+            "from typing import Any\n"
+            "type Json = dict[str, Any] | list[Json] | None\n"
+            "def load() -> Json: ...\n",
+            id="type-alias",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 12), reason="the type statement is 3.12+"
+            ),
+        ),
+    ],
+)
+def test_real_modules_with_json_return_annotations_stay_quiet(source: str) -> None:
+    """Only the return annotation counts, and an alias is read through."""
+    namespace: dict[str, Any] = {"__name__": "some_app"}
+    exec(source, namespace)  # noqa: S102 - the test's own source
+
+    cached(ttl=60, key="k")(namespace["load"])  # filterwarnings = error would raise
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="the type statement is 3.12+")
+def test_an_alias_of_a_model_is_still_named() -> None:
+    namespace: dict[str, Any] = {"__name__": "some_app", "Point": _Point}
+    exec("type Points = list[Point]\ndef load() -> Points: ...\n", namespace)  # noqa: S102
+
+    with pytest.warns(FutureWarning, match="cached return annotation"):
+        cached(ttl=60)(namespace["load"])
