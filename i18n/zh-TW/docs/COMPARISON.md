@@ -18,7 +18,7 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 | 序列化 | JSON，不用 pickle；透過 pydantic 讓值以原本的型別回傳（`type_=`，或 `@cached` 的回傳型別註記，0.6.0） | 預設 JSON，可選 pickle | 預設 pickle，可選 HMAC 簽章；可選 JSON | pickle、JSON、msgpack、字串或不序列化 |
 | 後端 | 記憶體、Redis、Memcached | 記憶體、Redis、Memcached、DynamoDB | 記憶體、Redis（含 cluster 與 client-side caching）、diskcache | 記憶體、Redis、Memcached |
 | Stampede 防護 | `get_or_set()` 搭配分散式鎖；`@cache` 的 `coalesce=True` 在單一行程內合併（0.5.0） | 無 | `locked`、`early`、`soft`、`thunder_protection` | `cached_stampede`（以鎖實作） |
-| 標籤、提前更新、指標 | 無 | 無 | 標籤、early 與 soft 提前更新、Prometheus 中介軟體、回呼 | 命中率與計時外掛 |
+| 標籤、提前更新、指標 | 在 handler 更新期間或失敗時提供過期的項目（`serve_stale`，0.6.1）；沒有標籤與指標 | 無 | 標籤、early 與 soft 提前更新、Prometheus 中介軟體、回呼 | 命中率與計時外掛 |
 | 其他功能 | `CacheLock`、原子計數器、監控路由 | — | 速率限制、斷路器、Bloom filter、鎖 | `RedLock`、`OptimisticLock`、`multi_cached` |
 | 比較的版本 | 0.6.0；Python 3.11–3.15、FastAPI 0.128.2+ | 0.2.2（2024-07-24）；Python 3.8+ | 7.6.0（2026-09-17）；Python 3.10+ | 0.12.3（2024-09-25） |
 
@@ -38,7 +38,7 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 - 只快取 `GET`（以及 `HEAD`）回應，不快取 `POST`。
 - 函式快取很基本：沒有提前或機率式更新、沒有標籤、不會在一個呼叫者更新時提供過期值、沒有指標掛鉤。
 - 三種後端：記憶體、Redis 與 Memcached。Memcached 無法列舉鍵，所以依模式或路徑清除在它上面不會有任何作用。
-- 伺服器端快取永遠不提供過期內容；`stale-while-revalidate` 和 `stale-if-error` 只寫進標頭給下游快取使用。
+- 伺服器端快取只有在路由以 `serve_stale=True`（0.6.1）要求時才提供過期內容；否則 `stale-while-revalidate` 和 `stale-if-error` 只寫進標頭給下游快取使用。
 
 ## fastapi-cache2 {#fastapi-cache2}
 

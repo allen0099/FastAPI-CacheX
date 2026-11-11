@@ -70,8 +70,8 @@ header, and the server-side cache behaves the same with or without them.
 | `public`                 | `public=True`                            | :white_check_mark: | Requests with `Authorization` or session data still use the backend (otherwise they bypass it).               |
 | `immutable`              | `immutable=True`                         | :white_check_mark: | None (header only).                                                                                            |
 | `must-revalidate`        | `must_revalidate=True`                   | :white_check_mark: | None (header only).                                                                                            |
-| `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | None (header only): the server-side cache never serves stale content.                                         |
-| `stale-if-error`         | `stale="error", stale_ttl=N`             | :white_check_mark: | None (header only): a failing handler is not answered from the cache.                                          |
+| `stale-while-revalidate` | `stale="revalidate", stale_ttl=N`        | :white_check_mark: | Header only by default; with `serve_stale=True` an expired entry is served while the handler runs afterwards. See [Serving stale responses](#serving-stale-responses). |
+| `stale-if-error`         | `stale="error", stale_ttl=N`             | :white_check_mark: | Header only by default; with `serve_stale=True` a failing handler is answered from the expired entry. See [Serving stale responses](#serving-stale-responses). |
 | `s-maxage`               | `s_maxage=N`                             | :white_check_mark: | None (header only): the stored response still expires after `ttl`.                                             |
 | `proxy-revalidate`       | `proxy_revalidate=True`                  | :white_check_mark: | None (header only).                                                                                            |
 | `no-transform`           | `no_transform=True`                      | :white_check_mark: | None (header only).                                                                                            |
@@ -348,6 +348,57 @@ rather than one after another.
   `no_store=True` it is ignored with the usual warning. Requests with
   credentials that bypass the backend are not coalesced.
 
+### Serving stale responses
+
+By default `stale=` and `stale_ttl=` only write `stale-while-revalidate` or
+`stale-if-error` into `Cache-Control`, for the caches downstream. With
+`serve_stale=True` this server's own cache acts on them too:
+
+```python
+@app.get("/report")
+@cache(ttl=60, stale="revalidate", stale_ttl=300, serve_stale=True)
+async def report() -> dict: ...
+```
+
+The entry is then kept for `ttl + stale_ttl` (360 seconds here). For the first
+`ttl` seconds it is a normal hit. After that, for `stale_ttl` seconds:
+
+| `stale=` | What a request gets once the entry is past `ttl` |
+|---|---|
+| `"revalidate"` | The stored response, at once. The handler runs after that response was sent and its result replaces the entry, so nobody waits for the handler. |
+| `"error"` | The handler runs. If it raises or answers with a 5xx status, the stored response is sent instead; otherwise the new response is stored and sent as usual. |
+
+A stale response carries an `Age` above `ttl`, and `X-Cache: STALE` with
+`debug_header=True`. Past `ttl + stale_ttl` the entry is gone and the request
+is an ordinary miss.
+
+With `stale="revalidate"`:
+
+- The refresh is a background task of the request that found the entry stale.
+  The dependencies of that request are still open while the handler runs, the
+  request's other background tasks run as usual, and a handler that takes
+  `BackgroundTasks` gets the same object. A dependency declared with
+  `Depends(..., scope="function")` has already been closed by then; a handler
+  that needs one should not use `stale="revalidate"` with `serve_stale`.
+- One refresh per key runs at a time in each process. With several workers,
+  each may run one.
+- A `HEAD` request is answered from the stale entry and starts no refresh,
+  since its response is never stored.
+- If the refresh fails (the handler raises, or its response is one that is not
+  stored), a warning is logged, the stale entry stays, and the next request
+  tries again.
+
+With `stale="error"`, an `HTTPException` below 500 is the handler's answer and
+is sent as it is: a 404 is not a failure. Without a stale entry (a cold key,
+or one past the window) the error is sent as it is.
+
+`serve_stale=True` needs `stale`, `stale_ttl` and a positive `ttl`, and is
+rejected together with `private=True`, `no_cache=True` or
+`must_revalidate=True`, which never allow a stale response. Whether an entry
+is past its `ttl` is read from the time stored with it, on the clock of the
+server that answers; servers whose clocks differ by seconds will disagree by
+that much about when an entry turns stale.
+
 ### Telling a hit from a miss
 
 Nothing in a response says whether the handler ran, short of adding counters
@@ -365,6 +416,7 @@ async def items() -> list[str]: ...
 | `MISS`    | The backend was consulted and the handler ran: a cold or expired key, `no_cache=True`, or a response that was not stored (a cookie, an error status, a streamed body). |
 | `BYPASS`  | The backend was neither read nor written: `no_store=True`, `private=True`, no positive `ttl`, a request with credentials on a route without `public` or `cache_authorized`, or a request's `no-store` on a route with `client_cache_control`. |
 | `REFRESH` | A request's `no-cache` or `max-age=0` skipped the entry on a route with [`client_cache_control`](#the-requests-cache-control-is-ignored): the handler ran, and its response replaced the entry unless it was one that is not stored (see `MISS`). |
+| `STALE`   | An entry past its `ttl` was served on a route with [`serve_stale`](#serving-stale-responses): at once while the handler runs afterwards (`stale="revalidate"`), or because the handler failed (`stale="error"`). |
 
 It is off by default, since it tells clients what the server caches; turn it
 on while developing or behind an internal route. The header is never stored

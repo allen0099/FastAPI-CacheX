@@ -22,6 +22,7 @@ from typing import get_origin
 from typing import get_type_hints
 from urllib.parse import urlencode
 
+from fastapi import BackgroundTasks
 from fastapi import Request
 from fastapi import Response
 from fastapi.params import Depends as DependsParam
@@ -33,7 +34,9 @@ from ._cache_control import _cache_control_for
 from ._cache_control import _unshareable_reason
 from ._cache_control import _with_cache_control
 from ._callables import _is_coroutine_callable
+from ._coalesce import _claim_refresh
 from ._coalesce import _Flight
+from ._coalesce import _release_refresh
 from ._coalesce import _wait_for
 from ._key_builders import _append_key_components
 from ._key_builders import _build_key
@@ -50,6 +53,7 @@ from ._rendering import get_response
 from ._stored_response import _UNCACHEABLE_HEADERS
 from ._stored_response import _age_headers
 from ._stored_response import _append_headers
+from ._stored_response import _entry_age
 from ._stored_response import _entry_for
 from ._stored_response import _etag_matches
 from ._stored_response import _fresh_not_modified
@@ -99,6 +103,11 @@ _HIT = "HIT"
 _MISS = "MISS"
 _BYPASS = "BYPASS"
 _REFRESH = "REFRESH"
+_STALE = "STALE"
+
+# From here up a response is a failure that `stale="error"` may answer from a
+# stale entry (RFC 5861 §4 names 500, 502, 503 and 504).
+_SERVER_ERROR = 500
 
 # What a request's own `Cache-Control` may ask for on a route that allows it
 # (`client_cache_control`, #541).
@@ -460,6 +469,13 @@ def _find_response_param(
     )
 
 
+def _is_background_annotation(annotation: Any) -> bool:
+    """Whether an annotation asks for the request's ``BackgroundTasks``."""
+    if get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    return isinstance(annotation, type) and issubclass(annotation, BackgroundTasks)
+
+
 def _find_param(
     func: HandlerCallable,
     params: list[Parameter],
@@ -523,8 +539,14 @@ def _seconds(name: str, value: int | timedelta | None) -> int | None:
     return value
 
 
+_BACKGROUND_PARAM = "__cachex_background"
+
+
 class _Params(NamedTuple):
     """The wrapper's signature and where its ``Request`` and ``Response`` are.
+
+    ``background_name`` is the ``BackgroundTasks`` parameter added for a route
+    that refreshes stale entries after the response (``serve_stale``), or None.
 
     ``*_injected`` says the parameter was added by ``@cache``: the wrapper
     then takes it out of the keyword arguments before calling the handler.
@@ -535,6 +557,18 @@ class _Params(NamedTuple):
     request_injected: bool
     response_name: str
     response_injected: bool
+    background_name: str | None = None
+    background_injected: bool = False
+
+    def take_background(self, kwargs: dict[str, Any]) -> BackgroundTasks | None:
+        if self.background_name is None:
+            return None
+        background: BackgroundTasks | None = (
+            kwargs.pop(self.background_name, None)
+            if self.background_injected
+            else kwargs.get(self.background_name)
+        )
+        return background
 
     def take_request(self, kwargs: dict[str, Any]) -> Request | None:
         request: Request | None = (
@@ -553,23 +587,31 @@ class _Params(NamedTuple):
         return response
 
 
-def _wrapper_params(func: HandlerCallable) -> _Params:
+def _wrapper_params(func: HandlerCallable, *, background: bool = False) -> _Params:
     """Find the handler's ``Request`` and ``Response`` parameters, or add them.
 
     The wrapper needs the request, and FastAPI's sub-response even when the
     handler does not ask for it, to send what the dependencies set on it
-    (#233).
+    (#233). With ``background`` it also asks for the request's
+    ``BackgroundTasks``, the same object FastAPI hands to the handler and the
+    dependencies, to run the handler after a stale response was sent (#539).
     """
     sig = inspect.signature(func)
     params = list(sig.parameters.values())
     found_request = _find_request_param(func, params)
     found_response = _find_response_param(func, params)
+    # FastAPI fills one BackgroundTasks parameter per function: the handler's
+    # own is used when it has one.
+    found_background = (
+        _find_param(func, params, _is_background_annotation) if background else ...
+    )
 
     injected = [
         inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, annotation=annotation)
         for found, name, annotation in (
             (found_request, "__cachex_request", Request),
             (found_response, "__cachex_response", Response),
+            (found_background, _BACKGROUND_PARAM, BackgroundTasks),
         )
         if found is None
     ]
@@ -594,6 +636,12 @@ def _wrapper_params(func: HandlerCallable) -> _Params:
         request_injected=found_request is None,
         response_name=found_response.name if found_response else "__cachex_response",
         response_injected=found_response is None,
+        background_name=(
+            None
+            if not background
+            else getattr(found_background, "name", _BACKGROUND_PARAM)
+        ),
+        background_injected=found_background is None,
     )
 
 
@@ -606,7 +654,9 @@ class _Call:
     ``_split_header_lines``). ``outcome`` is how the request was answered,
     for the ``X-Cache`` header: ``HIT`` (served from the stored entry, as a
     200 or a 304 for its ETag), ``MISS`` (the backend was consulted and the
-    handler ran), ``BYPASS`` (the backend was neither read nor written), or
+    handler ran), ``BYPASS`` (the backend was neither read nor written),
+    ``REFRESH`` (the request skipped the entry, see ``client_cache_control``),
+    ``STALE`` (an entry past its ttl was served, see ``serve_stale``), or
     ``None`` for a method that is not cached.
     """
 
@@ -616,6 +666,7 @@ class _Call:
     sub_response: Response | None
     dependency_lines: list[tuple[bytes, bytes]]
     dependency_status: int | None
+    background: BackgroundTasks | None = None
     flight: _Flight = field(default_factory=_Flight)
     outcome: str | None = None
 
@@ -636,6 +687,9 @@ class _Route:
 
     func: HandlerCallable
     ttl: int | None
+    stale: Literal["error", "revalidate"] | None
+    stale_ttl: int | None
+    serve_stale: bool
     no_cache: bool
     no_store: bool
     public: bool
@@ -661,6 +715,43 @@ class _Route:
         since ``max-age=0`` allows no reuse either.
         """
         return self.private or not self.ttl
+
+    @property
+    def stored_ttl(self) -> int | None:
+        """How long the backend keeps an entry.
+
+        With ``serve_stale`` it outlives ``ttl`` by ``stale_ttl``, the time
+        in which it may still be served stale.
+        """
+        if self.serve_stale and self.ttl is not None and self.stale_ttl is not None:
+            return self.ttl + self.stale_ttl
+        return self.ttl
+
+    def _is_stale(self, entry: CacheEntry) -> bool:
+        """Whether ``entry`` is past its ttl and kept only to be served stale.
+
+        Without ``serve_stale`` the backend drops an entry at its ttl, so one
+        that is read is fresh. An entry without ``stored_at`` (written by an
+        older release, or outside ``@cache``) is taken as fresh.
+        """
+        if not self.serve_stale or self.ttl is None:
+            return False
+        age = _entry_age(entry)
+        return age is not None and age >= self.ttl
+
+    def _is_gone(self, entry: CacheEntry) -> bool:
+        """Whether a stale ``entry`` is past the time it may be served at all.
+
+        The backend drops it by then on its own clock; this one is the clock
+        ``stored_at`` was written with, which may be another host's.
+        """
+        age = _entry_age(entry)
+        return (
+            self.serve_stale
+            and age is not None
+            and self.stored_ttl is not None
+            and age >= self.stored_ttl
+        )
 
     async def respond(self, call: _Call, backend: BaseCacheBackend) -> Response:
         """Answer ``call``, from the backend where the route and request allow."""
@@ -832,10 +923,43 @@ class _Route:
             await self._after_running_miss(call, backend, cache_key)
         else:
             entry = await self._read(call, backend, cache_key)
-        if entry is not None and not self.no_cache:
+        if entry is not None and self._is_gone(entry):
+            entry = None
+        stale = entry is not None and self._is_stale(entry)
+        if entry is not None and not self.no_cache and not stale:
             return self._hit(call, entry, cache_key, cache_control)
+        if (
+            entry is not None
+            and stale
+            and self.stale == "revalidate"
+            and self._refresh_later(call, backend, cache_key)
+        ):
+            # Answer now, from the old entry; the handler runs afterwards.
+            return self._hit(call, entry, cache_key, cache_control, outcome=_STALE)
 
-        response, body, etag = await self._render(call)
+        fallback = entry if stale and self.stale == "error" else None
+        rendered = await self._render_unless_failing(call, fallback)
+        if rendered is None:
+            # Only with a fallback: the handler failed, the stale entry answers.
+            assert fallback is not None  # noqa: S101 - for the type checker
+            return self._hit(call, fallback, cache_key, cache_control, outcome=_STALE)
+        return await self._fresh(
+            call, backend, cache_key, cache_control, stored=entry, rendered=rendered
+        )
+
+    async def _fresh(
+        self,
+        call: _Call,
+        backend: BaseCacheBackend,
+        cache_key: str,
+        cache_control: str,
+        *,
+        stored: CacheEntry | None,
+        rendered: tuple[Response, bytes | None, str | None],
+    ) -> Response:
+        """Store what the handler just rendered, and answer with it."""
+        entry = stored
+        response, body, etag = rendered
         if not _is_cacheable_status(response.status_code):
             # Leave any existing entry alone: a transient error must not
             # evict or overwrite the last good response. Error responses
@@ -881,6 +1005,93 @@ class _Route:
             return not_modified
         return self._send(response, cache_control)
 
+    def _refresh_later(
+        self, call: _Call, backend: BaseCacheBackend, cache_key: str
+    ) -> bool:
+        """Arrange for a stale entry to be replaced after this response.
+
+        One GET per key and process at a time starts a refresh; every other
+        request is just answered from the stale entry. False only when the
+        request has no ``BackgroundTasks`` to run it on (the wrapper was not
+        called by FastAPI), in which case the caller renders at once.
+        """
+        if call.background is None:
+            return False
+        if call.request.method == "GET" and _claim_refresh(
+            backend, cache_key, lease=self.stale_ttl or 0
+        ):
+            call.background.add_task(self._refresh, call, backend, cache_key)
+        return True
+
+    async def _refresh(
+        self, call: _Call, backend: BaseCacheBackend, cache_key: str
+    ) -> None:
+        """Run the handler and store its response, after the stale one was sent.
+
+        A background task of the request: its dependencies are still open.
+        Nothing is left to answer, so a failure is logged and the stale entry
+        stays until a later request refreshes it or it expires.
+        """
+        path = call.request.url.path
+        try:
+            response, body, etag = await self._render(call)
+            if (
+                body is None
+                or etag is None
+                or not _is_cacheable_status(response.status_code)
+            ):
+                logger.warning(
+                    "Refresh gave status %s, not stored; the stale entry stays; "
+                    "path=%s",
+                    response.status_code,
+                    path,
+                )
+                return
+            await self._store(
+                call,
+                backend,
+                cache_key,
+                stored=None,
+                response=response,
+                etag=etag,
+                body=body,
+            )
+        except Exception:
+            logger.warning(
+                "Refreshing the stale entry failed; path=%s", path, exc_info=True
+            )
+        finally:
+            _release_refresh(backend, cache_key)
+
+    async def _render_unless_failing(
+        self, call: _Call, fallback: CacheEntry | None
+    ) -> tuple[Response, bytes | None, str | None] | None:
+        """Run the handler; None if it failed and ``fallback`` can answer.
+
+        ``fallback`` is the stale entry of a ``stale="error"`` route. A
+        failure is an exception or a 5xx response; an ``HTTPException`` below
+        500 is an answer, not a failure, and is raised as usual.
+        """
+        try:
+            rendered = await self._render(call)
+        except Exception as e:
+            if fallback is None or getattr(e, "status_code", 500) < _SERVER_ERROR:
+                raise
+            logger.warning(
+                "Handler failed; serving the stale entry; path=%s",
+                call.request.url.path,
+                exc_info=e,
+            )
+            return None
+        if fallback is not None and rendered[0].status_code >= _SERVER_ERROR:
+            logger.warning(
+                "Handler answered %s; serving the stale entry; path=%s",
+                rendered[0].status_code,
+                call.request.url.path,
+            )
+            return None
+        return rendered
+
     async def _after_running_miss(
         self, call: _Call, backend: BaseCacheBackend, cache_key: str
     ) -> None:
@@ -921,10 +1132,16 @@ class _Route:
         return entry
 
     def _hit(
-        self, call: _Call, entry: CacheEntry, cache_key: str, cache_control: str
+        self,
+        call: _Call,
+        entry: CacheEntry,
+        cache_key: str,
+        cache_control: str,
+        *,
+        outcome: str = _HIT,
     ) -> Response:
         """Serve the stored entry: a 304 for its ETag, or the entry itself."""
-        call.outcome = _HIT
+        call.outcome = outcome
         if _etag_matches(call.client_etag, entry.fingerprint):
             logger.debug("304 Not Modified (cached ETag match); key=%s", cache_key)
             # Answered from the stored entry, so the 304 says how old
@@ -934,7 +1151,7 @@ class _Route:
                 entry.fingerprint,
                 cache_control,
                 entry.headers,
-                _age_headers(entry, self.ttl),
+                _age_headers(entry, self.stored_ttl),
             )
 
         logger.debug("Cache HIT (TTL valid); key=%s", cache_key)
@@ -955,7 +1172,7 @@ class _Route:
         )
         hit.headers["ETag"] = entry.fingerprint
         hit.headers["Cache-Control"] = cache_control
-        hit.headers.update(_age_headers(entry, self.ttl))
+        hit.headers.update(_age_headers(entry, self.stored_ttl))
         return hit
 
     def _skip_reason(self, call: _Call, response: Response) -> str | None:
@@ -993,10 +1210,16 @@ class _Route:
         if skip_reason is not None:
             logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
             return
-        if stored is not None and stored.fingerprint == etag:
+        if (
+            stored is not None
+            and stored.fingerprint == etag
+            and not self._is_stale(stored)
+        ):
             return
         try:
-            await backend.set(cache_key, _entry_for(response, etag, body), ttl=self.ttl)
+            await backend.set(
+                cache_key, _entry_for(response, etag, body), ttl=self.stored_ttl
+            )
         except Exception as e:
             if not self.fail_open:
                 raise
@@ -1004,7 +1227,9 @@ class _Route:
                 "write failed; response not stored", call.request, cache_key, e
             )
         else:
-            logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, self.ttl)
+            logger.debug(
+                "Updated cache entry; key=%s ttl=%s", cache_key, self.stored_ttl
+            )
 
 
 def _check_client_cache_control(value: object) -> None:
@@ -1023,6 +1248,33 @@ def _check_client_cache_control(value: object) -> None:
         raise CacheXError(msg)
 
 
+def _check_serve_stale(
+    serve_stale: object,
+    *,
+    ttl: int | None,
+    stale: object,
+    no_cache: bool,
+    private: bool,
+    must_revalidate: bool,
+) -> None:
+    """Reject a ``serve_stale`` route that could never serve a stale entry."""
+    if not isinstance(serve_stale, bool):
+        msg = f"serve_stale must be a bool, got {type(serve_stale).__name__}"
+        raise CacheXError(msg)
+    if not serve_stale:
+        return
+    if stale is None:
+        msg = "serve_stale needs stale and stale_ttl: they say when and how long"
+        raise CacheXError(msg)
+    if private or no_cache or must_revalidate or not ttl:
+        msg = (
+            "serve_stale needs a positive ttl and cannot be combined with "
+            "private, no_cache or must_revalidate, which never allow a stale "
+            "response"
+        )
+        raise CacheXError(msg)
+
+
 def _check_arguments(
     *,
     ttl: int | None,
@@ -1035,6 +1287,8 @@ def _check_arguments(
     coalesce: object,
     debug_header: object,
     client_cache_control: object,
+    serve_stale: object,
+    must_revalidate: bool,
     s_maxage: int | None,
     proxy_revalidate: bool,
 ) -> None:
@@ -1069,6 +1323,15 @@ def _check_arguments(
         msg = f"debug_header must be a bool, got {type(debug_header).__name__}"
         raise CacheXError(msg)
     _check_client_cache_control(client_cache_control)
+    if not no_store:
+        _check_serve_stale(
+            serve_stale,
+            ttl=ttl,
+            stale=stale,
+            no_cache=no_cache,
+            private=private,
+            must_revalidate=must_revalidate,
+        )
     if coalesce and not no_store and (private or no_cache or not ttl):
         # Such a route never serves a stored entry, so there would be
         # nothing to wait for.
@@ -1101,6 +1364,7 @@ def cache(
     coalesce: bool = False,
     debug_header: bool = False,
     client_cache_control: _ClientCacheControl = False,
+    serve_stale: bool = False,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -1131,9 +1395,9 @@ def cache(
             only when it matches the freshly rendered response. Negative values
             are rejected.
         stale_ttl: Seconds (or a ``timedelta``) sent with the directive chosen
-            by ``stale``. It only shapes the ``Cache-Control`` header; the
-            backend entry still expires after ``ttl``. Must be given together
-            with ``stale``.
+            by ``stale``. Without ``serve_stale`` it only shapes the
+            ``Cache-Control`` header; the backend entry still expires after
+            ``ttl``. Must be given together with ``stale``.
         stale: ``"revalidate"`` sends ``stale-while-revalidate=<stale_ttl>``,
             ``"error"`` sends ``stale-if-error=<stale_ttl>``.
         no_cache: Run the handler on every request and send ``no-cache``. The
@@ -1264,6 +1528,16 @@ def cache(
             ``X-Cache`` the handler set itself is replaced. ``REFRESH``
             marks a request that ``client_cache_control`` let past the entry;
             as with ``MISS``, its response may not have been stored.
+        serve_stale: Have this server's cache act on ``stale`` too, instead
+            of only telling the caches downstream. The entry is then kept
+            for ``ttl + stale_ttl``. Past ``ttl``, with ``stale="revalidate"``
+            a request is answered from the old entry at once, and the handler
+            runs after that response was sent, as a background task of the
+            request, to store a new one (one such refresh per key and
+            process at a time). With ``stale="error"`` the handler runs
+            first, and if it raises or answers 5xx the old entry is sent
+            instead. Such a response has ``X-Cache: STALE`` with
+            ``debug_header`` and an ``Age`` above ``ttl``. Off by default.
         client_cache_control: Let a request's own ``Cache-Control`` skip the
             stored entry. Off by default, so no client can send every
             request to the handler. With ``True``, or a callable that takes
@@ -1326,6 +1600,8 @@ def cache(
             coalesce=coalesce,
             debug_header=debug_header,
             client_cache_control=client_cache_control,
+            serve_stale=serve_stale,
+            must_revalidate=must_revalidate,
             s_maxage=s_maxage,
             proxy_revalidate=proxy_revalidate,
         )
@@ -1358,6 +1634,7 @@ def cache(
                     ("no_transform", no_transform),
                     ("coalesce", coalesce),
                     ("client_cache_control", client_cache_control),
+                    ("serve_stale", serve_stale),
                 )
                 if value is not None and value is not False
             ]
@@ -1396,6 +1673,9 @@ def cache(
         route = _Route(
             func=func,
             ttl=ttl,
+            stale=stale,
+            stale_ttl=stale_ttl,
+            serve_stale=serve_stale,
             no_cache=no_cache,
             no_store=no_store,
             public=public,
@@ -1418,11 +1698,14 @@ def cache(
                 f"{getattr(func, '__qualname__', '?')}"
             ),
         )
-        params = _wrapper_params(func)
+        params = _wrapper_params(
+            func, background=serve_stale and stale == "revalidate" and not no_store
+        )
 
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:
             sub_response = params.take_response(kwargs)
+            background = params.take_background(kwargs)
             request = params.take_request(kwargs)
             # Resolve backend on every request to support lifespan-configured backends
             backend = get_backend_or_fallback()
@@ -1443,6 +1726,7 @@ def cache(
                 dependency_status=(
                     None if sub_response is None else sub_response.status_code
                 ),
+                background=background,
             )
             try:
                 response = await route.respond(call, backend)

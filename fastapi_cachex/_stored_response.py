@@ -77,6 +77,13 @@ def _append_headers(response: Response, headers: Iterable[tuple[str, str]]) -> N
 _REVALIDATION_HEADERS = frozenset({"content-location", "expires", "vary"})
 
 
+def _entry_age(entry: CacheEntry) -> float | None:
+    """Seconds since ``entry`` was stored, or None if it does not say."""
+    if entry.stored_at is None:
+        return None
+    return max(0.0, _now() - entry.stored_at)
+
+
 def _age_headers(entry: CacheEntry, ttl: int | None) -> dict[str, str]:
     """The ``Age`` header for a response served from a stored ``entry``.
 
@@ -91,9 +98,9 @@ def _age_headers(entry: CacheEntry, ttl: int | None) -> dict[str, str]:
     anything outside that range is clock skew. An entry without ``stored_at``
     (written by an older release) gets no ``Age`` at all.
     """
-    if entry.stored_at is None:
+    age = _entry_age(entry)
+    if age is None:
         return {}
-    age = max(0.0, _now() - entry.stored_at)
     if ttl is not None:
         age = min(age, ttl)
     return {"age": str(int(age))}

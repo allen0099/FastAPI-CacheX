@@ -12,6 +12,7 @@ each other.
 """
 
 import asyncio
+import time
 
 # One future per key being rendered by a leader; done once it has answered.
 _IN_FLIGHT: dict[tuple[int, int, str], asyncio.Future[None]] = {}
@@ -68,3 +69,29 @@ async def _wait_for(leader: asyncio.Future[None]) -> None:
     the leader's future for the other followers.
     """
     await asyncio.shield(leader)
+
+
+# Keys whose stale entry is being replaced after its response was sent
+# (`serve_stale`, #539), with the monotonic time at which the claim lapses.
+# Nobody waits on these: they only keep a second refresh from starting.
+_REFRESHING: dict[tuple[int, str], float] = {}
+
+
+def _claim_refresh(backend: object, cache_key: str, lease: float) -> bool:
+    """Whether the caller is the one to refresh ``cache_key`` in this process.
+
+    The claim lapses after ``lease`` seconds, so a refresh that never ran
+    (the connection broke before the response was sent) does not block the
+    key for good.
+    """
+    key = (id(backend), cache_key)
+    now = time.monotonic()
+    if _REFRESHING.get(key, 0.0) > now:
+        return False
+    _REFRESHING[key] = now + lease
+    return True
+
+
+def _release_refresh(backend: object, cache_key: str) -> None:
+    """The refresh of ``cache_key`` is over, however it ended."""
+    _REFRESHING.pop((id(backend), cache_key), None)
