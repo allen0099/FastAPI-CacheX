@@ -674,7 +674,7 @@ set_event_handler(record)
 
 每個事件都有 `source`（`"http"` 或 `"app"`）、`key`（沒有查詢後端，或該次呼叫不是針對單一鍵時為 None）；對 `@cache` 路由的請求還有 `route`，也就是路由的路徑樣板（`/api/users/{user_id}`，包含被引入的 router 或掛載的應用程式的前綴）；回應請求的事件則有以秒為單位的 `duration`。請用 `route` 當指標的 label，不要用 `key`：鍵裡含有查詢字串、其他用戶端輸入，以及自訂 key builder 加入的任何內容，數量沒有上限。基於同樣的理由，也不要原樣把它寫進日誌。
 
-這個函式會在請求的處理路徑上同步執行，所以請只做遞增計數器這類的事。它必須是一般函式：`async` 函式會以 `TypeError` 拒絕。它拋出的例外會被記錄，不會影響請求。`set_event_handler(None)` 會移除它；沒有設定時不會建立任何事件。`add()`、`increment()`、`has()`、`get_many()`、`set_many()` 與各個 `clear*` 方法除了這種 `error` 之外不會回報事件。
+這個函式會在請求的處理路徑上同步執行，所以請只做遞增計數器這類的事。它必須是一般函式：`async` 函式會以 `TypeError` 拒絕。它拋出的例外會被記錄，不會影響請求。`set_event_handler(None)` 會移除它；沒有設定時不會建立任何事件。`add()`、`increment()`、`has()`、`get_many()`、`set_many()`、`invalidate_tags()` 與各個 `clear*` 方法除了這種 `error` 之外不會回報事件。
 
 在應用層這一側，`error` 表示連不上伺服器：連線被拒絕或重設、逾時。伺服器回覆的錯誤（唯讀的 replica、記憶體不足、值太大）會照常拋出但不會回報，你自己寫的後端也只有在拋出 `BackendUnavailableError` 時才會回報。若要對應用層快取的每一種失敗發出告警，請同時監看例外。
 

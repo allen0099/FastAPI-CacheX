@@ -648,6 +648,7 @@ class CacheManager:
 
         return tagged
 
+    @_reports_backend_errors
     async def invalidate_tags(self, *tags: str) -> None:
         """Invalidate every value stored under any of ``tags``.
 

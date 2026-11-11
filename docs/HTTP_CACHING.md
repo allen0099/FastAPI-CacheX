@@ -1184,8 +1184,8 @@ The handler runs synchronously on the request's path, so keep it to
 incrementing a counter. It must be a plain function: an `async` one is
 rejected with `TypeError`. An exception it raises is logged and does not reach
 the request. `set_event_handler(None)` removes it; while none is set, no event
-is built. `add()`, `increment()`, `has()`, `get_many()`, `set_many()` and the
-`clear*` methods report nothing but such an `error`.
+is built. `add()`, `increment()`, `has()`, `get_many()`, `set_many()`,
+`invalidate_tags()` and the `clear*` methods report nothing but such an `error`.
 
 On the application side an `error` means the server could not be reached: a
 refused or reset connection, a timeout. An error the server answers with (a
