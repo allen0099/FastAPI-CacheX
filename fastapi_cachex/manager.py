@@ -45,6 +45,7 @@ from .exceptions import BackendUnavailableError
 from .exceptions import LockTimeoutError
 from .lock import CacheLock
 from .proxy import BackendProxy
+from .switch import is_enabled
 from .types import CacheEntry
 from .types import TagVersions
 from .types import log_ref
@@ -671,6 +672,8 @@ class CacheManager:
         factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
         ttl: int | None,
         type_: Any = None,
+        *,
+        store: bool = True,
     ) -> Any:
         # This call computes the value: the miss. One that waits for another
         # caller's value never gets here, and is reported as a hit.
@@ -684,7 +687,7 @@ class CacheManager:
 
         effective_ttl = ttl if ttl is not None else self.default_ttl
         entry = self._encode(value)
-        if versions is not None:
+        if store and versions is not None:
             entry.tags = versions
             await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
             logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
@@ -877,6 +880,10 @@ class CacheManager:
             lock, ttl, lock_ttl, wait_timeout
         )
         names = _tags.validate_tags(tags)
+        if not is_enabled():
+            # Caching is switched off: no read, no lock, no write. The value
+            # still takes the JSON round trip, so it has the shape of a hit.
+            return await self._compute_and_store(key, factory, ttl, type_, store=False)
         if names:
             factory = self._tagged(factory, names)
         cached = await self._lookup(key, type_)

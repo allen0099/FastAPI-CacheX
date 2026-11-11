@@ -5,3 +5,5 @@
 ::: fastapi_cachex.exceptions
 
 ::: fastapi_cachex.events
+
+::: fastapi_cachex.switch

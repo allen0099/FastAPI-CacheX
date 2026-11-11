@@ -36,6 +36,8 @@ from .manager import CacheManager as CacheManager
 from .manager_proxy import CacheManagerProxy as CacheManagerProxy
 from .proxy import BackendProxy as BackendProxy
 from .routes import add_routes as add_routes
+from .switch import is_enabled as is_enabled
+from .switch import set_enabled as set_enabled
 from .types import CacheKeyBuilder as CacheKeyBuilder
 
 
@@ -93,5 +95,7 @@ __all__ = [
     "invalidate",
     "invalidate_path",
     "invalidate_tags",
+    "is_enabled",
+    "set_enabled",
     "set_event_handler",
 ]

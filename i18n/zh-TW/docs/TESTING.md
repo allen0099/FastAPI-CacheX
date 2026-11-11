@@ -70,6 +70,40 @@ def test_second_run_does_not_see_the_first() -> None:
 
 少了這個 fixture，第二個測試會以 `HIT` 拿到 `{"answer": "run-a"}`：兩個應用程式都會建立鍵 `http:v2|GET|testserver|/answer|`，而第一個測試留下的後備後端仍然註冊著。
 
+## 關閉快取 {#switching-off}
+
+開發時，被快取的路由會讓你看不到剛改好的結果；而與快取無關的測試，沒有快取會比較單純。一個開關就能關閉整個行程的快取：
+
+```python
+from fastapi_cachex import set_enabled
+
+set_enabled(False)  # 用 set_enabled(True) 重新開啟
+```
+
+或者不改程式碼，以 `FASTAPI_CACHEX_DISABLED=1`（也接受 `true`、`yes`、`on`）啟動行程；這個變數只在匯入 `fastapi_cachex` 時讀取一次，並會記錄一筆警告。`is_enabled()` 可以查詢目前的狀態。
+
+關閉期間：
+
+| | 行為 |
+|---|---|
+| `@cache` | 每個請求都執行 handler，不讀也不寫後端。回應的 `Cache-Control` 與 `ETag` 和開啟快取時相同，符合的 `If-None-Match` 仍會得到 304，所以瀏覽器或前方的 CDN 行為不變。`X-Cache` 為 `BYPASS`，並帶有 `X-Cache-Reason: disabled`。 |
+| `@cached`、`get_or_set()` | 每次呼叫都執行函式或 factory：不讀取、不加鎖、不寫入。值仍會經過 JSON 來回轉換（以及 `type_`），所以形狀與命中時相同。 |
+| `CacheManager.get()`、`set()`、`add()`、`delete()`、各後端、`CacheLock`、`invalidate()` 與其他清除函式 | 照常運作。 |
+
+最後一列是刻意的。`get()` 與 `set()` 也被用來*儲存*東西：一次性驗證碼、計數器、另一個請求會讀回的旗標。如果開關讓 `get()` 什麼都讀不到，關閉快取就會讓這些功能壞掉，而不只是讓應用程式變慢。代價是：寫成 `get()`、計算、`set()` 的程式碼在開關關閉時仍會回傳已儲存的值；改寫成 `get_or_set()`，它就會跟著開關走。
+
+在測試套件中，對與快取無關的測試關閉它，與快取有關的測試則保持開啟：
+
+```python
+@pytest.fixture
+def no_cache() -> Iterator[None]:
+    set_enabled(False)
+    yield
+    set_enabled(True)
+```
+
+不要在正式環境設定這個變數：每個請求都會執行它的 handler。
+
 ## 斷言某個回應確實被快取 {#asserting}
 
 `debug_header=True` 會讓 `@cache` 在 `X-Cache` 標頭中說明每個 GET 或 HEAD 請求是如何回應的：`HIT`（由已儲存的項目回應）、`MISS`（handler 執行了，且查詢過後端）或 `BYPASS`（既沒有讀取也沒有寫入後端）。比起在 handler 裡放呼叫計數器，斷言這個標頭更穩定。除非你希望用戶端看得到，否則在正式環境請保持關閉；測試可以透過設定把它打開。
