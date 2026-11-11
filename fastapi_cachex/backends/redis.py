@@ -213,6 +213,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             # builtins.__import__("redis") can simulate absence reliably.
             import redis  # noqa: F401
             from redis.asyncio import Redis as AsyncRedis
+            from redis.asyncio.retry import Retry
         except ImportError as exc:
             msg = (
                 "redis[hiredis] is not installed. Please install it with "
@@ -255,10 +256,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             # give up on the first connection error only when built from a
             # URL (#527). Read from the signature, so it follows redis-py
             # (older versions have no default, and then neither path retries).
-            default_retry = (
-                inspect.signature(AsyncRedis.__init__).parameters["retry"].default
-            )
-            if "retry" not in kwargs and default_retry is not None:
+            # A redis-py that renames the parameter or builds the default
+            # elsewhere gives no Retry here, and the URL is used as it is.
+            parameter = inspect.signature(AsyncRedis.__init__).parameters.get("retry")
+            default_retry = parameter.default if parameter is not None else None
+            if "retry" not in kwargs and isinstance(default_retry, Retry):
                 options["retry"] = copy.deepcopy(default_retry)
             # The client owns the pool from_url() builds, so aclose() closes it.
             self.client = AsyncRedis.from_url(url, **options)
