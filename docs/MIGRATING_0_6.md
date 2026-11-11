@@ -106,7 +106,7 @@ What to check when upgrading:
 - Code that used the result as a `dict` (`user["id"]`) now gets the model (`user.id`).
 - A value cached by 0.5.x that does not fit the annotation counts as a miss and the function runs again, so the upgrade needs no cache flush.
 - If the function returns something its annotation does not allow, the call raises pydantic's `ValidationError`, where before the mismatch went unnoticed.
-- The value is rebuilt from its JSON form, so a model that does not accept its own JSON raises `ValidationError` on every call. That is the case for a `strict=True` model with a `datetime` or tuple field, a `computed_field` on a model with `extra="forbid"`, and a required field with `Field(exclude=True)`. Use `type_=None` for such a function.
+- The value is rebuilt from its JSON form, so a model that does not accept its own JSON raises `ValidationError` on every call. That is the case for a `computed_field` on a model with `extra="forbid"`, and for a required field with `Field(exclude=True)`. Use `type_=None` for such a function.
 - The result is exactly the annotated type. A function annotated `-> User` that returns a subclass of `User` gets a `User` back, without the subclass's extra fields; with `-> Cat | Dog` pydantic picks the member the JSON fits, so give look-alike models a discriminator.
 - `-> Iterable[int]` gives a one-shot iterator rather than a list. Annotate `list[int]`.
 - Validation runs on every call, hit or miss. For a large value read very often, `type_=None` avoids it.

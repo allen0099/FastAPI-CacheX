@@ -106,7 +106,7 @@ async def load_user_dict(user_id: int) -> User: ...
 - 把結果當成 `dict` 使用的程式碼（`user["id"]`）現在會拿到模型（`user.id`）。
 - 0.5.x 快取下來、但不符合註記的值會視為未命中，函式會重新執行，因此升級時不需要清空快取。
 - 若函式回傳的值不符合它的註記，呼叫會拋出 pydantic 的 `ValidationError`；過去這種不一致不會被發現。
-- 值是從它的 JSON 形式重建的，因此無法接受自身 JSON 的模型每次呼叫都會拋出 `ValidationError`。這包括帶有 `datetime` 或 tuple 欄位的 `strict=True` 模型、在 `extra="forbid"` 模型上的 `computed_field`，以及設了 `Field(exclude=True)` 的必填欄位。這類函式請使用 `type_=None`。
+- 值是從它的 JSON 形式重建的，因此無法接受自身 JSON 的模型每次呼叫都會拋出 `ValidationError`。這包括在 `extra="forbid"` 模型上的 `computed_field`，以及設了 `Field(exclude=True)` 的必填欄位。這類函式請使用 `type_=None`。
 - 結果就是註記的型別本身。註記為 `-> User` 卻回傳 `User` 子類別的函式會拿回 `User`，子類別多出的欄位不會保留；`-> Cat | Dog` 則由 pydantic 挑選 JSON 符合的成員，因此長得一樣的模型請加上 discriminator。
 - `-> Iterable[int]` 會得到只能走訪一次的 iterator，而不是 list。請註記為 `list[int]`。
 - 每次呼叫都會執行驗證，不論命中與否。對於非常頻繁讀取的大型值，`type_=None` 可以避免這項成本。
