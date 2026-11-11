@@ -119,7 +119,8 @@ callers you trust:
 
 ```python
 def is_staff(request: Request) -> bool:
-    return request.headers.get("X-Staff-Token") == settings.staff_token
+    # request.state.user: set by your own authentication middleware
+    return request.state.user.is_staff
 
 
 @app.get("/report")
@@ -135,7 +136,8 @@ async def report() -> dict: ...
 
 The callable takes the request, returns whether this caller may, and is only
 called for a request that carries one of these directives. It must be a plain
-function, not `async`. A route that never reads the backend (`private=True`,
+function, not `async` (the decorator rejects one), and only `True` itself opens
+the route. `Pragma: no-cache` is not read. A route that never reads the backend (`private=True`,
 no positive `ttl`, or a request with credentials that bypasses it) is not
 affected. With `client_cache_control=True` any client can run the handler on
 every request, which is what the default prevents; keep it for routes where
@@ -362,7 +364,7 @@ async def items() -> list[str]: ...
 | `HIT`     | Served from the stored entry: a 200 without running the handler, or a 304 for the entry's ETag. |
 | `MISS`    | The backend was consulted and the handler ran: a cold or expired key, `no_cache=True`, or a response that was not stored (a cookie, an error status, a streamed body). |
 | `BYPASS`  | The backend was neither read nor written: `no_store=True`, `private=True`, no positive `ttl`, a request with credentials on a route without `public` or `cache_authorized`, or a request's `no-store` on a route with `client_cache_control`. |
-| `REFRESH` | A request's `no-cache` or `max-age=0` skipped the entry on a route with [`client_cache_control`](#the-requests-cache-control-is-ignored): the handler ran and its response replaced the entry. |
+| `REFRESH` | A request's `no-cache` or `max-age=0` skipped the entry on a route with [`client_cache_control`](#the-requests-cache-control-is-ignored): the handler ran, and its response replaced the entry unless it was one that is not stored (see `MISS`). |
 
 It is off by default, since it tells clients what the server caches; turn it
 on while developing or behind an internal route. The header is never stored

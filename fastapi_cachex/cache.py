@@ -32,6 +32,7 @@ from ._cache_control import _build_cache_control
 from ._cache_control import _cache_control_for
 from ._cache_control import _unshareable_reason
 from ._cache_control import _with_cache_control
+from ._callables import _is_coroutine_callable
 from ._coalesce import _Flight
 from ._coalesce import _wait_for
 from ._key_builders import _append_key_components
@@ -112,7 +113,9 @@ def _client_directive(request: Request) -> str | None:
     """
     directives = {
         directive.strip().lower().replace(" ", "")
-        for directive in request.headers.get("cache-control", "").split(",")
+        # Every line of the header: a client or a proxy may send several.
+        for line in request.headers.getlist("cache-control")
+        for directive in line.split(",")
     }
     if "no-store" in directives:
         return "no-store"
@@ -711,7 +714,9 @@ class _Route:
         if allowed is False:
             return None
         asked = _client_directive(request)
-        if asked is None or (allowed is not True and not allowed(request)):
+        # `is True`: anything else a callable returns, a coroutine or a
+        # non-empty string included, must not open the route.
+        if asked is None or (allowed is not True and allowed(request) is not True):
             return None
         return asked
 
@@ -822,7 +827,11 @@ class _Route:
         # Decided below: a hit is served from the entry, anything else runs
         # the handler.
         call.outcome = _REFRESH if refresh else _MISS
-        entry = None if refresh else await self._read(call, backend, cache_key)
+        if refresh:
+            entry = None
+            await self._after_running_miss(call, backend, cache_key)
+        else:
+            entry = await self._read(call, backend, cache_key)
         if entry is not None and not self.no_cache:
             return self._hit(call, entry, cache_key, cache_control)
 
@@ -871,6 +880,23 @@ class _Route:
             logger.debug("304 Not Modified (fresh render); key=%s", cache_key)
             return not_modified
         return self._send(response, cache_control)
+
+    async def _after_running_miss(
+        self, call: _Call, backend: BaseCacheBackend, cache_key: str
+    ) -> None:
+        """Let a coalesced miss that is running for the key finish first.
+
+        A refresh renders after it, so the newer response is the one left in
+        the backend. Without a running miss a GET leads, and misses arriving
+        meanwhile wait for what it stores.
+        """
+        if not self.coalesce:
+            return
+        leader = call.flight.join(
+            backend, cache_key, may_lead=call.request.method == "GET"
+        )
+        if leader is not None:
+            await _wait_for(leader)
 
     async def _read(
         self, call: _Call, backend: BaseCacheBackend, cache_key: str
@@ -981,6 +1007,22 @@ class _Route:
             logger.debug("Updated cache entry; key=%s ttl=%s", cache_key, self.ttl)
 
 
+def _check_client_cache_control(value: object) -> None:
+    """Reject a ``client_cache_control`` that is not a bool or a plain function."""
+    if isinstance(value, bool):
+        return
+    if not callable(value):
+        msg = (
+            "client_cache_control must be a bool or a callable taking the "
+            f"request, got {type(value).__name__}"
+        )
+        raise CacheXError(msg)
+    if _is_coroutine_callable(value):
+        # Its coroutine would never be awaited, and would count as "yes".
+        msg = "client_cache_control must be a plain function, not async"
+        raise CacheXError(msg)
+
+
 def _check_arguments(
     *,
     ttl: int | None,
@@ -1026,14 +1068,7 @@ def _check_arguments(
     if not isinstance(debug_header, bool):
         msg = f"debug_header must be a bool, got {type(debug_header).__name__}"
         raise CacheXError(msg)
-    if not isinstance(client_cache_control, bool) and not callable(
-        client_cache_control
-    ):
-        msg = (
-            "client_cache_control must be a bool or a callable taking the "
-            f"request, got {type(client_cache_control).__name__}"
-        )
-        raise CacheXError(msg)
+    _check_client_cache_control(client_cache_control)
     if coalesce and not no_store and (private or no_cache or not ttl):
         # Such a route never serves a stored entry, so there would be
         # nothing to wait for.
@@ -1227,7 +1262,8 @@ def cache(
             ``cache_authorized``). Off by default: it tells clients what the
             server caches. The header is never stored, and a stored
             ``X-Cache`` the handler set itself is replaced. ``REFRESH``
-            marks a request that ``client_cache_control`` let past the entry.
+            marks a request that ``client_cache_control`` let past the entry;
+            as with ``MISS``, its response may not have been stored.
         client_cache_control: Let a request's own ``Cache-Control`` skip the
             stored entry. Off by default, so no client can send every
             request to the handler. With ``True``, or a callable that takes
@@ -1235,8 +1271,10 @@ def cache(
             or ``max-age=0`` runs the handler and stores the new response
             in place of the entry, and ``no-store`` runs the handler without
             reading or writing the backend. Other request directives stay
-            ignored. The callable is synchronous and is only called for a
-            request that carries one of these directives.
+            ignored. The callable must be a plain function (an ``async``
+            one is rejected), is only called for a request that carries one
+            of these directives, and opens the route only by returning
+            ``True`` itself.
 
     Returns:
         Decorator function that wraps route handlers with caching logic

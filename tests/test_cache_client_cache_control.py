@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi import Request
+from fastapi import Response
 from fastapi.testclient import TestClient
 
 from fastapi_cachex.cache import cache
@@ -129,3 +130,54 @@ def test_anything_but_a_bool_or_a_callable_is_rejected(value: Any) -> None:
 def test_no_store_route_warns_that_it_is_ignored() -> None:
     with pytest.warns(UserWarning, match="client_cache_control"):
         _app(no_store=True, client_cache_control=True)
+
+
+def test_an_async_callable_is_rejected() -> None:
+    """Its coroutine is truthy: it would let every client through."""
+
+    async def allow(request: Request) -> bool:
+        return False
+
+    with pytest.raises(CacheXError, match="plain function, not async"):
+        _app(client_cache_control=allow)
+
+
+@pytest.mark.parametrize("answer", ["no", 1, [0], None])
+def test_only_true_itself_opens_the_route(answer: Any) -> None:
+    client, _ = _app(client_cache_control=lambda request: answer)
+
+    assert _get(client) == (1, "MISS")
+    assert _get(client, "no-cache") == (1, "HIT")
+
+
+def test_every_cache_control_line_is_read() -> None:
+    client, _ = _app(client_cache_control=True)
+    assert _get(client) == (1, "MISS")
+
+    response = client.get(
+        "/count",
+        headers=[("Cache-Control", "max-age=5"), ("Cache-Control", "no-cache")],
+    )
+
+    assert (response.json()["runs"], response.headers["x-cache"]) == (2, "REFRESH")
+
+
+def test_a_refresh_that_is_not_stored_leaves_the_entry() -> None:
+    app = FastAPI()
+    fail: list[int] = []
+
+    @app.get("/flaky")
+    @cache(ttl=60, client_cache_control=True, debug_header=True)
+    async def flaky() -> Response:
+        if fail:
+            return Response(content=b"down", status_code=503)
+        return Response(content=b"up")
+
+    client = TestClient(app)
+    assert client.get("/flaky").text == "up"
+    fail.append(1)
+
+    assert (
+        client.get("/flaky", headers={"Cache-Control": "no-cache"}).status_code == 503
+    )
+    assert client.get("/flaky").text == "up"

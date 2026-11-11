@@ -73,7 +73,8 @@ async def items(): ...
 
 ```python
 def is_staff(request: Request) -> bool:
-    return request.headers.get("X-Staff-Token") == settings.staff_token
+    # request.state.user：由你自己的驗證中介軟體設定
+    return request.state.user.is_staff
 
 
 @app.get("/report")
@@ -87,7 +88,7 @@ async def report() -> dict: ...
 | `no-store` | 執行 handler，但不讀取也不寫入後端；快取項目維持原狀。 |
 | 其他 | 和原本一樣忽略。 |
 
-這個 callable 接收請求並回傳該呼叫端是否獲准，而且只有在請求帶有上述指令時才會被呼叫。它必須是一般函式，不能是 `async`。從不讀取後端的路由（`private=True`、沒有正的 `ttl`，或帶有憑證而繞過後端的請求）不受影響。設定 `client_cache_control=True` 後，任何用戶端都能讓每個請求執行 handler，這正是預設行為要防止的；請只用在可以接受這件事的路由上。
+這個 callable 接收請求並回傳該呼叫端是否獲准，而且只有在請求帶有上述指令時才會被呼叫。它必須是一般函式，不能是 `async`（裝飾器會拒絕），而且只有回傳 `True` 本身才會開放路由。`Pragma: no-cache` 不會被讀取。從不讀取後端的路由（`private=True`、沒有正的 `ttl`，或帶有憑證而繞過後端的請求）不受影響。設定 `client_cache_control=True` 後，任何用戶端都能讓每個請求執行 handler，這正是預設行為要防止的；請只用在可以接受這件事的路由上。
 
 ## 快取命中時的行為 {#cache-hit-behavior}
 
@@ -187,7 +188,7 @@ async def items() -> list[str]: ...
 | `HIT`     | 以儲存的項目回應：沒有執行 handler 的 200，或對應該項目 ETag 的 304。 |
 | `MISS`    | 查過後端，且 handler 執行了：冷鍵或已過期的鍵、`no_cache=True`，或回應沒有儲存（設定了 cookie、錯誤狀態碼、串流本文）。 |
 | `BYPASS`  | 既沒有讀取也沒有寫入後端：`no_store=True`、`private=True`、沒有正的 `ttl`、帶有憑證的請求打到沒有 `public` 或 `cache_authorized` 的路由，或請求帶有 `no-store` 且路由設定了 `client_cache_control`。 |
-| `REFRESH` | 在設定了 [`client_cache_control`](#the-requests-cache-control-is-ignored) 的路由上，請求的 `no-cache` 或 `max-age=0` 略過了快取項目：handler 已執行，它的回應取代了該項目。 |
+| `REFRESH` | 在設定了 [`client_cache_control`](#the-requests-cache-control-is-ignored) 的路由上，請求的 `no-cache` 或 `max-age=0` 略過了快取項目：handler 已執行，它的回應取代了該項目，除非那是不會被儲存的回應（見 `MISS`）。 |
 
 預設關閉，因為它會向用戶端透露伺服器快取了什麼；請在開發時或內部路由上開啟。這個標頭不會隨項目儲存，並會取代 handler 自己設定的 `X-Cache`。其他方法不會得到這個標頭，就像它們也不會得到 `Cache-Control`。
 
