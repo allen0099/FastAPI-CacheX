@@ -50,11 +50,16 @@ jobs:
 
     - name: Install uv
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        # renovate: datasource=pypi depName=uv
+        version: "0.13.4"
 
-    # Same command Read the Docs runs; a broken link or docstring reference
-    # fails the PR here instead of the published site.
+    # What Read the Docs runs, except that a stale lock file fails here
+    # (--locked) where the published build uses it as it is (--frozen). A
+    # broken link or docstring reference fails the PR here instead of the
+    # published site.
     - name: Sync dependencies
-      run: uv sync --frozen --only-group docs --no-install-project
+      run: uv sync --locked --only-group docs --no-install-project
 
     - name: Build (strict)
       run: uv run --no-sync zensical build --strict

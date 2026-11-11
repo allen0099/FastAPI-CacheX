@@ -43,6 +43,22 @@
     // weekly lock file branch would stay pending forever.
     minimumReleaseAge: null,
   },
+  // Tools a workflow or the Read the Docs config installs on a command line,
+  // and the uv that setup-uv installs (its `version:` input). No manager sees
+  // those, so each is pinned under a `# renovate:` comment naming where it
+  // comes from, and this keeps the pin moving.
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: [
+        "/^\\.github/workflows/.+\\.ya?ml$/",
+        "/^\\.readthedocs\\.yaml$/",
+      ],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)\\n[^\\n]*?(?:@|==|version: \")(?<currentValue>[0-9][^\\s\"'\\]]*)",
+      ],
+    },
+  ],
   packageRules: [
     {
       description: "Group all GitHub Actions updates into a single PR",
@@ -75,6 +91,14 @@
       description: "Keep the uv pre-commit hook (uv lock) and the uv_build backend in step",
       matchPackageNames: ["uv_build", "astral-sh/uv-pre-commit"],
       groupName: "uv",
+    },
+    {
+      // Renovate itself releases several times a day; one pull request a
+      // week for these pins is enough.
+      description: "Group the tools pinned on a command line (customManagers)",
+      matchManagers: ["custom.regex"],
+      groupName: "command-line tools",
+      schedule: ["before 6am on monday"],
     },
     {
       description: "Automerge non-major updates once CI passes",
