@@ -43,9 +43,10 @@
     // weekly lock file branch would stay pending forever.
     minimumReleaseAge: null,
   },
-  // Tools a workflow or the Read the Docs config installs on a command line.
-  // No manager sees those, so each is pinned under a `# renovate:` comment
-  // naming where it comes from, and this keeps the pin moving.
+  // Tools a workflow or the Read the Docs config installs on a command line,
+  // and the uv that setup-uv installs (its `version:` input). No manager sees
+  // those, so each is pinned under a `# renovate:` comment naming where it
+  // comes from, and this keeps the pin moving.
   customManagers: [
     {
       customType: "regex",
@@ -54,7 +55,7 @@
         "/^\\.readthedocs\\.yaml$/",
       ],
       matchStrings: [
-        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)\\n[^\\n]*?(?:@|==)(?<currentValue>[0-9][^\\s\"'\\]]*)",
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)\\n[^\\n]*?(?:@|==|version: \")(?<currentValue>[0-9][^\\s\"'\\]]*)",
       ],
     },
   ],

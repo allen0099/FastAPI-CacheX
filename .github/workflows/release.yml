@@ -107,6 +107,8 @@ jobs:
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
+          # renovate: datasource=pypi depName=uv
+          version: "0.13.4"
 
       # The extras are redundant — the dev group already pins redis, pymemcache
       # and orjson — but they are named anyway. This is the one job where
