@@ -7,6 +7,7 @@ import time
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from collections.abc import Iterable
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from typing import Any
@@ -437,6 +438,39 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         removed = await self._delete_keys([self._make_key(key) for key in keys])
         logger.debug("Redis DELETE_MANY; removed=%s", removed)
         return removed
+
+    @_unavailable
+    async def get_many(self, keys: Iterable[str]) -> dict[str, CacheEntry]:
+        """Retrieve the entries stored under ``keys`` with a single ``MGET``."""
+        wanted = list(dict.fromkeys(keys))
+        if not wanted:
+            return {}
+        raws = await self.client.mget([self._make_key(key) for key in wanted])
+        found = {
+            key: value
+            for key, raw in zip(wanted, raws, strict=True)
+            if (value := decode_entry(raw)) is not None
+        }
+        logger.debug("Redis GET_MANY; requested=%s found=%s", len(wanted), len(found))
+        return found
+
+    @_unavailable
+    async def set_many(
+        self, entries: Mapping[str, CacheEntry], ttl: int | timedelta | None = None
+    ) -> None:
+        """Store every entry in ``entries`` in one transaction (see base class).
+
+        One ``SET`` per entry inside a single ``MULTI``/``EXEC``, sent in one
+        round trip: ``MSET`` takes no expiry.
+        """
+        ttl = validate_ttl(ttl)
+        if not entries:
+            return
+        pipe = self.client.pipeline(transaction=True)
+        for key, value in entries.items():
+            pipe.set(self._make_key(key), encode_entry(value), ex=ttl)
+        await pipe.execute()
+        logger.debug("Redis SET_MANY; count=%s ttl=%s", len(entries), ttl)
 
     @_unavailable
     async def get_and_delete(self, key: str) -> CacheEntry | None:

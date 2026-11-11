@@ -26,6 +26,10 @@ user = await manager.get("user:42")  # {"name": "Alice"}
 await manager.delete("user:42")
 await manager.clear_prefix()  # 清除 "myapp:" 底下的所有項目
 
+# 一次後端呼叫讀寫多個鍵。沒有快取的鍵不會出現在結果中。
+await manager.set_many({"user:1": {"name": "Ann"}, "user:2": {"name": "Ben"}}, ttl=300)
+users = await manager.get_many(["user:1", "user:2", "user:3"])  # 沒有 "user:3"
+
 # 未命中時才計算：只有在鍵不存在、已過期或無法解碼時才會執行 `factory`。
 # 它可以是同步或非同步函式。
 profile = await manager.get_or_set("user:42", lambda: load_user(42), ttl=300)
@@ -68,6 +72,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
       ...  # 沒有快取；快取的 None 會以 None 回傳
   ```
 - `set()` 可儲存 JSON 能編碼的值，以及 pydantic 能轉成 JSON 的值（模型、dataclass、`datetime`、`Decimal`、`UUID`、set；見 [JSON 往返](#json-round-trip)）。其他的值會拋出 `TypeError`。
+- `get_many(keys, type_=None)` 與 `set_many(mapping, ttl=None)` 以一次後端呼叫讀取、寫入多個鍵，前綴、編碼與 `ttl` 的規則都和 `get()`、`set()` 相同。`get_many()` 回傳一個 dict，內含找到的鍵。不存在、已過期或無法解碼的鍵（指定 `type_` 時，還包括值不符合該型別的鍵）不會出現在其中，因此存入的 `None` 會在 dict 裡，未命中則不會；重複傳入的鍵只讀取一次。`set_many()` 會先編碼所有的值才開始寫入，因此只要有一個值無法編碼就會拋出 `TypeError`，而且不會儲存任何內容。寫入本身在記憶體與 Redis 後端上是全有或全無；在 Memcached 上每個鍵各自儲存，因此發生錯誤時可能只存入了這一批的一部分（見[批次讀寫](BACKENDS.md#batch-reads-and-writes)）。
 - `increment(key, delta=1, ttl=None)` 以原子操作累加計數器並回傳新的值，適合配額與速率限制。它是後端的 `increment()` 加上 manager 的前綴：不存在的鍵視為 0，`ttl` 在建立計數器時套用，`get()` 會把計數器讀成 `int`。以 `set()` 寫入值的鍵不是計數器，會拋出 `CacheXError`。
 - `get_or_set()` 預設使用 cache stampede 保護（`lock=True`，可針對單次呼叫或以 `CacheManager(lock=...)` 全域設定），避免多次並行未命中時同時執行 `factory`，若等待超時則具備直接計算的優雅降級回退。分散式鎖的鍵名格式為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
 - `get_or_set()` 在未命中與命中時都回傳經 JSON 解碼後的值（見 [JSON 往返](#json-round-trip)），因此兩條路徑的結果相同。

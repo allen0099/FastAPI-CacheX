@@ -69,14 +69,12 @@ OPERATIONS: dict[str, Callable[[BaseCacheBackend, int], Awaitable[object]]] = {
     "expire_if_equals": lambda backend, ttl: backend.expire_if_equals(
         "k", ENTRY, ttl=ttl
     ),
+    "set_many": lambda backend, ttl: backend.set_many({"k": ENTRY}, ttl=ttl),
 }
 
 
 @pytest.mark.parametrize(("ttl", "error", "match"), BAD_TTLS)
-@pytest.mark.parametrize(
-    "operation",
-    ["set", "set_if_absent", "increment", "set_if_equals", "expire_if_equals"],
-)
+@pytest.mark.parametrize("operation", list(OPERATIONS))
 async def test_backends_reject_invalid_ttl(
     operation: str, ttl: object, error: type[Exception], match: str
 ) -> None:
@@ -127,6 +125,8 @@ async def test_cache_manager_rejects_invalid_ttl(
         await manager.set("k", 1, ttl=ttl)
     with pytest.raises(error, match=match):
         await manager.add("k", 1, ttl=ttl)
+    with pytest.raises(error, match=match):
+        await manager.set_many({"k": 1}, ttl=ttl)
     with pytest.raises(error, match=match):
         await manager.get_or_set("k", factory, ttl=ttl)
     # The ttl is checked before the factory runs.

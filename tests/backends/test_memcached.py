@@ -323,6 +323,8 @@ async def _clear_path(backend: MemcachedBackend) -> int:
         lambda b: b.delete_many(["a", "b"]),
         lambda b: b.delete("k"),
         _clear_path,
+        lambda b: b.get_many(["a", "b"]),
+        lambda b: b.set_many({"a": _ENTRY, "b": _ENTRY}),
     ],
     ids=[
         "get",
@@ -336,6 +338,8 @@ async def _clear_path(backend: MemcachedBackend) -> int:
         "delete_many",
         "delete",
         "clear_path",
+        "get_many",
+        "set_many",
     ],
 )
 async def test_memcached_keeps_raising_after_a_connection_failure(call) -> None:
@@ -1428,3 +1432,92 @@ async def test_memcached_server_refuses_a_value_over_its_item_size(
     assert await memcached_backend.get("big") is None
     with pytest.raises(ValueTooLargeError):
         await CacheManager(memcached_backend).set("big", "x" * (2 * 1024 * 1024))
+
+
+# --- get_many / set_many (#249) ---
+
+
+async def test_memcached_get_many_sends_each_namespaced_key_once() -> None:
+    backend = stubbed_backend()
+    long_key = "k" * 300  # hashed by _make_key
+    backend.client.get_many.return_value = {
+        backend._make_key("a"): encode_entry(_ENTRY),
+        backend._make_key(long_key): encode_entry(_ENTRY),
+        backend._make_key("junk"): b"not an entry",
+    }
+
+    found = await backend.get_many(["a", "missing", "a", long_key, "junk"])
+
+    assert found == {"a": _ENTRY, long_key: _ENTRY}
+    backend.client.get_many.assert_called_once_with(
+        [backend._make_key(key) for key in ("a", "missing", long_key, "junk")]
+    )
+
+
+@pytest.mark.parametrize(("ttl", "exptime"), [(None, 0), (60, 60)])
+async def test_memcached_set_many_sends_one_acknowledged_batch(
+    ttl: int | None, exptime: int
+) -> None:
+    backend = stubbed_backend()
+    long_key = "k" * 300
+    other = CacheEntry(fingerprint="other", content=b"y")
+
+    await backend.set_many({"a": _ENTRY, long_key: other}, ttl=ttl)
+
+    backend.client.set_many.assert_called_once_with(
+        {
+            backend._make_key("a"): encode_entry(_ENTRY),
+            backend._make_key(long_key): encode_entry(other),
+        },
+        exptime,
+        noreply=False,
+    )
+
+
+async def test_memcached_set_many_sends_a_long_ttl_as_a_timestamp() -> None:
+    backend = stubbed_backend()
+
+    await backend.set_many({"a": _ENTRY}, ttl=60 * 24 * 60 * 60)
+
+    assert backend.client.set_many.call_args.args[1] == _expiry(60 * 24 * 60 * 60)
+
+
+async def test_memcached_empty_batches_do_no_io() -> None:
+    backend = stubbed_backend()
+
+    assert await backend.get_many([]) == {}
+    await backend.set_many({})
+    assert backend.client.method_calls == []
+
+
+async def test_memcached_set_many_refused_value_names_the_largest() -> None:
+    from pymemcache.exceptions import MemcacheServerError
+
+    backend = stubbed_backend()
+    refusal = MemcacheServerError(b"object too large for cache")
+    backend.client.set_many.side_effect = refusal
+    big = CacheEntry(fingerprint="etag", content=b"x" * 2048)
+
+    with pytest.raises(ValueTooLargeError) as excinfo:
+        await backend.set_many({"small": _ENTRY, _SECRET_KEY: big, "small2": _ENTRY})
+
+    assert excinfo.value.__cause__ is refusal
+    assert f"{len(encode_entry(big))} bytes" in str(excinfo.value)
+    assert log_ref(_SECRET_KEY) in str(excinfo.value)
+    assert _SECRET_KEY not in str(excinfo.value)
+
+
+@requires_memcached
+async def test_memcached_set_many_is_not_atomic(
+    memcached_backend: MemcachedBackend,
+) -> None:
+    """A refused value does not take the rest of the batch with it."""
+    big = CacheEntry(fingerprint="etag", content=b"x" * (2 * 1024 * 1024))
+
+    with pytest.raises(ValueTooLargeError):
+        await memcached_backend.set_many({"first": _ENTRY, "big": big})
+
+    assert await memcached_backend.get_many(["first", "big"]) == {"first": _ENTRY}
+    # The connection the refusal came in on is not reused half-read.
+    await memcached_backend.set_many({"after": _ENTRY}, ttl=60)
+    assert await memcached_backend.get_many(["after"]) == {"after": _ENTRY}

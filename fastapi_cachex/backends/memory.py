@@ -10,6 +10,7 @@ import warnings
 from collections import OrderedDict
 from collections.abc import Callable
 from collections.abc import Iterable
+from collections.abc import Mapping
 from datetime import timedelta
 
 from fastapi_cachex._warnings import caller_stacklevel
@@ -284,6 +285,42 @@ class MemoryBackend(BaseCacheBackend):
             "Memory cache DELETE_MANY; requested=%s removed=%s", len(doomed), removed
         )
         return removed
+
+    async def get_many(self, keys: Iterable[str]) -> dict[str, CacheEntry]:
+        """Retrieve the entries stored under ``keys``, under one lock."""
+        self._ensure_cleanup_started()
+
+        found: dict[str, CacheEntry] = {}
+        async with self.lock:
+            now = time.time()
+            for key in dict.fromkeys(keys):
+                item = self.cache.get(key)
+                if item is None:
+                    continue
+                if not _is_live(item, now):
+                    del self.cache[key]
+                    continue
+                self._touch(key)
+                found[key] = copy.copy(item.value)
+        logger.debug("Memory cache GET_MANY; found=%s", len(found))
+        return found
+
+    async def set_many(
+        self, entries: Mapping[str, CacheEntry], ttl: int | timedelta | None = None
+    ) -> None:
+        """Store every entry in ``entries`` under one lock (see base class).
+
+        With ``max_entries``, a batch larger than the limit keeps only its
+        last ``max_entries`` entries.
+        """
+        ttl = validate_ttl(ttl)
+        self._ensure_cleanup_started()
+
+        async with self.lock:
+            expiry = time.time() + ttl if ttl is not None else None
+            for key, value in entries.items():
+                self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
+        logger.debug("Memory cache SET_MANY; count=%s ttl=%s", len(entries), ttl)
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry (see base class)."""

@@ -1799,3 +1799,104 @@ async def test_a_strict_model_is_read_back_from_its_json(
 
     assert made == visit
     assert await cache_manager.get("visit", type_=_StrictVisit) == visit
+
+
+# --- get_many / set_many (#249) ----------------------------------------------
+
+
+async def test_set_many_then_get_many_round_trips(cache_manager: CacheManager) -> None:
+    await cache_manager.set_many({"a": {"n": 1}, "b": [1, 2], "none": None})
+
+    found = await cache_manager.get_many(["a", "b", "none", "missing", "a"])
+
+    # A stored None is there; a miss is not.
+    assert found == {"a": {"n": 1}, "b": [1, 2], "none": None}
+    # The same keys and encoding as set() and get().
+    assert await cache_manager.get("a") == {"n": 1}
+    await cache_manager.set("c", "single")
+    assert await cache_manager.get_many(["c"]) == {"c": "single"}
+    assert await cache_manager.backend.get("cache:a") is not None
+
+
+async def test_get_many_and_set_many_take_nothing(cache_manager: CacheManager) -> None:
+    await cache_manager.set_many({})
+
+    assert await cache_manager.get_many([]) == {}
+
+
+async def test_batches_are_one_backend_call_each(
+    memory_backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = CacheManager(backend=memory_backend)
+
+    async def one_at_a_time(*args: Any, **kwargs: Any) -> None:
+        msg = "a batch went to the backend one key at a time"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(memory_backend, "get", one_at_a_time)
+    monkeypatch.setattr(memory_backend, "set", one_at_a_time)
+
+    await manager.set_many({"a": 1, "b": 2})
+
+    assert await manager.get_many(["a", "b"]) == {"a": 1, "b": 2}
+
+
+async def test_get_many_with_a_type_returns_typed_values(
+    cache_manager: CacheManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A value that does not fit is a miss, as for get(): left out, a digest logged."""
+    await cache_manager.set_many(
+        {"user:1": _ALICE, "user:alice@example.com": {"id": 1}, "user:0": None}
+    )
+    keys = ["user:1", "user:alice@example.com", "user:0"]
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.manager"):
+        found = await cache_manager.get_many(keys, type_=_User)
+
+    assert found == {"user:1": _ALICE}
+    assert log_ref("user:alice@example.com") in caplog.text
+    assert "alice@example.com" not in caplog.text
+    assert await cache_manager.get_many(keys, type_=_User | None) == {
+        "user:1": _ALICE,
+        "user:0": None,
+    }
+
+
+async def test_get_many_leaves_out_content_it_cannot_decode(
+    memory_backend: MemoryBackend,
+) -> None:
+    manager = CacheManager(backend=memory_backend)
+    await manager.set("good", 1)
+    await memory_backend.set("cache:bad", CacheEntry(fingerprint="x", content=b"{"))
+
+    assert await manager.get_many(["bad", "good"]) == {"good": 1}
+
+
+async def test_set_many_with_a_value_it_cannot_encode_stores_nothing(
+    cache_manager: CacheManager,
+) -> None:
+    with pytest.raises(TypeError):
+        await cache_manager.set_many({"fine": 1, "broken": object()})
+
+    assert await cache_manager.get_many(["fine", "broken"]) == {}
+
+
+async def test_set_many_uses_the_ttl_or_the_default_ttl(
+    memory_backend: MemoryBackend, clock: Clock
+) -> None:
+    manager = CacheManager(backend=memory_backend, default_ttl=10)
+    await manager.set_many({"default": 1})
+    await manager.set_many({"explicit": 2}, ttl=timedelta(seconds=100))
+
+    clock.advance(11)
+
+    assert await manager.get_many(["default", "explicit"]) == {"explicit": 2}
+
+
+@pytest.mark.parametrize("keys", ["user:1", b"user:1"])
+async def test_get_many_refuses_a_single_key(
+    cache_manager: CacheManager, keys: Any
+) -> None:
+    """It would be read as one key per character."""
+    with pytest.raises(TypeError, match="iterable of keys, not a single str"):
+        await cache_manager.get_many(keys)

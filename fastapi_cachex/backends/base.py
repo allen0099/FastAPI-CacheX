@@ -4,6 +4,7 @@ import warnings
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Iterable
+from collections.abc import Mapping
 from datetime import timedelta
 from types import TracebackType
 from typing import TYPE_CHECKING
@@ -229,6 +230,48 @@ class BaseCacheBackend(ABC):
             if await self.delete(key):
                 count += 1
         return count
+
+    async def get_many(self, keys: Iterable[str]) -> dict[str, CacheEntry]:
+        """Retrieve the entries stored under ``keys``.
+
+        A key that is missing or has expired is left out of the result, and a
+        key given twice is read once.
+
+        The base implementation calls ``get`` once per key. The built-in
+        backends override it with one batched read per server.
+
+        Returns:
+            The entries found, by key
+        """
+        found: dict[str, CacheEntry] = {}
+        for key in dict.fromkeys(keys):
+            value = await self.get(key)
+            if value is not None:
+                found[key] = value
+        return found
+
+    async def set_many(
+        self, entries: Mapping[str, CacheEntry], ttl: int | timedelta | None = None
+    ) -> None:
+        """Store every entry in ``entries`` under its key, all with ``ttl``.
+
+        ``ttl`` is validated before anything is stored. Whether the batch is
+        written as a whole depends on the backend: the memory and Redis
+        backends store all of it or none of it, and no reader sees half of
+        it. Memcached has no such operation, so a failure there can leave
+        some entries stored and others not.
+
+        The base implementation calls ``set`` once per entry, so it stops at
+        the first one that fails. The built-in backends override it with one
+        batched write per server.
+
+        Args:
+            entries: The entries to store, by key
+            ttl: Time to live in seconds (``None`` = never expires)
+        """
+        ttl = validate_ttl(ttl)
+        for key, value in entries.items():
+            await self.set(key, value, ttl=ttl)
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry.

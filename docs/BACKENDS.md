@@ -211,8 +211,8 @@ backend = AsyncRedisCacheBackend(connection_pool=pool)
 ```
 
 **Redis Cluster is not supported.** The backend uses a single-node client:
-`SCAN` would see one node, and the multi-key commands behind `delete_many()`
-and the `clear*` methods fail across hash slots.
+`SCAN` would see one node, and the multi-key commands behind `delete_many()`,
+`get_many()`, `set_many()` and the `clear*` methods fail across hash slots.
 
 ### Failing fast when Redis is down
 
@@ -320,7 +320,10 @@ server must not tie up the thread pool.
   `set_if_absent()` and `set_if_equals()` calls raise `ValueTooLargeError`, a
   `CacheXError` whose message gives the encoded size and a digest of the key. Nothing is stored, and the server also drops
   the value a refused `set()` would have replaced, so the key reads as missing
-  afterwards; a refused `set_if_absent()` leaves the existing value. The error
+  afterwards; a refused `set_if_absent()` leaves the existing value. A
+  `set_many()` with one value over the limit raises it too, and may have
+  stored the rest of the batch (see
+  [Batch reads and writes](#batch-reads-and-writes)). The error
   is chained to pymemcache's `MemcacheServerError` and is
   also an instance of it, which is all these callers raised before 0.5.4
 - Consider using the Redis backend if you need pattern-based cache clearing
@@ -507,9 +510,47 @@ counts as not removed (see [Backend `delete()` returning `None`](MIGRATING_0_5.m
 
 Complete runnable example: [`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py).
 
+### Batch reads and writes {#batch-reads-and-writes}
+
+`get_many` and `set_many` read and write several keys in one round trip per
+server. `CacheManager.get_many()` and `set_many()` are built on them.
+
+```python
+await backend.set_many({"a": entry_a, "b": entry_b}, ttl=300)
+found = await backend.get_many(["a", "b", "c"])  # {"a": entry_a, "b": entry_b}
+```
+
+- `get_many(keys) -> dict[str, CacheEntry]` — returns the entries found, by
+  key. A key that is missing, expired or holds bytes that are not an entry is
+  left out, and a key given twice is read once. Memory reads under its lock,
+  Redis sends one `MGET` and Memcached one `get` with every key per server.
+  An empty `keys` does no I/O.
+- `set_many(entries, ttl=None) -> None` — stores every entry of a mapping,
+  all with the same `ttl`, which is validated before anything is written. An
+  empty mapping does no I/O. Whether the batch is atomic depends on the
+  backend:
+    - **Memory**: atomic. The whole batch is stored under the backend's lock.
+      With `max_entries`, a batch larger than the limit keeps its last
+      `max_entries` entries.
+    - **Redis**: atomic. One `SET` per entry inside a single `MULTI`/`EXEC`
+      (`MSET` takes no expiry), sent in one round trip. A concurrent reader
+      sees the batch entirely or not at all, and a batch the server refuses,
+      for example at its memory limit, stores nothing.
+    - **Memcached**: not atomic. The entries go out as one batch of `set`
+      commands per server, and the server stores each on its own. If one
+      value is over the item size limit the call raises `ValueTooLargeError`,
+      whose message gives the size and key digest of the largest value in the
+      batch, and the other entries may have been stored. The same holds when a
+      server goes away mid-batch, or when one of several servers fails.
+
+Both have a fallback on `BaseCacheBackend` that calls `get` or `set` once per
+key, so a third-party backend works without overriding them. The `set_many`
+fallback stops at the first `set` that raises, leaving the entries before it
+stored.
+
 ## TTL values
 
-Every `ttl` argument (`set`, `set_if_absent`, `set_if_equals`, `increment`, and the `CacheManager`
+Every `ttl` argument (`set`, `set_many`, `set_if_absent`, `set_if_equals`, `increment`, and the `CacheManager`
 and `CacheLock` methods and defaults built on them) is either `None`, meaning
 the entry never expires, or a number of seconds from 1 up to `MAX_TTL`
 (2**31 - 1, about 68 years), as an `int` or a `datetime.timedelta` of whole
