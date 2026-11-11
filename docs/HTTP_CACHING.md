@@ -631,9 +631,49 @@ is not stored), so a shared cache in front of the app keys on them too. A name
 the response already lists (in any case) is not repeated, and a response with
 `Vary: *` is left alone.
 
-`vary` must be a list (or tuple) of header field names. A bare string such as
+`vary` must be a list (or tuple) of header field names, or a mapping from
+names to [normalisers](#vary-normaliser). A bare string such as
 `vary="Accept"` is rejected when the decorator is applied, as are empty names,
 `*` and anything that is not a valid field name.
+
+#### Normalising a header's value {#vary-normaliser}
+
+Header values come from the client, so every distinct value is its own entry:
+`Accept-Language: en-US,en;q=0.9` and `Accept-Language: en` are stored twice
+even when the route only serves `en` and `zh-TW`. To key on the values the
+route really distinguishes, give `vary` a mapping from the header name to a
+function:
+
+```python
+def locale(value: str) -> str:
+    return "zh-TW" if value.lower().startswith("zh") else "en"
+
+
+@app.get("/greeting")
+@cache(ttl=300, vary={"Accept-Language": locale})
+async def greeting(request: Request):
+    return {
+        "text": translate("hello", locale(request.headers.get("accept-language", "")))
+    }
+```
+
+- The function gets the header's value as described above (trimmed, repeated
+  lines joined, `""` when the header is missing) and returns the `str` or `int`
+  that goes into the key: `accept-language=en`. Anything else raises
+  `CacheXError`.
+- A name mapped to `None` is keyed on its own value, exactly as in a list, so
+  `vary={"Accept-Language": locale, "Origin": None}` mixes both.
+- The `Vary` response header still names the header. A cache in front of the
+  app cannot run your function, so it keeps one copy per raw value; the bound
+  applies to this library's backend.
+- `invalidate()` and `invalidate_path()` take the same mapping and build the
+  same component. Passing the list form for a route that uses a normaliser
+  builds another key and deletes nothing.
+- The function runs on every request to the route, before the backend is
+  read, so keep it cheap. It is your code: an exception it raises fails the
+  request and is not covered by `fail_open`.
+- A credential header's normalised value is still [hashed](#credential-headers-are-hashed),
+  and `Cookie` with a normaliser does not emit the warning described there.
 
 #### Credential headers are hashed
 

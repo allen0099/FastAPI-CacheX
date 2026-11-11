@@ -331,7 +331,31 @@ async def greeting(request: Request):
 
 這些名稱也會加入該路由對 GET 或 HEAD 請求的每個回應的 `Vary` 標頭，不論是 200 或 304，也不論是否由後端提供（`private`、`no_store`、繞過後端的 `Authorization` 請求，或未儲存的回應），讓應用程式前方的共用快取也依它們區分。回應已列出的名稱（不分大小寫）不會重複加入，帶有 `Vary: *` 的回應則維持原樣。
 
-`vary` 必須是由標頭欄位名稱組成的 list（或 tuple）。套用裝飾器時，會拒絕 `vary="Accept"` 這類單一字串，以及空名稱、`*` 與任何不是有效欄位名稱的值。
+`vary` 必須是由標頭欄位名稱組成的 list（或 tuple），或是「名稱 → [正規化函式](#vary-normaliser)」的 mapping。套用裝飾器時，會拒絕 `vary="Accept"` 這類單一字串，以及空名稱、`*` 與任何不是有效欄位名稱的值。
+
+#### 正規化標頭的值 {#vary-normaliser}
+
+標頭的值來自用戶端，因此每個不同的值都是一筆獨立的項目：即使路由只提供 `en` 與 `zh-TW`，`Accept-Language: en-US,en;q=0.9` 與 `Accept-Language: en` 仍會存成兩筆。若要只依路由實際區分的值來建立鍵，請給 `vary` 一個「標頭名稱 → 函式」的 mapping：
+
+```python
+def locale(value: str) -> str:
+    return "zh-TW" if value.lower().startswith("zh") else "en"
+
+
+@app.get("/greeting")
+@cache(ttl=300, vary={"Accept-Language": locale})
+async def greeting(request: Request):
+    return {
+        "text": translate("hello", locale(request.headers.get("accept-language", "")))
+    }
+```
+
+- 函式會收到如上所述的標頭值（已去除前後空白、重複的行已合併，標頭不存在時為 `""`），並回傳要放進鍵裡的 `str` 或 `int`：`accept-language=en`。回傳其他型別會拋出 `CacheXError`。
+- 對應到 `None` 的名稱會以它自己的值作為鍵，和清單形式完全相同，因此 `vary={"Accept-Language": locale, "Origin": None}` 可以混用兩者。
+- `Vary` 回應標頭仍然列出該標頭。應用程式前方的快取無法執行你的函式，所以它仍會為每個原始值各保留一份；這個上限只適用於本函式庫的後端。
+- `invalidate()` 與 `invalidate_path()` 接受相同的 mapping，並建立相同的鍵元件。對使用正規化函式的路由傳入清單形式，會組出另一個鍵，什麼也不會刪除。
+- 函式會在每個送到該路由的請求上執行，而且在讀取後端之前，所以請保持輕量。它是你的程式碼：它拋出的例外會讓請求失敗，不在 `fail_open` 的範圍內。
+- 憑證標頭經正規化後的值仍然會被[雜湊](#credential-headers-are-hashed)，而帶有正規化函式的 `Cookie` 不會發出該節所述的警告。
 
 #### 憑證標頭會雜湊 {#credential-headers-are-hashed}
 
