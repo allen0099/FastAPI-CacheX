@@ -637,7 +637,7 @@ set_event_handler(record)
 
 每個事件都有 `source`（`"http"` 或 `"app"`）、`key`（沒有查詢後端時為 None）；對 `@cache` 路由的請求還有 `route`，也就是路由的路徑樣板（`/api/users/{user_id}`，包含被引入的 router 或掛載的應用程式的前綴）；回應請求的事件則有以秒為單位的 `duration`。請用 `route` 當指標的 label，不要用 `key`：鍵裡含有查詢字串、其他用戶端輸入，以及自訂 key builder 加入的任何內容，數量沒有上限。基於同樣的理由，也不要原樣把它寫進日誌。
 
-這個函式會在請求的處理路徑上同步執行，所以請只做遞增計數器這類的事。它必須是一般函式：`async` 函式會以 `TypeError` 拒絕。它拋出的例外會被記錄，不會影響請求。`set_event_handler(None)` 會移除它；沒有設定時不會建立任何事件。`add()`、`increment()`、`has()` 與各個 `clear*` 方法不會回報事件，後端拋出例外的 `CacheManager` 呼叫也不會。
+這個函式會在請求的處理路徑上同步執行，所以請只做遞增計數器這類的事。它必須是一般函式：`async` 函式會以 `TypeError` 拒絕。它拋出的例外會被記錄，不會影響請求。`set_event_handler(None)` 會移除它；沒有設定時不會建立任何事件。`add()`、`increment()`、`has()`、`get_many()`、`set_many()` 與各個 `clear*` 方法不會回報事件，後端拋出例外的 `CacheManager` 呼叫也不會。
 
 ## 監控路由 {#monitoring-routes}
 
