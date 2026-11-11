@@ -8,6 +8,8 @@ from collections.abc import Iterable
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from typing import Any
+from urllib.parse import parse_qs
+from urllib.parse import urlsplit
 
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
@@ -122,6 +124,29 @@ def _key_text(key: bytes | str) -> str | None:
         return None
 
 
+def _check_url_arguments(url: str, kwargs: dict[str, Any]) -> None:
+    """Refuse what cannot be combined with ``url``, before any command runs.
+
+    redis-py would accept each of these and fail on the first command, which
+    ``@cache`` logs as a miss for ever. The messages leave the URL out: it
+    may hold a password.
+    """
+    if "connection_pool" in kwargs:
+        msg = "pass either url or connection_pool, not both: a pool names its server"
+        raise CacheXError(msg)
+    if "ssl" in kwargs:
+        msg = "with url, TLS is chosen by the scheme: use rediss:// instead of ssl="
+        raise CacheXError(msg)
+    for name in _REMOVED_KWARGS:
+        if name in parse_qs(urlsplit(url).query, keep_blank_values=True):
+            msg = (
+                f"the Redis URL sets {name!r} in its query string: it was "
+                "removed in version 0.4.0. Remove it; the client reads raw "
+                "bytes and entries are always UTF-8."
+            )
+            raise TypeError(msg)
+
+
 class AsyncRedisCacheBackend(BaseCacheBackend):
     """Async Redis cache backend implementation.
 
@@ -142,6 +167,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         socket_connect_timeout: float = 1.0,
         key_prefix: str = DEFAULT_REDIS_PREFIX,
         protocol: int = 2,
+        *,
+        url: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize async Redis cache backend.
@@ -151,19 +178,33 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             port: Redis port
             password: Redis password
             db: Redis database number
+            url: A connection URL, as ``redis.asyncio.Redis.from_url`` takes
+                it: ``redis://[user:password@]host[:port][/db]``,
+                ``rediss://`` for TLS, ``unix://`` for a socket. When given,
+                ``host`` and ``port`` are not used, and ``password``, ``db``
+                and ``username`` apply only where the URL does not name its
+                own. An option in the URL's query string
+                (``?socket_timeout=5``) wins over the argument of the same
+                name. See also ``from_url()``.
             socket_timeout: Timeout for socket operations (in seconds)
             socket_connect_timeout: Timeout for socket connection (in seconds)
             key_prefix: Prefix for all cache keys (default: 'fastapi_cachex:')
             protocol: RESP protocol version (2 or 3). Defaults to 2 (RESP2) for
                 broadest compatibility. Use 3 only when hiredis >= 3.0 is installed
                 and Redis 8.0+ RESP3 features are required.
-            **kwargs: Additional arguments to pass to Redis client
+            **kwargs: Additional arguments to pass to Redis client, such as
+                ``username`` (an ACL user), ``ssl=True`` and the other
+                ``ssl_*`` options, ``retry`` or ``connection_pool``
 
         Raises:
             CacheXError: If redis-py is not installed
-            TypeError: If ``encoding`` or ``decode_responses`` is passed; both
-                were removed in 0.4.0. The client always reads raw bytes, and
-                entries are always UTF-8.
+            CacheXError: If ``url`` is passed with ``connection_pool`` (a
+                pool already names its server) or with ``ssl`` (TLS is the
+                ``rediss://`` scheme)
+            TypeError: If ``encoding`` or ``decode_responses`` is passed, as
+                an argument or in the URL's query string; both were removed
+                in 0.4.0. The client always reads raw bytes, and entries are
+                always UTF-8.
         """
         try:
             # Import top-level package first so tests that monkeypatch
@@ -187,19 +228,28 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 )
                 raise TypeError(msg)
 
-        self.client = AsyncRedis(
-            host=host,
-            port=port,
-            password=password,
-            db=db,
+        options = {
             # Replies stay bytes: the codec decodes entries itself, and the
             # Lua compare-and-* scripts get back exactly the bytes read.
-            decode_responses=False,
-            socket_timeout=socket_timeout,
-            socket_connect_timeout=socket_connect_timeout,
-            protocol=protocol,
+            "decode_responses": False,
+            "socket_timeout": socket_timeout,
+            "socket_connect_timeout": socket_connect_timeout,
+            "protocol": protocol,
             **kwargs,
-        )
+        }
+        if url is None:
+            self.client = AsyncRedis(
+                host=host, port=port, password=password, db=db, **options
+            )
+        else:
+            _check_url_arguments(url, kwargs)
+            # As redis-py does: used only where the URL does not say.
+            if password is not None:
+                options["password"] = password
+            if db:
+                options["db"] = db
+            # The client owns the pool from_url() builds, so aclose() closes it.
+            self.client = AsyncRedis.from_url(url, **options)
         self.key_prefix = key_prefix
         # Registered once so every call is an EVALSHA (redis-py reloads the
         # script transparently if the server has flushed it).
@@ -213,6 +263,17 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         self._set_if_equals_script = self.client.register_script(_SET_IF_EQUALS_SCRIPT)
 
     @classmethod
+    def from_url(cls, url: str, **kwargs: Any) -> "Self":
+        """Create a backend from a connection URL.
+
+        ``AsyncRedisCacheBackend.from_url("rediss://user:secret@host:6380/0")``
+        is ``AsyncRedisCacheBackend(url=...)``; the other constructor
+        arguments (``key_prefix``, the timeouts, ``protocol``, redis-py
+        options) are passed the same way.
+        """
+        return cls(url=url, **kwargs)
+
+    @classmethod
     def load_from_config(cls, config: RedisConfig) -> "Self":
         """Create a backend from a ``RedisConfig``.
 
@@ -223,6 +284,20 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             An instance of the class it is called on, so a subclass gets
             itself back
         """
+        shared: dict[str, Any] = {
+            "socket_timeout": config.socket_timeout,
+            "socket_connect_timeout": config.socket_connect_timeout,
+            "key_prefix": config.key_prefix,
+            "protocol": config.protocol,
+        }
+        # Passed only when set, so a subclass whose __init__ predates these
+        # fields keeps working with a config that does not use them.
+        if config.username is not None:
+            shared["username"] = config.username
+        if config.ssl:
+            shared["ssl"] = True
+        if config.url is not None:
+            shared["url"] = config.url.get_secret_value()
         return cls(
             host=config.host,
             port=config.port,
@@ -230,10 +305,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             if config.password is not None
             else None,
             db=config.db,
-            socket_timeout=config.socket_timeout,
-            socket_connect_timeout=config.socket_connect_timeout,
-            key_prefix=config.key_prefix,
-            protocol=config.protocol,
+            **shared,
         )
 
     async def aclose(self) -> None:
