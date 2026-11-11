@@ -212,6 +212,19 @@ class CacheKey:
         )
 
     @staticmethod
+    def is_for_path(key: str, path: str, include_params: bool) -> bool:
+        """Whether ``key`` is an HTTP key for ``path``, as ``clear_path`` matches.
+
+        Without ``include_params`` only a key with an empty query matches.
+        """
+        parsed = CacheKey.parse(key)
+        return (
+            parsed is not None
+            and parsed.path == path
+            and (include_params or not parsed.query)
+        )
+
+    @staticmethod
     def path_glob(path: str) -> str:
         """A Redis glob that matches every HTTP key for ``path``.
 

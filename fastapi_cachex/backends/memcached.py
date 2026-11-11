@@ -28,6 +28,7 @@ from .base import BaseCacheBackend
 from .base import require_ttl
 from .base import validate_delta
 from .base import validate_ttl
+from .config import DEFAULT_KEY_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +75,7 @@ def _refused_as_too_large(key: str, payload: bytes) -> Iterator[None]:
         raise translated(ValueTooLargeError, e, msg) from e
 
 
-# Default Memcached key prefix for fastapi-cachex
-DEFAULT_MEMCACHE_PREFIX = "fastapi_cachex:"
+DEFAULT_MEMCACHE_PREFIX = DEFAULT_KEY_PREFIX
 
 # Memcached accepts keys of at most 250 bytes, and pymemcache rejects any key
 # containing whitespace, control characters or non-ASCII bytes. What is left is

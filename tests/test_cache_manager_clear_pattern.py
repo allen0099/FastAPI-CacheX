@@ -45,7 +45,7 @@ async def backend(request: Any) -> AsyncGenerator["BaseCacheBackend", Any]:
     """A memory backend, or a live Redis one when it is available."""
     if request.param == "memory":
         mem_backend = MemoryBackend()
-        mem_backend.start_cleanup()
+        mem_backend._ensure_cleanup_started()
         yield mem_backend
         await mem_backend.clear()
         mem_backend.stop_cleanup()

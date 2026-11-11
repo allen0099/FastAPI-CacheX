@@ -4,7 +4,8 @@ from pydantic import BaseModel
 from pydantic import Field
 from pydantic import SecretStr
 
-DEFAULT_REDIS_PREFIX = "fastapi_cachex:"
+DEFAULT_KEY_PREFIX = "fastapi_cachex:"
+DEFAULT_REDIS_PREFIX = DEFAULT_KEY_PREFIX
 
 
 class RedisConfig(BaseModel):
@@ -30,10 +31,10 @@ class RedisConfig(BaseModel):
         ),
     )
     socket_timeout: float = Field(
-        default=1.0, description="Timeout for socket operations in seconds"
+        default=1.0, gt=0, description="Timeout for socket operations in seconds"
     )
     socket_connect_timeout: float = Field(
-        default=1.0, description="Timeout for socket connection in seconds"
+        default=1.0, gt=0, description="Timeout for socket connection in seconds"
     )
     key_prefix: str = Field(
         default=DEFAULT_REDIS_PREFIX,

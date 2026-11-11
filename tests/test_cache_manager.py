@@ -64,7 +64,7 @@ async def cache_manager(request: Any) -> AsyncGenerator[CacheManager, Any]:
 
     if backend_type == "memory":
         mem_backend = MemoryBackend()
-        mem_backend.start_cleanup()
+        mem_backend._ensure_cleanup_started()
         backend: BaseCacheBackend = mem_backend
     else:  # redis
         from fastapi_cachex.backends import AsyncRedisCacheBackend
@@ -629,7 +629,7 @@ async def test_get_with_non_utf8_content_returns_default(
 async def test_manager_accepts_explicit_backend() -> None:
     """CacheManager(backend=...) uses the provided backend without touching BackendProxy."""
     backend = MemoryBackend()
-    backend.start_cleanup()
+    backend._ensure_cleanup_started()
 
     try:
         BackendProxy.set(None)
@@ -1233,7 +1233,7 @@ async def _stampede_backend_context(
     backend: BaseCacheBackend
     if backend_name == "memory":
         backend = MemoryBackend()
-        backend.start_cleanup()
+        backend._ensure_cleanup_started()
     elif backend_name == "redis":
         from fastapi_cachex.backends import AsyncRedisCacheBackend
 
