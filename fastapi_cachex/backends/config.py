@@ -16,6 +16,18 @@ class RedisConfig(BaseModel):
         default=None, description="Redis server password"
     )
     db: int = Field(default=0, ge=0, description="Redis database number")
+    username: str | None = Field(
+        default=None, description="ACL user name (Redis 6+); None is the default user"
+    )
+    ssl: bool = Field(default=False, description="Connect over TLS")
+    url: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Connection URL (redis://, rediss:// or unix://). It may hold a "
+            "password, hence the secret type. When set, it replaces host, "
+            "port, password, db, username and ssl."
+        ),
+    )
     socket_timeout: float = Field(
         default=1.0, description="Timeout for socket operations in seconds"
     )

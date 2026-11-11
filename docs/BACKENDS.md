@@ -130,6 +130,60 @@ hiredis will fail to negotiate it.
 
 Complete runnable example: [`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py).
 
+### URLs, TLS, ACL users and Sentinel {#redis-connecting}
+
+A managed Redis usually wants TLS, an ACL user, or both. Give the backend a
+URL, as redis-py's `from_url` takes it (`redis://`, `rediss://` for TLS,
+`unix://` for a socket), or the same things as arguments:
+
+```python
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+# TLS and an ACL user, from a URL ...
+backend = AsyncRedisCacheBackend.from_url(
+    "rediss://cache-user:secret@redis.example.com:6380/0",
+    key_prefix="myapp:",
+)
+
+# ... or as arguments
+backend = AsyncRedisCacheBackend(
+    host="redis.example.com",
+    port=6380,
+    username="cache-user",
+    password="secret",
+    ssl=True,
+)
+```
+
+`from_url(url, **kwargs)` is `AsyncRedisCacheBackend(url=url, **kwargs)`: the
+URL replaces `host`, `port`, `password` and `db`, and `key_prefix`, the
+timeouts, `protocol` and redis-py options are passed as before. `username`,
+`ssl` and the other `ssl_*` options (`ssl_ca_certs`, `ssl_cert_reqs`, ...) are
+redis-py's own and go straight to its client. `RedisConfig` has `username`,
+`ssl` and `url` fields too; `url` is a `SecretStr`, since it may hold the
+password, and when set it is used instead of the other connection fields.
+
+For **Sentinel**, build redis-py's pool and pass it as `connection_pool=`. The
+backend's `host`, `port`, `password`, `db`, timeouts and `protocol` are then
+not used, so set what you need on the pool, and close the pool yourself (see
+[Closing a backend](#closing-a-backend)):
+
+```python
+from redis.asyncio.sentinel import Sentinel, SentinelConnectionPool
+
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+sentinel = Sentinel([("sentinel-1", 26379), ("sentinel-2", 26379)], socket_timeout=1.0)
+pool = SentinelConnectionPool(
+    "mymaster", sentinel, socket_timeout=1.0, socket_connect_timeout=1.0
+)
+backend = AsyncRedisCacheBackend(connection_pool=pool)
+```
+
+**Redis Cluster is not supported.** The backend uses a single-node client:
+`SCAN` would see one node, and the multi-key commands behind `delete_many()`
+and the `clear*` methods fail across hash slots.
+
 ### Failing fast when Redis is down
 
 `@cache` [fails open](HTTP_CACHING.md#when-the-backend-fails), but only once

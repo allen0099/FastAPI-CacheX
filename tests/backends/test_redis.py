@@ -23,6 +23,117 @@ from tests.live_servers import requires_redis
 from tests.live_servers import requires_redis_package
 
 
+def _connection(backend: AsyncRedisCacheBackend) -> tuple[type, dict[str, Any]]:
+    pool = backend.client.connection_pool
+    return pool.connection_class, pool.connection_kwargs
+
+
+@requires_redis_package
+def test_redis_from_url_names_the_server_tls_and_the_acl_user() -> None:
+    """A managed Redis needs `rediss://` and a user; no server is contacted (#244)."""
+    from redis.asyncio.connection import SSLConnection
+
+    backend = AsyncRedisCacheBackend.from_url(
+        "rediss://alice:pw@redis.example.test:6380/3",
+        key_prefix="p:",
+        socket_timeout=0.5,
+    )
+
+    connection_class, kwargs = _connection(backend)
+    assert connection_class is SSLConnection
+    assert (kwargs["host"], kwargs["port"], kwargs["db"]) == (
+        "redis.example.test",
+        6380,
+        3,
+    )
+    assert (kwargs["username"], kwargs["password"]) == ("alice", "pw")
+    # The backend's own settings still apply to a client built from a URL.
+    assert kwargs["decode_responses"] is False
+    assert (kwargs["socket_timeout"], kwargs["socket_connect_timeout"]) == (0.5, 1.0)
+    assert backend.key_prefix == "p:"
+    # The client owns the pool it built, so aclose() closes it.
+    assert backend.client.auto_close_connection_pool is True
+
+
+@requires_redis_package
+def test_redis_from_url_returns_the_subclass_it_is_called_on() -> None:
+    class Mine(AsyncRedisCacheBackend):
+        pass
+
+    assert type(Mine.from_url("redis://127.0.0.1:6379/0")) is Mine
+
+
+@requires_redis_package
+def test_redis_config_carries_username_ssl_and_url() -> None:
+    from pydantic import SecretStr
+    from redis.asyncio.connection import Connection
+    from redis.asyncio.connection import SSLConnection
+
+    from fastapi_cachex.backends.config import RedisConfig
+
+    load = AsyncRedisCacheBackend.load_from_config
+
+    connection_class, kwargs = _connection(load(RedisConfig()))
+    assert connection_class is Connection
+    assert kwargs.get("username") is None
+
+    connection_class, kwargs = _connection(
+        load(RedisConfig(host="h", username="bob", ssl=True))
+    )
+    assert connection_class is SSLConnection
+    assert (kwargs["host"], kwargs["username"]) == ("h", "bob")
+
+    config = RedisConfig(
+        host="ignored",
+        url=SecretStr("rediss://carol:pw@u.example.test/2"),
+        key_prefix="c:",
+        socket_timeout=0.25,
+    )
+    assert "pw" not in repr(config)
+    backend = load(config)
+    connection_class, kwargs = _connection(backend)
+    assert connection_class is SSLConnection
+    assert (kwargs["host"], kwargs["db"], kwargs["username"]) == (
+        "u.example.test",
+        2,
+        "carol",
+    )
+    assert kwargs["socket_timeout"] == 0.25
+    assert backend.key_prefix == "c:"
+
+
+@requires_redis
+@pytest.mark.asyncio
+async def test_redis_from_url_authenticates_as_an_acl_user() -> None:
+    """Against a real server: a user created for the test, then removed."""
+    admin = AsyncRedisCacheBackend(host=REDIS_HOST, port=REDIS_PORT)
+    await admin.client.acl_setuser(
+        "cachex-url-test",
+        enabled=True,
+        passwords=["+pw"],
+        keys=["*"],
+        categories=["+@all"],
+    )
+    backend = AsyncRedisCacheBackend.from_url(
+        f"redis://cachex-url-test:pw@{REDIS_HOST}:{REDIS_PORT}/0",
+        key_prefix="url-test:",
+    )
+    try:
+        entry = CacheEntry(fingerprint="etag", content=b"x")
+        await backend.set("k", entry, 5)
+        assert await backend.get("k") == entry
+        # redis-py decodes this reply itself on some versions.
+        assert await backend.client.acl_whoami() in {
+            "cachex-url-test",
+            b"cachex-url-test",
+        }
+    finally:
+        await backend.clear()
+        await backend.aclose()
+        await admin.client.acl_deluser("cachex-url-test")
+        await admin.aclose()
+
+
 @requires_redis_package
 def test_redis_load_from_config_initializes_client_and_prefix() -> None:
     """Ensure `load_from_config` builds a backend with expected settings."""

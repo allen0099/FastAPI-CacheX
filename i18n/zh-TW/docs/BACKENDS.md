@@ -86,6 +86,47 @@ BackendProxy.set(backend)
 
 完整可執行範例（英文）：[`examples/redis_backend.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/redis_backend.py)。
 
+### URL、TLS、ACL 使用者與 Sentinel {#redis-connecting}
+
+代管的 Redis 通常要求 TLS、ACL 使用者，或兩者都要。可以給後端一個 URL，格式與 redis-py 的 `from_url` 相同（`redis://`、TLS 用 `rediss://`、socket 用 `unix://`），或用參數傳入相同的設定：
+
+```python
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+# TLS 與 ACL 使用者，以 URL 指定 ...
+backend = AsyncRedisCacheBackend.from_url(
+    "rediss://cache-user:secret@redis.example.com:6380/0",
+    key_prefix="myapp:",
+)
+
+# ... 或以參數指定
+backend = AsyncRedisCacheBackend(
+    host="redis.example.com",
+    port=6380,
+    username="cache-user",
+    password="secret",
+    ssl=True,
+)
+```
+
+`from_url(url, **kwargs)` 等同於 `AsyncRedisCacheBackend(url=url, **kwargs)`：URL 取代 `host`、`port`、`password` 與 `db`，而 `key_prefix`、逾時、`protocol` 與 redis-py 的選項照舊傳入。`username`、`ssl` 以及其他 `ssl_*` 選項（`ssl_ca_certs`、`ssl_cert_reqs` 等）是 redis-py 自己的參數，會直接交給它的用戶端。`RedisConfig` 也有 `username`、`ssl` 與 `url` 欄位；`url` 是 `SecretStr`，因為它可能含有密碼，設定後會取代其他連線欄位。
+
+使用 **Sentinel** 時，請建立 redis-py 的連線池並以 `connection_pool=` 傳入。此時後端的 `host`、`port`、`password`、`db`、逾時與 `protocol` 都不會用到，所以需要的設定請放在連線池上，並自行關閉連線池（見[關閉後端](#closing-a-backend)）：
+
+```python
+from redis.asyncio.sentinel import Sentinel, SentinelConnectionPool
+
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+sentinel = Sentinel([("sentinel-1", 26379), ("sentinel-2", 26379)], socket_timeout=1.0)
+pool = SentinelConnectionPool(
+    "mymaster", sentinel, socket_timeout=1.0, socket_connect_timeout=1.0
+)
+backend = AsyncRedisCacheBackend(connection_pool=pool)
+```
+
+**不支援 Redis Cluster。** 後端使用單節點用戶端：`SCAN` 只會看到一個節點，而 `delete_many()` 與 `clear*` 方法背後的多鍵指令在跨 hash slot 時會失敗。
+
 ### Redis 停止運作時快速失敗 {#failing-fast-when-redis-is-down}
 
 `@cache` 會 [fail open](HTTP_CACHING.md#when-the-backend-fails)，但要等後端放棄之後才會。redis-py 8 預設會將因連線錯誤或逾時而失敗的指令重試 10 次，並採用指數退避，每次嘗試之間最多等待 1 秒。在 Redis 拒絕連線時，每次 `get` 或 `set` 因此要約 3 到 4 秒才會失敗，而先讀取再寫入的快取請求約需 7 秒。若主機完全沒有回應，11 次嘗試中的每一次還要等待 `socket_connect_timeout`（預設 1 秒），每個指令約 15 秒，每個請求約 30 秒。
