@@ -171,9 +171,32 @@ def _log_backend_failure(
 
 
 def _route_template(request: Request) -> str | None:
-    """The path template of the route answering ``request``, if it has one."""
-    path = getattr(request.scope.get("route"), "path", None)
-    return path if isinstance(path, str) else None
+    """The path template of the route answering ``request``, if it has one.
+
+    The whole path, as a label that does not grow with the data:
+    ``/api/users/{user_id}``. The matched route only knows its own part when
+    it was included with a prefix or lives in a mounted application, so what
+    precedes that part in the request's path is put back in front of it, with
+    the values of any path parameters there replaced by their names.
+    """
+    route = request.scope.get("route")
+    template = getattr(route, "path", None)
+    path_format = getattr(route, "path_format", None)
+    if not isinstance(template, str) or not isinstance(path_format, str):
+        return None
+    params = request.path_params
+    try:
+        own = path_format.format(**params)
+    except (KeyError, IndexError, ValueError):
+        return template
+    path = request.url.path
+    if own == path or not path.endswith(own):
+        return template
+    prefix = path[: len(path) - len(own)]
+    for name, value in params.items():
+        if f"{{{name}" not in path_format:
+            prefix = prefix.replace(f"/{value}", f"/{{{name}}}", 1)
+    return prefix + template
 
 
 async def _read_entry(
@@ -1791,14 +1814,16 @@ def cache(
             finally:
                 # Releases the requests waiting on this one (#252).
                 call.flight.finish()
-            if call.outcome is not None:
-                _emit(
-                    call.outcome.lower(),  # type: ignore[arg-type]
-                    "http",
-                    call.cache_key,
-                    route=_route_template(request),
-                    duration=time.perf_counter() - started,
-                )
+                # Also when the handler raised: that request was a miss or a
+                # bypass all the same.
+                if call.outcome is not None:
+                    _emit(
+                        call.outcome.lower(),  # type: ignore[arg-type]
+                        "http",
+                        call.cache_key,
+                        route=_route_template(request),
+                        duration=time.perf_counter() - started,
+                    )
             if debug_header and call.outcome is not None:
                 # Set after the entry was built, so it is never stored.
                 response.headers[_DEBUG_HEADER] = call.outcome

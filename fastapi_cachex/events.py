@@ -15,6 +15,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Literal
 
+from ._callables import _is_coroutine_callable
+
 logger = logging.getLogger(__name__)
 
 EventKind = Literal[
@@ -31,7 +33,9 @@ class CacheEvent:
     - ``hit``, ``miss``, ``stale``, ``refresh``, ``bypass``: how a request to
       a ``@cache`` route was answered (the values of ``X-Cache``), or for
       ``source="app"`` whether ``CacheManager.get()`` / ``get_or_set()``
-      (and so ``@cached``) found the value.
+      (and so ``@cached``) found the value. A request is reported when its
+      handler raised too; a ``get_or_set()`` that waited for another caller
+      to compute the value is a hit.
     - ``store``: a response or value was written.
     - ``invalidate``: an entry was deleted by ``invalidate()`` or
       ``CacheManager.delete()``.
@@ -40,10 +44,12 @@ class CacheEvent:
 
     ``source`` is ``"http"`` for ``@cache`` and ``"app"`` for
     ``CacheManager`` and ``@cached``. ``key`` is the cache key, or None when
-    the backend was not consulted; it can hold user input, so it is not a
-    label for a metric. ``route`` is the path template of the route
-    (``/users/{user_id}``) for an HTTP event. ``duration`` is the seconds it
-    took to answer the request, on the events that answer one.
+    the backend was not consulted; it holds client input (the query string,
+    whatever a custom key builder puts in it), so it is not a label for a
+    metric and not something to log as it is. ``route`` is the path template
+    of the route (``/users/{user_id}``) for an event of a request to a
+    ``@cache`` route. ``duration`` is the seconds it took to answer the
+    request, on the events that answer one.
     """
 
     kind: EventKind
@@ -68,7 +74,16 @@ def set_event_handler(handler: EventHandler | None) -> None:
     incrementing a counter or recording a number. It must be a plain
     function. An exception it raises is logged and does not reach the
     request.
+
+    Raises:
+        TypeError: If ``handler`` is not callable, or is an ``async``
+            function: its coroutine would never be awaited.
     """
+    if handler is not None and (
+        not callable(handler) or _is_coroutine_callable(handler)
+    ):
+        msg = "the event handler must be a plain function taking the event"
+        raise TypeError(msg)
     global _handler  # noqa: PLW0603 - one process-wide hook, like logging's
     _handler = handler
 

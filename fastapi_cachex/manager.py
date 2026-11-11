@@ -510,11 +510,16 @@ class CacheManager:
         ``type_`` is passed only when given, so a subclass that overrides
         ``get()`` with the signature it had before 0.5.5 keeps working.
         """
-        # Muted: get_or_set reports its own hit or miss, once per call.
+        # Muted: get_or_set reports its own hit or miss, once per call. Every
+        # caller returns a value found here at once, so this is that hit.
         with _mute():
             if type_ is None:
-                return await self.get(key, default=_SENTINEL)
-            return await self.get(key, default=_SENTINEL, type_=type_)
+                cached = await self.get(key, default=_SENTINEL)
+            else:
+                cached = await self.get(key, default=_SENTINEL, type_=type_)
+        if cached is not _SENTINEL:
+            _emit("hit", "app", key)
+        return cached
 
     async def _compute_and_store(
         self,
@@ -523,6 +528,9 @@ class CacheManager:
         ttl: int | None,
         type_: Any = None,
     ) -> Any:
+        # This call computes the value: the miss. One that waits for another
+        # caller's value never gets here, and is reported as a hit.
+        _emit("miss", "app", key)
         value = factory()
         if inspect.isawaitable(value):
             value = await value
@@ -716,9 +724,7 @@ class CacheManager:
         )
         cached = await self._lookup(key, type_)
         if cached is not _SENTINEL:
-            _emit("hit", "app", key)
             return cached
-        _emit("miss", "app", key)
 
         use_lock = self.lock if lock is None else lock
         if not use_lock:

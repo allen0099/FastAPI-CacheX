@@ -1,10 +1,13 @@
 """``set_event_handler()`` is told what the cache does (#540)."""
 
+import asyncio
 import logging
 from typing import Any
 
 import pytest
+from fastapi import APIRouter
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Request
 from fastapi.testclient import TestClient
 
@@ -186,3 +189,77 @@ def test_removing_the_handler_stops_the_events(events: list[CacheEvent]) -> None
     _app().get("/items/7")
 
     assert events == []
+
+
+def test_the_route_keeps_the_prefix_it_was_included_or_mounted_under(
+    events: list[CacheEvent],
+) -> None:
+    """A router's own part alone would collide between routers."""
+    inner = APIRouter()
+
+    @inner.get("/items/{item_id}")
+    @cache(ttl=60)
+    async def item(item_id: int) -> dict[str, int]:
+        return {"id": item_id}
+
+    outer = APIRouter(prefix="/v1")
+    outer.include_router(inner, prefix="/shops/{shop}")
+    sub = FastAPI()
+    sub.include_router(inner)
+    app = FastAPI()
+    app.include_router(outer, prefix="/api")
+    app.mount("/sub", sub)
+    client = TestClient(app)
+
+    assert client.get("/api/v1/shops/acme/items/7").status_code == 200
+    assert client.get("/sub/items/7").status_code == 200
+
+    assert {event.route for event in events} == {
+        "/api/v1/shops/{shop}/items/{item_id}",
+        "/sub/items/{item_id}",
+    }
+
+
+def test_a_request_whose_handler_raised_is_still_reported(
+    events: list[CacheEvent],
+) -> None:
+    app = FastAPI()
+
+    @app.get("/gone")
+    @cache(ttl=60)
+    async def gone() -> None:
+        raise HTTPException(status_code=404)
+
+    assert TestClient(app).get("/gone").status_code == 404
+
+    assert [(e.kind, e.route) for e in events] == [("miss", "/gone")]
+    assert events[0].duration is not None
+
+
+async def test_callers_waiting_for_one_computation_are_hits(
+    events: list[CacheEvent],
+) -> None:
+    manager = CacheManager(BackendProxy.get())
+
+    async def slow() -> int:
+        await asyncio.sleep(0.01)
+        return 1
+
+    await asyncio.gather(*(manager.get_or_set("k", slow, ttl=60) for _ in range(5)))
+
+    assert sorted(_kinds(events)) == ["hit", "hit", "hit", "hit", "miss", "store"]
+
+
+@pytest.mark.parametrize("handler", ["not callable", 1])
+def test_a_handler_that_is_not_a_function_is_rejected(handler: Any) -> None:
+    with pytest.raises(TypeError, match="plain function"):
+        set_event_handler(handler)
+
+
+def test_an_async_handler_is_rejected() -> None:
+    """Its coroutine would never be awaited: nothing would be recorded."""
+
+    async def record(event: CacheEvent) -> None: ...
+
+    with pytest.raises(TypeError, match="plain function"):
+        set_event_handler(record)  # type: ignore[arg-type]

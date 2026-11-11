@@ -1117,22 +1117,25 @@ set_event_handler(record)
 
 | `kind` | When |
 |---|---|
-| `hit`, `miss`, `stale`, `refresh`, `bypass` | A GET or HEAD request to a `@cache` route was answered: the values of [`X-Cache`](#telling-a-hit-from-a-miss), reported whether or not `debug_header` is set. With `source="app"`, `hit` and `miss` say whether `CacheManager.get()` or `get_or_set()` (and so `@cached`) found the value. |
+| `hit`, `miss`, `stale`, `refresh`, `bypass` | A GET or HEAD request to a `@cache` route was answered: the values of [`X-Cache`](#telling-a-hit-from-a-miss), reported whether or not `debug_header` is set, and also when the handler raised. With `source="app"`, `hit` and `miss` say whether `CacheManager.get()` or `get_or_set()` (and so `@cached`) found the value; a `get_or_set()` that waited for another caller to compute the value is a `hit`. |
 | `store` | A response or a value was written. |
 | `invalidate` | An entry was deleted by `invalidate()`, `invalidate_path()` or `CacheManager.delete()`. |
 | `error` | A backend call of `@cache` failed and the request went on without the cache. |
 
 Each event has a `source` (`"http"` or `"app"`), the `key` (None when the
-backend was not consulted), for an HTTP event the `route` as its path template
-(`/users/{user_id}`), and on the events that answer a request the `duration`
-in seconds. Use `route` as a metric label, not `key`: a key holds the query
-string and other client input, and has no bound.
+backend was not consulted), for a request to a `@cache` route the `route` as
+its path template (`/api/users/{user_id}`, with the prefix of an included
+router or a mounted application), and on the events that answer a request the
+`duration` in seconds. Use `route` as a metric label, not `key`: a key holds
+the query string, other client input and whatever a custom key builder adds,
+and has no bound. For the same reason, do not log it as it is.
 
 The handler runs synchronously on the request's path, so keep it to
-incrementing a counter. It must be a plain function. An exception it raises
-is logged and does not reach the request. `set_event_handler(None)` removes
-it; while none is set, no event is built. `get_many()`, `set_many()`, `add()`,
-`increment()` and the `clear*` methods report nothing.
+incrementing a counter. It must be a plain function: an `async` one is
+rejected with `TypeError`. An exception it raises is logged and does not reach
+the request. `set_event_handler(None)` removes it; while none is set, no event
+is built. `add()`, `increment()`, `has()` and the `clear*` methods report
+nothing, and neither does a `CacheManager` call whose backend raised.
 
 ## Monitoring routes
 
