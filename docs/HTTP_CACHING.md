@@ -1120,10 +1120,10 @@ set_event_handler(record)
 | `hit`, `miss`, `stale`, `refresh`, `bypass` | A GET or HEAD request to a `@cache` route was answered: the values of [`X-Cache`](#telling-a-hit-from-a-miss), reported whether or not `debug_header` is set, and also when the handler raised. With `source="app"`, `hit` and `miss` say whether `CacheManager.get()` or `get_or_set()` (and so `@cached`) found the value; a `get_or_set()` that waited for another caller to compute the value is a `hit`. |
 | `store` | A response or a value was written. |
 | `invalidate` | An entry was deleted by `invalidate()`, `invalidate_path()` or `CacheManager.delete()`. |
-| `error` | A backend call failed. For `@cache`: whether the request then went on without the cache (`fail_open=True`) or failed with it. For `CacheManager` and `@cached`: the backend could not be reached (`BackendUnavailableError`, which is raised as before). |
+| `error` | A backend call failed. For `@cache`: any exception from the backend, whether the request then went on without the cache (`fail_open=True`) or failed with it. For `CacheManager` and `@cached`: only a backend that could not be reached (`BackendUnavailableError`, which is raised as before). |
 
 Each event has a `source` (`"http"` or `"app"`), the `key` (None when the
-backend was not consulted), for a request to a `@cache` route the `route` as
+backend was not consulted, or the call was not about one key), for a request to a `@cache` route the `route` as
 its path template (`/api/users/{user_id}`, with the prefix of an included
 router or a mounted application), and on the events that answer a request the
 `duration` in seconds. Use `route` as a metric label, not `key`: a key holds
@@ -1136,6 +1136,13 @@ rejected with `TypeError`. An exception it raises is logged and does not reach
 the request. `set_event_handler(None)` removes it; while none is set, no event
 is built. `add()`, `increment()`, `has()`, `get_many()`, `set_many()` and the
 `clear*` methods report nothing but such an `error`.
+
+On the application side an `error` means the server could not be reached: a
+refused or reset connection, a timeout. An error the server answers with (a
+read-only replica, out of memory, a value too large) raises as before and is
+not reported, and a backend of your own is reported only when it raises
+`BackendUnavailableError`. To alert on every failure of the application cache,
+watch the exceptions as well.
 
 ## Monitoring routes
 

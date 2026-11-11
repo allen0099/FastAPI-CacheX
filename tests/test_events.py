@@ -1,6 +1,7 @@
 """``set_event_handler()`` is told what the cache does (#540)."""
 
 import asyncio
+import inspect
 import logging
 from typing import Any
 
@@ -267,45 +268,75 @@ def test_an_async_handler_is_rejected() -> None:
 
 
 class _Unreachable(MemoryBackend):
-    """Every read and write fails as a server that cannot be reached does."""
+    """Every backend call fails as a server that cannot be reached does."""
 
-    async def get(self, key: str) -> CacheEntry | None:
-        raise BackendUnavailableError
+    def __getattribute__(self, name: str) -> Any:
+        value = super().__getattribute__(name)
+        if name.startswith("_") or not inspect.iscoroutinefunction(value):
+            return value
+        if name == "aclose":
+            return value
 
-    async def get_many(self, keys: Any) -> dict[str, CacheEntry]:
-        raise BackendUnavailableError
+        async def down(*args: Any, **kwargs: Any) -> Any:
+            raise BackendUnavailableError
 
-    async def set(self, key: str, value: CacheEntry, ttl: Any = None) -> None:
-        raise BackendUnavailableError
-
-    async def get_and_delete(self, key: str) -> CacheEntry | None:
-        raise BackendUnavailableError
+        return down
 
 
-async def test_cache_manager_reports_an_unreachable_backend_and_still_raises(
+_KEY_CALLS = {
+    "get": lambda m: m.get("user:1"),
+    "set": lambda m: m.set("user:1", 1),
+    "set by keyword": lambda m: m.set(key="user:1", value=1),
+    "add": lambda m: m.add("user:1", 1),
+    "delete": lambda m: m.delete("user:1"),
+    "increment": lambda m: m.increment("user:1"),
+    "has": lambda m: m.has("user:1"),
+    "get_or_set": lambda m: m.get_or_set("user:1", lambda: 1, ttl=60),
+}
+_OTHER_CALLS = {
+    "get_many": lambda m: m.get_many(["user:1", "user:2"]),
+    "set_many": lambda m: m.set_many({"user:1": 1}),
+    "clear_pattern": lambda m: m.clear_pattern("user:*"),
+    "clear_prefix": lambda m: m.clear_prefix("user:"),
+    # Goes through clear_prefix(): reported once all the same.
+    "clear": lambda m: m.clear(),
+}
+
+
+@pytest.mark.parametrize("call", _KEY_CALLS.values(), ids=list(_KEY_CALLS))
+async def test_a_call_about_one_key_reports_it_once_and_still_raises(
+    events: list[CacheEvent], call: Any
+) -> None:
+    with pytest.raises(BackendUnavailableError):
+        await call(CacheManager(_Unreachable()))
+
+    assert [(e.kind, e.source, e.key) for e in events] == [("error", "app", "user:1")]
+
+
+@pytest.mark.parametrize("call", _OTHER_CALLS.values(), ids=list(_OTHER_CALLS))
+async def test_a_call_about_several_keys_reports_once_without_a_key(
+    events: list[CacheEvent], call: Any
+) -> None:
+    with pytest.raises(BackendUnavailableError):
+        await call(CacheManager(_Unreachable()))
+
+    assert [(e.kind, e.source, e.key) for e in events] == [("error", "app", None)]
+
+
+async def test_a_failure_inside_a_factory_is_reported_by_the_call_that_failed(
     events: list[CacheEvent],
 ) -> None:
-    manager = CacheManager(_Unreachable())
+    """Not a second time by the ``get_or_set`` around it."""
+    healthy = CacheManager(BackendProxy.get())
+    down = CacheManager(_Unreachable())
+
+    async def load() -> Any:
+        return await down.get("inner")
 
     with pytest.raises(BackendUnavailableError):
-        await manager.get("user:1")
-    with pytest.raises(BackendUnavailableError):
-        await manager.set("user:1", 1)
-    with pytest.raises(BackendUnavailableError):
-        await manager.delete("user:1")
-    with pytest.raises(BackendUnavailableError):
-        await manager.get_many(["user:1", "user:2"])
-    with pytest.raises(BackendUnavailableError):
-        # Reads through get(): reported once, not once per layer.
-        await manager.get_or_set("user:1", lambda: 1, ttl=60)
+        await healthy.get_or_set("outer", load, ttl=60)
 
-    assert [(e.kind, e.source, e.key) for e in events] == [
-        ("error", "app", "user:1"),
-        ("error", "app", "user:1"),
-        ("error", "app", "user:1"),
-        ("error", "app", None),
-        ("error", "app", "user:1"),
-    ]
+    assert [(e.kind, e.key) for e in events] == [("miss", "outer"), ("error", "inner")]
 
 
 async def test_a_cached_function_reports_an_unreachable_backend(
@@ -321,18 +352,26 @@ async def test_a_cached_function_reports_an_unreachable_backend(
     assert [(e.kind, e.source) for e in events] == [("error", "app")]
 
 
+class _ReadOnly(MemoryBackend):
+    """Reads work, writes fail."""
+
+    async def set(self, key: str, value: CacheEntry, ttl: Any = None) -> None:
+        raise BackendUnavailableError
+
+
+@pytest.mark.parametrize("backend_class", [_Unreachable, _ReadOnly])
 async def test_a_route_that_fails_closed_reports_the_error_too(
-    events: list[CacheEvent],
+    events: list[CacheEvent], backend_class: type[MemoryBackend]
 ) -> None:
-    backend = _Unreachable()
+    """On the read, and on the write after the handler ran."""
+    backend = backend_class()
     BackendProxy.set(backend)
-    client = _app(fail_open=False)
-    client = TestClient(client.app, raise_server_exceptions=False)
+    client = TestClient(_app(fail_open=False).app, raise_server_exceptions=False)
     try:
         assert client.get("/items/7").status_code == 500
     finally:
         await backend.aclose()
 
-    assert ("error", "http", KEY, "/items/{item_id}") in [
-        (e.kind, e.source, e.key, e.route) for e in events
-    ]
+    assert [
+        (e.kind, e.source, e.key, e.route) for e in events if e.kind == "error"
+    ] == [("error", "http", KEY, "/items/{item_id}")]

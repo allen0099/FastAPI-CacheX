@@ -39,14 +39,17 @@ class CacheEvent:
     - ``store``: a response or value was written.
     - ``invalidate``: an entry was deleted by ``invalidate()`` or
       ``CacheManager.delete()``.
-    - ``error``: a backend call failed. For ``@cache``, whether the request
-      then went on without the cache (``fail_open``) or failed with it. For
-      ``CacheManager`` and ``@cached``, when the backend could not be reached
-      (``BackendUnavailableError``); the exception is raised as before.
+    - ``error``: a backend call failed. For ``@cache``, any exception from
+      the backend, whether the request then went on without the cache
+      (``fail_open``) or failed with it. For ``CacheManager`` and
+      ``@cached``, only a backend that could not be reached
+      (``BackendUnavailableError``, raised as before): an error the server
+      answered with, or another exception of a backend of your own, is not
+      reported there.
 
     ``source`` is ``"http"`` for ``@cache`` and ``"app"`` for
     ``CacheManager`` and ``@cached``. ``key`` is the cache key, or None when
-    the backend was not consulted; it holds client input (the query string,
+    the backend was not consulted or the call was not about one key; it holds client input (the query string,
     whatever a custom key builder puts in it), so it is not a label for a
     metric and not something to log as it is. ``route`` is the path template
     of the route (``/users/{user_id}``) for an event of a request to a

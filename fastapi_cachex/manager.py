@@ -38,6 +38,7 @@ from .backends.base import validate_ttl
 from .cache_key import GLOB_SPECIAL
 from .events import _emit
 from .events import _mute
+from .events import _muted
 from .exceptions import BackendUnavailableError
 from .exceptions import LockTimeoutError
 from .lock import CacheLock
@@ -178,14 +179,31 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
+# The methods whose first argument is the one key the call is about.
+_KEYED = frozenset({"set", "add", "delete", "increment", "has", "get_or_set"})
+# Set on an exception once it has been reported, so that a call made inside
+# another (``clear()`` through ``clear_prefix()``, a factory reading through
+# the same manager) is reported by the innermost one only.
+_REPORTED = "_cachex_reported"
+
+
+def _report_backend_error(error: BackendUnavailableError, key: str | None) -> None:
+    """Emit the ``error`` event for ``error``, once per exception (#540)."""
+    if _muted.get() or getattr(error, _REPORTED, False):
+        # Muted: get_or_set is reading through get(), and reports it itself.
+        return
+    setattr(error, _REPORTED, True)
+    _emit("error", "app", key)
+
+
 def _reports_backend_errors(
     method: Callable[Concatenate["CacheManager", _P], Coroutine[Any, Any, _R]],
 ) -> Callable[Concatenate["CacheManager", _P], Coroutine[Any, Any, _R]]:
     """Report a backend that could not be reached as an ``error`` event (#540).
 
-    The exception is raised as before. The key is the method's first
-    argument when that is one key.
+    The exception is raised as before.
     """
+    keyed = method.__name__ in _KEYED
 
     @functools.wraps(method)
     async def wrapper(
@@ -193,9 +211,9 @@ def _reports_backend_errors(
     ) -> _R:
         try:
             return await method(self, *args, **kwargs)
-        except BackendUnavailableError:
-            key = args[0] if args and isinstance(args[0], str) else kwargs.get("key")
-            _emit("error", "app", key if isinstance(key, str) else None)
+        except BackendUnavailableError as e:
+            key = (args[0] if args else kwargs.get("key")) if keyed else None
+            _report_backend_error(e, key if isinstance(key, str) else None)
             raise
 
     return wrapper
@@ -319,10 +337,10 @@ class CacheManager:
         """
         try:
             cached = await self.backend.get(self._cache_key(key))
-        except BackendUnavailableError:
+        except BackendUnavailableError as e:
             # Inline, not ``_reports_backend_errors``: the overloads above
             # need the implementation's own signature.
-            _emit("error", "app", key)
+            _report_backend_error(e, key)
             raise
         if cached is None:
             _emit("miss", "app", key)
