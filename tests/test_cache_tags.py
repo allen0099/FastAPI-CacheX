@@ -323,3 +323,42 @@ def test_tag_names_are_distinct_and_in_a_stable_order() -> None:
     assert validate_tags(["b", "a", "b"]) == ("a", "b")
     assert validate_tags(name for name in ("z", "y")) == ("y", "z")
     assert validate_tags(None) == ()
+
+
+def _users_app(**cache_kwargs: Any) -> TestClient:
+    """One deploy of a route; the deploys share the backend."""
+    app = FastAPI()
+
+    @app.get("/users/{user_id}")
+    @cache(ttl=60, debug_header=True, **cache_kwargs)
+    async def user(user_id: int) -> dict[str, int]:
+        return {"id": user_id}
+
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("before", [{}, {"tags": ["people"]}], ids=["none", "renamed"])
+def test_an_entry_stored_before_the_route_had_its_tags_is_not_served(
+    before: dict[str, Any],
+) -> None:
+    """It could not be invalidated by them: it is rendered again, tagged."""
+    _users_app(**before).get("/users/1")
+    deployed = _users_app(tags=["users"])
+
+    assert _x_cache(deployed, "/users/1") == "MISS"
+    assert _x_cache(deployed, "/users/1") == "HIT"
+
+
+def test_a_tags_function_runs_once_per_request() -> None:
+    calls: list[str] = []
+
+    def tags(request: Request) -> list[str]:
+        calls.append(request.url.path)
+        return ["users"]
+
+    client = _users_app(tags=tags)
+
+    client.get("/users/1")  # a miss: read, then stored
+    assert calls == ["/users/1"]
+    client.get("/users/1")  # a hit
+    assert calls == ["/users/1", "/users/1"]

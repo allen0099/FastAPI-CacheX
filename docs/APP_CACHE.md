@@ -215,6 +215,11 @@ How it works, and what follows from it:
   (`get_many`), and so does a write; the first write under a tag also stores
   its version. Values without tags pay nothing.
 - `has()` is false for an invalidated value, and `add()` replaces it.
+- Only a value written with `tags=` is covered. One written before the tags
+  were added, or under other names, is served until its TTL: delete such
+  keys, or wait one TTL, after adding or renaming tags. (`@cache` routes
+  handle this themselves; a plain `get()` cannot know which tags a key should
+  have.)
 - A version is created when a value is stored under the tag, not when one is
   looked up: a call that stores nothing leaves nothing behind.
 - Invalidated values are not deleted; they leave through their TTL, so give

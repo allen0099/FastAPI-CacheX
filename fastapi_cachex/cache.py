@@ -745,6 +745,7 @@ class _Call:
     # until then, and when they could not be read: a response of a tagged
     # route is not stored without them.
     tags_before: _tags.VersionsBefore | None = None
+    tag_names: tuple[str, ...] | None = None
     flight: _Flight = field(default_factory=_Flight)
     outcome: str | None = None
 
@@ -1003,8 +1004,7 @@ class _Route:
             await self._after_running_miss(call, backend, cache_key)
         else:
             entry = await self._read(call, backend, cache_key)
-        if entry is not None and self._is_gone(entry):
-            entry = None
+        entry = self._usable(call, entry)
         stale = entry is not None and self._is_stale(entry)
         if entry is not None and not self.no_cache and not stale:
             return self._hit(call, entry, cache_key, cache_control)
@@ -1086,6 +1086,33 @@ class _Route:
             return not_modified
         return self._send(response, cache_control)
 
+    def _tag_names(self, call: _Call) -> tuple[str, ...]:
+        """The route's tags for this request; a tags function runs once."""
+        if call.tag_names is None:
+            if callable(self.tags):
+                try:
+                    call.tag_names = _tags.validate_tags(self.tags(call.request))
+                except (TypeError, ValueError) as e:
+                    msg = f"the tags function of this route returned a bad value: {e}"
+                    raise CacheXError(msg) from e
+            else:
+                call.tag_names = self.tags
+        return call.tag_names
+
+    def _usable(self, call: _Call, entry: CacheEntry | None) -> CacheEntry | None:
+        """``entry``, unless it is too old to serve or lacks the route's tags.
+
+        An entry stored before the route had these tags (before ``tags=`` was
+        added, or under other names) could not be invalidated by them, so it
+        is not served: the handler runs and stores it again, tagged.
+        """
+        if entry is None or self._is_gone(entry):
+            return None
+        if self.tags and {name for name, _ in entry.tags} != set(self._tag_names(call)):
+            logger.debug("Entry lacks the route's tags; path=%s", call.request.url.path)
+            return None
+        return entry
+
     async def _read_tag_versions(
         self, call: _Call, backend: BaseCacheBackend, cache_key: str
     ) -> None:
@@ -1095,17 +1122,10 @@ class _Route:
         invalidation has since replaced must not be stored under the version
         that invalidation set.
         """
-        if not self.tags:
+        names = self._tag_names(call)
+        if not names:
             call.tags_before = {}
             return
-        if callable(self.tags):
-            try:
-                names = _tags.validate_tags(self.tags(call.request))
-            except (TypeError, ValueError) as e:
-                msg = f"the tags function of this route returned a bad value: {e}"
-                raise CacheXError(msg) from e
-        else:
-            names = self.tags
         try:
             call.tags_before = await _tags.versions_before(backend, names)
         except Exception as e:
@@ -1160,6 +1180,7 @@ class _Route:
     ) -> None:
         """Run the handler and store its response, unless the entry is fresh."""
         entry, _ = await _read_entry(backend, cache_key, call.request, fail_open=True)
+        entry = self._usable(call, entry)
         if entry is not None and not self._is_stale(entry):
             # A request served stale just before this one already replaced it.
             return

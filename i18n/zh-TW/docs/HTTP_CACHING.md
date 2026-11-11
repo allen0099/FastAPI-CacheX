@@ -590,6 +590,7 @@ async def update_user(user_id: int):
 
 - 帶有 tag 的路由命中時會多一次批次的後端讀取；沒有 tag 的路由沒有任何額外成本。
 - 失效的項目不會被刪除，而是隨 `ttl` 到期。
+- 在路由有這些 tag 之前就儲存的項目（加上 `tags=` 之前，或以其他名稱儲存的）不會被提供：handler 會執行，並帶著 tag 重新儲存。因此從第一次帶 tag 部署起、所有 worker 都跑新版之後，就可以依賴 `invalidate_tags()`。
 - tag 的版本是在有回應以它儲存時才建立的。回應沒有被儲存的請求（404、設定了 cookie）不會留下任何東西，所以無法利用由 URL 組成的 tag 來塞滿後端。
 - 版本是在 handler 執行之前讀取的，所以若資料在產生回應期間改變，該回應在失效之後不會被提供。
 - 這些 tag 與應用層快取共用：見[用 tag 讓一組值失效](APP_CACHE.md#group-invalidation-on-memcached)，其中也說明了 tag 的版本遺失時，以及從沒有 tag 的版本升級期間會發生什麼事。
