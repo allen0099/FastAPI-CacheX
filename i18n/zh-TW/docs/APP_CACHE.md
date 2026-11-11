@@ -52,7 +52,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 ```
 <!-- fmt:on -->
 
-- 被裝飾的函式一律要 `await`，即使它原本是 `def`（同步函式會在事件迴圈上執行，和 `get_or_set()` 的 factory 一樣）。它的結果會經過 manager 的 [JSON 往返](#json-round-trip)，因此必須可 JSON 序列化，拿回來的也是 JSON 解碼後的形式，第一次呼叫也一樣。
+- 被裝飾的函式一律要 `await`，即使它原本是 `def`（同步函式會在事件迴圈上執行，和 `get_or_set()` 的 factory 一樣）。它的結果會經過 manager 的 [JSON 往返](#json-round-trip)，因此拿回來的是 JSON 解碼後的形式，第一次呼叫也一樣；若要[型別化讀取](#typed-reads)，請傳入 `type_=`。
 - `ttl` 接受秒數或 `timedelta`；未設定時套用 manager 的 `default_ttl`。`manager=` 指定要透過哪個 `CacheManager` 儲存；未設定時使用應用程式的那一個（也就是 `AppCache` 回傳的），並在每次呼叫時解析，因此在啟動時以 `CacheManagerProxy.set()` 註冊的 manager 也會被採用。`lock=False` 讓這個函式略過 manager 的 [cache stampede 保護](#stampede-protection)。
 - 未設定 `key=` 時，鍵是 `module.qualname:` 加上引數的 SHA-256；引數會先依函式簽章綁定並套用預設值，因此 `load(1)`、`load(user_id=1)` 與 `load(1, locale="en")` 共用同一個項目。引數以 JSON 雜湊，因此必須可 JSON 序列化；帶有無法序列化之引數的呼叫會拋出 `CacheXError`。`key="user:{user_id}"` 是以引數名稱填入的 `str.format` 樣板（不含欄位的字串就是固定的鍵），`key=lambda self, user_id: f"user:{user_id}"` 則會以引數呼叫：方法的 `self` 無法雜湊，或引數是模型時，請用其中一種。manager 的 `key_prefix` 會加在前面，和它儲存的每個鍵一樣。
 - `fn.cache_key(*args, **kwargs)` 是該次呼叫使用的鍵（不含前綴），`await fn.invalidate(*args, **kwargs)` 則丟棄它的值，並回傳原本是否有快取。在方法上，`obj.load.invalidate(1)` 會和呼叫時一樣綁定 `obj`。
@@ -67,7 +67,8 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
   if value is missing:
       ...  # 沒有快取；快取的 None 會以 None 回傳
   ```
-- `set()` 遇到無法 JSON 序列化的值時，會讓 `TypeError` 直接往外拋出。
+- `set()` 可儲存 JSON 能編碼的值，以及 pydantic 能轉成 JSON 的值（模型、dataclass、`datetime`、`Decimal`、`UUID`、set；見 [JSON 往返](#json-round-trip)）。其他的值會拋出 `TypeError`。
+- `increment(key, delta=1, ttl=None)` 以原子操作累加計數器並回傳新的值，適合配額與速率限制。它是後端的 `increment()` 加上 manager 的前綴：不存在的鍵視為 0，`ttl` 在建立計數器時套用，`get()` 會把計數器讀成 `int`。以 `set()` 寫入值的鍵不是計數器，會拋出 `CacheXError`。
 - `get_or_set()` 預設使用 cache stampede 保護（`lock=True`，可針對單次呼叫或以 `CacheManager(lock=...)` 全域設定），避免多次並行未命中時同時執行 `factory`，若等待超時則具備直接計算的優雅降級回退。分散式鎖的鍵名格式為 `lock:<prefix><key>`（預設為 `lock:cache:user:42`）。
 - `get_or_set()` 在未命中與命中時都回傳經 JSON 解碼後的值（見 [JSON 往返](#json-round-trip)），因此兩條路徑的結果相同。
 - `add()` 只在鍵尚未被占用時寫入值，並回傳是否有寫入。檢查與寫入是同一個後端原子操作（`set_if_absent`），因此適合「每個鍵只做一次」的工作，例如 webhook 或電子郵件的去重。已過期的鍵視為未被占用；存放無法解碼之值的鍵則不算，即使 `get()` 會把它當成未命中。
@@ -155,15 +156,57 @@ manager = CacheManager(lock=False)  # 每次並行未命中都各自計算
 
 ## JSON 往返 {#json-round-trip}
 
-值以 JSON 儲存（`json.dumps` 的預設設定），讀取時以 `json.loads` 解碼，因此取回的是 JSON 解碼後的形式，而不是你存入的物件：
+值以 JSON 儲存，讀取時以 `json.loads` 解碼，因此取回的是 JSON 解碼後的形式，而不是你存入的物件。`json.dumps` 無法編碼的值會先依 pydantic 的寫法轉換（`pydantic_core.to_jsonable_python`）；0.5.5 之前則會拋出 `TypeError`：
 
 | 存入 | 讀回 |
 |---|---|
 | `dict`、`list`、`str`、`int`、`float`、`bool`、`None` | 不變 |
 | `tuple` | `list`：`(1, 2)` → `[1, 2]` |
 | 鍵為 `int`／`float`／`bool`／`None` 的 `dict` | 字串鍵：`{1: "a"}` → `{"1": "a"}` |
-| `datetime`、`Decimal`、`UUID`、`set`、pydantic 模型…… | `TypeError`，不會儲存任何內容 |
+| pydantic 模型、dataclass | `dict`，即 `model_dump(mode="json")` 的結果 |
+| `datetime`、`date`、`UUID`、`Decimal` | `str`：ISO 8601、`"1.50"` |
+| `set`、`frozenset` | `list` |
+| `Enum`、`Path`、`timedelta` 以及 pydantic 能序列化的其他型別 | 它們的 JSON 形式：enum 的值、`"/tmp/x"`、`"PT1M30S"` |
+| `bytes`、generator 或其他 iterator、`SecretStr`（作為模型的欄位時也一樣）、你自己的類別 | `TypeError`，不會儲存任何內容 |
 
-`get_or_set()` 在未命中時也套用同樣的規則：它將 `factory` 的值編碼一次、儲存這些位元組，並回傳其解碼結果，因此第一次呼叫的回傳值與之後命中時完全相同。JSON 無法編碼的值要等到 `factory` 執行後才會拋出 `TypeError`，因為在那之前這個值還不存在；請先轉換，例如 `lambda: model.model_dump(mode="json")` 或 `lambda: when.isoformat()`。
+`get_or_set()` 在未命中時也套用同樣的規則：它將 `factory` 的值編碼一次、儲存這些位元組，並回傳其解碼結果，因此第一次呼叫的回傳值與之後命中時完全相同。無法編碼的值要等到 `factory` 執行後才會拋出 `TypeError`，因為在那之前這個值還不存在。
+
+### 型別化讀取 {#typed-reads}
+
+若想取回物件而不是它的 JSON 形式，請指定型別。`get()`、`get_or_set()` 與 `@cached` 都接受 `type_=`（pydantic 的 `TypeAdapter` 接受的任何型別），並把解碼後的值驗證成該型別：
+
+```python
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from fastapi_cachex import AppCache
+
+
+class User(BaseModel):
+    id: int
+    joined: datetime
+
+
+async def read_user(user_id: int, cache: AppCache) -> User:
+    # 以 JSON 儲存；命中與未命中時都會驗證回 User。
+    return await cache.get_or_set(
+        f"user:{user_id}", lambda: load_user(user_id), ttl=300, type_=User
+    )
+
+
+await cache.set("user:1", user)  # 模型會以 model_dump(mode="json") 的形式儲存
+await cache.get("user:1")  # {"id": 1, "joined": "2026-01-02T03:04:05Z"}
+await cache.get("user:1", type_=User)  # User(id=1, joined=datetime(...))
+await cache.get("users", type_=list[User])
+```
+
+- 存入的值若不符合型別（例如在新增欄位之前寫入的），會被當成無法解碼的值：`get()` 記錄一筆警告並回傳預設值，`get_or_set()` 則重新執行 `factory` 並覆寫它。
+- 若 `factory` 回傳的值不符合 `type_`，`get_or_set()` 會拋出 pydantic 的 `ValidationError`。
+- `@cached` 不會從函式的型別註記讀取型別；請傳入 `type_=`。未傳入時，函式回傳的仍是 JSON 形式，與之前相同。
+- 存入的 `None` 不符合 `type_=User`。值可能不存在時，請明確寫出：`type_=User | None`。
+- 帶有 `SecretStr` 或 `SecretBytes` 欄位的模型或 dataclass（不論巢狀多深）會被拒絕並拋出 `TypeError`。pydantic 會把該欄位寫成 `"**********"`，型別化讀取之後就會交回一個機密值是這串遮罩的模型。請排除該欄位（`user.model_dump(mode="json", exclude={"password"})`），或改為快取你自己組出的 `dict`。
+- pydantic 的 `ValidationError` 會引用它拒絕的值，因此 `factory` 結果不符時拋出的例外可能把該值寫進你的 log。
+- 每次讀取都會執行驗證。對於經常讀取的大型值，選擇模型而非單純的 `dict` 之前請先量測。
 
 完整的方法清單請見 [API 參考](https://fastapi-cachex.readthedocs.io/en/stable/api/cache-manager/)（英文）。

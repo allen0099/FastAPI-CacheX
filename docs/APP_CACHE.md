@@ -59,8 +59,8 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
 - The decorated function is always `await`-ed, even if it was `def` (a sync
   function then runs on the event loop, as a `get_or_set()` factory does).
   Its result goes through the manager's [JSON round-trip](#json-round-trip),
-  so it must be JSON-serializable and comes back as JSON gives it, on the
-  first call too.
+  so it comes back as JSON gives it, on the first call too; pass `type_=` for
+  a [typed read](#typed-reads).
 - `ttl` takes seconds or a `timedelta`; without it the manager's
   `default_ttl` applies. `manager=` names the `CacheManager` to store
   through; without it the application's is used (what `AppCache` returns),
@@ -97,7 +97,15 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
   if value is missing:
       ...  # not cached; a cached None comes back as None
   ```
-- `set()` lets `TypeError` propagate for values that are not JSON-serializable.
+- `set()` stores what JSON can encode, and what pydantic can turn into JSON
+  (models, dataclasses, `datetime`, `Decimal`, `UUID`, sets; see
+  [JSON round-trip](#json-round-trip)). Any other value raises `TypeError`.
+- `increment(key, delta=1, ttl=None)` adds to a counter atomically and returns
+  its new value, for quotas and rate limits. It is the backend's `increment()`
+  under the manager's prefix: a missing key counts as 0, `ttl` applies when
+  the counter is created, and `get()` reads the counter as an `int`. A key
+  that holds a value written with `set()` is not a counter and raises
+  `CacheXError`.
 - `get_or_set()` uses stampede protection by default (`lock=True`, per call
   or manager-wide with `CacheManager(lock=...)`), preventing concurrent misses
   from running `factory` simultaneously, with graceful fallback to computing
@@ -233,22 +241,76 @@ Waiters poll with the backoff above: about five polls in the first second, then 
 
 ## JSON round-trip
 
-Values are stored as JSON (`json.dumps` with its defaults) and read back with
-`json.loads`, so what you get back is the JSON-decoded form, not the object you
-stored:
+Values are stored as JSON and read back with `json.loads`, so what you get
+back is the JSON-decoded form, not the object you stored. A value `json.dumps`
+cannot encode is first converted the way pydantic writes it
+(`pydantic_core.to_jsonable_python`); before 0.5.5 it raised `TypeError`:
 
 | Stored | Read back |
 |---|---|
 | `dict`, `list`, `str`, `int`, `float`, `bool`, `None` | unchanged |
 | `tuple` | `list`: `(1, 2)` → `[1, 2]` |
 | `dict` with `int`/`float`/`bool`/`None` keys | string keys: `{1: "a"}` → `{"1": "a"}` |
-| `datetime`, `Decimal`, `UUID`, `set`, a pydantic model, … | `TypeError`, nothing stored |
+| a pydantic model, a dataclass | `dict`, as `model_dump(mode="json")` gives |
+| `datetime`, `date`, `UUID`, `Decimal` | `str`: ISO 8601, `"1.50"` |
+| `set`, `frozenset` | `list` |
+| `Enum`, `Path`, `timedelta` and the other types pydantic serialises | their JSON form: the enum's value, `"/tmp/x"`, `"PT1M30S"` |
+| `bytes`, a generator or other iterator, `SecretStr` (also as a field of a model), your own class | `TypeError`, nothing stored |
 
 `get_or_set()` applies this on a miss too: it encodes the factory's value once,
 stores those bytes and returns them decoded, so the first call returns exactly
-what later hits return. A value JSON cannot encode raises `TypeError` only
-after `factory` has run, since the value doesn't exist before; convert it
-first, e.g. `lambda: model.model_dump(mode="json")` or
-`lambda: when.isoformat()`.
+what later hits return. A value that cannot be encoded raises `TypeError` only
+after `factory` has run, since the value doesn't exist before.
+
+### Typed reads {#typed-reads}
+
+To get the object back instead of its JSON form, name the type. `get()`,
+`get_or_set()` and `@cached` take `type_=`, anything pydantic's `TypeAdapter`
+accepts, and validate the decoded value into it:
+
+```python
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from fastapi_cachex import AppCache
+
+
+class User(BaseModel):
+    id: int
+    joined: datetime
+
+
+async def read_user(user_id: int, cache: AppCache) -> User:
+    # Stored as JSON; validated back into a User on a hit and on a miss.
+    return await cache.get_or_set(
+        f"user:{user_id}", lambda: load_user(user_id), ttl=300, type_=User
+    )
+
+
+await cache.set("user:1", user)  # a model is stored as model_dump(mode="json")
+await cache.get("user:1")  # {"id": 1, "joined": "2026-01-02T03:04:05Z"}
+await cache.get("user:1", type_=User)  # User(id=1, joined=datetime(...))
+await cache.get("users", type_=list[User])
+```
+
+- A stored value that does not fit the type (written before a field was added,
+  say) is treated like an undecodable one: `get()` logs a warning and returns
+  the default, and `get_or_set()` runs `factory` again and overwrites it.
+- If the value `factory` returns does not fit `type_`, `get_or_set()` raises
+  pydantic's `ValidationError`.
+- `@cached` does not read the type from the function's annotation; pass
+  `type_=` to it. Without it the function returns the JSON form, as before.
+- A stored `None` does not fit `type_=User`. For a value that may be absent,
+  name it: `type_=User | None`.
+- A model or dataclass with a `SecretStr` or `SecretBytes` field, at any
+  depth, is refused with `TypeError`. pydantic would write the field as
+  `"**********"`, and a typed read would then hand back a model whose secret
+  is that mask. Exclude the field (`user.model_dump(mode="json",
+  exclude={"password"})`) or cache a `dict` you build yourself.
+- pydantic's `ValidationError` quotes the value it rejected, so the one raised
+  for a `factory` result can put that value into your logs.
+- Validation runs on every read. For large values read often, measure before
+  choosing a model over the plain `dict`.
 
 The full method list is in the [API reference](api/cache-manager.md).

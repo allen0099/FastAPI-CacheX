@@ -1,20 +1,32 @@
 """Tests for CacheManager application-level caching."""
 
 import asyncio
+import dataclasses
 import logging
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
+from decimal import Decimal
 from functools import partial
+from typing import Annotated
 from typing import Any
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import SecretStr
+from pydantic import ValidationError
 
 from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.dependencies import get_app_cache
 from fastapi_cachex.exceptions import BackendNotFoundError
+from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import LockTimeoutError
 from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.manager import CacheManager
@@ -394,7 +406,7 @@ async def test_add_non_json_serializable_raises_type_error(
 ) -> None:
     """add() raises TypeError like set(), and leaves the key free."""
     with pytest.raises(TypeError):
-        await cache_manager.add("event:1", {1, 2, 3})
+        await cache_manager.add("event:1", object())
 
     assert await cache_manager.has("event:1") is False
 
@@ -584,7 +596,7 @@ async def test_set_non_json_serializable_raises_type_error(
 ) -> None:
     """set() propagates TypeError for a non-JSON-serializable value."""
     with pytest.raises(TypeError):
-        await cache_manager.set("key", {1, 2, 3})
+        await cache_manager.set("key", object())
 
 
 async def test_get_with_corrupted_backend_content_returns_default(
@@ -1502,3 +1514,271 @@ async def test_get_or_set_keeps_an_explicit_manager_lock(
 
     assert list(results) == [1, 1]
     assert calls == (1 if lock else 2)
+
+
+# --- pydantic values, typed reads and counters (#249) ---------------------------
+
+
+class _User(BaseModel):
+    id: int
+    joined: datetime
+    tags: frozenset[str] = frozenset()
+
+
+_ALICE = _User(id=1, joined=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc))
+
+
+async def test_values_pydantic_can_write_are_stored_as_their_json_form(
+    cache_manager: CacheManager,
+) -> None:
+    """A model, a datetime, a Decimal, a UUID and a set no longer raise."""
+    await cache_manager.set(
+        "mixed",
+        {
+            "user": _ALICE,
+            "price": Decimal("1.50"),
+            "id": UUID(int=1),
+            "seen": {1},
+        },
+    )
+
+    assert await cache_manager.get("mixed") == {
+        "user": {"id": 1, "joined": "2026-01-02T03:04:05Z", "tags": []},
+        "price": "1.50",
+        "id": "00000000-0000-0000-0000-000000000001",
+        "seen": [1],
+    }
+
+
+async def test_get_with_a_type_returns_the_typed_value(
+    cache_manager: CacheManager,
+) -> None:
+    await cache_manager.set("user:1", _ALICE)
+    await cache_manager.set("users", [_ALICE, _ALICE])
+    await cache_manager.set("when", _ALICE.joined)
+
+    assert await cache_manager.get("user:1", type_=_User) == _ALICE
+    assert await cache_manager.get("users", type_=list[_User]) == [_ALICE, _ALICE]
+    assert await cache_manager.get("when", type_=datetime) == _ALICE.joined
+    # Without a type the JSON form comes back, as before.
+    assert isinstance(await cache_manager.get("user:1"), dict)
+    assert await cache_manager.get("missing", "fallback", type_=_User) == "fallback"
+
+
+async def test_a_stored_value_that_does_not_fit_the_type_is_a_miss(
+    cache_manager: CacheManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Written before a field was added, say: the default, and a digest in the log."""
+    await cache_manager.set("user:alice@example.com", {"id": 1})
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.manager"):
+        value = await cache_manager.get(
+            "user:alice@example.com", "fallback", type_=_User
+        )
+
+    assert value == "fallback"
+    assert log_ref("user:alice@example.com") in caplog.text
+    assert "alice@example.com" not in caplog.text
+
+
+async def test_get_or_set_with_a_type_is_typed_on_a_miss_and_on_a_hit(
+    cache_manager: CacheManager,
+) -> None:
+    calls = 0
+
+    def factory() -> _User:
+        nonlocal calls
+        calls += 1
+        return _ALICE
+
+    first = await cache_manager.get_or_set("user:1", factory, type_=_User)
+    second = await cache_manager.get_or_set("user:1", factory, type_=_User)
+
+    assert first == second == _ALICE
+    assert calls == 1
+
+
+@pytest.mark.parametrize("lock", [True, False])
+async def test_get_or_set_recomputes_a_value_that_does_not_fit_the_type(
+    cache_manager: CacheManager, lock: bool
+) -> None:
+    await cache_manager.set("user:1", {"id": 1})
+
+    value = await cache_manager.get_or_set(
+        "user:1", lambda: _ALICE, type_=_User, lock=lock
+    )
+
+    assert value == _ALICE
+    assert await cache_manager.get("user:1", type_=_User) == _ALICE
+
+
+async def test_get_or_set_raises_when_the_factory_value_does_not_fit_the_type(
+    cache_manager: CacheManager,
+) -> None:
+    with pytest.raises(ValidationError):
+        await cache_manager.get_or_set("user:1", lambda: {"id": 1}, type_=_User)
+
+
+async def test_a_get_override_without_type_still_serves_get_or_set(
+    memory_backend: MemoryBackend,
+) -> None:
+    """A subclass written before `type_` existed keeps working."""
+
+    class Mine(CacheManager):
+        async def get(self, key: str, default: Any = None) -> Any:  # type: ignore[override]
+            return await super().get(key, default)
+
+    manager = Mine(backend=memory_backend)
+
+    assert await manager.get_or_set("k", lambda: 1) == 1
+    assert await manager.get_or_set("k", lambda: 2) == 1
+
+
+async def test_increment_counts_under_the_managers_prefix(
+    cache_manager: CacheManager,
+) -> None:
+    assert await cache_manager.increment("hits") == 1
+    assert await cache_manager.increment("hits", 4) == 5
+    assert await cache_manager.increment("hits", -2) == 3
+
+    # Readable and removable like any other value of this manager.
+    assert await cache_manager.get("hits") == 3
+    assert await cache_manager.has("hits") is True
+    key = f"{cache_manager.key_prefix}hits"
+    assert await cache_manager.backend.get(key) is not None
+    assert await cache_manager.delete("hits") is True
+    assert await cache_manager.increment("hits") == 1
+
+
+async def test_increment_applies_the_ttl_or_the_default_ttl(
+    memory_backend: MemoryBackend,
+) -> None:
+    manager = CacheManager(backend=memory_backend, default_ttl=30)
+
+    await manager.increment("a")
+    await manager.increment("b", ttl=timedelta(minutes=5))
+
+    now = time.time()
+    a, b = (
+        memory_backend.cache["cache:a"].expiry,
+        memory_backend.cache["cache:b"].expiry,
+    )
+    assert a is not None
+    assert b is not None
+    assert 25 < a - now <= 30
+    assert 295 < b - now <= 300
+
+
+async def test_increment_refuses_a_key_that_holds_another_value(
+    cache_manager: CacheManager,
+) -> None:
+    await cache_manager.set("name", "alice")
+
+    with pytest.raises(CacheXError):
+        await cache_manager.increment("name")
+    with pytest.raises(TypeError):
+        await cache_manager.increment("n", 1.5)  # type: ignore[arg-type]
+
+
+async def test_a_type_that_cannot_be_hashed_is_still_accepted(
+    memory_backend: MemoryBackend,
+) -> None:
+    """The adapters are kept in a cache keyed on the type; this one cannot be a key."""
+    manager = CacheManager(backend=memory_backend)
+    unhashable = Annotated[int, ["metadata"]]
+    await manager.set("n", "3")
+
+    assert await manager.get("n", type_=unhashable) == 3
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(b"raw", id="bytes"),
+        pytest.param(b"\xff\xfe", id="bytes-not-utf8"),
+        pytest.param(bytearray(b"raw"), id="bytearray"),
+        pytest.param(SecretStr("hunter2"), id="secret"),
+        pytest.param(object(), id="object"),
+    ],
+)
+async def test_values_pydantic_would_not_write_faithfully_are_refused(
+    cache_manager: CacheManager, value: object
+) -> None:
+    """Bytes would come back as text and a secret as its mask: still a TypeError."""
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        await cache_manager.set("k", {"nested": value})
+
+    assert await cache_manager.has("k") is False
+
+
+async def test_an_iterator_is_refused_and_not_consumed(
+    cache_manager: CacheManager,
+) -> None:
+    numbers = (n for n in range(3))
+
+    with pytest.raises(TypeError):
+        await cache_manager.set("k", numbers)
+
+    assert list(numbers) == [0, 1, 2]
+
+
+async def test_a_stored_none_needs_a_type_that_allows_it(
+    cache_manager: CacheManager,
+) -> None:
+    await cache_manager.set("user:0", None)
+
+    assert await cache_manager.get("user:0", "fallback", type_=_User) == "fallback"
+    assert await cache_manager.get("user:0", "fallback", type_=_User | None) is None
+
+
+class _Credentials(BaseModel):
+    user: str
+    password: SecretStr
+
+
+class _Account(BaseModel):
+    logins: list[_Credentials]
+
+
+@dataclasses.dataclass
+class _Token:
+    value: SecretStr
+
+
+_HUNTER = _Credentials(user="a", password=SecretStr("hunter2"))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(_HUNTER, id="model"),
+        pytest.param(_Account(logins=[_HUNTER]), id="nested-model"),
+        pytest.param(_Token(value=SecretStr("t")), id="dataclass"),
+        pytest.param({"accounts": [_HUNTER]}, id="model-in-a-dict"),
+    ],
+)
+async def test_a_model_with_a_secret_field_is_refused(
+    cache_manager: CacheManager, value: object
+) -> None:
+    """Stored as its mask, a typed read would return "**********" as the secret."""
+    with pytest.raises(TypeError, match="would be stored as its mask") as excinfo:
+        await cache_manager.set("k", value)
+
+    assert "hunter2" not in str(excinfo.value)
+    assert await cache_manager.has("k") is False
+    with pytest.raises(TypeError, match="would be stored as its mask"):
+        await cache_manager.get_or_set("k", lambda: value)
+
+
+async def test_a_model_without_its_secret_field_is_stored(
+    cache_manager: CacheManager,
+) -> None:
+    class Public(BaseModel):
+        user: str
+        password: SecretStr = Field(exclude=True)
+
+    await cache_manager.set("a", Public(user="a", password=SecretStr("hunter2")))
+    await cache_manager.set("b", _HUNTER.model_dump(mode="json", exclude={"password"}))
+
+    assert await cache_manager.get("a") == {"user": "a"}
+    assert await cache_manager.get("b") == {"user": "a"}

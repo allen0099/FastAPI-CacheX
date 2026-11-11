@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+from pydantic import BaseModel
 
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import CachedFunction
@@ -333,3 +334,30 @@ def test_bad_arguments_are_rejected_when_applied(
 ) -> None:
     with pytest.raises(error, match=match):
         cached(**kwargs)
+
+
+class _Point(BaseModel):
+    x: int
+    y: int
+
+
+async def test_a_model_result_comes_back_as_json_unless_a_type_is_given(
+    manager: CacheManager,
+) -> None:
+    """Stored as pydantic writes it; `type_` turns it back, on a miss and a hit (#249)."""
+    calls = 0
+
+    @cached(ttl=60, manager=manager)
+    async def plain() -> _Point:
+        return _Point(x=1, y=2)
+
+    @cached(ttl=60, manager=manager, type_=_Point)
+    async def typed() -> _Point:
+        nonlocal calls
+        calls += 1
+        return _Point(x=1, y=2)
+
+    assert await plain() == {"x": 1, "y": 2}  # type: ignore[comparison-overlap]
+    assert await typed() == _Point(x=1, y=2)
+    assert await typed() == _Point(x=1, y=2)
+    assert calls == 1

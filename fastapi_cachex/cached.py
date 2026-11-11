@@ -44,7 +44,7 @@ class CachedFunction(Generic[P, R]):
     __name__: str
     __qualname__: str
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         func: Callable[P, Awaitable[R]] | Callable[P, R],
         *,
@@ -52,6 +52,7 @@ class CachedFunction(Generic[P, R]):
         key: str | Callable[P, str] | None,
         manager: CacheManager | None,
         lock: bool | None,
+        type_: Any = None,
     ) -> None:
         """Wrap ``func``; ``cached()`` builds these."""
         self.__wrapped__ = func
@@ -60,6 +61,7 @@ class CachedFunction(Generic[P, R]):
         self._key = key
         self._manager = manager
         self._lock = lock
+        self._type = type_
         self._name = f"{func.__module__}.{func.__qualname__}"
         wraps(func)(self)
 
@@ -144,8 +146,11 @@ class CachedFunction(Generic[P, R]):
         def factory() -> Awaitable[R] | R:
             return self.__wrapped__(*args, **kwargs)
 
+        # Passed only when given: a manager subclass may override
+        # get_or_set() with the signature it had before 0.5.5.
+        typed = {} if self._type is None else {"type_": self._type}
         value: R = await self.manager.get_or_set(
-            key, factory, ttl=self._ttl, lock=self._lock
+            key, factory, ttl=self._ttl, lock=self._lock, **typed
         )
         return value
 
@@ -194,6 +199,7 @@ def cached(
     key: str | Callable[..., str] | None = None,
     manager: CacheManager | None = None,
     lock: bool | None = None,
+    type_: Any = None,
 ) -> _Decorator:
     """Cache what a plain function returns, keyed on its arguments.
 
@@ -205,9 +211,10 @@ def cached(
     stored. A sync function runs on the event loop, as a ``get_or_set``
     factory does; wrap blocking I/O in ``run_in_threadpool`` yourself.
 
-    The value goes through the manager's JSON round-trip, so the function's
-    result must be JSON-serializable and comes back as JSON gives it (a tuple
-    as a list, integer dict keys as strings), on the first call too.
+    The value goes through the manager's JSON round-trip, so the function
+    returns what JSON gives back (a tuple as a list, integer dict keys as
+    strings, a pydantic model as a ``dict``), on the first call too. Pass
+    ``type_`` to get the function's own type back instead.
 
     The decorated function has ``cache_key(*args, **kwargs)`` for the key a
     call uses and ``await invalidate(*args, **kwargs)`` to drop its value.
@@ -227,6 +234,11 @@ def cached(
             resolved on each call.
         lock: Whether concurrent misses take the manager's distributed lock.
             ``None`` uses the manager's ``lock`` setting.
+        type_: The type to validate the cached value into, usually the
+            function's return type (``@cached(ttl=60, type_=User)``,
+            ``type_=list[User]``), as for ``CacheManager.get(type_=...)``.
+            It is not read from the annotation. A cached value that does not
+            fit it counts as a miss and the function runs again.
 
     Returns:
         A decorator turning the function into a ``CachedFunction``
@@ -253,7 +265,7 @@ def cached(
 
     def decorator(func: Callable[P, Any]) -> CachedFunction[P, Any]:
         return CachedFunction(
-            func, ttl=ttl_seconds, key=key, manager=manager, lock=lock
+            func, ttl=ttl_seconds, key=key, manager=manager, lock=lock, type_=type_
         )
 
     return decorator

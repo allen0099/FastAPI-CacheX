@@ -2,7 +2,9 @@
 
 import asyncio
 import contextvars
+import dataclasses
 import fnmatch
+import functools
 import hashlib
 import inspect
 import json
@@ -12,8 +14,19 @@ import time
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any
+from typing import TypeVar
+from typing import overload
+
+from pydantic import BaseModel
+from pydantic import SecretBytes
+from pydantic import SecretStr
+from pydantic import TypeAdapter
+from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
+from pydantic_core import to_jsonable_python
 
 from .backends.base import BaseCacheBackend
 from .backends.base import validate_ttl
@@ -43,6 +56,75 @@ _JITTER_RATIO: float = 0.1
 
 _system_random = secrets.SystemRandom()
 _SENTINEL = object()
+
+T = TypeVar("T")
+D = TypeVar("D")
+
+
+_NOT_STORED = (Iterator, bytes, bytearray, memoryview, SecretStr, SecretBytes)
+
+
+def _holds_a_secret(value: Any) -> bool:
+    """Whether a model or dataclass has a secret field, at any depth.
+
+    Dumped in python mode, where the secret objects survive (the JSON form
+    has already masked them). An excluded field is not in the dump, and is
+    not stored either.
+    """
+    if isinstance(value, BaseModel) or (
+        dataclasses.is_dataclass(value) and not isinstance(value, type)
+    ):
+        value = _adapter(type(value)).dump_python(value)
+    if isinstance(value, (SecretStr, SecretBytes)):
+        return True
+    if isinstance(value, dict):
+        return any(_holds_a_secret(item) for item in value.values())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_holds_a_secret(item) for item in value)
+    return False
+
+
+def _jsonable(value: Any) -> Any:
+    """``json.dumps`` fallback: what pydantic would write for ``value``.
+
+    Models, dataclasses, ``datetime``, ``Decimal``, ``UUID``, sets and the
+    like. A value pydantic does not know either, or one it would not write
+    faithfully, stays a ``TypeError``, as ``json.dumps`` raises on its own.
+    """
+    msg = f"Object of type {type(value).__name__} is not JSON serializable"
+    # pydantic would write each of these, and none of them survives it: an
+    # iterator (a generator, an open file) is consumed, bytes come back as
+    # text, and a secret is stored as its mask.
+    if isinstance(value, _NOT_STORED):
+        raise TypeError(msg)
+    if _holds_a_secret(value):
+        # Stored as "**********", it would be read back, and validated by
+        # type_=, as if that were the secret.
+        msg = (
+            f"Object of type {type(value).__name__} is not JSON serializable: "
+            "it has a SecretStr or SecretBytes field, which would be stored as "
+            "its mask. Exclude the field (model_dump(exclude=...)) or cache a "
+            "dict you build yourself"
+        )
+        raise TypeError(msg)
+    try:
+        return to_jsonable_python(value)
+    except (PydanticSerializationError, ValueError) as e:
+        raise TypeError(msg) from e
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_adapter(type_: Any) -> TypeAdapter[Any]:
+    return TypeAdapter(type_)
+
+
+def _adapter(type_: Any) -> TypeAdapter[Any]:
+    """The ``TypeAdapter`` for ``type_``; building one is slow, so they are kept."""
+    try:
+        return _cached_adapter(type_)
+    except TypeError:  # an unhashable annotation
+        return TypeAdapter(type_)
+
 
 # Hooks for tests to inject artificial clocks and sleeping
 _sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
@@ -164,17 +246,38 @@ class CacheManager:
 
     @staticmethod
     def _encode(value: Any) -> CacheEntry:
-        content = json.dumps(value).encode("utf-8")
+        content = json.dumps(value, default=_jsonable).encode("utf-8")
         fingerprint = hashlib.sha256(content).hexdigest()
         return CacheEntry(fingerprint=fingerprint, content=content)
 
-    async def get(self, key: str, default: Any = None) -> Any:
+    @overload
+    async def get(self, key: str, default: Any = None) -> Any: ...
+
+    @overload
+    async def get(
+        self, key: str, default: None = None, *, type_: type[T]
+    ) -> T | None: ...
+
+    @overload
+    async def get(self, key: str, default: D, *, type_: type[T]) -> T | D: ...
+
+    @overload
+    async def get(self, key: str, default: Any = None, *, type_: Any) -> Any: ...
+
+    async def get(self, key: str, default: Any = None, *, type_: Any = None) -> Any:
         """Retrieve and JSON-decode a cached value.
 
         Args:
             key: Logical cache key (without the manager's prefix).
             default: Value returned when the key is missing, expired, or the
                 stored content cannot be decoded.
+            type_: A type to validate the decoded value into, with pydantic:
+                a model, a dataclass, ``datetime``, ``list[Model]``, anything
+                ``pydantic.TypeAdapter`` accepts. ``await cache.get("user:1",
+                type_=User)`` returns a ``User`` (or ``default``). A stored
+                value that does not fit the type, say one written before a
+                field was added, counts as a decode failure; so does a stored
+                ``None``, unless the type allows it (``User | None``).
 
         Returns:
             The cached value, or ``default`` on a miss or decode failure.
@@ -184,8 +287,9 @@ class CacheManager:
             return default
 
         try:
-            return json.loads(cached.content)
-        except _DECODE_ERRORS:
+            value = json.loads(cached.content)
+            return value if type_ is None else _adapter(type_).validate_python(value)
+        except (*_DECODE_ERRORS, ValidationError):
             # Keys often embed user IDs or e-mails: only a digest at WARNING.
             key_ref = log_ref(key)
             logger.warning("Failed to decode cached value; key_ref=%s", key_ref)
@@ -201,12 +305,13 @@ class CacheManager:
 
         Args:
             key: Logical cache key (without the manager's prefix).
-            value: A JSON-serializable Python value.
+            value: A JSON-serializable Python value, or one pydantic can
+                turn into JSON (a model, a ``datetime``, a ``UUID``, a set).
             ttl: Time-to-live in seconds or as a ``timedelta``. If None, uses
                 ``self.default_ttl`` (which itself defaults to no expiry).
 
         Raises:
-            TypeError: If ``value`` is not JSON-serializable, or ``ttl`` is
+            TypeError: If ``value`` cannot be encoded as JSON, or ``ttl`` is
                 not an int or a ``timedelta``.
             ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
                 or not a whole number of seconds.
@@ -233,7 +338,8 @@ class CacheManager:
 
         Args:
             key: Logical cache key (without the manager's prefix).
-            value: A JSON-serializable Python value.
+            value: A JSON-serializable Python value, or one pydantic can
+                turn into JSON (a model, a ``datetime``, a ``UUID``, a set).
             ttl: Time-to-live in seconds or as a ``timedelta``. If None, uses
                 ``self.default_ttl`` (which itself defaults to no expiry).
 
@@ -241,7 +347,7 @@ class CacheManager:
             True if the value was stored, False if the key already existed.
 
         Raises:
-            TypeError: If ``value`` is not JSON-serializable, or ``ttl`` is
+            TypeError: If ``value`` cannot be encoded as JSON, or ``ttl`` is
                 not an int or a ``timedelta``.
             ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
                 or not a whole number of seconds.
@@ -269,6 +375,41 @@ class CacheManager:
         logger.debug("Cache DELETE; key=%s", key)
         return True
 
+    async def increment(
+        self, key: str, delta: int = 1, ttl: int | timedelta | None = None
+    ) -> int:
+        """Atomically add ``delta`` to the counter at ``key`` and return it.
+
+        The backend's atomic ``increment()`` under this manager's prefix, for
+        quotas and rate limits. A missing key counts as 0. ``ttl`` applies
+        when the counter is created and later calls keep that expiry, so the
+        counter lives in a fixed window. ``get()`` reads the counter as an
+        ``int``, and ``delete()`` and the ``clear*`` methods remove it.
+
+        Args:
+            key: Logical cache key (without the manager's prefix).
+            delta: Amount to add; may be negative or zero (zero reads the
+                counter, creating it at 0).
+            ttl: Time-to-live of a newly created counter, in seconds or as a
+                ``timedelta``. If None, uses ``self.default_ttl``.
+
+        Returns:
+            The counter's value after the change.
+
+        Raises:
+            CacheXError: If ``key`` holds a value that is not a counter, or
+                the result would leave the counter's range (see
+                ``BaseCacheBackend.increment``).
+            TypeError: If ``delta`` is not an int, or ``ttl`` is not an int
+                or a ``timedelta``.
+            ValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
+                or not a whole number of seconds.
+        """
+        effective_ttl = validate_ttl(ttl if ttl is not None else self.default_ttl)
+        return await self.backend.increment(
+            self._cache_key(key), delta, ttl=effective_ttl
+        )
+
     async def has(self, key: str) -> bool:
         """Check whether a key exists in the cache without decoding its value.
 
@@ -280,11 +421,22 @@ class CacheManager:
         """
         return await self.backend.get(self._cache_key(key)) is not None
 
+    async def _lookup(self, key: str, type_: Any) -> Any:
+        """``get()`` for ``get_or_set``: the value, or ``_SENTINEL`` on a miss.
+
+        ``type_`` is passed only when given, so a subclass that overrides
+        ``get()`` with the signature it had before 0.5.5 keeps working.
+        """
+        if type_ is None:
+            return await self.get(key, default=_SENTINEL)
+        return await self.get(key, default=_SENTINEL, type_=type_)
+
     async def _compute_and_store(
         self,
         key: str,
         factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
         ttl: int | None,
+        type_: Any = None,
     ) -> Any:
         value = factory()
         if inspect.isawaitable(value):
@@ -294,7 +446,10 @@ class CacheManager:
         entry = self._encode(value)
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
-        return json.loads(entry.content)
+        stored = json.loads(entry.content)
+        # What a later hit returns. A factory whose value does not fit type_
+        # is a bug in the caller, so this ValidationError is not caught.
+        return stored if type_ is None else _adapter(type_).validate_python(stored)
 
     async def _execute_as_winner(
         self,
@@ -302,14 +457,15 @@ class CacheManager:
         factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
         ttl: int | None,
         lock_instance: CacheLock,
+        type_: Any = None,
     ) -> Any:
         lock_id = f"{id(self.backend)}:{self._cache_key(key)}"
         token = _HELD_LOCKS.set(_HELD_LOCKS.get() | {lock_id})
         try:
-            cached = await self.get(key, default=_SENTINEL)
+            cached = await self._lookup(key, type_)
             if cached is not _SENTINEL:
                 return cached
-            return await self._compute_and_store(key, factory, ttl)
+            return await self._compute_and_store(key, factory, ttl, type_)
         finally:
             try:
                 try:
@@ -332,6 +488,7 @@ class CacheManager:
         wait_timeout: float | None,
         *,
         raise_on_timeout: bool,
+        type_: Any = None,
     ) -> Any:
         start = _monotonic()
         interval = _INITIAL_POLL_INTERVAL
@@ -339,7 +496,7 @@ class CacheManager:
             if wait_timeout is not None:
                 elapsed = _monotonic() - start
                 if elapsed >= wait_timeout:
-                    cached = await self.get(key, default=_SENTINEL)
+                    cached = await self._lookup(key, type_)
                     if cached is not _SENTINEL:
                         return cached
                     if raise_on_timeout:
@@ -358,7 +515,7 @@ class CacheManager:
                         "Cache stampede wait timeout exceeded for key_ref=%s; computing directly",
                         log_ref(key),
                     )
-                    return await self._compute_and_store(key, factory, ttl)
+                    return await self._compute_and_store(key, factory, ttl, type_)
 
             jitter = _system_random.uniform(
                 -interval * _JITTER_RATIO, interval * _JITTER_RATIO
@@ -372,7 +529,7 @@ class CacheManager:
             interval = min(interval * _BACKOFF_FACTOR, _MAX_POLL_INTERVAL)
 
             # 1. Check cache, return on hit
-            cached = await self.get(key, default=_SENTINEL)
+            cached = await self._lookup(key, type_)
             if cached is not _SENTINEL:
                 return cached
 
@@ -383,7 +540,9 @@ class CacheManager:
                 backend=self.backend,
             )
             if await lock_instance.acquire(blocking=False):
-                return await self._execute_as_winner(key, factory, ttl, lock_instance)
+                return await self._execute_as_winner(
+                    key, factory, ttl, lock_instance, type_
+                )
 
     async def get_or_set(  # noqa: PLR0913
         self,
@@ -395,6 +554,7 @@ class CacheManager:
         lock_ttl: int | timedelta | None = None,
         wait_timeout: float | None = None,
         raise_on_timeout: bool = False,
+        type_: Any = None,
     ) -> Any:
         """Get a cached value, computing and storing it via ``factory`` on a miss.
 
@@ -420,9 +580,11 @@ class CacheManager:
         A miss returns the value as it will be read back from the cache, not
         the object ``factory`` returned: it goes through the same JSON
         round-trip as a hit, so a tuple comes back as a list and integer
-        dict keys as strings. A value JSON cannot encode (``datetime``,
-        ``Decimal``, ``UUID``, a pydantic model) raises ``TypeError`` only
-        after ``factory`` has run; nothing is stored.
+        dict keys as strings, and a pydantic model, a ``datetime`` or a
+        ``UUID`` as the plain JSON value pydantic writes for it. Pass
+        ``type_`` to get the typed value back on a miss and on a hit alike.
+        A value neither JSON nor pydantic can encode raises ``TypeError``
+        only after ``factory`` has run; nothing is stored.
 
         Args:
             key: Logical cache key (without the manager's prefix).
@@ -443,35 +605,40 @@ class CacheManager:
             raise_on_timeout: If True, raise :exc:`~fastapi_cachex.exceptions.LockTimeoutError`
                 when ``wait_timeout`` elapses. If False (default), log a warning and
                 fall back to invoking ``factory`` directly.
+            type_: A type to validate the value into, as for ``get()``. A
+                cached value that does not fit it counts as a miss and is
+                recomputed.
 
         Returns:
             The cached value (existing or newly created), JSON-decoded in
             both cases.
 
         Raises:
-            TypeError: If the value produced by ``factory`` is not JSON-serializable,
+            TypeError: If the value produced by ``factory`` cannot be encoded as JSON,
                 or if ``lock``, ``ttl``, ``lock_ttl``, or ``wait_timeout``
                 have invalid types.
             ValueError: If ``ttl``, ``lock_ttl``, or ``wait_timeout`` is zero or
                 negative, or ``ttl`` or ``lock_ttl`` is larger than ``MAX_TTL``
                 or a ``timedelta`` that is not a whole number of seconds.
             LockTimeoutError: If ``raise_on_timeout=True`` and waiting exceeds ``wait_timeout``.
+            pydantic.ValidationError: If the value ``factory`` produced does
+                not fit ``type_``. It has been stored by then.
         """
         ttl, lock_ttl, validated_wait_timeout = _validate_get_or_set_args(
             lock, ttl, lock_ttl, wait_timeout
         )
-        cached = await self.get(key, default=_SENTINEL)
+        cached = await self._lookup(key, type_)
         if cached is not _SENTINEL:
             return cached
 
         use_lock = self.lock if lock is None else lock
         if not use_lock:
-            return await self._compute_and_store(key, factory, ttl)
+            return await self._compute_and_store(key, factory, ttl, type_)
 
         lock_id = f"{id(self.backend)}:{self._cache_key(key)}"
         if lock_id in _HELD_LOCKS.get():
             logger.debug("Re-entrant get_or_set call for key=%s; skipping lock", key)
-            return await self._compute_and_store(key, factory, ttl)
+            return await self._compute_and_store(key, factory, ttl, type_)
 
         effective_lock_ttl = self.lock_ttl if lock_ttl is None else lock_ttl
         lock_instance = CacheLock(
@@ -480,7 +647,9 @@ class CacheManager:
             backend=self.backend,
         )
         if await lock_instance.acquire(blocking=False):
-            return await self._execute_as_winner(key, factory, ttl, lock_instance)
+            return await self._execute_as_winner(
+                key, factory, ttl, lock_instance, type_
+            )
 
         return await self._poll_for_value(
             key,
@@ -489,6 +658,7 @@ class CacheManager:
             effective_lock_ttl,
             validated_wait_timeout,
             raise_on_timeout=raise_on_timeout,
+            type_=type_,
         )
 
     async def clear_pattern(self, pattern: str) -> int:
