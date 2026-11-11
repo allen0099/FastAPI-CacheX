@@ -1,0 +1,61 @@
+<!doctype html>
+<!--
+  Source of social-preview.png, the repository's social preview image
+  (Settings > General > Social preview). 1280x640; everything that matters
+  stays 80px inside the edges, which GitHub may crop.
+
+  Render with a headless Chromium-based browser:
+    chrome --headless --hide-scrollbars --force-device-scale-factor=1 \
+      --window-size=1280,640 --screenshot=social-preview.png social-preview.html
+  The fonts are Liberation Sans and DejaVu Sans Mono; without them the
+  browser falls back and the layout shifts.
+-->
+<html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1280px;height:640px}
+body{font-family:"Liberation Sans","DejaVu Sans",sans-serif;color:#e6edf3;overflow:hidden;
+ background:
+  radial-gradient(900px 520px at 88% 12%, rgba(0,150,136,.32), transparent 62%),
+  radial-gradient(700px 480px at 4% 100%, rgba(56,139,253,.18), transparent 60%),
+  #0b1220;}
+.grid{position:absolute;inset:0;background-image:
+  linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);
+  background-size:40px 40px;-webkit-mask-image:radial-gradient(900px 500px at 70% 40%,#000,transparent 80%)}
+.wrap{position:absolute;inset:80px;display:flex;align-items:center;gap:48px}
+.left{flex:1 1 0;min-width:0}
+.kicker{font-size:21px;letter-spacing:.14em;text-transform:uppercase;color:#4dd0c1;font-weight:700;margin-bottom:18px}
+h1{font-size:72px;line-height:1;font-weight:700;letter-spacing:-.025em;white-space:nowrap}
+h1 span{color:#26c6b4}
+p.tag{margin-top:26px;font-size:31px;line-height:1.32;color:#b7c2d0;max-width:560px}
+.chips{margin-top:34px;display:flex;gap:12px}
+.chip{font-size:21px;font-weight:700;padding:9px 18px;border-radius:999px;border:1.5px solid rgba(77,208,193,.55);color:#c9f3ee;background:rgba(0,150,136,.14)}
+.pip{margin-top:30px;font-family:"DejaVu Sans Mono",monospace;font-size:23px;color:#8b98a9}
+.pip b{color:#4dd0c1;font-weight:400}
+.code{flex:0 0 490px;background:rgba(13,20,33,.92);border:1.5px solid rgba(255,255,255,.12);border-radius:18px;
+ box-shadow:0 30px 70px rgba(0,0,0,.45);overflow:hidden}
+.bar{height:46px;display:flex;align-items:center;gap:9px;padding:0 18px;border-bottom:1.5px solid rgba(255,255,255,.08)}
+.dot{width:13px;height:13px;border-radius:50%}
+.bar em{margin-left:10px;font-style:normal;font-family:"DejaVu Sans Mono",monospace;font-size:17px;color:#7d8a9b}
+pre{font-family:"DejaVu Sans Mono",monospace;font-size:21px;line-height:1.62;padding:22px 24px 26px;color:#d6deea}
+.k{color:#ff7b72}.d{color:#4dd0c1}.s{color:#a5d6ff}.n{color:#79c0ff}.c{color:#6e7b8c}.f{color:#d2a8ff}
+</style></head><body><div class="grid"></div>
+<div class="wrap">
+ <div class="left">
+  <div class="kicker">Caching for FastAPI</div>
+  <h1>FastAPI-Cache<span>X</span></h1>
+  <p class="tag">HTTP caching, an application cache and a distributed lock.</p>
+  <div class="chips"><div class="chip">Memory</div><div class="chip">Redis</div><div class="chip">Memcached</div></div>
+  <div class="pip"><b>$</b> pip install fastapi-cachex</div>
+ </div>
+ <div class="code">
+  <div class="bar"><div class="dot" style="background:#ff5f57"></div><div class="dot" style="background:#febc2e"></div><div class="dot" style="background:#28c840"></div><em>main.py</em></div>
+<pre><span class="d">@app.get</span>(<span class="s">"/items/{item_id}"</span>)
+<span class="d">@cache</span>(ttl=<span class="n">60</span>)
+<span class="k">async def</span> <span class="f">read_item</span>(item_id: <span class="n">int</span>):
+    <span class="k">return</span> {<span class="s">"item_id"</span>: item_id}
+
+<span class="c"># served from the cache for 60 s</span>
+<span class="c"># ETag → 304 Not Modified</span></pre>
+ </div>
+</div></body></html>
