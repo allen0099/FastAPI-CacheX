@@ -85,38 +85,47 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 > [!NOTE]
 > `CacheManager.clear()`／`clear_prefix()` 是以後端的 `get_all_keys()` 與 `delete_many()` 實作（在 Redis 上是每批 100 個鍵的 `DEL`）。由於 Memcached 不支援列舉鍵（見[後端](BACKENDS.md#memcached)），這些方法以及 `CacheManager.clear_pattern()` 在 Memcached 後端上不會有任何作用，只會回傳 0 並發出 `RuntimeWarning`；`get()`／`set()`／`add()`／`delete()`／`has()` 則照常運作。若需要大量清除，請使用 Redis 或記憶體後端。不要在 Memcached 上改用後端本身的 `clear()`：`MemcachedBackend.clear()` 會發出 `flush_all`，清空整台伺服器，包括 HTTP 回應、鎖以及其他應用程式的鍵。
 
-### 在 Memcached 上讓一組鍵失效 {#group-invalidation-on-memcached}
+### 用 tag 讓一組值失效 {#group-invalidation-on-memcached}
 
-無法列舉鍵時，一次讓一組鍵失效的方法是不再去找它們：為這一組保留一個世代（generation）編號，把它放進這一組的每個鍵裡，要失效時就把編號加一。舊項目從此不會再被讀到，並隨 TTL 自然消失。
+寫入值時可以附上一個或多個 tag，之後不需要知道鍵，就能一次讓某個 tag 底下的所有值失效：
 
 ```python
-from fastapi_cachex import AppCache, CacheBackend
-from fastapi_cachex.backends.base import BaseCacheBackend
-
-# 存放在後端的計數器。它透過後端而非 manager 讀取，所以沒有 "cache:" 前綴。
-USERS_GENERATION = "gen:users"
-
-
-async def user_key(backend: BaseCacheBackend, user_id: int) -> str:
-    # increment(..., 0) 以原子操作讀取計數器，不存在時從 0 建立。
-    generation = await backend.increment(USERS_GENERATION, 0)
-    return f"user:{generation}:{user_id}"
+from fastapi_cachex import AppCache, cached, invalidate_tags
 
 
 @app.get("/users/{user_id}")
-async def read_user(user_id: int, cache: AppCache, backend: CacheBackend):
-    key = await user_key(backend, user_id)
-    return await cache.get_or_set(key, lambda: load_user(user_id), ttl=300)
+async def read_user(user_id: int, cache: AppCache):
+    return await cache.get_or_set(
+        f"user:{user_id}",
+        lambda: load_user(user_id),
+        ttl=300,
+        tags=["users", f"user:{user_id}"],
+    )
+
+
+@cached(ttl=300, tags=["users"])
+async def count_users() -> int: ...
 
 
 @app.post("/users/import")
-async def import_users(backend: CacheBackend):
+async def import_users():
     await run_import()
-    # 從此之後，所有 user:<舊世代>:* 的項目都讀不到了。
-    await backend.increment(USERS_GENERATION)
+    await invalidate_tags("users")  # 所有以 "users" 寫入的值
 ```
 
-這在每個後端上都可行，代價是每次查詢多一次後端讀取。請為項目設定 TTL，因為不會有任何東西刪除它們。計數器本身沒有 TTL；若後端可能弄丟它（Memcached 在記憶體不足時會淘汰項目，`flush_all` 則會清空一切），請改以較大的步幅遞增，例如 `increment(USERS_GENERATION, int(time.time()))`，這樣從 0 重新開始的計數器就不會重複用到仍有存活項目的世代。
+`set()`、`get_or_set()` 與 `@cached` 都接受 `tags=`；`@cached` 還可以傳入一個函式，它會原樣收到該次呼叫傳入的引數並回傳 tag（`tags=lambda user_id: [f"user:{user_id}"]`）。`set_many()` 與 `add()` 不接受 tag。`invalidate_tags()` 也是 `CacheManager` 的方法。這些 tag 與同一個後端上的 [`@cache(tags=...)`](HTTP_CACHING.md#by-tag) 路由共用，因此一次呼叫就能同時讓快取的回應與快取的值失效。
+
+運作方式，以及由此而來的特性：
+
+- 每個 tag 有一個版本，存放在後端的 `tag:<名稱>` 底下。值在寫入時會記下它各個 tag 的版本，只要其中任何一個變了，讀取時就視為未命中。過程中不掃描也不列舉任何鍵，所以每個後端都能用，包含 Memcached。
+- 讀取帶有 tag 的值會多一次批次的後端讀取（`get_many`），寫入也一樣；某個 tag 底下的第一次寫入還會存下它的版本。沒有 tag 的值沒有任何額外成本。
+- 對已失效的值，`has()` 會回傳 false，`add()` 會取代它。
+- 版本是在有值以該 tag 寫入時才建立的，查詢時不會建立：沒有寫入任何東西的呼叫不會留下任何鍵。
+- 失效的值不會被刪除，而是隨 TTL 消失，所以請為帶有 tag 的值設定 TTL。
+- 使用 `get_or_set()` 與 `@cached` 時，版本是在計算值之前讀取的，所以若資料在計算期間改變，算出來的值在失效之後不會被提供。
+- 版本從設定起保留 30 天，所以「每個使用者一個」或「每筆資料一個」的 tag 不會永久留下鍵。版本到期後，以該 tag 寫入的值會視為未命中，下一次寫入會開始新的版本：帶有 tag 的值最多存活 30 天，不論它自己的 TTL 多長。
+- 版本提早遺失時也一樣（Memcached 在記憶體不足時淘汰項目、`flush_all`、重新啟動，或設了 `max_entries` 的 `MemoryBackend`：`tag:` 鍵也算項目，可能被淘汰）。版本遺失只會多一次未命中，不會提供已失效的值。
+- 0.6.1 之前的版本不認得 tag，會持續提供帶有 tag 的值直到 TTL 到期。請先把所有 worker 都升級，再依賴 `invalidate_tags()`。
 
 ## Cache stampede 保護 {#stampede-protection}
 

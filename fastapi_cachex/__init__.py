@@ -10,6 +10,7 @@ from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
 from .cache import invalidate as invalidate
 from .cache import invalidate_path as invalidate_path
+from .cache import invalidate_tags as invalidate_tags
 from .cache_key import CacheKey as CacheKey
 from .cached import CachedFunction as CachedFunction
 from .cached import cached as cached
@@ -89,5 +90,6 @@ __all__ = [
     "get_cache_backend",
     "invalidate",
     "invalidate_path",
+    "invalidate_tags",
     "set_event_handler",
 ]

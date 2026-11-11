@@ -300,6 +300,7 @@ _OTHER_CALLS = {
     "clear_prefix": lambda m: m.clear_prefix("user:"),
     # Goes through clear_prefix(): reported once all the same.
     "clear": lambda m: m.clear(),
+    "invalidate_tags": lambda m: m.invalidate_tags("users"),
 }
 
 

@@ -10,6 +10,7 @@ import typing
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Iterable
 from datetime import timedelta
 from functools import wraps
 from typing import Any
@@ -19,6 +20,7 @@ from typing import Protocol
 from typing import TypeVar
 from typing import overload
 
+from ._tags import validate_tags
 from .backends.base import validate_ttl
 from .dependencies import get_app_cache
 from .exceptions import CacheXError
@@ -215,6 +217,7 @@ class CachedFunction(Generic[P, R]):
         manager: CacheManager | None,
         lock: bool | None,
         type_: Any = None,
+        tags: Iterable[str] | Callable[..., Iterable[str]] | None = None,
     ) -> None:
         """Wrap ``func``; ``cached()`` builds these."""
         self.__wrapped__ = func
@@ -224,6 +227,8 @@ class CachedFunction(Generic[P, R]):
         self._manager = manager
         self._lock = lock
         self._type = type_
+        # A callable is asked on every call; a list is checked once, here.
+        self._tags = tags if callable(tags) else validate_tags(tags)
         self._name = f"{func.__module__}.{func.__qualname__}"
         wraps(func)(self)
 
@@ -310,9 +315,13 @@ class CachedFunction(Generic[P, R]):
 
         # Passed only when given: a manager subclass may override
         # get_or_set() with the signature it had before 0.5.5.
-        typed = {} if self._type is None else {"type_": self._type}
+        extra: dict[str, Any] = {} if self._type is None else {"type_": self._type}
+        if self._tags:
+            extra["tags"] = (
+                self._tags(*args, **kwargs) if callable(self._tags) else self._tags
+            )
         value: R = await self.manager.get_or_set(
-            key, factory, ttl=self._ttl, lock=self._lock, **typed
+            key, factory, ttl=self._ttl, lock=self._lock, **extra
         )
         return value
 
@@ -355,13 +364,14 @@ class _Decorator(Protocol):
     def __call__(self, func: Callable[P, R]) -> CachedFunction[P, R]: ...
 
 
-def cached(
+def cached(  # noqa: PLR0913
     ttl: int | timedelta | None = None,
     *,
     key: str | Callable[..., str] | None = None,
     manager: CacheManager | None = None,
     lock: bool | None = None,
     type_: Any = _UNSET,
+    tags: Iterable[str] | Callable[..., Iterable[str]] | None = None,
 ) -> _Decorator:
     """Cache what a plain function returns, keyed on its arguments.
 
@@ -408,6 +418,10 @@ def cached(
             from JSON's own types (``dict[str, Any]``, ``list[int]``,
             ``str | None``), means no validation. Before 0.6.0 not passing
             it always returned the JSON form.
+        tags: Names the cached values can be invalidated by, with
+            ``invalidate_tags()``: a list of strings, or a function that
+            takes the same arguments as the decorated one and returns them
+            (``tags=lambda user_id: [f"user:{user_id}"]``).
 
     Returns:
         A decorator turning the function into a ``CachedFunction``
@@ -446,6 +460,7 @@ def cached(
             manager=manager,
             lock=lock,
             type_=_type_from_annotation(func) if type_ is _UNSET else type_,
+            tags=tags,
         )
 
     return decorator

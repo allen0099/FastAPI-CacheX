@@ -42,16 +42,18 @@ def encode_entry(entry: CacheEntry) -> bytes:
         value = parse_counter(entry.content)
         if value is not None and entry == counter_entry(value):
             return entry.content
-    serialized: str | bytes = json.dumps(
-        {
-            "fingerprint": entry.fingerprint,
-            "content": entry.content.decode("latin-1"),
-            "media_type": entry.media_type,
-            "status_code": entry.status_code,
-            "headers": [[name, value] for name, value in entry.headers],
-            "stored_at": entry.stored_at,
-        },
-    )
+    document: dict[str, object] = {
+        "fingerprint": entry.fingerprint,
+        "content": entry.content.decode("latin-1"),
+        "media_type": entry.media_type,
+        "status_code": entry.status_code,
+        "headers": [[name, value] for name, value in entry.headers],
+        "stored_at": entry.stored_at,
+    }
+    if entry.tags:
+        # Only when there are any: an entry without tags is stored as before.
+        document["tags"] = dict(entry.tags)
+    serialized: str | bytes = json.dumps(document)
     # orjson returns bytes, stdlib json returns str
     return serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
 
@@ -68,6 +70,23 @@ def _stored_at(value: object) -> float | None:
     return float(value) if math.isfinite(value) else None
 
 
+def _tags(value: object) -> tuple[tuple[str, str], ...]:
+    """``tags`` from a document: ``{name: version}``, both strings.
+
+    Anything else raises, so the document is a miss: an entry whose tags
+    cannot be read must not be served as if it had none.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, dict) or not all(
+        isinstance(name, str) and isinstance(version, str)
+        for name, version in value.items()
+    ):
+        msg = "tags must map tag names to versions"
+        raise TypeError(msg)
+    return tuple(value.items())
+
+
 def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
     """Rebuild a ``CacheEntry`` from a stored value.
 
@@ -79,7 +98,8 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
 
     Documents written before entries carried a status code and headers simply
     lack those keys and decode to a plain ``200`` with no extra headers; those
-    written before entries carried ``stored_at`` decode with ``None``. Headers
+    written before entries carried ``stored_at`` decode with ``None``, and
+    those without ``tags`` with none. Headers
     are a list of ``[name, value]`` lines; the object 0.3.x wrote (one value
     per name) is still read.
     """
@@ -108,6 +128,7 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
             status_code=status_code,
             headers=data.get("headers"),
             stored_at=_stored_at(data.get("stored_at")),
+            tags=_tags(data.get("tags")),
         )
     except _DECODE_ERRORS:
         return None

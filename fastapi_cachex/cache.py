@@ -6,6 +6,7 @@ import threading
 import time
 import warnings
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ from fastapi.params import Depends as DependsParam
 from starlette.background import BackgroundTasks as StarletteBackgroundTasks
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from . import _tags
 from ._cache_control import _NO_STORE
 from ._cache_control import CacheControl
 from ._cache_control import _build_cache_control
@@ -93,6 +95,7 @@ __all__ = [
     "get_response",
     "invalidate",
     "invalidate_path",
+    "invalidate_tags",
     "logger",
 ]
 
@@ -207,13 +210,21 @@ async def _read_entry(
     A failed read is a miss if failing open.
     """
     try:
-        return await backend.get(cache_key), True
+        entry = await backend.get(cache_key)
+        if (
+            entry is not None
+            and entry.tags
+            and await _tags.outdated(backend, {cache_key: entry})
+        ):
+            logger.debug("A tag of the entry was invalidated; key=%s", cache_key)
+            entry = None
     except Exception as e:
         if not fail_open:
             _emit("error", "http", cache_key, route=_route_template(request))
             raise
         _log_backend_failure("read failed; serving uncached", request, cache_key, e)
         return None, False
+    return entry, True
 
 
 def _request_credential(request: Request) -> str | None:
@@ -381,6 +392,29 @@ async def invalidate(
     logger.debug("Cache INVALIDATE; key=%s", cache_key)
     _emit("invalidate", "http", cache_key)
     return True
+
+
+async def invalidate_tags(*tags: str) -> None:
+    """Invalidate every entry stored under any of ``tags``.
+
+    Entries of ``@cache(tags=...)`` routes and values written with
+    ``CacheManager.set(..., tags=...)``, ``get_or_set(..., tags=...)`` or
+    ``@cached(tags=...)`` on the same backend share one set of tags. They
+    read as a miss from now on, on every backend, Memcached included; the
+    entries themselves stay in the backend until they expire.
+
+    Without a backend there is nothing to invalidate, as for ``invalidate()``.
+
+    Raises:
+        TypeError: If a tag is not a ``str``.
+        ValueError: If a tag is empty.
+    """
+    try:
+        cache_backend = BackendProxy.get()
+    except BackendNotFoundError:
+        return
+    await _tags.invalidate(cache_backend, tags)
+    logger.debug("Cache INVALIDATE_TAGS; tags=%s", tags)
 
 
 async def invalidate_path(
@@ -707,6 +741,10 @@ class _Call:
     dependency_status: int | None
     background: BackgroundTasks | None = None
     cache_key: str | None = None
+    # The versions of the route's tags, read before the handler ran. None
+    # until then, and when they could not be read: a response of a tagged
+    # route is not stored without them.
+    tags_before: _tags.VersionsBefore | None = None
     flight: _Flight = field(default_factory=_Flight)
     outcome: str | None = None
 
@@ -738,6 +776,7 @@ class _Route:
     cache_authorized: bool
     coalesce: bool
     client_cache_control: _ClientCacheControl
+    tags: tuple[str, ...] | Callable[[Request], Iterable[str]]
     key_builder: CacheKeyBuilder
     vary_names: dict[str, VaryNormaliser | None]
     cache_control: str
@@ -978,6 +1017,7 @@ class _Route:
             # Answer now, from the old entry; the handler runs afterwards.
             return self._hit(call, entry, cache_key, cache_control, outcome=_STALE)
 
+        await self._read_tag_versions(call, backend, cache_key)
         fallback = entry if stale and self.stale == "error" else None
         rendered = await self._render_unless_failing(call, fallback)
         if rendered is None:
@@ -1046,6 +1086,35 @@ class _Route:
             return not_modified
         return self._send(response, cache_control)
 
+    async def _read_tag_versions(
+        self, call: _Call, backend: BaseCacheBackend, cache_key: str
+    ) -> None:
+        """Note the versions of the route's tags, before the handler runs.
+
+        Before, not after: a response rendered from data that an
+        invalidation has since replaced must not be stored under the version
+        that invalidation set.
+        """
+        if not self.tags:
+            call.tags_before = {}
+            return
+        if callable(self.tags):
+            try:
+                names = _tags.validate_tags(self.tags(call.request))
+            except (TypeError, ValueError) as e:
+                msg = f"the tags function of this route returned a bad value: {e}"
+                raise CacheXError(msg) from e
+        else:
+            names = self.tags
+        try:
+            call.tags_before = await _tags.versions_before(backend, names)
+        except Exception as e:
+            if not self.fail_open:
+                raise
+            _log_backend_failure(
+                "tag read failed; response not stored", call.request, cache_key, e
+            )
+
     def _refresh_later(
         self, call: _Call, backend: BaseCacheBackend, cache_key: str
     ) -> bool:
@@ -1094,6 +1163,7 @@ class _Route:
         if entry is not None and not self._is_stale(entry):
             # A request served stale just before this one already replaced it.
             return
+        await self._read_tag_versions(call, backend, cache_key)
         response, body, etag = await self._render(call)
         reason = self._skip_reason(call, response)
         if (
@@ -1294,12 +1364,18 @@ class _Route:
             stored is not None
             and stored.fingerprint == etag
             and not self._is_stale(stored)
-        ):
+        ) or call.tags_before is None:
+            # Without the tag versions read before the handler ran, the entry
+            # could never be invalidated: nothing is stored.
             return
+        entry = _entry_for(response, etag, body)
         try:
-            await backend.set(
-                cache_key, _entry_for(response, etag, body), ttl=self.stored_ttl
-            )
+            versions = await _tags.versions_to_record(backend, call.tags_before)
+            if versions is None:
+                logger.debug("A tag got its version meanwhile; key=%s", cache_key)
+                return
+            entry.tags = versions
+            await backend.set(cache_key, entry, ttl=self.stored_ttl)
         except Exception as e:
             if not self.fail_open:
                 _emit("error", "http", cache_key, route=_route_template(call.request))
@@ -1328,6 +1404,21 @@ def _check_client_cache_control(value: object) -> None:
         # Its coroutine would never be awaited, and would count as "yes".
         msg = "client_cache_control must be a plain function, not async"
         raise CacheXError(msg)
+
+
+def _check_tags(
+    tags: object,
+) -> tuple[str, ...] | Callable[[Request], Iterable[str]]:
+    """The route's tags: a tuple of names, or the callable that gives them."""
+    if callable(tags):
+        if _is_coroutine_callable(tags):
+            msg = "tags must be a plain function, not async"
+            raise CacheXError(msg)
+        return tags
+    try:
+        return _tags.validate_tags(tags)
+    except (TypeError, ValueError) as e:
+        raise CacheXError(str(e)) from e
 
 
 def _check_serve_stale(
@@ -1447,6 +1538,7 @@ def cache(
     debug_header: bool = False,
     client_cache_control: _ClientCacheControl = False,
     serve_stale: bool = False,
+    tags: Iterable[str] | Callable[[Request], Iterable[str]] | None = None,
 ) -> Callable[[HandlerCallable], AsyncResponseCallable]:
     """Cache decorator for FastAPI route handlers.
 
@@ -1620,6 +1712,13 @@ def cache(
             first, and if it raises or answers 5xx the old entry is sent
             instead. Such a response has ``X-Cache: STALE`` with
             ``debug_header`` and an ``Age`` above ``ttl``. Off by default.
+        tags: Names this route's entries can be invalidated by, with
+            ``invalidate_tags()``: a list of strings, or a plain function
+            that takes the request and returns them
+            (``lambda request: [f"user:{request.path_params['user_id']}"]``).
+            An entry is a miss once any of its tags has been invalidated
+            since it was stored. A hit on a tagged entry costs one extra
+            batched backend read; a route without tags pays nothing.
         client_cache_control: Let a request's own ``Cache-Control`` skip the
             stored entry. Off by default, so no client can send every
             request to the handler. With ``True``, or a callable that takes
@@ -1689,6 +1788,7 @@ def cache(
         )
         vary_names = _validate_vary(vary)
         builder = _resolve_key_builder(key_builder, sort_query)
+        route_tags = _check_tags(tags)
         # A normaliser bounds the entries, which is what the warning is about.
         if any(
             name.lower() == "cookie" and normaliser is None
@@ -1717,6 +1817,7 @@ def cache(
                     ("coalesce", coalesce),
                     ("client_cache_control", client_cache_control),
                     ("serve_stale", serve_stale),
+                    ("tags", tags),
                 )
                 if value is not None and value is not False
             ]
@@ -1766,6 +1867,7 @@ def cache(
             cache_authorized=cache_authorized,
             coalesce=coalesce,
             client_cache_control=client_cache_control,
+            tags=route_tags,
             key_builder=builder,
             vary_names=vary_names,
             cache_control=cache_control,

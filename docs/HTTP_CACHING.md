@@ -1001,6 +1001,55 @@ entries at all: it deletes only a key named exactly as the path and emits a
 
 What each backend supports is listed under [Backends](BACKENDS.md).
 
+### By tag
+
+When the same data appears in several routes, tag the routes and invalidate
+the tag instead of naming every path:
+
+```python
+from fastapi_cachex import cache, invalidate_tags
+
+
+@app.get("/users")
+@cache(ttl=300, tags=["users"])
+async def list_users(): ...
+
+
+@app.get("/users/{user_id}")
+@cache(
+    ttl=300,
+    tags=lambda request: ["users", f"user:{request.path_params['user_id']}"],
+)
+async def read_user(user_id: int): ...
+
+
+@app.put("/users/{user_id}")
+async def update_user(user_id: int):
+    await save_user(user_id)
+    await invalidate_tags(f"user:{user_id}")  # that user's entries
+    # await invalidate_tags("users") would drop the list and every user
+```
+
+`tags=` is a list of names, or a plain function that takes the request and
+returns them. An entry is a miss once any of its tags has been invalidated
+since it was stored, whatever its query string, `vary` variant or host. It
+works on every backend, Memcached included, because nothing is enumerated:
+each tag has a version in the backend, and an entry remembers the versions it
+was stored under.
+
+- A hit on a tagged route costs one extra batched backend read; a route
+  without tags pays nothing.
+- Invalidated entries are not deleted; they expire with their `ttl`.
+- A tag's version is created when a response is stored under it. A request
+  whose response is not stored (a 404, a cookie) leaves nothing behind, so
+  tags built from the URL cannot be used to fill the backend.
+- The versions are read before the handler runs, so a response built from
+  data that changed meanwhile is not served after the invalidation.
+- The tags are shared with the application cache: see
+  [Invalidating a group of values with tags](APP_CACHE.md#group-invalidation-on-memcached),
+  which also covers what happens when a tag's version is lost and during an
+  upgrade from a release without tags.
+
 ### Invalidating a single cached route
 
 `clear_path`/`clear_pattern` work on ranges of keys. To drop exactly the entry a
@@ -1073,9 +1122,10 @@ you invalidated with `en`.
 - `clear_path(path, include_params=True)` when the resource has several
   entries: it removes every entry stored for the path, across query strings,
   `vary` variants, hosts and methods. Call it for the item and for the lists
-  that include it. Redis and memory only: Memcached cannot enumerate keys, so
-  there you either name every key for `invalidate()` or change what the key
-  contains (see the [generation-counter recipe](APP_CACHE.md#group-invalidation-on-memcached)).
+  that include it. Redis and memory only: Memcached cannot enumerate keys.
+- [`invalidate_tags(...)`](#by-tag) when the data appears under several paths,
+  or the backend is Memcached: tag the routes, and one call invalidates every
+  entry stored under the tag.
 
 ```python
 from fastapi_cachex import CacheBackend
@@ -1134,8 +1184,8 @@ The handler runs synchronously on the request's path, so keep it to
 incrementing a counter. It must be a plain function: an `async` one is
 rejected with `TypeError`. An exception it raises is logged and does not reach
 the request. `set_event_handler(None)` removes it; while none is set, no event
-is built. `add()`, `increment()`, `has()`, `get_many()`, `set_many()` and the
-`clear*` methods report nothing but such an `error`.
+is built. `add()`, `increment()`, `has()`, `get_many()`, `set_many()`,
+`invalidate_tags()` and the `clear*` methods report nothing but such an `error`.
 
 On the application side an `error` means the server could not be reached: a
 refused or reset connection, a timeout. An error the server answers with (a
