@@ -1,5 +1,7 @@
 """Redis cache backend implementation."""
 
+import copy
+import inspect
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -248,6 +250,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 options["password"] = password
             if db:
                 options["db"] = db
+            # redis-py gives its default retry policy to Redis(...) but not
+            # to Redis.from_url(...); without this, the same backend would
+            # give up on the first connection error only when built from a
+            # URL (#527). Read from the signature, so it follows redis-py
+            # (older versions have no default, and then neither path retries).
+            default_retry = (
+                inspect.signature(AsyncRedis.__init__).parameters["retry"].default
+            )
+            if "retry" not in kwargs and default_retry is not None:
+                options["retry"] = copy.deepcopy(default_retry)
             # The client owns the pool from_url() builds, so aclose() closes it.
             self.client = AsyncRedis.from_url(url, **options)
         self.key_prefix = key_prefix

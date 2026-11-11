@@ -167,9 +167,9 @@ before. With a URL:
 - An option in the URL's query string (`?socket_timeout=5`) wins over the
   argument of the same name. `decode_responses` and `encoding` are refused
   there as they are as arguments.
-- redis-py does not apply its default retries to a client built from a URL, so
-  the timings under [Failing fast](#failing-fast-when-redis-is-down) are those
-  of "no retries" unless you pass `retry=`.
+- The retry policy is the one a backend built from `host` and `port` gets
+  (redis-py's default, see [Failing fast](#failing-fast-when-redis-is-down)),
+  unless you pass `retry=`. In 0.5.4 a backend built from a URL did not retry.
 
 `username`, `ssl` and the other `ssl_*` options (`ssl_ca_certs`,
 `ssl_cert_reqs`, ...) are redis-py's own and go straight to its client.
