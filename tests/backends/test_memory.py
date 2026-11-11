@@ -1303,8 +1303,12 @@ async def test_lock_and_start_cleanup_are_deprecated(memory_backend: MemoryBacke
     """Both still work in 0.6.x and warn about their removal in 0.7.0 (#504)."""
     with pytest.warns(DeprecationWarning, match=r"lock is deprecated.*0\.7\.0"):
         lock = memory_backend.lock
+    # Still the lock the operations take: holding it keeps them out.
     async with lock:
-        pass
+        write = asyncio.create_task(memory_backend.clear())
+        await asyncio.sleep(0)
+        assert not write.done()
+    await write
 
     memory_backend.stop_cleanup()
     with pytest.warns(DeprecationWarning, match=r"start_cleanup\(\) is deprecated"):
