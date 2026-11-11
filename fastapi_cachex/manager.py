@@ -341,12 +341,20 @@ class CacheManager:
                 given twice is read once.
             type_: A type to validate each value into, as for ``get()``.
 
+        Raises:
+            TypeError: If ``keys`` is a single ``str`` instead of an iterable
+                of keys.
+
         Returns:
             The values found, by key. A key that is missing, expired, or
             whose stored content cannot be decoded (or does not fit
             ``type_``) is left out, so a stored ``None`` can be told from a
             miss.
         """
+        if isinstance(keys, (str, bytes)):
+            # A str is an iterable of its characters: one key each.
+            msg = "keys must be an iterable of keys, not a single str"
+            raise TypeError(msg)
         by_cache_key = {self._cache_key(key): key for key in keys}
         cached = await self.backend.get_many(by_cache_key)
         values: dict[str, Any] = {}

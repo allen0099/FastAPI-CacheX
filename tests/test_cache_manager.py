@@ -1891,3 +1891,12 @@ async def test_set_many_uses_the_ttl_or_the_default_ttl(
     clock.advance(11)
 
     assert await manager.get_many(["default", "explicit"]) == {"explicit": 2}
+
+
+@pytest.mark.parametrize("keys", ["user:1", b"user:1"])
+async def test_get_many_refuses_a_single_key(
+    cache_manager: CacheManager, keys: Any
+) -> None:
+    """It would be read as one key per character."""
+    with pytest.raises(TypeError, match="iterable of keys, not a single str"):
+        await cache_manager.get_many(keys)
