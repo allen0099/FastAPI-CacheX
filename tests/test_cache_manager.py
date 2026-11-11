@@ -1824,6 +1824,23 @@ async def test_get_many_and_set_many_take_nothing(cache_manager: CacheManager) -
     assert await cache_manager.get_many([]) == {}
 
 
+async def test_batches_are_one_backend_call_each(
+    memory_backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = CacheManager(backend=memory_backend)
+
+    async def one_at_a_time(*args: Any, **kwargs: Any) -> None:
+        msg = "a batch went to the backend one key at a time"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(memory_backend, "get", one_at_a_time)
+    monkeypatch.setattr(memory_backend, "set", one_at_a_time)
+
+    await manager.set_many({"a": 1, "b": 2})
+
+    assert await manager.get_many(["a", "b"]) == {"a": 1, "b": 2}
+
+
 async def test_get_many_with_a_type_returns_typed_values(
     cache_manager: CacheManager, caplog: pytest.LogCaptureFixture
 ) -> None:
