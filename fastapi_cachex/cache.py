@@ -210,6 +210,7 @@ async def _read_entry(
         return await backend.get(cache_key), True
     except Exception as e:
         if not fail_open:
+            _emit("error", "http", cache_key, route=_route_template(request))
             raise
         _log_backend_failure("read failed; serving uncached", request, cache_key, e)
         return None, False
@@ -1301,6 +1302,7 @@ class _Route:
             )
         except Exception as e:
             if not self.fail_open:
+                _emit("error", "http", cache_key, route=_route_template(call.request))
                 raise
             _log_backend_failure(
                 "write failed; response not stored", call.request, cache_key, e

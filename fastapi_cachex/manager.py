@@ -14,11 +14,14 @@ import time
 import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Coroutine
 from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
+from typing import Concatenate
+from typing import ParamSpec
 from typing import TypeVar
 from typing import overload
 
@@ -35,6 +38,8 @@ from .backends.base import validate_ttl
 from .cache_key import GLOB_SPECIAL
 from .events import _emit
 from .events import _mute
+from .events import _muted
+from .exceptions import BackendUnavailableError
 from .exceptions import LockTimeoutError
 from .lock import CacheLock
 from .proxy import BackendProxy
@@ -170,6 +175,50 @@ def _validate_get_or_set_args(
     return validate_ttl(ttl), validate_ttl(lock_ttl), validated_wait_timeout
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+# The methods whose first argument is the one key the call is about.
+_KEYED = frozenset({"set", "add", "delete", "increment", "has", "get_or_set"})
+# Set on an exception once it has been reported, so that a call made inside
+# another (``clear()`` through ``clear_prefix()``, a factory reading through
+# the same manager) is reported by the innermost one only.
+_REPORTED = "_cachex_reported"
+
+
+def _report_backend_error(error: BackendUnavailableError, key: str | None) -> None:
+    """Emit the ``error`` event for ``error``, once per exception (#540)."""
+    if _muted.get() or getattr(error, _REPORTED, False):
+        # Muted: get_or_set is reading through get(), and reports it itself.
+        return
+    setattr(error, _REPORTED, True)
+    _emit("error", "app", key)
+
+
+def _reports_backend_errors(
+    method: Callable[Concatenate["CacheManager", _P], Coroutine[Any, Any, _R]],
+) -> Callable[Concatenate["CacheManager", _P], Coroutine[Any, Any, _R]]:
+    """Report a backend that could not be reached as an ``error`` event (#540).
+
+    The exception is raised as before.
+    """
+    keyed = method.__name__ in _KEYED
+
+    @functools.wraps(method)
+    async def wrapper(
+        self: "CacheManager", /, *args: _P.args, **kwargs: _P.kwargs
+    ) -> _R:
+        try:
+            return await method(self, *args, **kwargs)
+        except BackendUnavailableError as e:
+            key = (args[0] if args else kwargs.get("key")) if keyed else None
+            _report_backend_error(e, key if isinstance(key, str) else None)
+            raise
+
+    return wrapper
+
+
 class CacheManager:
     """Provides convenient get/set/delete access to the configured cache backend.
 
@@ -286,7 +335,13 @@ class CacheManager:
         Returns:
             The cached value, or ``default`` on a miss or decode failure.
         """
-        cached = await self.backend.get(self._cache_key(key))
+        try:
+            cached = await self.backend.get(self._cache_key(key))
+        except BackendUnavailableError as e:
+            # Inline, not ``_reports_backend_errors``: the overloads above
+            # need the implementation's own signature.
+            _report_backend_error(e, key)
+            raise
         if cached is None:
             _emit("miss", "app", key)
             return default
@@ -315,6 +370,7 @@ class CacheManager:
         _emit("hit", "app", key)
         return value
 
+    @_reports_backend_errors
     async def set(
         self, key: str, value: Any, ttl: int | timedelta | None = None
     ) -> None:
@@ -340,6 +396,7 @@ class CacheManager:
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
         _emit("store", "app", key)
 
+    @_reports_backend_errors
     async def get_many(
         self, keys: Iterable[str], *, type_: Any = None
     ) -> dict[str, Any]:
@@ -375,6 +432,7 @@ class CacheManager:
                 values[key] = value
         return values
 
+    @_reports_backend_errors
     async def set_many(
         self, mapping: Mapping[str, Any], ttl: int | timedelta | None = None
     ) -> None:
@@ -404,6 +462,7 @@ class CacheManager:
         await self.backend.set_many(entries, ttl=effective_ttl)
         logger.debug("Cache SET_MANY; count=%s ttl=%s", len(entries), effective_ttl)
 
+    @_reports_backend_errors
     async def add(
         self, key: str, value: Any, ttl: int | timedelta | None = None
     ) -> bool:
@@ -443,6 +502,7 @@ class CacheManager:
         logger.debug("Cache ADD; key=%s ttl=%s added=%s", key, effective_ttl, added)
         return added
 
+    @_reports_backend_errors
     async def delete(self, key: str) -> bool:
         """Remove a value from the cache.
 
@@ -458,6 +518,7 @@ class CacheManager:
         _emit("invalidate", "app", key)
         return True
 
+    @_reports_backend_errors
     async def increment(
         self, key: str, delta: int = 1, ttl: int | timedelta | None = None
     ) -> int:
@@ -493,6 +554,7 @@ class CacheManager:
             self._cache_key(key), delta, ttl=effective_ttl
         )
 
+    @_reports_backend_errors
     async def has(self, key: str) -> bool:
         """Check whether a key exists in the cache without decoding its value.
 
@@ -639,6 +701,7 @@ class CacheManager:
                     key, factory, ttl, lock_instance, type_
                 )
 
+    @_reports_backend_errors
     async def get_or_set(  # noqa: PLR0913
         self,
         key: str,
@@ -756,6 +819,7 @@ class CacheManager:
             type_=type_,
         )
 
+    @_reports_backend_errors
     async def clear_pattern(self, pattern: str) -> int:
         r"""Clear all keys under this manager's namespace matching a glob pattern.
 
@@ -801,6 +865,7 @@ class CacheManager:
         )
         return cleared
 
+    @_reports_backend_errors
     async def clear_prefix(self, prefix: str | None = None) -> int:
         """Clear all keys under this manager's namespace matching a sub-prefix.
 
@@ -824,6 +889,7 @@ class CacheManager:
         logger.debug("Cache CLEAR_PREFIX; prefix=%s removed=%s", match_prefix, removed)
         return removed
 
+    @_reports_backend_errors
     async def clear(self) -> int:
         """Clear all keys under this manager's namespace.
 
