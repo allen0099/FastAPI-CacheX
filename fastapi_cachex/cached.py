@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import json
 import logging
+import sys
 import types
 import typing
 import warnings
@@ -43,6 +44,10 @@ class _Unset:
 
 _UNSET: Any = _Unset()
 
+# A return annotation that is there but cannot be evaluated where the
+# decorator is applied.
+_UNRESOLVED: Any = object()
+
 _JSON_SCALARS = (str, int, float, bool, type(None), object)
 
 _RETURN_ANNOTATION_NOTICE = (
@@ -54,18 +59,60 @@ _RETURN_ANNOTATION_NOTICE = (
     "(https://github.com/allen0099/FastAPI-CacheX/issues/533)."
 )
 
+_UNRESOLVED_ANNOTATION_NOTICE = (
+    "cached return annotation: the annotations of {name}() cannot be resolved "
+    "where @cached is applied (a name imported under TYPE_CHECKING, or a "
+    "class defined further down). From 0.6.0 @cached validates the cached "
+    "value into the return annotation; it cannot read this one, so this "
+    "function will keep returning the JSON form while others change. Pass "
+    "type_=<the type> or type_=None to say which you want "
+    "(https://github.com/allen0099/FastAPI-CacheX/issues/533)."
+)
+
 
 def _return_annotation(func: Callable[..., Any]) -> Any:
-    """The function's resolved return annotation, or ``_UNSET``.
+    """The function's resolved return annotation.
 
-    ``_UNSET`` when there is none or it cannot be resolved here (a forward
-    reference to a name defined later, an import under ``TYPE_CHECKING``).
+    ``_UNSET`` when there is none, and ``_UNRESOLVED`` when there is one but
+    the function's annotations cannot be evaluated here (a forward reference
+    to a name defined later, an import under ``TYPE_CHECKING``).
     """
     try:
         hints = typing.get_type_hints(func)
     except Exception:  # noqa: BLE001 - whatever evaluating an annotation raises
-        return _UNSET
+        return _UNRESOLVED if _has_return_annotation(func) else _UNSET
     return hints.get("return", _UNSET)
+
+
+def _signature(func: Callable[..., Any]) -> inspect.Signature:
+    """``inspect.signature`` without evaluating the annotations.
+
+    Only the parameters are used, to bind a call's arguments. From Python
+    3.14 annotations are evaluated lazily, and ``inspect.signature`` would
+    raise ``NameError`` for a name imported under ``TYPE_CHECKING``.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib  # noqa: PLC0415 - not there before 3.14
+
+        return inspect.signature(
+            func, annotation_format=annotationlib.Format.FORWARDREF
+        )
+    return inspect.signature(func)
+
+
+def _has_return_annotation(func: Callable[..., Any]) -> bool:
+    """Whether ``func`` is annotated with a return type, without evaluating it."""
+    if sys.version_info >= (3, 14):
+        # Annotations are evaluated lazily: reading __annotations__ would
+        # raise for the very annotation that could not be resolved.
+        import annotationlib  # noqa: PLC0415 - not there before 3.14
+
+        annotations = annotationlib.get_annotations(
+            func, format=annotationlib.Format.FORWARDREF
+        )
+    else:
+        annotations = getattr(func, "__annotations__", {})
+    return "return" in annotations
 
 
 def _is_json_shaped(annotation: Any) -> bool:
@@ -95,8 +142,13 @@ def _warn_about_return_annotation(func: Callable[..., Any]) -> None:
     annotation = _return_annotation(func)
     if annotation is _UNSET or _is_json_shaped(annotation):
         return
+    notice = (
+        _UNRESOLVED_ANNOTATION_NOTICE
+        if annotation is _UNRESOLVED
+        else _RETURN_ANNOTATION_NOTICE
+    )
     warnings.warn(
-        _RETURN_ANNOTATION_NOTICE.format(name=func.__qualname__, annotation=annotation),
+        notice.format(name=func.__qualname__, annotation=annotation),
         FutureWarning,
         # The line that applies the decorator: cached(...)(func).
         stacklevel=3,
@@ -129,7 +181,7 @@ class CachedFunction(Generic[P, R]):
     ) -> None:
         """Wrap ``func``; ``cached()`` builds these."""
         self.__wrapped__ = func
-        self._signature = inspect.signature(func)
+        self._signature = _signature(func)
         self._ttl = ttl
         self._key = key
         self._manager = manager

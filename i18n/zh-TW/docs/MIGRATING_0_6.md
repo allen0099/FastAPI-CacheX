@@ -85,8 +85,10 @@ FutureWarning: cached return annotation: load_user() is annotated to return <cla
 它只在套用裝飾器的地方發出一次，而且只在這項變更可能改變函式回傳值時才發出。以下情況不會發出：
 
 - 有傳入 `type_`，不論值是什麼；
-- 函式沒有回傳型別註記，或註記在套用裝飾器的地方無法解析（指向之後才定義之類別的前向參照、放在 `TYPE_CHECKING` 之下的匯入）；
+- 函式沒有回傳型別註記；
 - 註記只由 JSON 自己的型別組成：`str`、`int`、`float`、`bool`、`None`、`Any`、`object`、`list` 與 `dict`（不帶參數，或寫成 `list[...]`、`dict[str, ...]`），以及它們的 union。這類值會照 JSON 解碼的結果回傳，不會被轉換。
+
+在套用裝飾器的地方無法解析的回傳型別註記，會收到另一則前綴相同的警告。這發生在型別是放在 `if TYPE_CHECKING:` 底下匯入（linter 常會把匯入搬到那裡），或是檔案後面才定義的類別時。0.6.0 讀不到這種註記，所以該函式會繼續回傳 JSON 形式，而其他函式卻改變了；明確傳入 `type_` 就能確定行為。
 
 請逐一為函式做出選擇，警告就會消失：
 

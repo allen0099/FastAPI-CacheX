@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import sys
 import typing
 import warnings
 from collections.abc import AsyncIterator
@@ -428,12 +429,9 @@ def test_annotations_validation_would_change_warn(annotation: Any) -> None:
         typing.List,  # noqa: UP006 - bare, without arguments
         typing.Dict,  # noqa: UP006
         typing.Dict[str, int],  # noqa: UP006
-        "_DefinedLater",
     ],
 )
 def test_annotations_the_json_form_already_has_stay_quiet(annotation: Any) -> None:
-    """Also one that cannot be resolved: there is nothing to validate into."""
-
     def load() -> Any:
         return None
 
@@ -478,3 +476,69 @@ def test_the_documented_filter_silences_the_notice() -> None:
         @cached(ttl=60)
         async def load() -> _Point:
             return _Point(x=1, y=2)
+
+
+def test_an_annotation_that_cannot_be_resolved_is_named_too() -> None:
+    """A model imported under TYPE_CHECKING, or defined further down (#533).
+
+    0.6.0 cannot read it, so the function would keep the JSON form while its
+    neighbours change: say so now.
+    """
+
+    def load() -> Any:
+        return None
+
+    load.__annotations__["return"] = "_DefinedLater"
+
+    with pytest.warns(FutureWarning, match="cached return annotation") as record:
+        cached(ttl=60)(load)
+
+    message = str(record[0].message)
+    assert "cannot be resolved" in message
+    assert "TYPE_CHECKING" in message
+    assert record[0].filename == __file__
+    # Either choice silences it.
+    cached(ttl=60, type_=None)(load)
+    cached(ttl=60, type_=_Point)(load)
+
+
+def test_an_unresolvable_parameter_alone_is_not_about_the_return_type() -> None:
+    def load(point):
+        return None
+
+    load.__annotations__["point"] = "_DefinedLater"
+
+    cached(ttl=60, key="k")(load)  # filterwarnings = error would raise
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "from __future__ import annotations\n"
+            "from typing import TYPE_CHECKING\n"
+            "if TYPE_CHECKING:\n"
+            "    from decimal import Decimal\n"
+            "def load() -> Decimal: ...\n",
+            id="type-checking-import",
+        ),
+        pytest.param(
+            "def load() -> NeverDefined: ...\n",
+            id="lazy-annotation",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 14),
+                reason="annotations are evaluated when the function is defined",
+            ),
+        ),
+    ],
+)
+def test_real_modules_with_unresolvable_annotations_are_named(source: str) -> None:
+    """As a linter leaves the import, and as Python 3.14 defers the annotation."""
+    namespace: dict[str, Any] = {"__name__": "some_app"}
+    exec(source, namespace)  # noqa: S102 - the test's own source
+
+    with pytest.warns(FutureWarning, match="cannot be resolved"):
+        cached(ttl=60)(namespace["load"])
+    # With the choice made the function is decorated without a warning (on
+    # Python 3.14+ this used to raise NameError from inspect.signature).
+    assert cached(ttl=60, type_=None)(namespace["load"]).cache_key() != ""
