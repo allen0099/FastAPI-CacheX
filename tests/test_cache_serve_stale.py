@@ -275,6 +275,20 @@ def test_error_mode_runs_the_handler_and_stores_when_it_succeeds(
     assert handler.runs == 2
 
 
+def test_error_mode_stores_an_unchanged_response_again(clock: _Clock) -> None:
+    """Skipping the write for an equal ETag would leave the entry stale."""
+    client, handler = _app("error")
+    handler.same_body = True
+    client.get("/item")
+    clock.now += TTL + 1
+
+    assert _seen(client.get("/item")) == (200, "same", "MISS")
+
+    again = client.get("/item")
+    assert _seen(again) == (200, "same", "HIT")
+    assert again.headers["age"] == "0"
+
+
 @pytest.mark.parametrize(
     "failure", [RuntimeError("boom"), HTTPException(status_code=502), 500, 503]
 )
