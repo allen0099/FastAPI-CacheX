@@ -28,14 +28,19 @@ private、沒有正數的 ttl，或帶有 Authorization／Session 資料且未�
 讀取後端項目（fail_open 時，後端錯誤視為未命中；
 儲存之後有任何一個 tag 被失效的項目也視為未命中）
     │  設定 client_cache_control 時，請求的 no-cache 或 max-age=0 會略過
-    │  讀取（handler 執行，它的回應取代該項目），請求的 no-store 則會在
-    │  不讀取也不寫入後端的情況下執行 handler
+    │  讀取（handler 執行，它的回應取代該項目）；請求的 no-store 則是在
+    │  建立鍵之前就決定，走上方 bypass 的路徑（不執行 key builder，也不
+    │  使用後端）
     ↓
 設定 serve_stale 且項目已超過 ttl（項目會保留 ttl + stale_ttl）？
-    ├─ stale="revalidate" → 立刻以該項目回應；handler 在回應送出之後，
-    │                        以該請求的背景工作執行，它的回應取代該項目
-    ├─ stale="error"      → 執行 handler；若它拋出例外或回應 5xx，
-    │                        就改以該項目回應
+    ├─ stale="revalidate" → 立刻以該項目回應，方式同下（If-None-Match
+    │                        相符時回 304）；GET 請求的 handler 會在回應
+    │                        送出之後，以該請求的背景工作執行，它的回應
+    │                        取代該項目
+    ├─ stale="error"      → 執行 handler；若它拋出例外或回應 5xx，就改以
+    │                        該項目回應（低於 500 的 HTTPException，或應用
+    │                        程式自己處理的例外，是 handler 的答案，會原樣
+    │                        送出）
     └─ 否 → 繼續
     ↓
 請求帶有 If-None-Match？
@@ -54,7 +59,8 @@ private、沒有正數的 ttl，或帶有 Authorization／Session 資料且未�
               │     → 設定 ETag 後回傳，**不寫入**（既有項目保持不變；
               │       private／no-store 標頭保留原樣）
               └─ 一般回應 → 設定 ETag；只有與既有項目的 ETag
-                            不同時才寫入後端
+                            不同，或既有項目已過期時才寫入後端；
+                            讀不到路由的 tag 版本時不寫入
                             （fail_open 時，寫入失敗會記錄警告，
                             回應照常送出但不儲存）
               接著，若 If-None-Match 與新的 ETag 相符（項目已過期、
@@ -138,7 +144,7 @@ cache_key = "|".join(
 @cache(ttl=60, tags=["users"])              # 可用 invalidate_tags("users") 讓它失效
 ```
 
-參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 或 `stale_ttl` 不是 `int` 或整數秒的 `timedelta`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起傳入，`key_builder` 是 `async` 可呼叫物件，`coalesce` 不是 `bool`、未搭配正的 `ttl` 或與 `private`、`no_cache` 一起設定，或 `debug_header` 不是 `bool`，會拋出 `CacheXError`。
+參數會在套用裝飾器時驗證；若同時設定 `public` 與 `private`、只提供 `stale`／`stale_ttl` 其中之一、`ttl` 或 `stale_ttl` 不是 `int` 或整數秒的 `timedelta`、為負數或大於 `MAX_TTL`、`vary` 不是由標頭欄位名稱組成的 list、`sort_query` 不是 `bool` 或與自訂的 `key_builder` 一起傳入，`key_builder` 是 `async` 可呼叫物件，`coalesce` 不是 `bool`、未搭配正的 `ttl` 或與 `private`、`no_cache` 一起設定，或 `debug_header` 不是 `bool`，會拋出 `CacheXError`。以下情況也一樣：`serve_stale` 不是 `bool`、未搭配 `stale` 或正的 `ttl`，或與 `private`、`no_cache`、`must_revalidate` 一起設定；`client_cache_control` 既不是 `bool` 也不是一般函式；`tags` 是單一的 `str`、含有不是非空 `str` 的內容，或是 `async` 函式。
 
 標頭值在每個被裝飾的路由上只建立一次：
 
@@ -204,20 +210,38 @@ if bypass or (credential and not cache_authorized):
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
 # HEAD：key_builder 拿到的請求方法是 GET
+asked = client_asks(
+    request
+)  # 只有 client_cache_control 時："no-cache"（max-age=0 亦同）、"no-store" 或 None
+if asked == "no-store":
+    ...  # 同上方的 bypass：自行產生，既不讀取也不寫入後端
+
 cache_key = key_builder(request) + vary_components(request)  # 只在這裡建立
-entry = await backend.get(cache_key)  # 過期的項目已在此略過
+# 過期的項目已在此略過; 儲存之後有 tag 被失效的項目也會被略過
+entry = None if asked == "no-cache" else await backend.get(cache_key)
 if coalesce and entry is None and (leader := running_miss(cache_key)):
     await leader  # 只有 GET 會帶頭；HEAD 只會等待
     entry = await backend.get(cache_key)  # None：在下方自行產生，不再等待
+
+stale = (
+    serve_stale and entry and age(entry) >= ttl
+)  # serve_stale：保留 ttl + stale_ttl，超過 ttl 即為過期
+if stale and stale_mode == "revalidate":
+    background.add_task(
+        refresh, cache_key
+    )  # 只有 GET；在回應送出之後執行，此時請求的依賴仍然開啟
+    stale = False  # 在下方以該項目回應，X-Cache 為 STALE
 
 if client_etag and no_cache:
     fresh = await render()  # no-cache：一律先重新產生
     if etag_matches(client_etag, fresh.etag):
         return not_modified(...)  # 304
-elif client_etag and entry and etag_matches(client_etag, entry.fingerprint):
-    return not_modified(..., age_headers(entry, ttl))  # 304，handler 不執行
+elif (
+    client_etag and entry and not stale and etag_matches(client_etag, entry.fingerprint)
+):
+    return not_modified(..., age_headers(entry, stored_ttl))  # 304，handler 不執行
 
-if entry and not no_cache:
+if entry and not no_cache and not stale:
     hit = Response(  # 200，handler 不執行
         content=entry.content,
         status_code=entry.status_code,
@@ -226,9 +250,11 @@ if entry and not no_cache:
     for name, value in entry.headers:  # 依序加上儲存的每一行
         hit.headers.append(name, value)
     hit.headers["ETag"] = entry.fingerprint  # 接著設定 ETag、Cache-Control 與
-    ...  # Age：now - stored_at，限制在 0..ttl
+    ...  # Age：now - stored_at，限制在 0..stored_ttl（ttl，或 ttl + stale_ttl）
     return hit
 
+tags_before = await tag_versions(route_tags)  # 在 handler 執行之前讀取；讀不到時為 None
+# stale="error"：若這裡拋出例外或回應 5xx，就改以過期的項目回應
 response, body, etag = await render()  # 未命中（若 no-cache 已產生過則直接沿用）
 if not is_cacheable_status(response.status_code):
     return response  # 非 2xx：原樣回傳，不寫入
@@ -239,8 +265,15 @@ shareable = not (
     or "set-cookie" in response.headers
     or request.method == "HEAD"
 )  # 屬於單一呼叫者的回應與 HEAD 的回應不寫入
-if shareable and (not entry or entry.fingerprint != etag):
-    await backend.set(cache_key, CacheEntry(..., stored_at=time.time()), ttl=ttl)
+# 已儲存的項目過期時也會寫入；不知道 tag 版本時不寫入
+if (
+    shareable
+    and tags_before is not None
+    and (not entry or entry.fingerprint != etag or stale)
+):
+    await backend.set(
+        cache_key, CacheEntry(..., stored_at=time.time(), tags=...), ttl=stored_ttl
+    )
 if etag_matches(client_etag, etag):
     return not_modified(...)  # 304：用戶端的副本仍是最新的；
     # 它保留回應的 Set-Cookie 與背景任務
@@ -248,7 +281,7 @@ return response
 ```
 
 > [!NOTE]
-> **由後端送出的回應帶有 `Age`。** 快取命中，以及依已儲存 ETag 回應的 304，會帶有 `Age: <自 stored_at 起的秒數>`，並限制在 `0`–`ttl` 之間，以防主機之間的時鐘偏差；`Cache-Control` 保持 `max-age=<ttl>`，由下游快取從中扣掉 `Age`（RFC 9111 §4.2.3）。handler 剛產生的回應（包括所有 `no_cache` 回應與所有繞過後端的回應）不帶 `Age`，沒有 `stored_at` 的項目也不帶。
+> **由後端送出的回應帶有 `Age`。** 快取命中，以及依已儲存 ETag 回應的 304，會帶有 `Age: <自 stored_at 起的秒數>`，並限制在 `0`–`ttl` 之間（設定 `serve_stale` 時為 `0`–`ttl + stale_ttl`，此時過期的回應會帶有大於 `max-age` 的 `Age`），以防主機之間的時鐘偏差；`Cache-Control` 保持 `max-age=<ttl>`，由下游快取從中扣掉 `Age`（RFC 9111 §4.2.3）。handler 剛產生的回應（包括所有 `no_cache` 回應與所有繞過後端的回應）不帶 `Age`，沒有 `stored_at` 的項目也不帶。
 
 > [!NOTE]
 > 「非 2xx 不寫入」是刻意的設計：暫時性的錯誤不應抹除最後一次正常的快取回應，也不應在之後被當成 200 重播。`206 Partial Content` 同樣不會快取，因為它的內容只對產生它的那個 `Range` 請求有意義。非 2xx 回應也永遠不會以 `304` 回應，且回傳時不帶裝飾器的 `Cache-Control` 標頭（只有 `no_store=True` 會在每個回應加上 `no-store`）。
