@@ -31,7 +31,7 @@ When `@cache`, `CacheBackend` or `AppCache` registers this fallback because no
 backend was set, the `fastapi_cachex.proxy` logger logs a `WARNING` once per
 process, since its cache is per process: under multiple workers, invalidation
 reaches only one worker. Set the backend explicitly at startup to silence it;
-an explicit `MemoryBackend` stays silent:
+an explicit `MemoryBackend` does not log it:
 
 ```python
 from fastapi_cachex.backends import MemoryBackend
@@ -44,6 +44,23 @@ BackendProxy.set(backend)
 > [!NOTE]
 > The in-memory cache is not suitable for production with multiple processes.
 > Each process maintains its own separate cache.
+
+Creating a `MemoryBackend`, explicitly or as the fallback, emits a
+`UserWarning` when the `WEB_CONCURRENCY` environment variable is an integer
+greater than 1. uvicorn (`--workers`) and gunicorn (`-w`) read that variable as
+their default worker count, and platforms such as Heroku set it. With several
+workers, `invalidate()` and the `clear*` methods reach one worker only,
+`CacheLock` and `get_or_set(lock=True)` exclude only within one worker, and
+counters are per worker. The check is a hint, not a guarantee: a worker count
+given only on the command line, or several single-worker replicas, are not
+detected. If the variable is set but the process really is the only worker,
+silence the warning:
+
+```python
+import warnings
+
+warnings.filterwarnings("ignore", message="memory backend with several workers")
+```
 
 The cleanup task starts on the event loop of the first cache call. If a later call
 runs on a different loop, for example after the first loop was closed, the task is
