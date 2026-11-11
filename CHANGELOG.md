@@ -20,6 +20,50 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-11
+
+### Added
+
+- **`CacheManager.get_many()` and `set_many()` read and write several keys in one backend call.**
+  `get_many(keys, type_=None)` returns a dict of the keys it found and leaves
+  out the ones that are missing, expired or undecodable; `set_many(mapping,
+  ttl=None)` stores every value with the same prefix, encoding and `ttl` rules
+  as `set()`. They are built on the new `BaseCacheBackend.get_many()` and
+  `set_many()`, which the built-in backends implement with one round trip per
+  server (`MGET` and a `MULTI`/`EXEC` on Redis) and a third-party backend
+  inherits as a loop over `get`/`set`. `set_many` is atomic on the memory and
+  Redis backends and not on Memcached, where a failure can leave part of the
+  batch stored. ([#249](https://github.com/allen0099/FastAPI-CacheX/issues/249))
+- **Tags: `invalidate_tags()` invalidates every entry written under a tag, on
+  every backend.** `@cache(tags=...)`, `@cached(tags=...)`,
+  `CacheManager.set(..., tags=...)` and `get_or_set(..., tags=...)` write under
+  tags, as a list of names or computed from the request or the arguments. No
+  keys are enumerated, so it works on Memcached too; a tagged read costs one
+  extra batched backend read. ([#538](https://github.com/allen0099/FastAPI-CacheX/issues/538))
+- **`@cache(serve_stale=True)` makes the server's own cache act on `stale`.**
+  The entry is kept for `ttl + stale_ttl`. Past `ttl`, `stale="revalidate"`
+  answers from the old entry at once and runs the handler after the response was
+  sent; `stale="error"` answers from it when the handler raises or returns a 5xx
+  status. `X-Cache` reports such a response as `STALE`. ([#539](https://github.com/allen0099/FastAPI-CacheX/issues/539))
+- **`set_event_handler()` reports hits, misses, stores and backend failures to a
+  function of yours.** One `CacheEvent` per event, for `@cache` routes and for
+  `CacheManager` / `@cached`, with the route's path template and the time it
+  took to answer, so an application can feed its own metrics without the library
+  depending on a metrics package. ([#540](https://github.com/allen0099/FastAPI-CacheX/issues/540))
+- **`@cache(client_cache_control=...)` lets a request's own `Cache-Control`
+  skip the stored entry.** Off by default. With `True`, or a callable that
+  decides per request, `no-cache` and `max-age=0` run the handler and replace
+  the entry, and `no-store` runs it without touching the backend. `X-Cache`
+  reports the first as `REFRESH`. ([#541](https://github.com/allen0099/FastAPI-CacheX/issues/541))
+
+### Fixed
+
+- **The `error` event also covers an unreachable backend in `CacheManager` and
+  `@cached`, and routes with `fail_open=False`.** It was reported only for a
+  `@cache` route that went on without the cache. The application cache reports
+  a server that cannot be reached (`BackendUnavailableError`); other backend
+  errors there still only raise. ([#540](https://github.com/allen0099/FastAPI-CacheX/issues/540))
+
 ## [0.6.0] - 2026-11-11
 
 ### Changed
@@ -1652,7 +1696,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.4...v0.5.5
