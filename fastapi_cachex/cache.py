@@ -54,6 +54,8 @@ from ._stored_response import _etag_matches
 from ._stored_response import _fresh_not_modified
 from ._stored_response import _is_cacheable_status
 from ._stored_response import _not_modified
+from ._vary import Vary
+from ._vary import VaryNormaliser
 from ._vary import _validate_vary
 from ._vary import _vary_components
 from .backends.base import MAX_TTL
@@ -240,7 +242,7 @@ class _BypassWarner:
 async def invalidate(
     request: Request,
     key_builder: CacheKeyBuilder | None = None,
-    vary: Sequence[str] | None = None,
+    vary: Vary | None = None,
     *,
     sort_query: bool | None = None,
 ) -> bool:
@@ -259,9 +261,10 @@ async def invalidate(
         key_builder: Custom key builder used by the target route's ``@cache``
             decorator, if any. If None, uses ``default_key_builder``. Must be
             a sync callable returning a ``str``, as for ``@cache``.
-        vary: The target route's ``vary`` names, if any. Only the variant
-            selected by ``request``'s own values for those headers is
-            deleted; ``clear_path()`` clears every variant of a path.
+        vary: The target route's ``vary``, if any: the same list of names
+            or mapping of names to normalisers, so the same component is
+            built. Only the variant selected by ``request``'s own values for
+            those headers is deleted; ``clear_path()`` clears every variant of a path.
             Credential headers (``Authorization``, ``Cookie``, ...) are
             hashed exactly as ``@cache`` hashes them, so pass a request
             carrying the same header value.
@@ -275,10 +278,12 @@ async def invalidate(
         True if a cache entry existed and was deleted, False otherwise.
 
     Raises:
-        CacheXError: If ``vary`` is not a list of header names, if
-            ``sort_query`` is not a ``bool`` or is passed with
-            ``key_builder``, if ``key_builder`` is an ``async`` callable, or
-            if it returns something other than a ``str``. Raised before the
+        CacheXError: If ``vary`` is not a list of header names or a mapping
+            of names to normalisers, if a normaliser returns something other
+            than a ``str`` or an ``int``, if ``sort_query`` is not a ``bool``
+            or is passed with ``key_builder``, if ``key_builder`` is an
+            ``async`` callable, or if it returns something other than a
+            ``str``. Raised before the
             backend is touched.
     """
     builder = _resolve_key_builder(key_builder, sort_query)
@@ -312,7 +317,7 @@ async def invalidate_path(
     request: Request,
     path: str,
     key_builder: CacheKeyBuilder | None = None,
-    vary: Sequence[str] | None = None,
+    vary: Vary | None = None,
     *,
     query: str | Mapping[str, Any] | Sequence[tuple[str, Any]] | None = None,
     sort_query: bool | None = None,
@@ -614,7 +619,7 @@ class _Route:
     cache_authorized: bool
     coalesce: bool
     key_builder: CacheKeyBuilder
-    vary_names: list[str]
+    vary_names: dict[str, VaryNormaliser | None]
     cache_control: str
     private_cache_control: str
     warn_bypass: _BypassWarner
@@ -998,7 +1003,7 @@ def cache(
     key_builder: CacheKeyBuilder | None = None,
     fail_open: bool = True,
     cache_authorized: bool = False,
-    vary: Sequence[str] | None = None,
+    vary: Vary | None = None,
     sort_query: bool | None = None,
     coalesce: bool = False,
     debug_header: bool = False,
@@ -1108,14 +1113,22 @@ def cache(
             gets its own entry. The names are also added to the ``Vary``
             header of every response to a GET or HEAD request, unless it already
             lists them or ``*``. Values are client-controlled: each listed
-            header multiplies the number of entries, so normalise them in a
-            ``key_builder`` when only a few values matter. The credential
+            header multiplies the number of entries. When only a few values
+            matter, pass a mapping from the name to a normaliser instead:
+            ``vary={"Accept-Language": pick_locale}`` calls
+            ``pick_locale(value)`` and puts what it returns (a ``str`` or an
+            ``int``) into the key, while ``Vary`` still names the header. A
+            name mapped to ``None`` behaves as in a list. The normaliser
+            must be a sync function; it runs once for every GET or HEAD
+            request that is looked up in the cache, before the backend is
+            read, and an exception it raises fails the request. The credential
             headers ``Authorization``, ``Proxy-Authorization``, ``Cookie``
             and ``X-Session-Token`` are keyed on ``sha256:<hex digest>`` of
             the value rather than the value, so no token or session cookie
             appears in the key; missing or empty, they stay ``name=``.
-            Listing ``Cookie`` emits a ``UserWarning`` when the decorator is
-            applied, since every visitor then gets their own entry.
+            A normalised value is hashed the same way. Listing ``Cookie``
+            without a normaliser emits a ``UserWarning`` when the decorator
+            is applied, since every visitor then gets their own entry.
             A request with ``Authorization`` or a non-empty
             ``request.session`` still bypasses the backend unless ``public``
             or ``cache_authorized`` is set, and a response that sets a cookie
@@ -1210,7 +1223,11 @@ def cache(
         )
         vary_names = _validate_vary(vary)
         builder = _resolve_key_builder(key_builder, sort_query)
-        if any(name.lower() == "cookie" for name in vary_names):
+        # A normaliser bounds the entries, which is what the warning is about.
+        if any(
+            name.lower() == "cookie" and normaliser is None
+            for name, normaliser in vary_names.items()
+        ):
             # stacklevel=2: the caller applying the decorator, i.e. the line
             # of the user's @cache(...).
             warnings.warn(_COOKIE_VARY_WARNING, UserWarning, stacklevel=2)
@@ -1336,7 +1353,7 @@ def cache(
             if vary_names and cacheable_request:
                 # Every GET or HEAD answer, served from the backend or not: a
                 # shared cache downstream keys on these headers too.
-                add_vary(response.headers, vary_names)
+                add_vary(response.headers, list(vary_names))
             return response
 
         wrapper.__signature__ = params.signature  # type: ignore[attr-defined]

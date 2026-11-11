@@ -1,6 +1,9 @@
 """The `vary=` request headers that `@cache` adds to a key."""
 
 import hashlib
+import inspect
+from collections.abc import Callable
+from collections.abc import Mapping
 from collections.abc import Sequence
 
 from fastapi import Request
@@ -13,31 +16,62 @@ _FIELD_NAME_CHARS = frozenset(
 )
 
 
-def _validate_vary(vary: Sequence[str] | None) -> list[str]:
-    """Check ``@cache(vary=...)`` and return the names, first spelling of each.
+# What ``vary={name: normaliser}`` maps a header to: the header's value in,
+# the key component's value out.
+VaryNormaliser = Callable[[str], str | int]
+Vary = Sequence[str] | Mapping[str, VaryNormaliser | None]
+
+
+_ASYNC_NORMALISER_MSG = (
+    "vary[{name!r}] must be a sync function returning a str or an int; an "
+    "async normaliser is not supported"
+)
+
+
+def _validate_vary(vary: Vary | None) -> dict[str, VaryNormaliser | None]:
+    """Check ``@cache(vary=...)``; return each name, first spelling, with its normaliser.
+
+    A list gives every name ``None``, as a mapping does for a name mapped to
+    ``None``: the header's own value goes into the key.
 
     Raises:
-        CacheXError: If ``vary`` is a single string instead of a sequence of
-            names, or a name is not a non-empty header field name, or is ``*``.
+        CacheXError: If ``vary`` is a single string instead of a sequence or
+            mapping of names, a name is not a non-empty header field name or
+            is ``*``, or a mapping's value is neither callable nor ``None``,
+            or is an ``async`` function.
     """
     if vary is None:
-        return []
-    if isinstance(vary, (str, bytes)) or not isinstance(vary, Sequence):
+        return {}
+    if isinstance(vary, Mapping):
+        items = list(vary.items())
+    elif isinstance(vary, (str, bytes)) or not isinstance(vary, Sequence):
         msg = (
             "vary must be a list of header names, e.g. vary=['Accept-Language'], "
+            "or a mapping of header names to normalisers, "
             f"got {type(vary).__name__}"
         )
         raise CacheXError(msg)
-    names: dict[str, str] = {}
-    for name in vary:
+    else:
+        items = [(name, None) for name in vary]
+    names: dict[str, tuple[str, VaryNormaliser | None]] = {}
+    for name, normaliser in items:
         if not isinstance(name, str) or not name or not set(name) <= _FIELD_NAME_CHARS:
             msg = f"vary entries must be header field names, got {name!r}"
             raise CacheXError(msg)
         if name == "*":
             msg = "vary cannot contain '*': the key can only vary on named headers"
             raise CacheXError(msg)
-        names.setdefault(name.lower(), name)
-    return list(names.values())
+        if normaliser is not None and not callable(normaliser):
+            # Unreachable for type checkers; guards untyped callers.
+            msg = (  # type: ignore[unreachable]
+                f"vary[{name!r}] must be a callable taking the header value, "
+                f"or None, got {type(normaliser).__name__}"
+            )
+            raise CacheXError(msg)
+        if inspect.iscoroutinefunction(normaliser):
+            raise CacheXError(_ASYNC_NORMALISER_MSG.format(name=name))
+        names.setdefault(name.lower(), (name, normaliser))
+    return dict(names.values())
 
 
 # Request headers whose values are credentials: ``vary`` keys on a digest of
@@ -57,21 +91,47 @@ _HASHED_VARY_HEADERS = frozenset(
 _HASHED_VARY_MARKER = "sha256:"
 
 
-def _vary_components(request: Request, names: Sequence[str]) -> list[str]:
-    """The key components for ``@cache(vary=names)``: ``name=value`` each.
+def _vary_components(
+    request: Request, vary: Mapping[str, VaryNormaliser | None]
+) -> list[str]:
+    """The key components for ``@cache(vary=...)``: ``name=value`` each.
 
     The name is lower-cased and the value trimmed; repeated header lines are
     joined with ``,`` as RFC 9110 §5.3 allows, and a missing header gives an
-    empty value, the same as an empty one. For a credential header
+    empty value, the same as an empty one. A normaliser then gets that value
+    and returns what goes into the key. For a credential header
     (``Authorization``, ``Proxy-Authorization``, ``Cookie`` and
-    ``X-Session-Token``) a non-empty value is replaced by ``sha256:`` and the
-    full hex SHA-256 of the joined value; an empty or missing one stays
+    ``X-Session-Token``) a non-empty value, normalised or not, is replaced by
+    ``sha256:`` and its full hex SHA-256; an empty or missing one stays
     ``name=``, so anonymous requests share one entry.
+
+    Raises:
+        CacheXError: If a normaliser returns something other than a ``str``
+            or an ``int`` (a coroutine included).
     """
     components = []
-    for name in names:
+    for name, normaliser in vary.items():
         lowered = name.lower()
         value = ",".join(line.strip() for line in request.headers.getlist(name))
+        if normaliser is not None:
+            normalised: object = normaliser(value)
+            if inspect.iscoroutine(normalised):
+                # Closed, so it does not also warn "never awaited".
+                normalised.close()
+                raise CacheXError(_ASYNC_NORMALISER_MSG.format(name=name))
+            if isinstance(normalised, bool) or not isinstance(normalised, (str, int)):
+                msg = (
+                    f"the vary normaliser for {name!r} must return a str or an "
+                    f"int, got {type(normalised).__name__}"
+                )
+                raise CacheXError(msg)
+            # The value itself, not its repr: str() of a (str, Enum) member
+            # is "Locale.EN", and of an IntEnum member before 3.11 its name.
+            value = (
+                str.__str__(normalised)
+                if isinstance(normalised, str)
+                else str(int(normalised))
+            )
         if value and lowered in _HASHED_VARY_HEADERS:
             digest = hashlib.sha256(value.encode("utf-8", "surrogatepass"))
             value = _HASHED_VARY_MARKER + digest.hexdigest()

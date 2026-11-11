@@ -6,6 +6,7 @@ import warnings
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
 
+from ._vary import VaryNormaliser as VaryNormaliser
 from .cache import build_cache_key as build_cache_key
 from .cache import cache as cache
 from .cache import default_key_builder as default_key_builder
@@ -98,6 +99,7 @@ __all__ = [
     "TTLTypeError",
     "TTLValueError",
     "ValueTooLargeError",
+    "VaryNormaliser",
     "__version__",
     "add_routes",
     "build_cache_key",
