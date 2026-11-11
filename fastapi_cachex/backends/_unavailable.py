@@ -23,54 +23,71 @@ from typing import TypeVar
 from typing import cast
 
 from fastapi_cachex.exceptions import BackendUnavailableError
+from fastapi_cachex.exceptions import CacheXError
 
 P = ParamSpec("P")
 R = TypeVar("R")
 
-_SUBCLASSES: dict[type[Exception], type[BackendUnavailableError]] = {}
+E = TypeVar("E", bound=CacheXError)
+
+_SUBCLASSES: dict[tuple[type[CacheXError], type[Exception]], type[CacheXError]] = {}
 
 
-def _rebuild(error_type: type[Exception], args: tuple[Any, ...]) -> Exception:
-    """Unpickle a translated error: pickle cannot import a runtime class."""
-    return _subclass_for(error_type)(*args)
+def _rebuild(
+    error_type: type[Exception],
+    args: tuple[Any, ...],
+    base: type[CacheXError] = BackendUnavailableError,
+) -> Exception:
+    """Unpickle a translated error: pickle cannot import a runtime class.
+
+    ``base`` comes last and has a default because a pickle written before
+    0.5.4 carries only the first two arguments.
+    """
+    return _subclass_for(base, error_type)(*args)
 
 
 def _reduce(self: BaseException) -> tuple[Any, ...]:
-    return _rebuild, (type(self).__bases__[1], self.args), self.__dict__ or None
+    base, error_type = type(self).__bases__
+    return _rebuild, (error_type, self.args, base), self.__dict__ or None
 
 
-def _subclass_for(error_type: type[Exception]) -> type[BackendUnavailableError]:
-    """The ``BackendUnavailableError`` that is also an ``error_type``."""
-    subclass = _SUBCLASSES.get(error_type)
+def _subclass_for(base: type[E], error_type: type[Exception]) -> type[E]:
+    """The ``base`` (a ``CacheXError``) that is also an ``error_type``."""
+    subclass = _SUBCLASSES.get((base, error_type))
     if subclass is None:
         # Named like its base, so a traceback reads BackendUnavailableError;
         # the chained original below it names the client's own exception.
-        subclass = cast(
-            "type[BackendUnavailableError]",
-            type(
-                "BackendUnavailableError",
-                (BackendUnavailableError, error_type),
-                {
-                    "__module__": BackendUnavailableError.__module__,
-                    "__qualname__": BackendUnavailableError.__qualname__,
-                    "__doc__": BackendUnavailableError.__doc__,
-                    "__reduce__": _reduce,
-                },
-            ),
+        subclass = type(
+            base.__name__,
+            (base, error_type),
+            {
+                "__module__": base.__module__,
+                "__qualname__": base.__qualname__,
+                "__doc__": base.__doc__,
+                "__reduce__": _reduce,
+            },
         )
-        _SUBCLASSES[error_type] = subclass
-    return subclass
+        _SUBCLASSES[base, error_type] = subclass
+    return cast("type[E]", subclass)
+
+
+def translated(base: type[E], error: Exception, message: str | None = None) -> E:
+    """``error`` as a ``base`` that is also its own type.
+
+    The arguments are the original's, or ``message`` alone when given.
+    """
+    subclass = _subclass_for(base, type(error))
+    try:
+        new = subclass(*(error.args if message is None else (message,)))
+    except Exception:  # noqa: BLE001 - a constructor that wants other arguments
+        new = subclass(str(error) if message is None else message)
+    new.__dict__.update(error.__dict__)
+    return new
 
 
 def as_unavailable(error: Exception) -> BackendUnavailableError:
     """``error`` as a ``BackendUnavailableError`` that is also its own type."""
-    subclass = _subclass_for(type(error))
-    try:
-        translated = subclass(*error.args)
-    except Exception:  # noqa: BLE001 - a constructor that wants other arguments
-        translated = subclass(str(error))
-    translated.__dict__.update(error.__dict__)
-    return translated
+    return translated(BackendUnavailableError, error)
 
 
 def translate_unavailable(

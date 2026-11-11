@@ -34,6 +34,18 @@ class BackendUnavailableError(CacheXError):
     """
 
 
+class ValueTooLargeError(CacheXError):
+    """The backend's server refused a value as too large to store.
+
+    Raised by the Memcached backend when a value exceeds the server's item
+    size limit (1 MB unless the server was started with ``-I``). Like
+    ``BackendUnavailableError`` it is chained to the client's own exception
+    and is also an instance of that exception's type
+    (``pymemcache.exceptions.MemcacheServerError``), so an ``except`` clause
+    written before 0.5.4 keeps catching it (#261).
+    """
+
+
 class InvalidTTLError(CacheXError):
     """An invalid ``ttl``, wherever it is passed.
 

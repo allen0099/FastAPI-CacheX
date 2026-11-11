@@ -230,9 +230,15 @@ server must not tie up the thread pool.
 - A `ttl` whose expiry falls after 2038-01-19 raises `ValueError` (see
   [TTL values](#ttl-values))
 - Values larger than the server's item size limit (1 MB by default, `memcached -I`)
-  are rejected with an error. `@cache` logs it and serves the response unstored
-  (see [When the backend fails](HTTP_CACHING.md#when-the-backend-fails)); other
-  callers get the error
+  are rejected. `@cache` logs it and serves the response unstored
+  (see [When the backend fails](HTTP_CACHING.md#when-the-backend-fails)).
+  `CacheManager` (`set`, `add`, `get_or_set`), `@cached` and direct `set()`,
+  `set_if_absent()` and `set_if_equals()` calls raise `ValueTooLargeError`, a
+  `CacheXError` whose message gives the encoded size and a digest of the key. Nothing is stored, and the server also drops
+  the value a refused `set()` would have replaced, so the key reads as missing
+  afterwards; a refused `set_if_absent()` leaves the existing value. The error
+  is chained to pymemcache's `MemcacheServerError` and is
+  also an instance of it, which is all these callers raised before 0.5.4
 - Consider using the Redis backend if you need pattern-based cache clearing
 
 The synchronous pymemcache client runs in worker threads and is connection-pooled,
@@ -315,9 +321,10 @@ an instance of that exception's type: a refused Memcached connection is a
 `BackendUnavailableError` and a `ConnectionRefusedError`, a Redis one a
 `BackendUnavailableError` and a `redis.exceptions.ConnectionError`. An
 `except` clause naming the client's exception, written before 0.5.1, keeps
-catching it. Errors that are not about reaching the server are left as they
-are: an invalid argument, a value Memcached refuses as too large, a key that
-holds something else.
+catching it. Errors that are not about reaching the server are not
+turned into it: an invalid argument, a key that holds something else, a value
+Memcached refuses as too large (a `ValueTooLargeError`, see
+[Memcached](#memcached)).
 
 `@cache` is not affected: it [fails open](HTTP_CACHING.md#when-the-backend-fails)
 on any backend error, this one included. `CacheManager`, `CacheLock` and direct

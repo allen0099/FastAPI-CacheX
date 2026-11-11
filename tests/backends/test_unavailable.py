@@ -133,3 +133,13 @@ def test_it_survives_pickling() -> None:
     assert isinstance(restored, ConnectionResetError)
     assert restored.errno == 104
     assert str(restored) == str(error)
+
+
+def test_a_pickle_written_before_0_5_4_still_loads() -> None:
+    """It names `_rebuild` with two arguments; a third came with #261."""
+    from fastapi_cachex.backends._unavailable import _rebuild
+
+    restored = _rebuild(ConnectionResetError, (104, "reset"))
+
+    assert isinstance(restored, BackendUnavailableError)
+    assert isinstance(restored, ConnectionResetError)

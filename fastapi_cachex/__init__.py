@@ -26,6 +26,7 @@ from .exceptions import ProxyNotSetError as ProxyNotSetError
 from .exceptions import RequestNotFoundError as RequestNotFoundError
 from .exceptions import TTLTypeError as TTLTypeError
 from .exceptions import TTLValueError as TTLValueError
+from .exceptions import ValueTooLargeError as ValueTooLargeError
 from .lock import CacheLock as CacheLock
 from .manager import CacheManager as CacheManager
 from .manager_proxy import CacheManagerProxy as CacheManagerProxy
@@ -95,6 +96,7 @@ __all__ = [
     "RequestNotFoundError",
     "TTLTypeError",
     "TTLValueError",
+    "ValueTooLargeError",
     "__version__",
     "add_routes",
     "build_cache_key",
