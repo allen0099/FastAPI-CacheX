@@ -1793,7 +1793,7 @@ async def test_a_strict_model_is_read_back_from_its_json(
     cache_manager: CacheManager,
 ) -> None:
     """Validated as JSON: in Python mode strict refuses the str and the list."""
-    visit = _StrictVisit(at=datetime(2026, 1, 1, tzinfo=timezone.utc), seat=(1, 2))
+    visit = _StrictVisit(at=_ALICE.joined, seat=(1, 2))
 
     made = await cache_manager.get_or_set("visit", lambda: visit, type_=_StrictVisit)
 
