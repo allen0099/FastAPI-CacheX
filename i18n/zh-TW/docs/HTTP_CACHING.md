@@ -633,11 +633,11 @@ set_event_handler(record)
 | `hit`、`miss`、`stale`、`refresh`、`bypass` | 對 `@cache` 路由的 GET 或 HEAD 請求已回應：也就是 [`X-Cache`](#telling-a-hit-from-a-miss) 的值，不論是否設定 `debug_header` 都會回報，handler 拋出例外時也一樣。`source="app"` 時，`hit` 與 `miss` 表示 `CacheManager.get()` 或 `get_or_set()`（因此也包含 `@cached`）有沒有找到值；等待另一個呼叫者算出值的 `get_or_set()` 算是 `hit`。 |
 | `store` | 寫入了一個回應或值。 |
 | `invalidate` | `invalidate()`、`invalidate_path()` 或 `CacheManager.delete()` 刪除了一個項目。 |
-| `error` | `@cache` 的後端呼叫失敗，請求在沒有快取的情況下繼續處理。 |
+| `error` | 後端呼叫失敗。對 `@cache`：不論請求之後是在沒有快取的情況下繼續處理（`fail_open=True`），還是跟著失敗。對 `CacheManager` 與 `@cached`：連不上後端（`BackendUnavailableError`，例外照常拋出）。 |
 
 每個事件都有 `source`（`"http"` 或 `"app"`）、`key`（沒有查詢後端時為 None）；對 `@cache` 路由的請求還有 `route`，也就是路由的路徑樣板（`/api/users/{user_id}`，包含被引入的 router 或掛載的應用程式的前綴）；回應請求的事件則有以秒為單位的 `duration`。請用 `route` 當指標的 label，不要用 `key`：鍵裡含有查詢字串、其他用戶端輸入，以及自訂 key builder 加入的任何內容，數量沒有上限。基於同樣的理由，也不要原樣把它寫進日誌。
 
-這個函式會在請求的處理路徑上同步執行，所以請只做遞增計數器這類的事。它必須是一般函式：`async` 函式會以 `TypeError` 拒絕。它拋出的例外會被記錄，不會影響請求。`set_event_handler(None)` 會移除它；沒有設定時不會建立任何事件。`add()`、`increment()`、`has()`、`get_many()`、`set_many()` 與各個 `clear*` 方法不會回報事件，後端拋出例外的 `CacheManager` 呼叫也不會。
+這個函式會在請求的處理路徑上同步執行，所以請只做遞增計數器這類的事。它必須是一般函式：`async` 函式會以 `TypeError` 拒絕。它拋出的例外會被記錄，不會影響請求。`set_event_handler(None)` 會移除它；沒有設定時不會建立任何事件。`add()`、`increment()`、`has()`、`get_many()`、`set_many()` 與各個 `clear*` 方法除了這種 `error` 之外不會回報事件。
 
 ## 監控路由 {#monitoring-routes}
 

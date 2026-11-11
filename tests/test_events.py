@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+from fastapi_cachex import BackendUnavailableError
 from fastapi_cachex import CacheEvent
 from fastapi_cachex import CacheManager
 from fastapi_cachex import cache
@@ -263,3 +264,75 @@ def test_an_async_handler_is_rejected() -> None:
 
     with pytest.raises(TypeError, match="plain function"):
         set_event_handler(record)  # type: ignore[arg-type]
+
+
+class _Unreachable(MemoryBackend):
+    """Every read and write fails as a server that cannot be reached does."""
+
+    async def get(self, key: str) -> CacheEntry | None:
+        raise BackendUnavailableError
+
+    async def get_many(self, keys: Any) -> dict[str, CacheEntry]:
+        raise BackendUnavailableError
+
+    async def set(self, key: str, value: CacheEntry, ttl: Any = None) -> None:
+        raise BackendUnavailableError
+
+    async def get_and_delete(self, key: str) -> CacheEntry | None:
+        raise BackendUnavailableError
+
+
+async def test_cache_manager_reports_an_unreachable_backend_and_still_raises(
+    events: list[CacheEvent],
+) -> None:
+    manager = CacheManager(_Unreachable())
+
+    with pytest.raises(BackendUnavailableError):
+        await manager.get("user:1")
+    with pytest.raises(BackendUnavailableError):
+        await manager.set("user:1", 1)
+    with pytest.raises(BackendUnavailableError):
+        await manager.delete("user:1")
+    with pytest.raises(BackendUnavailableError):
+        await manager.get_many(["user:1", "user:2"])
+    with pytest.raises(BackendUnavailableError):
+        # Reads through get(): reported once, not once per layer.
+        await manager.get_or_set("user:1", lambda: 1, ttl=60)
+
+    assert [(e.kind, e.source, e.key) for e in events] == [
+        ("error", "app", "user:1"),
+        ("error", "app", "user:1"),
+        ("error", "app", "user:1"),
+        ("error", "app", None),
+        ("error", "app", "user:1"),
+    ]
+
+
+async def test_a_cached_function_reports_an_unreachable_backend(
+    events: list[CacheEvent],
+) -> None:
+    @cached(ttl=60, manager=CacheManager(_Unreachable()), key="answer")
+    async def answer() -> int:
+        return 42
+
+    with pytest.raises(BackendUnavailableError):
+        await answer()
+
+    assert [(e.kind, e.source) for e in events] == [("error", "app")]
+
+
+async def test_a_route_that_fails_closed_reports_the_error_too(
+    events: list[CacheEvent],
+) -> None:
+    backend = _Unreachable()
+    BackendProxy.set(backend)
+    client = _app(fail_open=False)
+    client = TestClient(client.app, raise_server_exceptions=False)
+    try:
+        assert client.get("/items/7").status_code == 500
+    finally:
+        await backend.aclose()
+
+    assert ("error", "http", KEY, "/items/{item_id}") in [
+        (e.kind, e.source, e.key, e.route) for e in events
+    ]

@@ -39,8 +39,10 @@ class CacheEvent:
     - ``store``: a response or value was written.
     - ``invalidate``: an entry was deleted by ``invalidate()`` or
       ``CacheManager.delete()``.
-    - ``error``: a backend call of ``@cache`` failed and the request went on
-      without the cache (``fail_open``).
+    - ``error``: a backend call failed. For ``@cache``, whether the request
+      then went on without the cache (``fail_open``) or failed with it. For
+      ``CacheManager`` and ``@cached``, when the backend could not be reached
+      (``BackendUnavailableError``); the exception is raised as before.
 
     ``source`` is ``"http"`` for ``@cache`` and ``"app"`` for
     ``CacheManager`` and ``@cached``. ``key`` is the cache key, or None when
