@@ -3,6 +3,7 @@
 import inspect
 import logging
 import threading
+import time
 import warnings
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -68,6 +69,7 @@ from ._vary import _vary_components
 from .backends.base import MAX_TTL
 from .backends.base import BaseCacheBackend
 from .directives import DirectiveType
+from .events import _emit
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
 from .exceptions import RequestNotFoundError
@@ -165,6 +167,13 @@ def _log_backend_failure(
         error,
     )
     logger.debug("Cache backend %s; key_ref=%s key=%s", what, key_ref, cache_key)
+    _emit("error", "http", cache_key, route=_route_template(request))
+
+
+def _route_template(request: Request) -> str | None:
+    """The path template of the route answering ``request``, if it has one."""
+    path = getattr(request.scope.get("route"), "path", None)
+    return path if isinstance(path, str) else None
 
 
 async def _read_entry(
@@ -346,6 +355,7 @@ async def invalidate(
             )
         return False
     logger.debug("Cache INVALIDATE; key=%s", cache_key)
+    _emit("invalidate", "http", cache_key)
     return True
 
 
@@ -672,6 +682,7 @@ class _Call:
     dependency_lines: list[tuple[bytes, bytes]]
     dependency_status: int | None
     background: BackgroundTasks | None = None
+    cache_key: str | None = None
     flight: _Flight = field(default_factory=_Flight)
     outcome: str | None = None
 
@@ -920,6 +931,7 @@ class _Route:
             _vary_components(req, self.vary_names),
         )
 
+        call.cache_key = cache_key
         # Decided below: a hit is served from the entry, anything else runs
         # the handler.
         call.outcome = _REFRESH if refresh else _MISS
@@ -1274,6 +1286,7 @@ class _Route:
             logger.debug(
                 "Updated cache entry; key=%s ttl=%s", cache_key, self.stored_ttl
             )
+            _emit("store", "http", cache_key, route=_route_template(call.request))
 
 
 def _check_client_cache_control(value: object) -> None:
@@ -1772,11 +1785,20 @@ def cache(
                 ),
                 background=background,
             )
+            started = time.perf_counter()
             try:
                 response = await route.respond(call, backend)
             finally:
                 # Releases the requests waiting on this one (#252).
                 call.flight.finish()
+            if call.outcome is not None:
+                _emit(
+                    call.outcome.lower(),  # type: ignore[arg-type]
+                    "http",
+                    call.cache_key,
+                    route=_route_template(request),
+                    duration=time.perf_counter() - started,
+                )
             if debug_header and call.outcome is not None:
                 # Set after the entry was built, so it is never stored.
                 response.headers[_DEBUG_HEADER] = call.outcome

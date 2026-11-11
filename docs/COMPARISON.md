@@ -27,7 +27,7 @@ FastAPI-CacheX version or newer.
 | Serialization | JSON, no pickle; values come back as their type through pydantic (`type_=`, or the return annotation of `@cached`, 0.6.0) | JSON by default, pickle optional | Pickle by default, optionally HMAC-signed; JSON optional | Pickle, JSON, msgpack, string or none |
 | Backends | Memory, Redis, Memcached | Memory, Redis, Memcached, DynamoDB | Memory, Redis (incl. cluster and client-side caching), diskcache | Memory, Redis, Memcached |
 | Stampede protection | `get_or_set()` with a distributed lock; `coalesce=True` per process on `@cache` (0.5.0) | None | `locked`, `early`, `soft`, `thunder_protection` | `cached_stampede` (lock based) |
-| Tags, early refresh, metrics | Stale entries served while the handler refreshes, or when it fails (`serve_stale`, 0.6.1); no tags or metrics | No | Tags, early and soft refresh, Prometheus middleware, callbacks | Hit/miss and timing plugins |
+| Tags, early refresh, metrics | Stale entries served while the handler refreshes, or when it fails (`serve_stale`, 0.6.1); an event hook to feed your own metrics (`set_event_handler`, 0.6.1); no tags | No | Tags, early and soft refresh, Prometheus middleware, callbacks | Hit/miss and timing plugins |
 | Also included | `CacheLock`, atomic counters, monitoring routes | — | Rate limiting, circuit breaker, Bloom filters, locks | `RedLock`, `OptimisticLock`, `multi_cached` |
 | Version compared | 0.6.0; Python 3.11–3.15, FastAPI 0.128.2+ | 0.2.2 (2024-07-24); Python 3.8+ | 7.6.0 (2026-09-17); Python 3.10+ | 0.12.3 (2024-09-25) |
 
@@ -62,7 +62,7 @@ What it does not do, or does only simply:
 
 - Only `GET` (and `HEAD`) responses are cached; there is no caching of `POST`.
 - Function caching is basic: no early or probabilistic refresh, no tags, no
-  serving of stale values while one caller refreshes, no metrics hooks.
+  serving of stale values while one caller refreshes.
 - Three backends: memory, Redis and Memcached. Memcached cannot enumerate
   keys, so pattern and path clearing do nothing there.
 - The server-side cache serves stale content only where a route asks for it

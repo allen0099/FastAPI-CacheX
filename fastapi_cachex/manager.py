@@ -33,6 +33,8 @@ from pydantic_core import to_jsonable_python
 from .backends.base import BaseCacheBackend
 from .backends.base import validate_ttl
 from .cache_key import GLOB_SPECIAL
+from .events import _emit
+from .events import _mute
 from .exceptions import LockTimeoutError
 from .lock import CacheLock
 from .proxy import BackendProxy
@@ -286,6 +288,7 @@ class CacheManager:
         """
         cached = await self.backend.get(self._cache_key(key))
         if cached is None:
+            _emit("miss", "app", key)
             return default
         return self._decode(key, cached, default, type_)
 
@@ -294,11 +297,14 @@ class CacheManager:
         """The value in ``cached``, or ``default`` if it cannot be decoded."""
         try:
             if type_ is None:
-                return json.loads(cached.content)
-            # As JSON, not as the decoded Python value: a strict model takes
-            # a datetime or a tuple from JSON, and refuses a str or a list.
-            return _adapter(type_).validate_json(cached.content)
+                value = json.loads(cached.content)
+            else:
+                # As JSON, not as the decoded Python value: a strict model
+                # takes a datetime or a tuple from JSON, and refuses a str
+                # or a list.
+                value = _adapter(type_).validate_json(cached.content)
         except (*_DECODE_ERRORS, ValidationError):
+            _emit("miss", "app", key)
             # Keys often embed user IDs or e-mails: only a digest at WARNING.
             key_ref = log_ref(key)
             logger.warning("Failed to decode cached value; key_ref=%s", key_ref)
@@ -306,6 +312,8 @@ class CacheManager:
                 "Failed to decode cached value; key_ref=%s key=%s", key_ref, key
             )
             return default
+        _emit("hit", "app", key)
+        return value
 
     async def set(
         self, key: str, value: Any, ttl: int | timedelta | None = None
@@ -330,6 +338,7 @@ class CacheManager:
 
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
+        _emit("store", "app", key)
 
     async def get_many(
         self, keys: Iterable[str], *, type_: Any = None
@@ -446,6 +455,7 @@ class CacheManager:
         if await self.backend.get_and_delete(self._cache_key(key)) is None:
             return False
         logger.debug("Cache DELETE; key=%s", key)
+        _emit("invalidate", "app", key)
         return True
 
     async def increment(
@@ -500,9 +510,11 @@ class CacheManager:
         ``type_`` is passed only when given, so a subclass that overrides
         ``get()`` with the signature it had before 0.5.5 keeps working.
         """
-        if type_ is None:
-            return await self.get(key, default=_SENTINEL)
-        return await self.get(key, default=_SENTINEL, type_=type_)
+        # Muted: get_or_set reports its own hit or miss, once per call.
+        with _mute():
+            if type_ is None:
+                return await self.get(key, default=_SENTINEL)
+            return await self.get(key, default=_SENTINEL, type_=type_)
 
     async def _compute_and_store(
         self,
@@ -519,6 +531,7 @@ class CacheManager:
         entry = self._encode(value)
         await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
+        _emit("store", "app", key)
         # What a later hit returns. A factory whose value does not fit type_
         # is a bug in the caller, so this ValidationError is not caught.
         if type_ is None:
@@ -703,7 +716,9 @@ class CacheManager:
         )
         cached = await self._lookup(key, type_)
         if cached is not _SENTINEL:
+            _emit("hit", "app", key)
             return cached
+        _emit("miss", "app", key)
 
         use_lock = self.lock if lock is None else lock
         if not use_lock:
