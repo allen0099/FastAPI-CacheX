@@ -43,6 +43,21 @@
     // weekly lock file branch would stay pending forever.
     minimumReleaseAge: null,
   },
+  // Tools a workflow or the Read the Docs config installs on a command line.
+  // No manager sees those, so each is pinned under a `# renovate:` comment
+  // naming where it comes from, and this keeps the pin moving.
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: [
+        "/^\\.github/workflows/.+\\.ya?ml$/",
+        "/^\\.readthedocs\\.yaml$/",
+      ],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)\\n[^\\n]*?(?:@|==)(?<currentValue>[0-9][^\\s\"'\\]]*)",
+      ],
+    },
+  ],
   packageRules: [
     {
       description: "Group all GitHub Actions updates into a single PR",

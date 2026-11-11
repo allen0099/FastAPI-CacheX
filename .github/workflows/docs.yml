@@ -54,7 +54,7 @@ jobs:
     # Same command Read the Docs runs; a broken link or docstring reference
     # fails the PR here instead of the published site.
     - name: Sync dependencies
-      run: uv sync --frozen --only-group docs --no-install-project
+      run: uv sync --locked --only-group docs --no-install-project
 
     - name: Build (strict)
       run: uv run --no-sync zensical build --strict

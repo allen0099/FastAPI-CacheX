@@ -55,7 +55,8 @@ jobs:
         uv run coverage run -m pytest
         uv run coverage report
         uv run coverage xml
-        uv tool run --from "genbadge[coverage]" genbadge coverage -i coverage.xml -o coverage.svg
+        # renovate: datasource=pypi depName=genbadge
+        uv tool run --from "genbadge[coverage]==1.1.3" genbadge coverage -i coverage.xml -o coverage.svg
       env:
         # The suites that talk to a real server are opt-in: they wipe what they
         # connect to, so they skip unless a port is named. These are the service

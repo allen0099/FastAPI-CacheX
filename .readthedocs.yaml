@@ -1,5 +1,7 @@
 # Read the Docs build: https://fastapi-cachex.readthedocs.io/
 # Mirrors the docs workflow in CI, so a PR that passes there builds here.
+# The Python version is the newest one Read the Docs offers, which can lag
+# behind .python-version; the docs build does not import the package.
 version: 2
 
 build:
@@ -8,7 +10,8 @@ build:
     python: "3.14"
   jobs:
     install:
-      - pip install uv
+      # renovate: datasource=pypi depName=uv
+      - pip install uv==0.13.4
       # mkdocstrings reads the package statically, so it need not be installed.
       - UV_PROJECT_ENVIRONMENT=$READTHEDOCS_VIRTUALENV_PATH uv sync --frozen --only-group docs --no-install-project
     build:

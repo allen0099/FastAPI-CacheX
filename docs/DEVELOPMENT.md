@@ -381,6 +381,18 @@ environment so the trusted publisher and any protection rules can be tied to it.
 A release runs from `master` only. Dispatched on any other ref, the run fails
 at its first step, and the `release` and `publish` jobs check the ref again.
 
+### Before a new minor
+
+The workflow moves the version and the changelog; a few files name the
+release line in prose and are edited by hand, in a pull request merged right
+before the release:
+
+- `SECURITY.md`: the supported line in the text and the table.
+- The migration guide of the new minor (`docs/MIGRATING_<minor>.md` and its
+  zh-TW copy): its introduction says the release is still to come until then.
+- `README.md` and `i18n/zh-TW/docs/index.md`: the line that links the guide.
+- `docs/COMPARISON.md` and its zh-TW copy: the "Version compared" row.
+
 ### Rehearsing a release
 
 Dispatch it with **dry run** ticked. Everything in `build` runs — the gate,
