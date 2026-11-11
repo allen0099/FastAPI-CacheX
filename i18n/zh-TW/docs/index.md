@@ -95,6 +95,7 @@ async def report(cache: AppCache):
 - [應用層快取](APP_CACHE.md)：`CacheManager`
 - [後端](BACKENDS.md)：選擇與設定後端、原子操作的基本功能
 - [分散式鎖](LOCK.md)：以 `CacheLock` 在多個行程之間互斥
+- [測試你的應用程式](TESTING.md)：每個測試一份全新的快取、證明隔離有效、在 lifespan 內建立 Redis
 - [快取流程](CACHE_FLOW.md)：快取請求內部的處理流程
 - [可執行範例](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples)（英文）：每個功能一個完整的應用程式，皆由測試套件涵蓋
 - [API 參考](https://fastapi-cachex.readthedocs.io/en/stable/api/http-caching/)（英文）

@@ -112,6 +112,7 @@ block links the example file).
 - [Application cache](https://fastapi-cachex.readthedocs.io/en/stable/APP_CACHE/) — `CacheManager`
 - [Backends](https://fastapi-cachex.readthedocs.io/en/stable/BACKENDS/) — choosing and configuring a backend, atomic primitives
 - [Distributed lock](https://fastapi-cachex.readthedocs.io/en/stable/LOCK/) — `CacheLock` for multi-process mutual exclusion
+- [Testing your app](https://fastapi-cachex.readthedocs.io/en/stable/TESTING/) — a fresh cache per test, proving isolation, Redis in the lifespan
 - [Cache flow](https://fastapi-cachex.readthedocs.io/en/stable/CACHE_FLOW/) — what happens inside a cached request
 - [Runnable examples](https://github.com/allen0099/FastAPI-CacheX/tree/master/examples) — one complete app per feature, each covered by the test suite
 - [API reference](https://fastapi-cachex.readthedocs.io/en/stable/api/http-caching/)

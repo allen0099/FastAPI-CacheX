@@ -58,7 +58,7 @@ backend = MemcachedBackend(
 )
 ```
 
-A test suite that turns warnings into errors (`filterwarnings = ["error"]`) fails on 0.5.3 wherever it builds the backend without both arguments. If the backend is built by code you cannot change, ignore this one warning instead:
+A test suite that turns warnings into errors (`filterwarnings = ["error"]`) fails on 0.5.3 and later 0.5.x releases wherever it builds the backend without both arguments. If the backend is built by code you cannot change, ignore this one warning instead:
 
 ```toml
 [tool.pytest.ini_options]
