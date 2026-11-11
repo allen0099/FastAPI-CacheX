@@ -23,6 +23,31 @@ EventKind = Literal[
     "hit", "miss", "stale", "refresh", "bypass", "store", "invalidate", "error"
 ]
 
+# Why a request to a ``@cache`` route did not use the cache as usual: the
+# values of ``X-Cache-Reason`` and ``CacheEvent.reason``. Public: a value is
+# renamed or removed only as a breaking change. Each is described in
+# docs/HTTP_CACHING.md ("Why a response was not cached"), which a test keeps
+# in step with this list.
+CacheReason = Literal[
+    # The backend was bypassed.
+    "no-store",
+    "private",
+    "no-ttl",
+    "authorization",
+    "session",
+    "request-no-store",
+    # The handler ran and its response was not stored.
+    "status",
+    "streamed",
+    "set-cookie",
+    "response-cache-control",
+    "dependency-status",
+    "head",
+    "tag-read-failed",
+    "tag-invalidated",
+    "write-failed",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class CacheEvent:
@@ -54,7 +79,10 @@ class CacheEvent:
     metric and not something to log as it is. ``route`` is the path template
     of the route (``/users/{user_id}``) for an event of a request to a
     ``@cache`` route. ``duration`` is the seconds it took to answer the
-    request, on the events that answer one.
+    request, on the events that answer one. ``reason`` says, on such an
+    event, why the backend was bypassed or why the response of a miss was
+    not stored: a ``CacheReason``, the value of ``X-Cache-Reason``. The
+    set is fixed, so it can be a metric label.
     """
 
     kind: EventKind
@@ -62,6 +90,7 @@ class CacheEvent:
     key: str | None = None
     route: str | None = None
     duration: float | None = None
+    reason: CacheReason | None = None
 
 
 EventHandler = Callable[[CacheEvent], None]
@@ -102,22 +131,29 @@ def _mute() -> Iterator[None]:
         _muted.reset(token)
 
 
-def _emit(
+def _emit(  # noqa: PLR0913
     kind: EventKind,
     source: Literal["http", "app"],
     key: str | None = None,
     *,
     route: str | None = None,
     duration: float | None = None,
+    reason: CacheReason | None = None,
 ) -> None:
     """Tell the handler, if there is one."""
     handler = _handler
     if handler is None or _muted.get():
         return
     try:
-        handler(CacheEvent(kind, source, key, route, duration))
+        handler(CacheEvent(kind, source, key, route, duration, reason))
     except Exception:
         logger.exception("The cache event handler raised; kind=%s", kind)
 
 
-__all__ = ["CacheEvent", "EventHandler", "EventKind", "set_event_handler"]
+__all__ = [
+    "CacheEvent",
+    "CacheReason",
+    "EventHandler",
+    "EventKind",
+    "set_event_handler",
+]

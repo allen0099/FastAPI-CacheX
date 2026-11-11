@@ -223,7 +223,29 @@ async def items() -> list[str]: ...
 | `REFRESH` | 在設定了 [`client_cache_control`](#the-requests-cache-control-is-ignored) 的路由上，請求的 `no-cache` 或 `max-age=0` 略過了快取項目：handler 已執行，它的回應取代了該項目，除非那是不會被儲存的回應（見 `MISS`）。 |
 | `STALE`   | 在設定了 [`serve_stale`](#serving-stale-responses) 的路由上，以超過 `ttl` 的項目回應：立刻回應、之後再執行 handler（`stale="revalidate"`），或因為 handler 失敗（`stale="error"`）。 |
 
-預設關閉，因為它會向用戶端透露伺服器快取了什麼；請在開發時或內部路由上開啟。這個標頭不會隨項目儲存，並會取代 handler 自己設定的 `X-Cache`。其他方法不會得到這個標頭，就像它們也不會得到 `Cache-Control`。
+預設關閉，因為它會向用戶端透露伺服器快取了什麼；請在開發時或內部路由上開啟。這個標頭不會隨項目儲存，並會取代 handler 自己設定的 `X-Cache`。加上 `X-Cache-Reason`（見下）後，它還會透露請求帶有 session 資料，或後端發生了錯誤。其他方法不會得到這個標頭，就像它們也不會得到 `Cache-Control`。
+
+#### 為什麼回應沒有被快取 {#why-not-cached}
+
+`BYPASS`，以及後面一直等不到 `HIT` 的 `MISS`，各自都有好幾種原因。設定 `debug_header=True` 時，這類回應還會帶有 `X-Cache-Reason`：
+
+| `X-Cache-Reason` | 伴隨 | 原因 |
+|------------------|------|------|
+| `no-store` | `BYPASS` | 路由設定了 `no_store`。 |
+| `private` | `BYPASS` | 路由設定了 `private`。 |
+| `no-ttl` | `BYPASS` | 路由沒有 `ttl`，或 `ttl=0`。 |
+| `authorization`、`session` | `BYPASS` | [帶有憑證的請求](#requests-with-credentials)（`Authorization` 標頭，或 session 資料），而路由沒有設定 `public` 或 `cache_authorized`。 |
+| `request-no-store` | `BYPASS` | 請求的 `Cache-Control` 如此要求，且路由設定了 `client_cache_control`。 |
+| `status` | `MISS`、`REFRESH` | handler 回應的不是 2xx（或是 206）。 |
+| `streamed` | `MISS`、`REFRESH` | `StreamingResponse` 或 `FileResponse`：沒有可儲存的內容。 |
+| `set-cookie` | `MISS`、`REFRESH` | handler 或某個 dependency 設定了 cookie：儲存的副本會把某位訪客的 cookie 交給下一位。之後才由 middleware 加上的 cookie 在這裡看不到。 |
+| `response-cache-control` | `MISS`、`REFRESH` | handler 或某個 dependency 在這個回應送出了 `Cache-Control: private` 或 `no-store`。 |
+| `dependency-status` | `MISS`、`REFRESH` | 某個 dependency 設定了狀態碼，它可能只對這個請求成立。 |
+| `head` | `MISS`、`REFRESH` | handler 為 `HEAD` 請求執行了；只有 `GET` 的回應會被儲存。 |
+| `tag-read-failed`、`tag-invalidated` | `MISS`、`REFRESH` | [有 tag](#by-tag) 的路由，其 tag 版本讀取失敗，或在 handler 執行期間改變：儲存這個回應可能留下一個失效操作沒有涵蓋到的項目。 |
+| `write-failed` | `MISS`、`REFRESH` | 後端拒絕寫入或無法連線，而路由為 `fail_open=True`。 |
+
+沒有這個標頭的回應，就是照常使用了快取。handler 以拋出例外代替回傳回應時也沒有原因：它的事件是不帶 `reason` 的 `miss` 或 `bypass`。同一個值也會出現在該請求[事件](#counting-hits-and-misses)的 `reason` 上，型別為 `fastapi_cachex.CacheReason`。這些值屬於公開 API，所以可以當作指標的 label：只有在破壞性變更時才會改名或移除。
 
 ### 帶有憑證的請求 {#requests-with-credentials}
 
@@ -673,7 +695,7 @@ set_event_handler(record)
 | `invalidate` | `invalidate()`、`invalidate_path()` 或 `CacheManager.delete()` 刪除了一個項目。 |
 | `error` | 後端呼叫失敗。對 `@cache`：後端拋出的任何例外，不論請求之後是在沒有快取的情況下繼續處理（`fail_open=True`），還是跟著失敗。對 `CacheManager` 與 `@cached`：只有連不上後端的情況（`BackendUnavailableError`，例外照常拋出）。 |
 
-每個事件都有 `source`（`"http"` 或 `"app"`）、`key`（沒有查詢後端，或該次呼叫不是針對單一鍵時為 None）；對 `@cache` 路由的請求還有 `route`，也就是路由的路徑樣板（`/api/users/{user_id}`，包含被引入的 router 或掛載的應用程式的前綴）；回應請求的事件則有以秒為單位的 `duration`。請用 `route` 當指標的 label，不要用 `key`：鍵裡含有查詢字串、其他用戶端輸入，以及自訂 key builder 加入的任何內容，數量沒有上限。基於同樣的理由，也不要原樣把它寫進日誌。
+每個事件都有 `source`（`"http"` 或 `"app"`）、`key`（沒有查詢後端，或該次呼叫不是針對單一鍵時為 None）；對 `@cache` 路由的請求還有 `route`，也就是路由的路徑樣板（`/api/users/{user_id}`，包含被引入的 router 或掛載的應用程式的前綴）；回應請求的事件則有以秒為單位的 `duration`，以及在略過後端或回應沒有被儲存時的 `reason`（[`X-Cache-Reason` 的值](#why-not-cached)）。請用 `route` 當指標的 label，不要用 `key`：鍵裡含有查詢字串、其他用戶端輸入，以及自訂 key builder 加入的任何內容，數量沒有上限。基於同樣的理由，也不要原樣把它寫進日誌。
 
 這個函式會在請求的處理路徑上同步執行，所以請只做遞增計數器這類的事。它必須是一般函式：`async` 函式會以 `TypeError` 拒絕。它拋出的例外會被記錄，不會影響請求。`set_event_handler(None)` 會移除它；沒有設定時不會建立任何事件。`add()`、`increment()`、`has()`、`get_many()`、`set_many()`、`invalidate_tags()` 與各個 `clear*` 方法除了這種 `error` 之外不會回報事件。
 

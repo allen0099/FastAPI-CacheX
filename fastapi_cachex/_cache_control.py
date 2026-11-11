@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import Response
 
 from .directives import DirectiveType
+from .events import CacheReason
 
 _NO_STORE = DirectiveType.NO_STORE.value
 
@@ -115,12 +116,12 @@ def _has_unshareable_directive(cache_control: Iterable[str]) -> bool:
     )
 
 
-def _unshareable_reason(response: Response) -> str | None:
+def _unshareable_reason(response: Response) -> CacheReason | None:
     """Why a rendered response must not be stored, or None when it may be."""
     if _marked_unshareable(response):
-        return "response Cache-Control is private or no-store"
+        return "response-cache-control"
     if "set-cookie" in response.headers:
-        return "response sets a cookie"
+        return "set-cookie"
     return None
 
 

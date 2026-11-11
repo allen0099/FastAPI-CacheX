@@ -71,6 +71,7 @@ from ._vary import _vary_components
 from .backends.base import MAX_TTL
 from .backends.base import BaseCacheBackend
 from .directives import DirectiveType
+from .events import CacheReason
 from .events import _emit
 from .exceptions import BackendNotFoundError
 from .exceptions import CacheXError
@@ -106,6 +107,9 @@ _CACHED_METHODS = frozenset({"GET", "HEAD"})
 
 # Sent as `X-Cache` with `debug_header=True` (#335).
 _DEBUG_HEADER = "X-Cache"
+# Sent beside it when the request did not use the cache as a route normally
+# does: why the backend was bypassed, or why a miss was not stored.
+_REASON_HEADER = "X-Cache-Reason"
 _HIT = "HIT"
 _MISS = "MISS"
 _BYPASS = "BYPASS"
@@ -748,6 +752,8 @@ class _Call:
     tag_names: tuple[str, ...] | None = None
     flight: _Flight = field(default_factory=_Flight)
     outcome: str | None = None
+    # Why the backend was bypassed or the rendered response was not stored.
+    reason: CacheReason | None = None
 
     @property
     def client_etag(self) -> str | None:
@@ -870,10 +876,20 @@ class _Route:
                 self.warn_bypass(req, credential)
 
         if self.skips_backend or authorized_bypass:
+            call.reason = (
+                "private"
+                if self.private
+                else "no-ttl"
+                if not self.ttl
+                else "authorization"
+                if "authorization" in req.headers
+                else "session"
+            )
             return await self._uncached(call, cache_control)
         asked = self._client_asks(req)
         if asked == "no-store":
             logger.debug("Request no-store; bypassing for path=%s", req.url.path)
+            call.reason = "request-no-store"
             return await self._uncached(call, cache_control)
         return await self._cached(
             call, backend, cache_control, refresh=asked == "no-cache"
@@ -931,6 +947,7 @@ class _Route:
     async def _no_store(self, call: _Call) -> Response:
         """``no_store=True``: the highest priority, nothing else applies."""
         call.outcome = _BYPASS
+        call.reason = "no-store"
         response = await self._run(call)
         logger.debug(
             "no-store active; bypassed cache for path=%s", call.request.url.path
@@ -1049,9 +1066,11 @@ class _Route:
                 response.status_code,
                 cache_key,
             )
+            call.reason = "status"
             return response
         if body is None or etag is None:
             # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
+            call.reason = "streamed"
             return self._send(response, cache_control)
 
         if self.no_cache and call.client_etag:
@@ -1185,7 +1204,7 @@ class _Route:
             return
         await self._read_tag_versions(call, backend, cache_key)
         response, body, etag = await self._render(call)
-        reason = self._skip_reason(call, response)
+        reason: str | None = self._skip_reason(call, response)
         if (
             body is None
             or etag is None
@@ -1350,7 +1369,7 @@ class _Route:
         hit.headers.update(_age_headers(entry, self.stored_ttl))
         return hit
 
-    def _skip_reason(self, call: _Call, response: Response) -> str | None:
+    def _skip_reason(self, call: _Call, response: Response) -> CacheReason | None:
         """Why a rendered response is served but not stored, if it is not.
 
         A response scoped to one caller is never stored. An entry already
@@ -1362,11 +1381,11 @@ class _Route:
             reason = _dependency_unshareable_reason(call.dependency_lines)
         if reason is None and call.dependency_status is not None:
             # It may hold for this request only, and a hit would replay it.
-            reason = "a dependency set the status code"
+            reason = "dependency-status"
         if reason is None and call.request.method == "HEAD":
             # A handler may skip the body for HEAD; a GET hit would then
             # replay the empty one.
-            reason = "only a GET response is stored"
+            reason = "head"
         return reason
 
     async def _store(
@@ -1384,20 +1403,25 @@ class _Route:
         skip_reason = self._skip_reason(call, response)
         if skip_reason is not None:
             logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
+            call.reason = skip_reason
+            return
+        if call.tags_before is None:
+            # Without the tag versions read before the handler ran, the entry
+            # could never be invalidated: nothing is stored.
+            call.reason = "tag-read-failed"
             return
         if (
             stored is not None
             and stored.fingerprint == etag
             and not self._is_stale(stored)
-        ) or call.tags_before is None:
-            # Without the tag versions read before the handler ran, the entry
-            # could never be invalidated: nothing is stored.
+        ):
             return
         entry = _entry_for(response, etag, body)
         try:
             versions = await _tags.versions_to_record(backend, call.tags_before)
             if versions is None:
                 logger.debug("A tag got its version meanwhile; key=%s", cache_key)
+                call.reason = "tag-invalidated"
                 return
             entry.tags = versions
             await backend.set(cache_key, entry, ttl=self.stored_ttl)
@@ -1405,6 +1429,7 @@ class _Route:
             if not self.fail_open:
                 _emit("error", "http", cache_key, route=_route_template(call.request))
                 raise
+            call.reason = "write-failed"
             _log_backend_failure(
                 "write failed; response not stored", call.request, cache_key, e
             )
@@ -1413,6 +1438,21 @@ class _Route:
                 "Updated cache entry; key=%s ttl=%s", cache_key, self.stored_ttl
             )
             _emit("store", "http", cache_key, route=_route_template(call.request))
+
+
+def _add_debug_headers(response: Response, call: _Call) -> None:
+    """``X-Cache`` and ``X-Cache-Reason`` for a GET or HEAD response.
+
+    Set after the entry was built, so they are never stored. They replace
+    what the handler, a dependency or a stored entry put under these names.
+    """
+    if call.outcome is None:
+        return
+    response.headers[_DEBUG_HEADER] = call.outcome
+    if call.reason is None:
+        del response.headers[_REASON_HEADER]
+    else:
+        response.headers[_REASON_HEADER] = call.reason
 
 
 def _check_client_cache_control(value: object) -> None:
@@ -1724,7 +1764,9 @@ def cache(
             with credentials on a route without ``public`` or
             ``cache_authorized``). Off by default: it tells clients what the
             server caches. The header is never stored, and a stored
-            ``X-Cache`` the handler set itself is replaced. ``REFRESH``
+            ``X-Cache`` the handler set itself is replaced. A bypass, and
+            a miss whose response was not stored, also carry
+            ``X-Cache-Reason``, a ``CacheReason`` saying why. ``REFRESH``
             marks a request that ``client_cache_control`` let past the entry;
             as with ``MISS``, its response may not have been stored.
         serve_stale: Have this server's cache act on ``stale`` too, instead
@@ -1956,10 +1998,8 @@ def cache(
                         call.cache_key,
                         route=_route_template(request),
                         duration=time.perf_counter() - started,
+                        reason=call.reason,
                     )
-            if debug_header and call.outcome is not None:
-                # Set after the entry was built, so it is never stored.
-                response.headers[_DEBUG_HEADER] = call.outcome
             cacheable_request = request.method in _CACHED_METHODS
             response = _with_dependency_headers(
                 response,
@@ -1968,6 +2008,10 @@ def cache(
                 route.private_cache_control,
                 cacheable_request=cacheable_request,
             )
+            if debug_header:
+                # Last, so that neither a dependency's line nor a stored one
+                # stands in for this request's.
+                _add_debug_headers(response, call)
             if vary_names and cacheable_request:
                 # Every GET or HEAD answer, served from the backend or not: a
                 # shared cache downstream keys on these headers too.
