@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
+from fastapi_cachex.backends.codec import validate_compress_min_size
 from fastapi_cachex.backends.config import DEFAULT_REDIS_PREFIX as DEFAULT_REDIS_PREFIX  # noqa: PLC0414
 from fastapi_cachex.backends.config import RedisConfig
 from fastapi_cachex.cache_key import CacheKey
@@ -173,6 +174,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         protocol: int = 2,
         *,
         url: str | None = None,
+        compress_min_size: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize async Redis cache backend.
@@ -196,6 +198,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             protocol: RESP protocol version (2 or 3). Defaults to 2 (RESP2) for
                 broadest compatibility. Use 3 only when hiredis >= 3.0 is installed
                 and Redis 8.0+ RESP3 features are required.
+            compress_min_size: Store an entry of at least this many encoded
+                bytes compressed with zlib (default: None, never). Entries
+                are read in either form whatever this is set to.
             **kwargs: Additional arguments to pass to Redis client, such as
                 ``username`` (an ACL user), ``ssl=True`` and the other
                 ``ssl_*`` options, ``retry`` or ``connection_pool``
@@ -205,6 +210,10 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             CacheXError: If ``url`` is passed with ``connection_pool`` (a
                 pool already names its server) or with ``ssl`` (TLS is the
                 ``rediss://`` scheme)
+            CacheXError: If ``compress_min_size`` is passed with a
+                ``connection_pool`` that decodes replies
+            TypeError: If ``compress_min_size`` is not an ``int`` or None
+            ValueError: If ``compress_min_size`` is not greater than zero
             TypeError: If ``encoding`` or ``decode_responses`` is passed, as
                 an argument or in the URL's query string; both were removed
                 in 0.4.0. The client always reads raw bytes, and entries are
@@ -223,6 +232,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             )
             raise CacheXError(msg) from exc
 
+        self.compress_min_size = validate_compress_min_size(compress_min_size)
+        pool = kwargs.get("connection_pool")
+        if compress_min_size is not None and getattr(pool, "connection_kwargs", {}).get(
+            "decode_responses"
+        ):
+            msg = (
+                "compress_min_size cannot be used with a connection_pool that "
+                "has decode_responses=True: a compressed entry is not text"
+            )
+            raise CacheXError(msg)
         for name in _REMOVED_KWARGS:
             if name in kwargs:
                 msg = (
@@ -308,6 +327,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         }
         # Passed only when set, so a subclass whose __init__ predates these
         # fields keeps working with a config that does not use them.
+        if config.compress_min_size is not None:
+            shared["compress_min_size"] = config.compress_min_size
         if config.username is not None:
             shared["username"] = config.username
         if config.ssl:
@@ -422,7 +443,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
     ) -> None:
         """Store a response in the cache."""
         ttl = validate_ttl(ttl)
-        await self.client.set(self._make_key(key), encode_entry(value), ex=ttl)
+        await self.client.set(
+            self._make_key(key), encode_entry(value, self.compress_min_size), ex=ttl
+        )
         logger.debug("Redis SET; key=%s ttl=%s", key, ttl)
 
     @_unavailable
@@ -468,7 +491,9 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             return
         pipe = self.client.pipeline(transaction=True)
         for key, value in entries.items():
-            pipe.set(self._make_key(key), encode_entry(value), ex=ttl)
+            pipe.set(
+                self._make_key(key), encode_entry(value, self.compress_min_size), ex=ttl
+            )
         await pipe.execute()
         logger.debug("Redis SET_MANY; count=%s ttl=%s", len(entries), ttl)
 
@@ -492,7 +517,10 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """
         ttl = validate_ttl(ttl)
         stored = await self.client.set(
-            self._make_key(key), encode_entry(value), ex=ttl, nx=True
+            self._make_key(key),
+            encode_entry(value, self.compress_min_size),
+            ex=ttl,
+            nx=True,
         )
         logger.debug(
             "Redis SET_IF_ABSENT %s; key=%s ttl=%s",
@@ -565,7 +593,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             key,
             expected,
             self._set_if_equals_script,
-            lambda: (encode_entry(value), ttl or 0),
+            lambda: (encode_entry(value, self.compress_min_size), ttl or 0),
         )
 
     @_unavailable

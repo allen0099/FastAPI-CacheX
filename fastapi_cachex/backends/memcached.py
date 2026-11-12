@@ -16,6 +16,7 @@ from typing import Any
 from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
+from fastapi_cachex.backends.codec import validate_compress_min_size
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import TTLValueError
 from fastapi_cachex.exceptions import ValueTooLargeError
@@ -200,6 +201,7 @@ class MemcachedBackend(BaseCacheBackend):
         *,
         connect_timeout: float = 1.0,
         timeout: float = 1.0,
+        compress_min_size: int | None = None,
     ) -> None:
         """Initialize the Memcached backend.
 
@@ -213,6 +215,9 @@ class MemcachedBackend(BaseCacheBackend):
                 thread of the default executor and holds it until it is
                 answered or times out, so a short timeout keeps an
                 unreachable server from tying up those threads.
+            compress_min_size: Store an entry of at least this many encoded
+                bytes compressed with zlib (default: None, never). Entries
+                are read in either form whatever this is set to.
 
         Raises:
             CacheXError: If pymemcache is not installed
@@ -224,6 +229,7 @@ class MemcachedBackend(BaseCacheBackend):
         _validate_key_prefix(key_prefix)
         _validate_timeout("connect_timeout", connect_timeout)
         _validate_timeout("timeout", timeout)
+        self.compress_min_size = validate_compress_min_size(compress_min_size)
         try:
             from pymemcache import HashClient
         except ImportError as exc:
@@ -326,7 +332,7 @@ class MemcachedBackend(BaseCacheBackend):
         ttl: int | None,
     ) -> Any:
         """Send a storage command; a refused value raises ``ValueTooLargeError``."""
-        payload = encode_entry(value)
+        payload = encode_entry(value, self.compress_min_size)
         with _refused_as_too_large(key, payload):
             return command(self._make_key(key), payload, _expiry(ttl), noreply=False)
 
@@ -371,7 +377,10 @@ class MemcachedBackend(BaseCacheBackend):
 
     def _store_many(self, entries: Mapping[str, CacheEntry], exptime: int) -> None:
         """Send ``set_many``; a refused value raises ``ValueTooLargeError``."""
-        payloads = {key: encode_entry(value) for key, value in entries.items()}
+        payloads = {
+            key: encode_entry(value, self.compress_min_size)
+            for key, value in entries.items()
+        }
         # The server does not say which value it refused; the largest one is
         # the one over the limit.
         largest = max(payloads, key=lambda key: len(payloads[key]))
@@ -525,7 +534,7 @@ class MemcachedBackend(BaseCacheBackend):
             "SET_IF_EQUALS",
             key,
             expected,
-            lambda _: encode_entry(value),
+            lambda _: encode_entry(value, self.compress_min_size),
             exptime,
         )
 
