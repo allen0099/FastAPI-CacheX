@@ -1213,11 +1213,10 @@ class _Route:
         lock = None
         try:
             if self.coalesce == "distributed":
-                lock = CacheLock(
-                    cache_key, ttl=_LOCK_TTL, backend=backend, auto_extend=True
-                )
+                lock = _miss_lock(backend, cache_key)
                 if not await lock.acquire(blocking=False):
                     # Another worker is refreshing the key.
+                    lock = None
                     return
             await self._replace_stale(call, backend, cache_key)
         except Exception as e:  # noqa: BLE001 - there is no response to fail
@@ -1387,12 +1386,14 @@ class _Route:
         """
         if self.coalesce != "distributed":
             return False
-        lock = CacheLock(cache_key, ttl=_LOCK_TTL, backend=backend, auto_extend=True)
+        lock = _miss_lock(backend, cache_key)
         try:
             if call.request.method == "GET" and await lock.acquire(blocking=False):
                 call.lock = lock
                 return False
-            waited = False
+            # A GET that did not get the lock reads again even if the lock is
+            # gone by the first look: its holder has stored in between.
+            waited = call.request.method == "GET"
             delay = _LOCK_POLL_MIN
             deadline = time.monotonic() + _LOCK_WAIT_MAX
             while await lock.locked():
@@ -1533,13 +1534,28 @@ class _Route:
             _emit("store", "http", cache_key, route=_route_template(call.request))
 
 
+def _miss_lock(backend: BaseCacheBackend, cache_key: str) -> CacheLock:
+    """The lock of ``coalesce="distributed"`` for one key."""
+    return CacheLock(cache_key, ttl=_LOCK_TTL, backend=backend, auto_extend=True)
+
+
+# Releases on their way to the backend, so that they are not collected.
+_pending_releases: set["asyncio.Future[bool]"] = set()
+
+
 async def _release_lock(lock: CacheLock) -> None:
     """Release a ``coalesce="distributed"`` lock; a failure is only logged.
 
-    The response is already made, and the lock expires on its own.
+    The response is already made, and the lock expires on its own. The
+    release runs as a task of its own, shielded: a request cancelled by a
+    timeout is cancelled again at every await, and a lock left behind would
+    make each miss of its key wait until it expired.
     """
+    release = asyncio.ensure_future(lock.release())
+    _pending_releases.add(release)
+    release.add_done_callback(_pending_releases.discard)
     try:
-        await lock.release()
+        await asyncio.shield(release)
     except Exception as e:  # noqa: BLE001 - there is nothing left to fail
         logger.warning(
             "Releasing the miss lock failed (%s: %s); it expires in %ss",

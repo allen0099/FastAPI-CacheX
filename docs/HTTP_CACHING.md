@@ -364,8 +364,8 @@ request in another worker that misses meanwhile waits until that lock is gone,
 then reads the backend again and is served the stored entry.
 
 - **Cost.** A miss that nobody else is rendering makes two more backend round
-  trips, to take and to release the lock (about 2 ms more against a local
-  Redis). A hit makes none. A waiting request polls the lock, 50 ms after the
+  trips, to take and to release the lock, and a HEAD miss one, to look at it.
+  A hit makes none. A waiting request polls the lock, 50 ms after the
   first look and then with growing gaps of up to half a second.
 - **Nothing stored.** When the first response was not stored, each waiting
   request runs the handler itself without taking the lock, so requests never
@@ -375,18 +375,20 @@ then reads the backend again and is served the stored entry.
   the requests waiting for it then run the handler.
 - **Waiting is bounded.** A request waits for another worker for 30 seconds at
   most. After that it logs a warning and runs the handler itself, so a handler
-  that hangs in one worker does not hang the same URL in all of them. Within
+  that hangs in one worker delays the misses of that URL in the others by 30
+  seconds each, for as long as it hangs, instead of hanging them too. Within
   one process a waiting request still waits as long as the first one's
   handler takes, as with `coalesce=True`.
 - **Backend errors.** If the lock cannot be taken or read, the request runs
   the handler without it; with `fail_open=False` the error is raised.
 - **Not covered.** A request that `client_cache_control` let past the entry
   does not take the lock. A request that read the backend just before another
-  worker stored and released may still run the handler a second time; that
-  window is one backend round trip.
+  worker stored and released may still run the handler a second time.
 - The lock is stored under `lock:` followed by the cache key, next to the
-  entries. With the memory backend there is one process, so
-  `coalesce="distributed"` only adds the lock's cost.
+  entries. Deleting it (`backend.clear()`, or a `clear_pattern` that matches
+  it) only lets a second worker render. With the memory backend there is one
+  process, so `coalesce="distributed"` only adds the lock's cost, and the lock
+  takes one of `max_entries` while it is held.
 
 With `serve_stale=True` and `stale="revalidate"`, the same lock lets one
 worker at a time refresh a stale entry; the others skip their refresh.

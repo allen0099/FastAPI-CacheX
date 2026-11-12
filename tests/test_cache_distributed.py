@@ -10,6 +10,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+import anyio
 import pytest
 from fastapi import FastAPI
 from fastapi import Request
@@ -167,6 +168,50 @@ async def test_the_lock_outlives_its_ttl_while_the_handler_runs(
     await _get(client)
 
     assert handler.locked == [True]
+
+
+async def test_the_lock_is_released_when_a_timeout_cancels_the_request(
+    client: httpx.AsyncClient, handler: Handler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = handler.run
+
+    async def slow() -> None:
+        await run()
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(handler, "run", slow)
+
+    # An anyio scope cancels again at every await, the release included.
+    with anyio.move_on_after(0.05) as scope:
+        await client.get("/items")
+
+    assert scope.cancelled_caught
+    assert handler.locked == [True]
+    await asyncio.wait_for(_until_unlocked(), timeout=5)
+
+
+async def _until_unlocked() -> None:
+    while cache_module._pending_releases:
+        await asyncio.wait(cache_module._pending_releases)
+    assert not await _locked()
+
+
+async def test_a_get_reads_again_when_the_lock_went_before_its_first_look(
+    client: httpx.AsyncClient, handler: Handler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def taken(self: CacheLock, **kwargs: Any) -> bool:
+        # Another worker held it, stored and released, all before the look.
+        await BackendProxy.get().set(
+            KEY, CacheEntry(fingerprint='"theirs"', content=b"theirs"), ttl=60
+        )
+        return False
+
+    monkeypatch.setattr(CacheLock, "acquire", taken)
+
+    response = await _get(client)
+
+    assert (response.text, response.headers["x-cache"]) == ("theirs", "HIT")
+    assert handler.locked == []
 
 
 async def test_coalesce_true_takes_no_lock(handler: Handler) -> None:
