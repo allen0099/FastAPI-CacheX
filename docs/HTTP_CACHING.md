@@ -336,9 +336,7 @@ rather than one after another.
 
 - Only requests in one process are coalesced, without a lock in the backend:
   each worker still runs the handler once per cold key. For one run across
-  workers, cache the expensive part with `get_or_set()`, whose
-  [stampede protection](APP_CACHE.md#stampede-protection) uses a distributed
-  lock.
+  workers, use [`coalesce="distributed"`](#across-workers).
 - A waiting request waits as long as the first one's handler takes; there is
   no separate timeout. A request whose backend read fails does not wait.
 - A HEAD request waits for a running GET of the same key but never makes
@@ -347,6 +345,53 @@ rather than one after another.
   never serve a stored entry, the decorator raises `CacheXError`; with
   `no_store=True` it is ignored with the usual warning. Requests with
   credentials that bypass the backend are not coalesced.
+
+#### Across workers {#across-workers}
+
+With several workers on one Redis or Memcached, `coalesce="distributed"` runs
+the handler once per key for all of them:
+
+```python
+@app.get("/report")
+@cache(ttl=60, coalesce="distributed")
+async def report() -> dict[str, int]: ...
+```
+
+It does everything `coalesce=True` does within a process. In addition, the
+request that leads in its process takes a [`CacheLock`](LOCK.md) on the
+cache key before it runs the handler, and releases it once it has answered. A
+request in another worker that misses meanwhile waits until that lock is gone,
+then reads the backend again and is served the stored entry.
+
+- **Cost.** A miss that nobody else is rendering makes two more backend round
+  trips, to take and to release the lock, and a HEAD miss one, to look at it.
+  A hit makes none. A waiting request polls the lock, 50 ms after the
+  first look and then with growing gaps of up to half a second.
+- **Nothing stored.** When the first response was not stored, each waiting
+  request runs the handler itself without taking the lock, so requests never
+  queue behind one another across workers either.
+- **Lock lifetime.** The lock renews itself while the handler runs, however
+  long that takes. If the worker dies, the lock expires within 30 seconds, and
+  the requests waiting for it then run the handler.
+- **Waiting is bounded.** A request waits for another worker for 30 seconds at
+  most. After that it logs a warning and runs the handler itself, so a handler
+  that hangs in one worker delays the misses of that URL in the others by 30
+  seconds each, for as long as it hangs, instead of hanging them too. Within
+  one process a waiting request still waits as long as the first one's
+  handler takes, as with `coalesce=True`.
+- **Backend errors.** If the lock cannot be taken or read, the request runs
+  the handler without it; with `fail_open=False` the error is raised.
+- **Not covered.** A request that `client_cache_control` let past the entry
+  does not take the lock. A request that read the backend just before another
+  worker stored and released may still run the handler a second time.
+- The lock is stored under `lock:` followed by the cache key, next to the
+  entries. Deleting it (`backend.clear()`, or a `clear_pattern` that matches
+  it) only lets a second worker render. With the memory backend there is one
+  process, so `coalesce="distributed"` only adds the lock's cost, and the lock
+  takes one of `max_entries` while it is held.
+
+With `serve_stale=True` and `stale="revalidate"`, the same lock lets one
+worker at a time refresh a stale entry; the others skip their refresh.
 
 ### Serving stale responses
 
@@ -381,7 +426,8 @@ With `stale="revalidate"`:
   `Depends(..., scope="function")` has already been closed by then; a handler
   that needs one should not use `stale="revalidate"` with `serve_stale`.
 - One refresh per key runs at a time in each process. With several workers,
-  each may run one.
+  each may run one, unless the route has
+  [`coalesce="distributed"`](#across-workers).
 - A `HEAD` request is answered from the stale entry and starts no refresh,
   since its response is never stored.
 - If the refresh fails (the handler raises, or its response is one that is not

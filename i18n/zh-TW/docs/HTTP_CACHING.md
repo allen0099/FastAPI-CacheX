@@ -168,10 +168,32 @@ async def report() -> dict[str, int]: ...
 
 第一個未命中的請求照常產生回應。在它執行期間未命中同一個快取鍵的請求，會等它回應後再讀取一次後端，並以儲存的項目回應，`ETag`、`Age` 與 304 的處理與一般命中相同（#252）。若第一個回應沒有儲存（它設定了 cookie、是 `private` 或 `no-store`、狀態碼是錯誤或由依賴項設定、是串流回應，或 handler 拋出例外），每個等待中的請求會自己執行 handler，而且是同時執行，不會一個接一個排隊。
 
-- 只會合併同一個行程內的請求，不會在後端加鎖：每個 worker 對每個冷鍵仍會執行一次 handler。若要讓所有 worker 合計只執行一次，請以 `get_or_set()` 快取成本高的部分，它的 [cache stampede 保護](APP_CACHE.md#stampede-protection)使用分散式鎖。
+- 只會合併同一個行程內的請求，不會在後端加鎖：每個 worker 對每個冷鍵仍會執行一次 handler。若要讓所有 worker 合計只執行一次，請使用 [`coalesce="distributed"`](#across-workers)。
 - 等待中的請求會等到第一個請求的 handler 結束，沒有另外的逾時。讀取後端失敗的請求不會等待。
 - HEAD 請求會等待同一個快取鍵正在執行的 GET，但永遠不會讓其他請求等它，因為它的回應不會儲存。
 - 它需要正的 `ttl`。搭配永遠不會以儲存的項目回應的 `private=True` 或 `no_cache=True` 時，裝飾器會拋出 `CacheXError`；搭配 `no_store=True` 時則會被忽略，並發出一般的警告。帶有憑證而繞過後端的請求不會被合併。
+
+#### 跨 worker {#across-workers}
+
+多個 worker 共用同一個 Redis 或 Memcached 時，`coalesce="distributed"` 讓所有 worker 對每個快取鍵合計只執行一次 handler：
+
+```python
+@app.get("/report")
+@cache(ttl=60, coalesce="distributed")
+async def report() -> dict[str, int]: ...
+```
+
+在單一行程內，它的行為與 `coalesce=True` 完全相同。此外，在所屬行程中領頭的請求會在執行 handler 之前，對快取鍵取得一個 [`CacheLock`](LOCK.md)，並在回應之後釋放。這段期間在其他 worker 未命中的請求，會等到這個鎖消失，再讀取一次後端，並以儲存的項目回應。
+
+- **成本。** 沒有其他請求正在產生的未命中，會多出兩次後端往返：取得鎖與釋放鎖；HEAD 的未命中多出一次，用來查看鎖。命中不會多出任何往返。等待中的請求會輪詢這個鎖：第一次查看後 50 毫秒再看一次，之後間隔逐漸拉長，最長半秒。
+- **沒有儲存時。** 若第一個回應沒有儲存，每個等待中的請求會自己執行 handler，而且不取得鎖，因此跨 worker 的請求也不會一個接一個排隊。
+- **鎖的存活時間。** handler 執行期間鎖會自動續期，不論執行多久。若 worker 異常終止，鎖會在 30 秒內到期，等待它的請求接著會執行 handler。
+- **等待有上限。** 請求最多等待其他 worker 30 秒，之後會記錄一則警告並自己執行 handler，因此某個 worker 的 handler 卡住時，其他 worker 對同一個網址的未命中在它卡住期間各會延遲 30 秒，而不會跟著卡住。在同一個行程內，等待中的請求仍會等到第一個請求的 handler 結束，與 `coalesce=True` 相同。
+- **後端錯誤。** 若無法取得或讀取鎖，請求會不帶鎖執行 handler；設定 `fail_open=False` 時則會拋出錯誤。
+- **不涵蓋的情況。** 由 `client_cache_control` 放行而略過項目的請求不會取得鎖。在另一個 worker 儲存並釋放之前剛讀過後端的請求，仍可能再執行一次 handler。
+- 鎖儲存在 `lock:` 加上快取鍵的鍵之下，與項目放在一起。刪除它（`backend.clear()`，或符合它的 `clear_pattern`）只會讓第二個 worker 也產生回應。記憶體後端只有一個行程，`coalesce="distributed"` 在那裡只會增加鎖的成本，而且鎖在持有期間會佔用 `max_entries` 的一個名額。
+
+搭配 `serve_stale=True` 與 `stale="revalidate"` 時，同一個鎖讓同一時間只有一個 worker 更新過期的項目；其他 worker 會略過自己的更新。
 
 ### 提供過期的回應 {#serving-stale-responses}
 
@@ -195,7 +217,7 @@ async def report() -> dict: ...
 使用 `stale="revalidate"` 時：
 
 - 更新是「發現項目過期的那個請求」的背景工作。handler 執行時該請求的依賴仍然開啟，請求的其他背景工作照常執行，接收 `BackgroundTasks` 的 handler 會拿到同一個物件。以 `Depends(..., scope="function")` 宣告的依賴在那時已經關閉；需要這種依賴的 handler 不應該把 `stale="revalidate"` 與 `serve_stale` 一起使用。
-- 每個行程中，同一個鍵一次只會有一個更新在執行。有多個 worker 時，每個 worker 可能各執行一個。
+- 每個行程中，同一個鍵一次只會有一個更新在執行。有多個 worker 時，每個 worker 可能各執行一個，除非路由設定了 [`coalesce="distributed"`](#across-workers)。
 - `HEAD` 請求會以過期的項目回應，但不會啟動更新，因為它的回應不會被儲存。
 - 若更新失敗（handler 拋出例外，或它的回應屬於不會被儲存的那一類），會記錄一則警告，過期的項目維持原狀，下一個請求會再試一次。
 
