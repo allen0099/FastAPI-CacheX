@@ -193,7 +193,7 @@ async def load_rates() -> dict[str, float]: ...
 - **同一時間只有一個更新**：每個行程中的每個鍵。使用 `lock=True`（預設）時，共用後端的所有行程合計也只有一個：其他行程會回傳過期的值，而不是等待鎖。
 - **需要 `ttl`**：在呼叫時傳入，或設定 manager 的 `default_ttl`；否則會拋出 `ValueError`。
 - **只有帶 `stale_ttl` 的呼叫會拿到過期的值。** `get()`、`get_many()` 與 `has()` 把它視為未命中，`add()` 會取代它，不帶 `stale_ttl` 的 `get_or_set()` 則和一般未命中一樣執行 `factory`。因此直接讀取這個鍵的程式永遠不會看到比 `ttl` 更舊的值。
-- **只有 `factory` 自己拋出的例外會以過期的值回應。** 無法連上後端、值無法存成 JSON，以及值不符合 `type_`，都會和未命中時一樣拋出。每次更新失敗後，下一次呼叫會再執行一次 `factory`，並記錄 `Refreshing a stale value failed` 這則警告，因此緩慢的失敗每次都會讓一個呼叫者等上那麼久。
+- **只有 `factory` 自己拋出的例外會以過期的值回應。** 無法連上後端、值無法存成 JSON，以及值不符合 `type_`，都會和未命中時一樣拋出。每次更新失敗後，下一次呼叫會再執行一次 `factory`，並記錄 `Refreshing a stale value failed` 這則警告，因此緩慢的失敗每次都會讓一個呼叫者等上那麼久：`stale_ttl` 遮住的是錯誤，不是等待。請為 `factory` 裡呼叫上游的部分自行設定較短的逾時。
 - tag 被失效的值是未命中，不是過期的值。
 - 值何時過期是以牆上時鐘的時間與值一起儲存的，並以讀取它的行程的時鐘比較；時鐘相差幾秒的伺服器，判斷也會相差那麼多。0.6.3 之前的版本不認得這個時間：滾動升級期間，舊版本會在整個 `ttl + stale_ttl` 期間回傳這個值。
 - 拿到過期值的呼叫者會回報為 `stale` [事件](HTTP_CACHING.md#counting-hits-and-misses)；執行更新的呼叫者則回報為 `miss`，若它的 `factory` 拋出例外，後面再跟一個 `stale`。

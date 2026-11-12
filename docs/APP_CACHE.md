@@ -327,7 +327,8 @@ usual.
   a value that does not fit `type_` are raised as on a miss. Each failed
   refresh runs `factory` again on the next call and logs the warning
   `Refreshing a stale value failed`, so a slow failure costs one caller its
-  duration each time.
+  duration each time: `stale_ttl` hides the error, not the wait. Give the
+  call to the upstream inside `factory` a short timeout of its own.
 - A value whose tag was invalidated is a miss, not a stale value.
 - When the value turns stale is stored with it, as a wall-clock time, and
   compared on the clock of the process that reads it; servers whose clocks
