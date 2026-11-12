@@ -152,6 +152,23 @@ async def test_the_lock_is_released_when_the_handler_raises(
     assert _IN_FLIGHT == {}
 
 
+async def test_the_lock_outlives_its_ttl_while_the_handler_runs(
+    client: httpx.AsyncClient, handler: Handler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cache_module, "_LOCK_TTL", 1)
+    run = handler.run
+
+    async def slow() -> None:
+        await asyncio.sleep(1.3)
+        await run()
+
+    monkeypatch.setattr(handler, "run", slow)
+
+    await _get(client)
+
+    assert handler.locked == [True]
+
+
 async def test_coalesce_true_takes_no_lock(handler: Handler) -> None:
     async with _client(handler, coalesce=True) as client:
         await _get(client)
