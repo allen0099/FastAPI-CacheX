@@ -47,7 +47,13 @@ def test_the_package_reexports_the_same_objects() -> None:
 
 @pytest.mark.parametrize(
     "module",
-    ["fastapi_cachex.cache", "fastapi_cachex._key_builders"],
+    [
+        "fastapi_cachex.cache",
+        "fastapi_cachex._key_builders",
+        "fastapi_cachex._route",
+        "fastapi_cachex._arguments",
+        "fastapi_cachex._invalidation",
+    ],
 )
 def test_every_part_logs_under_the_documented_logger(module: str) -> None:
     logger = importlib.import_module(module).logger

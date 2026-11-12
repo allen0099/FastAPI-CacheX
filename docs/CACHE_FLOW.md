@@ -4,6 +4,14 @@ This document explains in detail how FastAPI-CacheX applies its caching logic to
 HTTP requests. The decorator lives in
 [`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py), and the
 parts it calls in private modules beside it:
+[`_route.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_route.py) (how one request is
+answered: the flow below),
+[`_arguments.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_arguments.py) (argument
+checks and warnings),
+[`_params.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_params.py) (the wrapper's
+signature),
+[`_invalidation.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_invalidation.py)
+(`invalidate()` and its relatives),
 [`_key_builders.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_key_builders.py) (cache
 keys), [`_vary.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_vary.py) (`vary=`),
 [`_cache_control.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_cache_control.py)
@@ -248,7 +256,7 @@ If no backend has been configured with `BackendProxy.set()`, the decorator
 creates a `MemoryBackend` on the first request, registers it and logs a
 warning that the cache is per process.
 
-**Decision logic** (the `cache.py` wrapper, in order):
+**Decision logic** (`_Route.respond` in `_route.py`, in order):
 
 ```python
 if request.method not in ("GET", "HEAD"):

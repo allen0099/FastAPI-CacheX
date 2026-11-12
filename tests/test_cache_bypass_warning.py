@@ -19,7 +19,7 @@ from starlette.middleware.sessions import (
 )
 
 from fastapi_cachex import cache
-from fastapi_cachex.cache import _BypassWarner
+from fastapi_cachex._arguments import _BypassWarner
 
 _LOGGER = "fastapi_cachex.cache"
 _BEARER = "Bearer secret-bearer-value-326"
