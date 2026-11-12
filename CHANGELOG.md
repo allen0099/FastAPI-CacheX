@@ -20,6 +20,45 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-12
+
+### Added
+
+- **`X-Cache-Reason` and `CacheEvent.reason` say why a request was not cached.**
+  With `debug_header=True`, a `BYPASS`, or a `MISS` whose response was not
+  stored, also carries `X-Cache-Reason` with a short code (`authorization`,
+  `set-cookie`, `status`, ...). The same value is on the request's event as
+  `reason`, typed as the new `CacheReason`; the codes are public, so they can be
+  a metric label. ([#556](https://github.com/allen0099/FastAPI-CacheX/issues/556))
+- **`set_enabled(False)` and `FASTAPI_CACHEX_DISABLED=1` turn caching off for the
+  process.** For local development and for tests that are not about caching:
+  `@cache`, `@cached` and `get_or_set()` run the handler, function or factory
+  every time and neither read nor write the backend, while a `@cache` route
+  keeps sending the same `Cache-Control` and `ETag`. `CacheManager.get()` /
+  `set()`, the backends and `CacheLock` are not affected. ([#557](https://github.com/allen0099/FastAPI-CacheX/issues/557))
+- **`@cache(coalesce="distributed")` runs the handler once per key across
+  workers.** `coalesce=True` only joins the misses of one process, so each worker
+  still rendered a cold key once. With `"distributed"` the request that leads in
+  its process takes a `CacheLock` on the key while it renders, and a request in
+  another worker waits for that lock to go and is then served the stored entry.
+  An uncontended miss costs two more backend round trips, a hit none. With
+  `serve_stale` one worker at a time refreshes a stale entry. ([#558](https://github.com/allen0099/FastAPI-CacheX/issues/558))
+
+### Changed
+
+- **`RedisConfig` rejects a zero or negative `socket_timeout` and
+  `socket_connect_timeout`.** Such a value made every command fail at the first
+  request; it is now a validation error when the config is built. ([#504](https://github.com/allen0099/FastAPI-CacheX/issues/504))
+
+### Deprecated
+
+- **`MemoryBackend.lock` and `MemoryBackend.start_cleanup()` are deprecated and
+  will be removed in 0.7.0.** Both now emit a `DeprecationWarning`. The lock never
+  made the operations atomic (each already runs without yielding to the event
+  loop); use `CacheLock` or your own lock to make several operations one step.
+  The cleanup task starts on the first read or write, so the `start_cleanup()`
+  call can simply be removed. ([#504](https://github.com/allen0099/FastAPI-CacheX/issues/504))
+
 ## [0.6.1] - 2026-11-11
 
 ### Added
@@ -1696,7 +1735,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.5...v0.5.6
