@@ -169,6 +169,35 @@ manager = CacheManager(lock=False)  # 每次並行未命中都各自計算
 
 等待者依上述退避輪詢：第一秒約五次，之後每 500 ms 一次，因此在 `factory` 執行期間，每個等待者每秒約多出四次後端操作。記憶體後端在行程內執行相同的步驟。對重複計算比額外往返更便宜的鍵，請在單次呼叫或 `CacheManager(...)` 傳入 `lock=False`；使用 `AppCache` 時，請以 `CacheManagerProxy.set(CacheManager(lock=False))` 註冊自己的 manager。
 
+## 過期的值 {#stale-values}
+
+值的 `ttl` 到期時，每個呼叫者都要等 `factory`；上游故障時，即使前一刻還知道最後一個正常的值，也會變成錯誤。`stale_ttl` 會把值多保留這麼久，並在這段期間繼續使用它：
+
+```python
+rates = await cache.get_or_set("rates", load_rates, ttl=60, stale_ttl=300)
+
+
+@cached(ttl=60, stale_ttl=300)
+async def load_rates() -> dict[str, float]: ...
+```
+
+值會保留 `ttl + stale_ttl`（此例為 360 秒）。前 `ttl` 秒是一般的命中。之後的 `stale_ttl` 秒內：
+
+- 第一個發現它過期的呼叫者會執行 `factory` 並儲存結果，新的值再保鮮 `ttl` 秒。
+- 在它執行期間抵達的呼叫者會立刻拿到過期的值，不必等待。
+- 若 `factory` 拋出例外，該呼叫者也會拿到過期的值，並記錄一行警告。下一個呼叫者會再試一次。
+
+超過 `ttl + stale_ttl` 後值就不存在了，`factory` 失敗時會照常拋出例外。
+
+- **沒有背景工作。** 更新是在發現值過期的那次呼叫裡執行的，所以只有那一個呼叫者要等 `factory`，而且請求結束後不會有任何東西還在執行。
+- **同一時間只有一個更新**：每個行程中的每個鍵。使用 `lock=True`（預設）時，共用後端的所有行程合計也只有一個：其他行程會回傳過期的值，而不是等待鎖。
+- **需要 `ttl`**：在呼叫時傳入，或設定管理器的 `default_ttl`；否則會拋出 `ValueError`。
+- **只有帶 `stale_ttl` 的呼叫會拿到過期的值。** `get()`、`get_many()` 與 `has()` 把它視為未命中，`add()` 會取代它，不帶 `stale_ttl` 的 `get_or_set()` 則和一般未命中一樣執行 `factory`。因此直接讀取這個鍵的程式永遠不會看到比 `ttl` 更舊的值。
+- **`factory` 的任何例外都算**，包含值不符合 `type_` 的情況。請留意 `Refreshing a stale value failed` 這則警告。
+- tag 被失效的值是未命中，不是過期的值。
+- 值何時過期是以牆上時鐘的時間與值一起儲存的，並以讀取它的行程的時鐘比較；時鐘相差幾秒的伺服器，判斷也會相差那麼多。0.6.3 之前的版本不認得這個時間：滾動升級期間，舊版本會在整個 `ttl + stale_ttl` 期間回傳這個值。
+- 拿到過期值的呼叫者會回報為 `stale` [事件](HTTP_CACHING.md#counting-hits-and-misses)；執行更新的呼叫者則回報為 `miss`。
+
 ## JSON 往返 {#json-round-trip}
 
 值以 JSON 儲存，讀取時以 `json.loads` 解碼，因此取回的是 JSON 解碼後的形式，而不是你存入的物件。`json.dumps` 無法編碼的值會先依 pydantic 的寫法轉換（`pydantic_core.to_jsonable_python`）；0.5.5 之前則會拋出 `TypeError`：

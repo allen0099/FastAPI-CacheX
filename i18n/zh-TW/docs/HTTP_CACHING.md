@@ -713,7 +713,7 @@ set_event_handler(record)
 
 | `kind` | 發生時機 |
 |---|---|
-| `hit`、`miss`、`stale`、`refresh`、`bypass` | 對 `@cache` 路由的 GET 或 HEAD 請求已回應：也就是 [`X-Cache`](#telling-a-hit-from-a-miss) 的值，不論是否設定 `debug_header` 都會回報，handler 拋出例外時也一樣。`source="app"` 時，`hit` 與 `miss` 表示 `CacheManager.get()` 或 `get_or_set()`（因此也包含 `@cached`）有沒有找到值；等待另一個呼叫者算出值的 `get_or_set()` 算是 `hit`。 |
+| `hit`、`miss`、`stale`、`refresh`、`bypass` | 對 `@cache` 路由的 GET 或 HEAD 請求已回應：也就是 [`X-Cache`](#telling-a-hit-from-a-miss) 的值，不論是否設定 `debug_header` 都會回報，handler 拋出例外時也一樣。`source="app"` 時，`hit` 與 `miss` 表示 `CacheManager.get()` 或 `get_or_set()`（因此也包含 `@cached`）有沒有找到值；等待另一個呼叫者算出值的 `get_or_set()` 算是 `hit`，回傳已超過 ttl 的值（[`stale_ttl`](APP_CACHE.md#stale-values)）的則是 `stale`。 |
 | `store` | 寫入了一個回應或值。 |
 | `invalidate` | `invalidate()`、`invalidate_path()` 或 `CacheManager.delete()` 刪除了一個項目。 |
 | `error` | 後端呼叫失敗。對 `@cache`：後端拋出的任何例外，不論請求之後是在沒有快取的情況下繼續處理（`fail_open=True`），還是跟著失敗。對 `CacheManager` 與 `@cached`：只有連不上後端的情況（`BackendUnavailableError`，例外照常拋出）。 |

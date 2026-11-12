@@ -218,8 +218,10 @@ class CachedFunction(Generic[P, R]):
         lock: bool | None,
         type_: Any = None,
         tags: Iterable[str] | Callable[..., Iterable[str]] | None = None,
+        stale_ttl: int | None = None,
     ) -> None:
         """Wrap ``func``; ``cached()`` builds these."""
+        self._stale_ttl = stale_ttl
         self.__wrapped__ = func
         self._signature = _signature(func)
         self._ttl = ttl
@@ -320,6 +322,8 @@ class CachedFunction(Generic[P, R]):
             extra["tags"] = (
                 self._tags(*args, **kwargs) if callable(self._tags) else self._tags
             )
+        if self._stale_ttl is not None:
+            extra["stale_ttl"] = self._stale_ttl
         value: R = await self.manager.get_or_set(
             key, factory, ttl=self._ttl, lock=self._lock, **extra
         )
@@ -372,6 +376,7 @@ def cached(  # noqa: PLR0913
     lock: bool | None = None,
     type_: Any = _UNSET,
     tags: Iterable[str] | Callable[..., Iterable[str]] | None = None,
+    stale_ttl: int | timedelta | None = None,
 ) -> _Decorator:
     """Cache what a plain function returns, keyed on its arguments.
 
@@ -408,6 +413,11 @@ def cached(  # noqa: PLR0913
             resolved on each call.
         lock: Whether concurrent misses take the manager's distributed lock.
             ``None`` uses the manager's ``lock`` setting.
+        stale_ttl: Keep a value this much longer than ``ttl`` and use it
+            past ``ttl`` as a stale value: one call refreshes it while the
+            others get it at once, and it is returned when the function
+            raises. As for ``get_or_set()``; needs a ``ttl`` (or the
+            manager's ``default_ttl``).
         type_: The type to validate the cached value into, usually the
             function's return type (``@cached(ttl=60, type_=User)``,
             ``type_=list[User]``), as for ``CacheManager.get(type_=...)``.
@@ -445,6 +455,7 @@ def cached(  # noqa: PLR0913
             called, if the key cannot be built (see ``cache_key``)
     """
     ttl_seconds = validate_ttl(ttl)
+    stale_seconds = validate_ttl(stale_ttl)
     if lock is not None and not isinstance(lock, bool):
         msg = f"lock must be a bool or None, got {type(lock).__name__}"  # type: ignore[unreachable]
         raise TypeError(msg)
@@ -461,6 +472,7 @@ def cached(  # noqa: PLR0913
             lock=lock,
             type_=_type_from_annotation(func) if type_ is _UNSET else type_,
             tags=tags,
+            stale_ttl=stale_seconds,
         )
 
     return decorator

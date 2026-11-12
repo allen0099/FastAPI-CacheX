@@ -115,6 +115,11 @@ class CacheEntry:
     ``tags`` holds the version each of the entry's tags had when it was
     written, as ``(name, version)`` pairs. The entry is served only while
     those are still the current versions (see ``invalidate_tags``).
+
+    ``stale_at`` is when a value written by ``get_or_set(stale_ttl=...)``
+    turns stale, in epoch seconds from the wall clock. From then on only a
+    ``get_or_set`` with ``stale_ttl`` uses it; every other read takes it as
+    a miss. ``None`` for everything else.
     """
 
     fingerprint: str
@@ -124,6 +129,7 @@ class CacheEntry:
     headers: HeaderPairs = ()
     stored_at: float | None = None
     tags: TagVersions = ()
+    stale_at: float | None = None
 
     def __post_init__(self) -> None:
         """Store ``headers`` and ``tags`` as tuples of pairs."""
