@@ -81,6 +81,7 @@ from .exceptions import TTLValueError
 from .headers import add_vary
 from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
+from .switch import is_enabled
 from .types import CacheEntry
 from .types import CacheKeyBuilder
 from .types import log_ref
@@ -885,6 +886,11 @@ class _Route:
                 if "authorization" in req.headers
                 else "session"
             )
+            return await self._uncached(call, cache_control)
+        if not is_enabled():
+            # After the checks above, so that a request gets the same
+            # `Cache-Control` as with the switch on.
+            call.reason = "disabled"
             return await self._uncached(call, cache_control)
         asked = self._client_asks(req)
         if asked == "no-store":

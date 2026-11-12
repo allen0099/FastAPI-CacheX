@@ -236,11 +236,12 @@ async def items() -> list[str]: ...
 | `no-ttl` | `BYPASS` | 路由沒有 `ttl`，或 `ttl=0`。 |
 | `authorization`、`session` | `BYPASS` | [帶有憑證的請求](#requests-with-credentials)（`Authorization` 標頭，或 session 資料），而路由沒有設定 `public` 或 `cache_authorized`。 |
 | `request-no-store` | `BYPASS` | 請求的 `Cache-Control` 如此要求，且路由設定了 `client_cache_control`。 |
+| `disabled` | `BYPASS` | 整個行程的快取已[關閉](TESTING.md#switching-off)。 |
 | `status` | `MISS`、`REFRESH` | handler 回應的不是 2xx（或是 206）。 |
 | `streamed` | `MISS`、`REFRESH` | `StreamingResponse` 或 `FileResponse`：沒有可儲存的內容。 |
-| `set-cookie` | `MISS`、`REFRESH` | handler 或某個 dependency 設定了 cookie：儲存的副本會把某位訪客的 cookie 交給下一位。之後才由 middleware 加上的 cookie 在這裡看不到。 |
-| `response-cache-control` | `MISS`、`REFRESH` | handler 或某個 dependency 在這個回應送出了 `Cache-Control: private` 或 `no-store`。 |
-| `dependency-status` | `MISS`、`REFRESH` | 某個 dependency 設定了狀態碼，它可能只對這個請求成立。 |
+| `set-cookie` | `MISS`、`REFRESH` | handler 或某個依賴項設定了 cookie：儲存的副本會把某位訪客的 cookie 交給下一位。之後才由中介軟體加上的 cookie 在這裡看不到。 |
+| `response-cache-control` | `MISS`、`REFRESH` | handler 或某個依賴項在這個回應送出了 `Cache-Control: private` 或 `no-store`。 |
+| `dependency-status` | `MISS`、`REFRESH` | 某個依賴項設定了狀態碼，它可能只對這個請求成立。 |
 | `head` | `MISS`、`REFRESH` | handler 為 `HEAD` 請求執行了；只有 `GET` 的回應會被儲存。 |
 | `tag-read-failed`、`tag-invalidated` | `MISS`、`REFRESH` | [有 tag](#by-tag) 的路由，其 tag 版本讀取失敗，或在 handler 執行期間改變：儲存這個回應可能留下一個失效操作沒有涵蓋到的項目。 |
 | `write-failed` | `MISS`、`REFRESH` | 後端拒絕寫入或無法連線，而路由為 `fail_open=True`。 |

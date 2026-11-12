@@ -449,6 +449,7 @@ causes. With `debug_header=True` such a response also carries
 | `no-ttl` | `BYPASS` | The route has no `ttl`, or `ttl=0`. |
 | `authorization`, `session` | `BYPASS` | A [request with credentials](#requests-with-credentials) (an `Authorization` header, or session data) on a route without `public` or `cache_authorized`. |
 | `request-no-store` | `BYPASS` | The request's `Cache-Control` asked, on a route with `client_cache_control`. |
+| `disabled` | `BYPASS` | Caching is [switched off](TESTING.md#switching-off) for the process. |
 | `status` | `MISS`, `REFRESH` | The handler answered with something other than a 2xx (or with 206). |
 | `streamed` | `MISS`, `REFRESH` | A `StreamingResponse` or `FileResponse`: there is no body to store. |
 | `set-cookie` | `MISS`, `REFRESH` | The handler or a dependency set a cookie: a stored copy would hand one visitor's cookie to the next. A middleware that adds its cookie later is not seen here. |

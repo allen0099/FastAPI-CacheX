@@ -36,6 +36,8 @@ from .manager import CacheManager as CacheManager
 from .manager_proxy import CacheManagerProxy as CacheManagerProxy
 from .proxy import BackendProxy as BackendProxy
 from .routes import add_routes as add_routes
+from .switch import is_enabled as is_enabled
+from .switch import set_enabled as set_enabled
 from .types import CacheKeyBuilder as CacheKeyBuilder
 
 
@@ -54,6 +56,9 @@ def _read_version() -> str:
 
 __version__ = _read_version()
 
+# After the imports above on purpose: `switch` warns at import when the
+# environment turns caching off, and that line must reach stderr in an
+# application that has not configured logging (a test covers it).
 _package_logger = logging.getLogger("fastapi_cachex")
 _package_logger.addHandler(
     logging.NullHandler()
@@ -93,5 +98,7 @@ __all__ = [
     "invalidate",
     "invalidate_path",
     "invalidate_tags",
+    "is_enabled",
+    "set_enabled",
     "set_event_handler",
 ]

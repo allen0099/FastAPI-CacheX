@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex import manager
+from fastapi_cachex import set_enabled
 from fastapi_cachex import set_event_handler
 from fastapi_cachex._coalesce import _IN_FLIGHT
 from fastapi_cachex._coalesce import _REFRESHING
@@ -190,6 +191,8 @@ def reset_proxy_singletons():
     """
     for proxy in _PROXIES:
         proxy.set(None)
+    # On for every test, whatever the developer's shell exports (#557).
+    set_enabled(True)
     yield
     for proxy in _PROXIES:
         proxy.set(None)

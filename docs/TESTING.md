@@ -70,6 +70,52 @@ def test_second_run_does_not_see_the_first() -> None:
 
 Without the fixture the second test gets `{"answer": "run-a"}` as a `HIT`: both apps build the key `http:v2|GET|testserver|/answer|`, and the fallback backend from the first test is still registered.
 
+## Turning the cache off {#switching-off}
+
+While developing, a cached route hides the change you just made; and a test
+that is not about caching is simpler without one. One switch turns caching
+off for the whole process:
+
+```python
+from fastapi_cachex import set_enabled
+
+set_enabled(False)  # and set_enabled(True) to turn it back on
+```
+
+or, without touching the code, start the process with
+`FASTAPI_CACHEX_DISABLED=1` (also `true`, `yes` or `on`; read once, when
+`fastapi_cachex` is imported, and logged as a warning). `is_enabled()` tells
+which it is.
+
+While it is off:
+
+| | Does |
+|---|---|
+| `@cache` | Runs the handler on every request and neither reads nor writes the backend. The response has the same `Cache-Control` and `ETag` as with caching on, and a matching `If-None-Match` still gets a 304, so a browser or a CDN in front behaves the same. `X-Cache` is `BYPASS`, with `X-Cache-Reason: disabled`. |
+| `@cached`, `get_or_set()` | Run the function or factory on every call: no read, no lock, no write. The value still goes through the JSON round trip (and `type_`), so it has the shape a hit would have. The [event](HTTP_CACHING.md#counting-hits-and-misses) of each call is a `miss`. |
+| `CacheManager.get()`, `set()`, `add()`, `delete()`, the backends, `CacheLock`, `invalidate()` and the other clearing functions | Work as usual. |
+
+The last row is deliberate. `get()` and `set()` are also used to *store*
+things: a one-time code, a counter, a flag another request reads back. If the
+switch made `get()` return nothing, turning the cache off would break those
+features instead of only making the app slower. The cost is that code written
+as `get()`, compute, `set()` keeps returning the stored value with the switch
+off; write it as `get_or_set()` and it follows the switch.
+
+In a test suite, turn it off for the tests that are not about caching and
+leave it on for those that are:
+
+```python
+@pytest.fixture
+def no_cache() -> Iterator[None]:
+    set_enabled(False)
+    yield
+    set_enabled(True)
+```
+
+A `CacheManager()` you build yourself still needs a backend to be set.
+Do not set the variable in production: every request then runs its handler.
+
 ## Asserting that something was cached {#asserting}
 
 `debug_header=True` makes `@cache` say how each GET or HEAD request was answered, in an `X-Cache` header: `HIT` (served from the stored entry), `MISS` (the handler ran and the backend was consulted) or `BYPASS` (the backend was neither read nor written). That is a steadier thing to assert than a call counter in the handler. Leave it off in production unless you want clients to see it; a test can turn it on through a setting.
