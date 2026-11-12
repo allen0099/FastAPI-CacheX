@@ -1,10 +1,14 @@
 """Serialization shared by the network backends (Redis, Memcached).
 
 Both backends store a ``CacheEntry`` as a JSON document; ``orjson`` is used when
-it is installed and the standard library ``json`` module otherwise.
+it is installed and the standard library ``json`` module otherwise. A backend
+built with ``compress_min_size`` stores a document of at least that many bytes
+compressed with zlib, behind ``COMPRESSED_PREFIX``; every reader understands
+both forms, whatever its own setting.
 """
 
 import math
+import zlib
 
 from fastapi_cachex.types import COUNTER_FINGERPRINT
 from fastapi_cachex.types import DEFAULT_STATUS_CODE
@@ -25,10 +29,41 @@ except ImportError:  # pragma: no cover - import-time, environment dependent
 # is not the one ``encode_entry`` writes (missing fields, non-string content);
 # fields of another type are checked in ``decode_entry``.
 # The standard library parser raises ``RecursionError`` on deep nesting.
-_DECODE_ERRORS = (ValueError, KeyError, TypeError, AttributeError, RecursionError)
+# ``zlib.error`` is a compressed document that was cut short or damaged.
+_DECODE_ERRORS = (
+    ValueError,
+    KeyError,
+    TypeError,
+    AttributeError,
+    RecursionError,
+    zlib.error,
+)
+
+# Starts a compressed document. A JSON document cannot start with a NUL byte,
+# and neither can a counter.
+COMPRESSED_PREFIX = b"\x00zlib\x00"
+# Fastest level: on typical JSON it gives most of the reduction of the
+# default level (to about 22% against 19%) in less than half the time.
+_COMPRESSION_LEVEL = 1
 
 
-def encode_entry(entry: CacheEntry) -> bytes:
+def validate_compress_min_size(value: object) -> int | None:
+    """``compress_min_size`` for a backend: ``None``, or a positive ``int``."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = (
+            "compress_min_size must be a number of bytes or None, "
+            f"got {type(value).__name__}"
+        )
+        raise TypeError(msg)
+    if value < 1:
+        msg = f"compress_min_size must be greater than zero, got {value!r}"
+        raise ValueError(msg)
+    return value
+
+
+def encode_entry(entry: CacheEntry, compress_min_size: int | None = None) -> bytes:
     """Serialize a ``CacheEntry`` to a UTF-8 JSON document.
 
     The raw content bytes are passed through ``latin-1`` so that arbitrary
@@ -37,6 +72,9 @@ def encode_entry(entry: CacheEntry) -> bytes:
     A counter entry (exactly what ``counter_entry`` builds) is stored as a bare
     integer instead, the form the server-side ``INCR`` family works on, so a
     counter written with ``set()`` can still be passed to ``increment()``.
+
+    With ``compress_min_size``, a document of at least that many bytes is
+    returned compressed.
     """
     if entry.fingerprint == COUNTER_FINGERPRINT:
         value = parse_counter(entry.content)
@@ -57,7 +95,14 @@ def encode_entry(entry: CacheEntry) -> bytes:
         document["stale_at"] = entry.stale_at
     serialized: str | bytes = json.dumps(document)
     # orjson returns bytes, stdlib json returns str
-    return serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
+    encoded = (
+        serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
+    )
+    if compress_min_size is not None and len(encoded) >= compress_min_size:
+        # Even content that is compressed already shrinks: as JSON text its
+        # bytes above 0x7f take two bytes or an escape each.
+        return COMPRESSED_PREFIX + zlib.compress(encoded, _COMPRESSION_LEVEL)
+    return encoded
 
 
 # The status codes HTTP defines; anything else cannot be replayed.
@@ -111,6 +156,8 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
     if counter is not None:
         return counter_entry(counter)
     try:
+        if isinstance(raw, bytes) and raw.startswith(COMPRESSED_PREFIX):
+            raw = zlib.decompress(raw[len(COMPRESSED_PREFIX) :])
         data = json.loads(raw)
         fingerprint = data["fingerprint"]
         media_type = data.get("media_type")

@@ -40,6 +40,12 @@ class RedisConfig(BaseModel):
         default=DEFAULT_REDIS_PREFIX,
         description="Prefix applied to all cache keys",
     )
+    compress_min_size: int | None = Field(
+        default=None,
+        ge=1,
+        strict=True,
+        description="Compress stored entries of at least this many bytes",
+    )
     protocol: int = Field(
         default=2,
         ge=2,

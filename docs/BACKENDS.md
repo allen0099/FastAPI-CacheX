@@ -314,7 +314,8 @@ server must not tie up the thread pool.
 - A `ttl` whose expiry falls after 2038-01-19 raises `ValueError` (see
   [TTL values](#ttl-values))
 - Values larger than the server's item size limit (1 MB by default, `memcached -I`)
-  are rejected. `@cache` logs it and serves the response unstored
+  are rejected ([`compress_min_size`](#compressing-large-entries) makes most of
+  them fit). `@cache` logs it and serves the response unstored
   (see [When the backend fails](HTTP_CACHING.md#when-the-backend-fails)).
   `CacheManager` (`set`, `add`, `get_or_set`), `@cached` and direct `set()`,
   `set_if_absent()` and `set_if_equals()` calls raise `ValueTooLargeError`, a
@@ -382,6 +383,47 @@ when the block ends, including when the block raises.
   which may emit `ResourceWarning`s at shutdown. Before 0.3.9 only
   `MemoryBackend` had `aclose()`, and the Redis and Memcached backends were
   closed through `backend.client`.
+
+## Compressing large entries {#compressing-large-entries}
+
+A JSON response of a few hundred kB is stored as it is: memory on the server,
+network time on every hit, and on Memcached nothing at all once the entry is
+over the item size limit. `compress_min_size` on the Redis and Memcached
+backends stores an entry of at least that many bytes compressed with zlib,
+from the standard library:
+
+```python
+backend = AsyncRedisCacheBackend(compress_min_size=4096)
+backend = MemcachedBackend(servers=["127.0.0.1:11211"], compress_min_size=4096)
+```
+
+`RedisConfig` has the same field. It is off by default.
+
+| Stored entry (JSON list of records) | Compressed | Extra time per write | Extra time per hit |
+|---|---|---|---|
+| 14 kB | 3.4 kB (24%) | 0.09 ms | 0.04 ms |
+| 140 kB | 32 kB (23%) | 1.0 ms | 0.5 ms |
+| 1.4 MB | 317 kB (22%) | 9.7 ms | 5.7 ms |
+
+Measured on one machine with CPython 3.15; take the ratios, not the
+milliseconds. The size counted against the threshold is that of the stored
+entry (body, headers and metadata as JSON), which is somewhat larger than the
+response body.
+
+- **The time is spent on the event loop.** Compressing and decompressing are
+  plain CPU work in the request's own task, so a multi-megabyte entry holds up
+  the other requests of the worker for those milliseconds. A threshold of a
+  few kB keeps small entries, where there is little to gain, uncompressed.
+- **Every reader understands both forms**, whatever its own setting, so the
+  threshold can be changed or switched off at any time, and backends with
+  different settings can share a server. The compare-and-write primitives
+  compare entries, not stored bytes, so locks and `add()` are unaffected.
+- **Enable it only once every process runs 0.6.3 or later.** An older release
+  reads a compressed entry as a miss.
+- Counters are never compressed, and the memory backend has no such option:
+  it keeps entries as objects.
+- On Memcached the item size limit applies to the compressed entry, so a
+  response of several MB of JSON fits under the default 1 MB.
 
 ## When the server is unavailable {#backend-unavailable}
 

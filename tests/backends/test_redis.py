@@ -1797,4 +1797,4 @@ def test_redis_config_refuses_a_timeout_that_is_not_positive(
     from fastapi_cachex.backends.config import RedisConfig
 
     with pytest.raises(ValidationError, match=field):
-        RedisConfig(**{field: value})
+        RedisConfig(**{field: value})  # type: ignore[arg-type]
