@@ -12,6 +12,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from fastapi_cachex import CacheManager
 from fastapi_cachex import _stored_response as stored_response
@@ -21,6 +22,8 @@ from fastapi_cachex import set_event_handler
 from fastapi_cachex._coalesce import _REFRESHING
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
+from fastapi_cachex.backends.memory import MemoryBackend
+from fastapi_cachex.exceptions import BackendUnavailableError
 from fastapi_cachex.lock import CacheLock
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
@@ -175,6 +178,115 @@ async def test_a_failing_refresh_returns_the_stale_value(
     assert await _get(manager, factory) == "run 3"
 
 
+async def test_a_failed_refresh_is_a_miss_and_a_stale_event(
+    manager: CacheManager, factory: _Factory, clock: _Clock
+) -> None:
+    await _get(manager, factory)
+    clock.now += TTL + 1
+    factory.fail = True
+    events: list[str] = []
+    set_event_handler(lambda event: events.append(event.kind))
+    try:
+        await _get(manager, factory)
+        # Another process is at it: stale, and the factory does not run.
+        other = CacheLock("cache:k")
+        assert await other.acquire(blocking=False)
+        await _get(manager, factory)
+        await other.release()
+    finally:
+        set_event_handler(None)
+
+    assert events == ["miss", "stale", "stale"]
+
+
+class _NoWrites(MemoryBackend):
+    async def set(self, *args: Any, **kwargs: Any) -> None:
+        msg = "backend is down"
+        raise BackendUnavailableError(msg)
+
+
+async def test_only_a_failure_of_the_factory_itself_is_answered_stale(
+    manager: CacheManager, factory: _Factory, clock: _Clock
+) -> None:
+    await _get(manager, factory, type_=str)
+    clock.now += TTL + 1
+
+    async def wrong_type() -> int:
+        return 1
+
+    # As on a miss: the value was computed, and does not fit.
+    with pytest.raises(ValidationError):
+        await manager.get_or_set("k", wrong_type, TTL, stale_ttl=STALE_TTL, type_=str)
+    assert set() == _REFRESHING
+    assert not await CacheLock("cache:k").locked()
+
+    # A backend that cannot store is reported and raised, as on a miss.
+    down = _NoWrites()
+    down.cache = BackendProxy.get().cache  # type: ignore[attr-defined]
+    await manager.set("k", "old", ttl=TTL)
+    entry = await BackendProxy.get().get("cache:k")
+    assert entry is not None
+    entry.stale_at = clock.now - 1
+    await BackendProxy.get().set("cache:k", entry, ttl=TTL)
+    events: list[str] = []
+    set_event_handler(lambda event: events.append(event.kind))
+    try:
+        with pytest.raises(BackendUnavailableError):
+            await _get(CacheManager(down, lock=False), factory)
+    finally:
+        set_event_handler(None)
+    assert events == ["miss", "error"]
+
+
+async def test_a_refresh_that_asks_for_its_own_key_does_not_wait_for_itself(
+    manager: CacheManager, clock: _Clock
+) -> None:
+    async def inner() -> str:
+        return "inner"
+
+    async def outer() -> str:
+        return await asyncio.wait_for(manager.get_or_set("k", inner, TTL), timeout=2)
+
+    await manager.set("k", "old", ttl=TTL)
+    entry = await BackendProxy.get().get("cache:k")
+    assert entry is not None
+    entry.stale_at = clock.now - 1
+    await BackendProxy.get().set("cache:k", entry, ttl=TTL)
+
+    assert await manager.get_or_set("k", outer, TTL, stale_ttl=STALE_TTL) == "inner"
+
+
+async def test_a_cancelled_refresh_is_cancelled_and_leaves_nothing_held(
+    manager: CacheManager, factory: _Factory, clock: _Clock
+) -> None:
+    await _get(manager, factory)
+    clock.now += TTL + 1
+    factory.gate = asyncio.Event()
+    factory.started.clear()
+    refresher = asyncio.ensure_future(_get(manager, factory))
+    await asyncio.wait_for(factory.started.wait(), timeout=5)
+
+    refresher.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await refresher
+    assert set() == _REFRESHING
+    assert not await CacheLock("cache:k").locked()
+
+
+async def test_tags_and_stale_ttl_together_store_the_value_itself(
+    manager: CacheManager, factory: _Factory, clock: _Clock
+) -> None:
+    assert await _get(manager, factory, tags=["t"]) == "run 1"
+
+    entry = await BackendProxy.get().get("cache:k")
+    assert entry is not None
+    assert (entry.content, entry.stale_at) == (b'"run 1"', clock.now + TTL)
+    assert [name for name, _ in entry.tags] == ["t"]
+    clock.now += TTL + 1
+    assert await _get(manager, factory, tags=["t"]) == "run 2"
+
+
 async def test_past_the_stale_window_a_failure_is_raised(
     manager: CacheManager, factory: _Factory, clock: _Clock
 ) -> None:
@@ -280,7 +392,7 @@ async def test_stale_ttl_needs_a_ttl(factory: _Factory) -> None:
         await manager.get_or_set("k", factory, stale_ttl=30)
     with pytest.raises(TypeError):
         await manager.get_or_set("k", factory, ttl=60, stale_ttl=1.5)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="ttl"):
+    with pytest.raises(ValueError, match=r"greater than|positive"):
         await manager.get_or_set("k", factory, ttl=60, stale_ttl=0)
 
     with_default = CacheManager(BackendProxy.get(), default_ttl=TTL)

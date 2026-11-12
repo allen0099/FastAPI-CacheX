@@ -106,6 +106,30 @@ def _turning_stale(
     return turning_stale
 
 
+class _Watched:
+    """A ``get_or_set`` factory that remembers the exception it raised.
+
+    A refresh returns the stale value only when the factory itself failed:
+    a backend error, or a value that cannot be stored, is raised as on a miss.
+    """
+
+    def __init__(
+        self, factory: Callable[[], Any] | Callable[[], Awaitable[Any]]
+    ) -> None:
+        self.factory = factory
+        self.error: Exception | None = None
+
+    async def __call__(self) -> Any:
+        try:
+            value = self.factory()
+            if inspect.isawaitable(value):
+                value = await value
+        except Exception as e:
+            self.error = e
+            raise
+        return value
+
+
 def _is_stale(entry: CacheEntry) -> bool:
     """Whether ``entry`` is kept only for ``get_or_set(stale_ttl=...)``."""
     return (
@@ -674,7 +698,7 @@ class CacheManager:
             raise ValueError(msg)
         return fresh_for
 
-    async def _lookup_or_refresh(
+    async def _lookup_or_refresh(  # noqa: PLR0913
         self,
         key: str,
         factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
@@ -682,6 +706,7 @@ class CacheManager:
         type_: Any,
         *,
         lock_ttl: int | None,
+        watched: _Watched | None,
     ) -> Any:
         """``_lookup`` for ``stale_ttl``: a stale value is refreshed or returned.
 
@@ -698,7 +723,13 @@ class CacheManager:
             _emit("hit", "app", key)
             return cached
         return await self._refresh_or_stale(
-            key, factory, ttl, type_, stale=cached, lock_ttl=lock_ttl
+            key,
+            factory,
+            ttl,
+            type_,
+            stale=cached,
+            lock_ttl=lock_ttl,
+            watched=watched,
         )
 
     async def _refresh_or_stale(  # noqa: PLR0913
@@ -710,13 +741,15 @@ class CacheManager:
         *,
         stale: Any,
         lock_ttl: int | None,
+        watched: _Watched | None,
     ) -> Any:
         """Replace a value past its ttl, or return it as it is (``stale_ttl``).
 
         The caller that claims the key runs ``factory``, in this process and,
         with ``lock_ttl``, across the processes sharing the backend. Everyone
-        else gets ``stale`` without waiting, and so does the claimant when the
-        refresh fails: the value is known, and the next caller tries again.
+        else gets ``stale`` without waiting, and so does the claimant when
+        the caller's own factory (``watched``) raises: the value is known, and
+        the next caller tries again. Any other error is raised as on a miss.
         """
         cache_key = self._cache_key(key)
         if not _claim_refresh(self.backend, cache_key):
@@ -730,9 +763,20 @@ class CacheManager:
                     _emit("stale", "app", key)
                     return stale
                 held = lock
-            return await self._compute_and_store(key, factory, ttl, type_)
-        except Exception as e:  # noqa: BLE001 - the stale value answers
-            # One line, no traceback: a failing upstream fails every refresh.
+            # As a winner of the miss path: a factory that asks for the same
+            # key again must not wait for the lock held here.
+            token = _HELD_LOCKS.set(
+                _HELD_LOCKS.get() | {f"{id(self.backend)}:{cache_key}"}
+            )
+            try:
+                return await self._compute_and_store(key, factory, ttl, type_)
+            finally:
+                _HELD_LOCKS.reset(token)
+        except Exception as e:
+            if watched is None or e is not watched.error:
+                raise
+            # No traceback: a failing upstream fails every refresh.
+            _emit("stale", "app", key)
             logger.warning(
                 "Refreshing a stale value failed (%s: %s); returning it; key_ref=%s",
                 type(e).__name__,
@@ -1013,7 +1057,9 @@ class CacheManager:
                 ``factory`` and stores the result, while the callers that
                 arrive meanwhile get the stale value at once; and if
                 ``factory`` raises, that caller gets the stale value too,
-                with a warning logged. One refresh per key runs at a time
+                with a warning logged (a backend error, or a value that
+                cannot be stored or does not fit ``type_``, is raised as on
+                a miss). One refresh per key runs at a time
                 in a process, and with ``lock`` across the processes that
                 share the backend. Needs a ``ttl`` (or the manager's
                 ``default_ttl``). Every other read (``get()``, ``has()``,
@@ -1040,7 +1086,9 @@ class CacheManager:
         )
         names = _tags.validate_tags(tags)
         fresh_for = self._fresh_for(ttl, stale_ttl)
+        watched: _Watched | None = None
         if fresh_for is not None:
+            factory = watched = _Watched(factory)
             # What the backend keeps the value for.
             ttl = validate_ttl(fresh_for + validate_ttl(stale_ttl))  # type: ignore[operator]
         if not is_enabled():
@@ -1065,6 +1113,7 @@ class CacheManager:
                 ttl,
                 type_,
                 lock_ttl=effective_lock_ttl if use_lock else None,
+                watched=watched,
             )
         if cached is not _SENTINEL:
             return cached

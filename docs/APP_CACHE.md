@@ -304,8 +304,8 @@ The value is kept for `ttl + stale_ttl` (360 seconds here). For the first
   which is fresh for another `ttl`.
 - Callers that arrive while it runs get the stale value at once instead of
   waiting.
-- If `factory` raises, that caller gets the stale value too, and one warning
-  line is logged. The next caller tries again.
+- If `factory` raises, that caller gets the stale value too, and a warning
+  is logged. The next caller tries again.
 
 Past `ttl + stale_ttl` the value is gone, and a failing `factory` raises as
 usual.
@@ -322,8 +322,12 @@ usual.
   and `has()` take it as a miss, `add()` replaces it, and a `get_or_set()`
   without `stale_ttl` runs its `factory` as for any miss. So code that reads
   the key directly never sees a value older than its `ttl`.
-- **Any exception from `factory` counts**, including a value that does not
-  fit `type_`. Watch for the warning `Refreshing a stale value failed`.
+- **Only an exception raised by `factory` is answered with the stale value.**
+  A backend that cannot be reached, a value that cannot be stored as JSON and
+  a value that does not fit `type_` are raised as on a miss. Each failed
+  refresh runs `factory` again on the next call and logs the warning
+  `Refreshing a stale value failed`, so a slow failure costs one caller its
+  duration each time.
 - A value whose tag was invalidated is a miss, not a stale value.
 - When the value turns stale is stored with it, as a wall-clock time, and
   compared on the clock of the process that reads it; servers whose clocks
@@ -332,7 +336,7 @@ usual.
   `ttl + stale_ttl`.
 - A caller that got the stale value is reported as a `stale`
   [event](HTTP_CACHING.md#counting-hits-and-misses); the caller that refreshed, as a
-  `miss`.
+  `miss`, followed by `stale` if its `factory` raised.
 
 ## JSON round-trip
 
