@@ -4,6 +4,9 @@ The codec is tested on its own; the backends, against live servers, through
 every primitive that writes or compares an entry.
 """
 
+import json as std_json
+import os
+import types
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from typing import Any
@@ -15,6 +18,7 @@ from fastapi_cachex.backends import AsyncRedisCacheBackend
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends import codec
 from fastapi_cachex.backends.config import RedisConfig
+from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import ValueTooLargeError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
@@ -50,13 +54,42 @@ def test_a_document_at_the_threshold_is_compressed_and_reads_back() -> None:
     assert codec.encode_entry(BIG, None) == plain
 
 
-def test_binary_content_shrinks_too() -> None:
-    noise = CacheEntry(fingerprint="etag", content=bytes(range(256)) * 16)
+def test_random_bytes_shrink_too() -> None:
+    # As JSON text a byte above 0x7f takes two bytes or an escape.
+    noise = CacheEntry(fingerprint="etag", content=os.urandom(100_000))
 
     encoded = codec.encode_entry(noise, 1)
 
     assert len(encoded) < len(codec.encode_entry(noise))
     assert codec.decode_entry(encoded) == noise
+
+
+def test_compression_works_without_orjson(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        codec,
+        "json",
+        types.SimpleNamespace(dumps=std_json.dumps, loads=std_json.loads),
+    )
+
+    encoded = codec.encode_entry(BIG, 1)
+
+    assert encoded.startswith(codec.COMPRESSED_PREFIX)
+    assert codec.decode_entry(encoded) == BIG
+
+
+def test_a_document_over_the_bound_is_neither_compressed_nor_inflated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = codec.encode_entry(BIG, 1)
+    plain = codec.encode_entry(BIG)
+
+    monkeypatch.setattr(codec, "_MAX_COMPRESSED_DOCUMENT", len(plain) - 1)
+
+    assert codec.decode_entry(encoded) is None
+    assert codec.encode_entry(BIG, 1) == plain
+    monkeypatch.setattr(codec, "_MAX_COMPRESSED_DOCUMENT", len(plain))
+    assert codec.decode_entry(encoded) == BIG
+    assert codec.encode_entry(BIG, 1) == encoded
 
 
 def test_a_counter_is_never_compressed() -> None:
@@ -70,6 +103,7 @@ def test_a_counter_is_never_compressed() -> None:
         codec.COMPRESSED_PREFIX + b"not zlib",
         codec.encode_entry(BIG, 1)[:-5],
         codec.COMPRESSED_PREFIX + b"x\x01\x03\x00\x00\x00\x00\x01",  # empty
+        codec.encode_entry(BIG, 1) + b"junk",
     ],
 )
 def test_a_damaged_compressed_document_is_a_miss(raw: bytes) -> None:
@@ -92,8 +126,22 @@ def test_compress_min_size_must_be_an_int(value: Any) -> None:
         MemcachedBackend(servers=[MEMCACHED_SERVER], compress_min_size=value)
     with pytest.raises(TypeError, match="compress_min_size must be a number of bytes"):
         AsyncRedisCacheBackend(compress_min_size=value)
+
+
+def test_the_config_takes_it_as_its_other_numbers() -> None:
+    # Lax, like `port`: a config is often built from environment strings.
+    assert RedisConfig(compress_min_size="4096").compress_min_size == 4096
     with pytest.raises(ValueError, match="compress_min_size"):
-        RedisConfig(compress_min_size=value)
+        RedisConfig(compress_min_size="4 kB")
+
+
+def test_a_pool_that_decodes_replies_cannot_compress() -> None:
+    from redis.asyncio import ConnectionPool
+
+    pool = ConnectionPool(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+    with pytest.raises(CacheXError, match="decode_responses=True"):
+        AsyncRedisCacheBackend(connection_pool=pool, compress_min_size=1024)
 
 
 async def test_from_config_passes_it_on() -> None:

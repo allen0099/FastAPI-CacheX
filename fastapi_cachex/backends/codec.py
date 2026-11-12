@@ -45,6 +45,20 @@ COMPRESSED_PREFIX = b"\x00zlib\x00"
 # Fastest level: on typical JSON it gives most of the reduction of the
 # default level (to about 22% against 19%) in less than half the time.
 _COMPRESSION_LEVEL = 1
+# The largest document that is compressed, or inflated when read. Without a
+# bound a small stored value could inflate to gigabytes; a document over it
+# is stored as it is, and a compressed value that inflates past it is a miss.
+_MAX_COMPRESSED_DOCUMENT = 256 * 1024 * 1024
+
+
+def _inflate(body: bytes) -> bytes:
+    """Decompress ``body``; raises unless it is one whole zlib stream."""
+    inflater = zlib.decompressobj()
+    document = inflater.decompress(body, _MAX_COMPRESSED_DOCUMENT)
+    if not inflater.eof or inflater.unused_data:
+        msg = "not one zlib stream of an allowed size"
+        raise ValueError(msg)
+    return document
 
 
 def validate_compress_min_size(value: object) -> int | None:
@@ -98,7 +112,10 @@ def encode_entry(entry: CacheEntry, compress_min_size: int | None = None) -> byt
     encoded = (
         serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
     )
-    if compress_min_size is not None and len(encoded) >= compress_min_size:
+    if (
+        compress_min_size is not None
+        and compress_min_size <= len(encoded) <= _MAX_COMPRESSED_DOCUMENT
+    ):
         # Even content that is compressed already shrinks: as JSON text its
         # bytes above 0x7f take two bytes or an escape each.
         return COMPRESSED_PREFIX + zlib.compress(encoded, _COMPRESSION_LEVEL)
@@ -157,7 +174,7 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
         return counter_entry(counter)
     try:
         if isinstance(raw, bytes) and raw.startswith(COMPRESSED_PREFIX):
-            raw = zlib.decompress(raw[len(COMPRESSED_PREFIX) :])
+            raw = _inflate(raw[len(COMPRESSED_PREFIX) :])
         data = json.loads(raw)
         fingerprint = data["fingerprint"]
         media_type = data.get("media_type")

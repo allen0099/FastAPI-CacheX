@@ -210,6 +210,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             CacheXError: If ``url`` is passed with ``connection_pool`` (a
                 pool already names its server) or with ``ssl`` (TLS is the
                 ``rediss://`` scheme)
+            CacheXError: If ``compress_min_size`` is passed with a
+                ``connection_pool`` that decodes replies
             TypeError: If ``compress_min_size`` is not an ``int`` or None
             ValueError: If ``compress_min_size`` is not greater than zero
             TypeError: If ``encoding`` or ``decode_responses`` is passed, as
@@ -231,6 +233,15 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             raise CacheXError(msg) from exc
 
         self.compress_min_size = validate_compress_min_size(compress_min_size)
+        pool = kwargs.get("connection_pool")
+        if compress_min_size is not None and getattr(pool, "connection_kwargs", {}).get(
+            "decode_responses"
+        ):
+            msg = (
+                "compress_min_size cannot be used with a connection_pool that "
+                "has decode_responses=True: a compressed entry is not text"
+            )
+            raise CacheXError(msg)
         for name in _REMOVED_KWARGS:
             if name in kwargs:
                 msg = (
@@ -314,10 +325,10 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             "key_prefix": config.key_prefix,
             "protocol": config.protocol,
         }
-        if config.compress_min_size is not None:
-            shared["compress_min_size"] = config.compress_min_size
         # Passed only when set, so a subclass whose __init__ predates these
         # fields keeps working with a config that does not use them.
+        if config.compress_min_size is not None:
+            shared["compress_min_size"] = config.compress_min_size
         if config.username is not None:
             shared["username"] = config.username
         if config.ssl:

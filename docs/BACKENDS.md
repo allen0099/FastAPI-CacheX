@@ -314,8 +314,8 @@ server must not tie up the thread pool.
 - A `ttl` whose expiry falls after 2038-01-19 raises `ValueError` (see
   [TTL values](#ttl-values))
 - Values larger than the server's item size limit (1 MB by default, `memcached -I`)
-  are rejected ([`compress_min_size`](#compressing-large-entries) makes most of
-  them fit). `@cache` logs it and serves the response unstored
+  are rejected ([`compress_min_size`](#compressing-large-entries) makes JSON
+  and other text several times that size fit). `@cache` logs it and serves the response unstored
   (see [When the backend fails](HTTP_CACHING.md#when-the-backend-fails)).
   `CacheManager` (`set`, `add`, `get_or_set`), `@cached` and direct `set()`,
   `set_if_absent()` and `set_if_equals()` calls raise `ValueTooLargeError`, a
@@ -410,20 +410,29 @@ milliseconds. The size counted against the threshold is that of the stored
 entry (body, headers and metadata as JSON), which is somewhat larger than the
 response body.
 
-- **The time is spent on the event loop.** Compressing and decompressing are
-  plain CPU work in the request's own task, so a multi-megabyte entry holds up
-  the other requests of the worker for those milliseconds. A threshold of a
-  few kB keeps small entries, where there is little to gain, uncompressed.
+- **On Redis, and for reads on Memcached, the time is spent on the event
+  loop.** It is plain CPU work in the request's own task, so a multi-megabyte
+  entry holds up the other requests of the worker for those milliseconds
+  (Memcached writes compress in the worker thread that sends them). A
+  threshold of a few kB keeps small entries, where there is little to gain,
+  uncompressed.
 - **Every reader understands both forms**, whatever its own setting, so the
   threshold can be changed or switched off at any time, and backends with
   different settings can share a server. The compare-and-write primitives
   compare entries, not stored bytes, so locks and `add()` are unaffected.
 - **Enable it only once every process runs 0.6.3 or later.** An older release
   reads a compressed entry as a miss.
+- **Not with a Redis pool that decodes replies.** A `connection_pool` built
+  with `decode_responses=True` cannot read a compressed entry, which is not
+  text: `compress_min_size` with such a pool raises `CacheXError`, and a
+  backend on such a pool must not share a server with one that compresses.
+- A document over 256 MB is stored uncompressed, and a compressed value that
+  would inflate past that is read as a miss.
 - Counters are never compressed, and the memory backend has no such option:
   it keeps entries as objects.
 - On Memcached the item size limit applies to the compressed entry, so a
-  response of several MB of JSON fits under the default 1 MB.
+  response of several MB of JSON fits under the default 1 MB. Content that is
+  compressed already (images, archives) does not shrink below its own size.
 
 ## When the server is unavailable {#backend-unavailable}
 

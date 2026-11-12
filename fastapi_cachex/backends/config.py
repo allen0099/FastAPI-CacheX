@@ -43,7 +43,6 @@ class RedisConfig(BaseModel):
     compress_min_size: int | None = Field(
         default=None,
         ge=1,
-        strict=True,
         description="Compress stored entries of at least this many bytes",
     )
     protocol: int = Field(

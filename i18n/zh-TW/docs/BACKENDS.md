@@ -199,7 +199,7 @@ BackendProxy.set(backend)
 - `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間，且每次呼叫都會發出 `RuntimeWarning`。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用層快取](APP_CACHE.md)）
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存，摘要前面仍帶著 `key_prefix`。因此建立後端時會先檢查前綴本身：含空白字元、控制字元或非 ASCII 字元，或長度達 250 位元組以上的前綴會拋出 `ValueError`；超過 186 位元組、放不下 64 個字元摘要的前綴則會發出警告（0.4.1 之前，這類前綴會讓呼叫以 `MemcacheIllegalInputError` 失敗）
 - 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
-- 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕（[`compress_min_size`](#compressing-large-entries) 可以讓其中大多數放得進去）。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）。`CacheManager`（`set`、`add`、`get_or_set`）、`@cached` 以及直接呼叫 `set()`、`set_if_absent()` 與 `set_if_equals()` 則會拋出 `ValueTooLargeError`，它是 `CacheXError`，訊息中會列出編碼後的大小與鍵的摘要。不會儲存任何內容，而且伺服器還會移除被拒絕的 `set()` 原本要取代的值，因此之後讀取該鍵會是不存在；被拒絕的 `set_if_absent()` 則會保留既有的值。`set_many()` 中只要有一個值超過上限也會拋出這個錯誤，而這一批的其他項目可能已經存入（見[批次讀寫](#batch-reads-and-writes)）。這個錯誤會串接 pymemcache 的 `MemcacheServerError`，同時也是該型別的實例，而 0.5.4 之前這些呼叫端收到的就只有後者
+- 超過伺服器項目大小上限（預設 1 MB，可用 `memcached -I` 調整）的值會被拒絕（[`compress_min_size`](#compressing-large-entries) 可以讓數倍於此的 JSON 與其他文字放得進去）。`@cache` 會記錄該錯誤，並照常送出不儲存的回應（見[後端發生錯誤時](HTTP_CACHING.md#when-the-backend-fails)）。`CacheManager`（`set`、`add`、`get_or_set`）、`@cached` 以及直接呼叫 `set()`、`set_if_absent()` 與 `set_if_equals()` 則會拋出 `ValueTooLargeError`，它是 `CacheXError`，訊息中會列出編碼後的大小與鍵的摘要。不會儲存任何內容，而且伺服器還會移除被拒絕的 `set()` 原本要取代的值，因此之後讀取該鍵會是不存在；被拒絕的 `set_if_absent()` 則會保留既有的值。`set_many()` 中只要有一個值超過上限也會拋出這個錯誤，而這一批的其他項目可能已經存入（見[批次讀寫](#batch-reads-and-writes)）。這個錯誤會串接 pymemcache 的 `MemcacheServerError`，同時也是該型別的實例，而 0.5.4 之前這些呼叫端收到的就只有後者
 - 若需要依模式清除快取，請考慮使用 Redis 後端
 
 同步的 pymemcache 用戶端在工作執行緒中執行，並使用連線池，因此並行的請求絕不會共用同一個 socket。寫入會等待伺服器確認（`default_noreply=False`），因此只要 `set()` 返回，就能從連線池中的任何連線讀到該值。每次呼叫只切換到工作執行緒一次，多步驟的[原子操作](#atomic-backend-primitives)也是如此。`delete_many()` 在這一次呼叫中逐一對每個鍵送出 `DELETE`，並回傳實際存在的鍵數；0.3.8 之前它每個鍵都要切換一次執行緒，回傳的是傳入的鍵數。
@@ -248,13 +248,15 @@ backend = MemcachedBackend(servers=["127.0.0.1:11211"], compress_min_size=4096)
 | 140 kB | 32 kB（23%） | 1.0 ms | 0.5 ms |
 | 1.4 MB | 317 kB（22%） | 9.7 ms | 5.7 ms |
 
-以上是在單一機器、CPython 3.15 上量測的結果；請參考比例，而不是毫秒數。與門檻比較的是儲存項目的大小（內容、標頭與中繼資料組成的 JSON），會比回應內容略大。
+以上是在單一機器、CPython 3.15 上量測的結果；請參考比例，而不是毫秒數。與門檻比較的是儲存項目的大小（本文、標頭與中繼資料組成的 JSON），會比回應本文略大。
 
-- **這些時間花在事件迴圈上。** 壓縮與解壓縮是請求本身工作中的 CPU 運算，因此數 MB 的項目會讓同一個 worker 的其他請求等上那幾毫秒。把門檻設為幾 kB，可以讓沒什麼好處的小項目維持不壓縮。
+- **在 Redis 上，以及在 Memcached 上讀取時，這些時間花在事件迴圈上。** 這是在處理該請求的 task 裡進行的 CPU 運算，因此數 MB 的項目會讓同一個 worker 的其他請求等上那幾毫秒（Memcached 的寫入是在送出它的工作執行緒裡壓縮的）。把門檻設為幾 kB，可以讓沒什麼好處的小項目維持不壓縮。
 - **每個讀取端都看得懂兩種形式**，不論自己的設定為何，因此門檻可以隨時調整或關閉，設定不同的後端也可以共用同一台伺服器。比較後寫入的操作比較的是項目，而不是儲存的位元組，所以鎖與 `add()` 不受影響。
 - **請等所有行程都執行 0.6.3 以上的版本後再啟用。** 較舊的版本會把壓縮過的項目讀成未命中。
+- **不能搭配會解碼回覆的 Redis 連線池。** 以 `decode_responses=True` 建立的 `connection_pool` 無法讀取壓縮過的項目，因為它不是文字：`compress_min_size` 搭配這種連線池會拋出 `CacheXError`，而使用這種連線池的後端也不能和會壓縮的後端共用同一台伺服器。
+- 超過 256 MB 的文件不會壓縮；解壓縮後會超過這個大小的值則讀成未命中。
 - 計數器永遠不會被壓縮；記憶體後端沒有這個選項，因為它以物件保存項目。
-- 在 Memcached 上，項目大小上限是對壓縮後的項目計算的，因此數 MB 的 JSON 回應也放得進預設的 1 MB。
+- 在 Memcached 上，項目大小上限是對壓縮後的項目計算的，因此數 MB 的 JSON 回應也放得進預設的 1 MB。本身已經壓縮過的內容（圖片、壓縮檔）不會變得比原本小。
 
 ## 伺服器無法使用時 {#backend-unavailable}
 
