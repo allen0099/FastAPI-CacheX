@@ -1,6 +1,6 @@
 # FastAPI-CacheX 快取流程 {#fastapi-cachex-cache-flow}
 
-本文件詳細說明 FastAPI-CacheX 如何將快取邏輯套用到 HTTP 請求上。裝飾器位於 [`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py)，它呼叫的各部分則位於同一目錄的私有模組：[`_key_builders.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_key_builders.py)（快取鍵）、[`_vary.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_vary.py)（`vary=`）、[`_cache_control.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_cache_control.py)（`Cache-Control`）、[`_stored_response.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_stored_response.py)（儲存與重播回應、ETag 與 304）、[`_rendering.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_rendering.py)（執行 handler 並加上依賴項的標頭），以及 [`_coalesce.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_coalesce.py)（`coalesce=`）。
+本文件詳細說明 FastAPI-CacheX 如何將快取邏輯套用到 HTTP 請求上。裝飾器位於 [`fastapi_cachex/cache.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/cache.py)，它呼叫的各部分則位於同一目錄的私有模組：[`_route.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_route.py)（如何回應一個請求，也就是下方的流程）、[`_arguments.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_arguments.py)（參數檢查與警告）、[`_params.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_params.py)（包裝函式的簽章）、[`_invalidation.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_invalidation.py)（`invalidate()` 及相關函式）、[`_key_builders.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_key_builders.py)（快取鍵）、[`_vary.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_vary.py)（`vary=`）、[`_cache_control.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_cache_control.py)（`Cache-Control`）、[`_stored_response.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_stored_response.py)（儲存與重播回應、ETag 與 304）、[`_rendering.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_rendering.py)（執行 handler 並加上依賴項的標頭），以及 [`_coalesce.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/fastapi_cachex/_coalesce.py)（`coalesce=`）。
 
 ## 整體流程 {#overall-flow}
 
@@ -172,7 +172,7 @@ TTL 不儲存在 `CacheEntry` 中：過期由後端負責（`MemoryBackend` 將�
 
 若尚未以 `BackendProxy.set()` 設定後端，裝飾器會在第一個請求時建立 `MemoryBackend`、註冊它，並記錄一則警告，說明這個快取是每個行程各自一份。
 
-**判斷邏輯**（`cache.py` 的包裝函式，依序執行）：
+**判斷邏輯**（`_route.py` 的 `_Route.respond`，依序執行）：
 
 ```python
 if request.method not in ("GET", "HEAD"):

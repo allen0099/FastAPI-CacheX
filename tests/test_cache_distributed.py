@@ -29,8 +29,8 @@ try:  # Starlette's TestClient moved to httpx2; the `lowest` env still has httpx
 except ImportError:  # pragma: no cover - depends on the installed starlette
     import httpx  # type: ignore[no-redef, import-not-found, unused-ignore]
 
-# `fastapi_cachex.cache` is the decorator once the package is imported.
-cache_module = importlib.import_module("fastapi_cachex.cache")
+# Where the request flow lives, and so the names these tests patch.
+cache_module = importlib.import_module("fastapi_cachex._route")
 
 KEY = "http:v2|GET|testserver|/items|"
 LOCK_KEY = f"lock:{KEY}"

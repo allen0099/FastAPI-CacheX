@@ -146,6 +146,9 @@ keep-runtime-typing = true
 ]
 "fastapi_cachex/cache.py" = ["PLR0913"]  # One keyword per @cache option
 "fastapi_cachex/_cache_control.py" = ["PLR0913"]  # One keyword per @cache option
+"fastapi_cachex/_arguments.py" = ["PLR0913"]  # One keyword per @cache option
+"fastapi_cachex/_invalidation.py" = ["PLR0913"]  # The key options of @cache
+"fastapi_cachex/_route.py" = ["PLR0913"]  # The request, backend, key and what was rendered
 "fastapi_cachex/_rendering.py" = ["PLR0913"]  # The handler call and its sub-response
 "fastapi_cachex/backends/memcached.py" = ["PLC0415"]  # Optional dependency
 # PLR0917: these constructors take many positional options; making them
