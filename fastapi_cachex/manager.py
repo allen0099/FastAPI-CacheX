@@ -34,7 +34,10 @@ from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 from pydantic_core import to_jsonable_python
 
+from . import _stored_response
 from . import _tags
+from ._coalesce import _claim_refresh
+from ._coalesce import _release_refresh
 from .backends.base import BaseCacheBackend
 from .backends.base import validate_ttl
 from .cache_key import GLOB_SPECIAL
@@ -78,6 +81,60 @@ class _Tagged(NamedTuple):
     # None: a tag got its version while the value was computed, possibly by an
     # invalidation, so the value is returned but not stored.
     versions: TagVersions | None
+
+
+class _Stale(NamedTuple):
+    """What a ``get_or_set`` factory wrapped by ``_turning_stale`` returns."""
+
+    value: Any
+    stale_at: float
+
+
+def _turning_stale(
+    factory: Callable[[], Any] | Callable[[], Awaitable[Any]], fresh_for: int
+) -> Callable[[], Awaitable[_Stale]]:
+    """``factory``, with the time its value turns stale (``stale_ttl``)."""
+
+    async def turning_stale() -> _Stale:
+        value = factory()
+        if inspect.isawaitable(value):
+            value = await value
+        # Counted from when the value was made. The module's clock, read at
+        # call time: tests move it.
+        return _Stale(value, _stored_response._now() + fresh_for)  # noqa: SLF001
+
+    return turning_stale
+
+
+class _Watched:
+    """A ``get_or_set`` factory that remembers the exception it raised.
+
+    A refresh returns the stale value only when the factory itself failed:
+    a backend error, or a value that cannot be stored, is raised as on a miss.
+    """
+
+    def __init__(
+        self, factory: Callable[[], Any] | Callable[[], Awaitable[Any]]
+    ) -> None:
+        self.factory = factory
+        self.error: Exception | None = None
+
+    async def __call__(self) -> Any:
+        try:
+            value = self.factory()
+            if inspect.isawaitable(value):
+                value = await value
+        except Exception as e:
+            self.error = e
+            raise
+        return value
+
+
+def _is_stale(entry: CacheEntry) -> bool:
+    """Whether ``entry`` is kept only for ``get_or_set(stale_ttl=...)``."""
+    return (
+        entry.stale_at is not None and _stored_response._now() >= entry.stale_at  # noqa: SLF001
+    )
 
 
 T = TypeVar("T")
@@ -351,10 +408,9 @@ class CacheManager:
         """
         try:
             cached = await self.backend.get(self._cache_key(key))
-            if (
-                cached is not None
-                and cached.tags
-                and await _tags.outdated(self.backend, {key: cached})
+            if cached is not None and (
+                _is_stale(cached)
+                or (cached.tags and await _tags.outdated(self.backend, {key: cached}))
             ):
                 cached = None
         except BackendUnavailableError as e:
@@ -457,7 +513,11 @@ class CacheManager:
         invalidated = await _tags.outdated(self.backend, cached)
         values: dict[str, Any] = {}
         for cache_key, key in by_cache_key.items():
-            if cache_key not in cached or cache_key in invalidated:
+            if (
+                cache_key not in cached
+                or cache_key in invalidated
+                or _is_stale(cached[cache_key])
+            ):
                 continue
             value = self._decode(key, cached[cache_key], _SENTINEL, type_)
             if value is not _SENTINEL:
@@ -531,11 +591,13 @@ class CacheManager:
         cache_key = self._cache_key(key)
         added = await self.backend.set_if_absent(cache_key, entry, ttl=effective_ttl)
         if not added:
-            # A value whose tag was invalidated reads as absent, so it does
-            # not keep the key: it is replaced, unless someone else just did.
+            # A value that is stale, or whose tag was invalidated, reads as
+            # absent, so it does not keep the key: it is replaced, unless
+            # someone else just did.
             existing = await self.backend.get(cache_key)
-            if existing is not None and await _tags.outdated(
-                self.backend, {key: existing}
+            if existing is not None and (
+                _is_stale(existing)
+                or await _tags.outdated(self.backend, {key: existing})
             ):
                 added = await self.backend.set_if_equals(
                     cache_key, existing, entry, ttl=effective_ttl
@@ -607,9 +669,132 @@ class CacheManager:
             has been invalidated.
         """
         cached = await self.backend.get(self._cache_key(key))
-        return cached is not None and not await _tags.outdated(
-            self.backend, {key: cached}
+        return (
+            cached is not None
+            and not _is_stale(cached)
+            and not await _tags.outdated(self.backend, {key: cached})
         )
+
+    async def _entry(self, key: str) -> CacheEntry | None:
+        """The stored entry, unless one of its tags was invalidated since."""
+        entry = await self.backend.get(self._cache_key(key))
+        if (
+            entry is not None
+            and entry.tags
+            and await _tags.outdated(self.backend, {key: entry})
+        ):
+            return None
+        return entry
+
+    def _fresh_for(
+        self, ttl: int | None, stale_ttl: int | timedelta | None
+    ) -> int | None:
+        """With ``stale_ttl``, the seconds after which a value is stale."""
+        if validate_ttl(stale_ttl) is None:
+            return None
+        fresh_for = ttl if ttl is not None else self.default_ttl
+        if fresh_for is None:
+            msg = "stale_ttl needs a ttl, or a default_ttl on the manager"
+            raise ValueError(msg)
+        return fresh_for
+
+    async def _lookup_or_refresh(  # noqa: PLR0913
+        self,
+        key: str,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        ttl: int | None,
+        type_: Any,
+        *,
+        lock_ttl: int | None,
+        watched: _Watched | None,
+    ) -> Any:
+        """``_lookup`` for ``stale_ttl``: a stale value is refreshed or returned.
+
+        ``_SENTINEL`` on a miss, as ``_lookup``.
+        """
+        entry = await self._entry(key)
+        if entry is None:
+            return _SENTINEL
+        with _mute():
+            cached = self._decode(key, entry, _SENTINEL, type_)
+        if cached is _SENTINEL:
+            return _SENTINEL
+        if not _is_stale(entry):
+            _emit("hit", "app", key)
+            return cached
+        return await self._refresh_or_stale(
+            key,
+            factory,
+            ttl,
+            type_,
+            stale=cached,
+            lock_ttl=lock_ttl,
+            watched=watched,
+        )
+
+    async def _refresh_or_stale(  # noqa: PLR0913
+        self,
+        key: str,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        ttl: int | None,
+        type_: Any,
+        *,
+        stale: Any,
+        lock_ttl: int | None,
+        watched: _Watched | None,
+    ) -> Any:
+        """Replace a value past its ttl, or return it as it is (``stale_ttl``).
+
+        The caller that claims the key runs ``factory``, in this process and,
+        with ``lock_ttl``, across the processes sharing the backend. Everyone
+        else gets ``stale`` without waiting, and so does the claimant when
+        the caller's own factory (``watched``) raises: the value is known, and
+        the next caller tries again. Any other error is raised as on a miss.
+        """
+        cache_key = self._cache_key(key)
+        if not _claim_refresh(self.backend, cache_key):
+            _emit("stale", "app", key)
+            return stale
+        held: CacheLock | None = None
+        try:
+            if lock_ttl is not None:
+                lock = CacheLock(name=cache_key, ttl=lock_ttl, backend=self.backend)
+                if not await lock.acquire(blocking=False):
+                    _emit("stale", "app", key)
+                    return stale
+                held = lock
+            # As a winner of the miss path: a factory that asks for the same
+            # key again must not wait for the lock held here.
+            token = _HELD_LOCKS.set(
+                _HELD_LOCKS.get() | {f"{id(self.backend)}:{cache_key}"}
+            )
+            try:
+                return await self._compute_and_store(key, factory, ttl, type_)
+            finally:
+                _HELD_LOCKS.reset(token)
+        except Exception as e:
+            if watched is None or e is not watched.error:
+                raise
+            # No traceback: a failing upstream fails every refresh.
+            _emit("stale", "app", key)
+            logger.warning(
+                "Refreshing a stale value failed (%s: %s); returning it; key_ref=%s",
+                type(e).__name__,
+                e,
+                log_ref(key),
+            )
+            return stale
+        finally:
+            _release_refresh(self.backend, cache_key)
+            if held is not None:
+                try:
+                    await held.release()
+                except Exception:
+                    logger.warning(
+                        "Failed to release the refresh lock for key_ref=%s",
+                        log_ref(key),
+                        exc_info=True,
+                    )
 
     async def _lookup(self, key: str, type_: Any) -> Any:
         """``get()`` for ``get_or_set``: the value, or ``_SENTINEL`` on a miss.
@@ -681,6 +866,9 @@ class CacheManager:
         value = factory()
         if inspect.isawaitable(value):
             value = await value
+        stale_at: float | None = None
+        if isinstance(value, _Stale):
+            value, stale_at = value.value, value.stale_at
         versions: TagVersions | None = ()
         if isinstance(value, _Tagged):
             value, versions = value.value, value.versions
@@ -689,6 +877,7 @@ class CacheManager:
         entry = self._encode(value)
         if store and versions is not None:
             entry.tags = versions
+            entry.stale_at = stale_at
             await self.backend.set(self._cache_key(key), entry, ttl=effective_ttl)
             logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
             _emit("store", "app", key)
@@ -804,6 +993,7 @@ class CacheManager:
         raise_on_timeout: bool = False,
         type_: Any = None,
         tags: Iterable[str] | None = None,
+        stale_ttl: int | timedelta | None = None,
     ) -> Any:
         """Get a cached value, computing and storing it via ``factory`` on a miss.
 
@@ -861,6 +1051,20 @@ class CacheManager:
             tags: Names the value can be invalidated by, as for ``set()``.
                 Their versions are read before ``factory`` runs, so a value
                 computed before an invalidation is not served after it.
+            stale_ttl: Keep the value this much longer than ``ttl``, in
+                seconds or as a ``timedelta``, and use it past ``ttl`` as a
+                stale value: the first caller to find it stale runs
+                ``factory`` and stores the result, while the callers that
+                arrive meanwhile get the stale value at once; and if
+                ``factory`` raises, that caller gets the stale value too,
+                with a warning logged (a backend error, or a value that
+                cannot be stored or does not fit ``type_``, is raised as on
+                a miss). One refresh per key runs at a time
+                in a process, and with ``lock`` across the processes that
+                share the backend. Needs a ``ttl`` (or the manager's
+                ``default_ttl``). Every other read (``get()``, ``has()``,
+                a ``get_or_set()`` without ``stale_ttl``) takes a stale
+                value as a miss.
 
         Returns:
             The cached value (existing or newly created), JSON-decoded in
@@ -881,26 +1085,42 @@ class CacheManager:
             lock, ttl, lock_ttl, wait_timeout
         )
         names = _tags.validate_tags(tags)
+        fresh_for = self._fresh_for(ttl, stale_ttl)
+        watched: _Watched | None = None
+        if fresh_for is not None:
+            factory = watched = _Watched(factory)
+            # What the backend keeps the value for.
+            ttl = validate_ttl(fresh_for + validate_ttl(stale_ttl))  # type: ignore[operator]
         if not is_enabled():
             # Caching is switched off: no read, no lock, no write. The value
             # still takes the JSON round trip, so it has the shape of a hit.
             return await self._compute_and_store(key, factory, ttl, type_, store=False)
         if names:
             factory = self._tagged(factory, names)
-        cached = await self._lookup(key, type_)
+        if fresh_for is not None:
+            factory = _turning_stale(factory, fresh_for)
+        use_lock = self.lock if lock is None else lock
+        lock_id = f"{id(self.backend)}:{self._cache_key(key)}"
+        effective_lock_ttl = self.lock_ttl if lock_ttl is None else lock_ttl
+        # A re-entrant call for a key this task holds skips the lock.
+        use_lock = use_lock and lock_id not in _HELD_LOCKS.get()
+        if fresh_for is None:
+            cached = await self._lookup(key, type_)
+        else:
+            cached = await self._lookup_or_refresh(
+                key,
+                factory,
+                ttl,
+                type_,
+                lock_ttl=effective_lock_ttl if use_lock else None,
+                watched=watched,
+            )
         if cached is not _SENTINEL:
             return cached
 
-        use_lock = self.lock if lock is None else lock
         if not use_lock:
             return await self._compute_and_store(key, factory, ttl, type_)
 
-        lock_id = f"{id(self.backend)}:{self._cache_key(key)}"
-        if lock_id in _HELD_LOCKS.get():
-            logger.debug("Re-entrant get_or_set call for key=%s; skipping lock", key)
-            return await self._compute_and_store(key, factory, ttl, type_)
-
-        effective_lock_ttl = self.lock_ttl if lock_ttl is None else lock_ttl
         lock_instance = CacheLock(
             name=self._cache_key(key),
             ttl=effective_lock_ttl,

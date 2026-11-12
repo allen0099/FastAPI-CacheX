@@ -1252,7 +1252,7 @@ set_event_handler(record)
 
 | `kind` | When |
 |---|---|
-| `hit`, `miss`, `stale`, `refresh`, `bypass` | A GET or HEAD request to a `@cache` route was answered: the values of [`X-Cache`](#telling-a-hit-from-a-miss), reported whether or not `debug_header` is set, and also when the handler raised. With `source="app"`, `hit` and `miss` say whether `CacheManager.get()` or `get_or_set()` (and so `@cached`) found the value; a `get_or_set()` that waited for another caller to compute the value is a `hit`. |
+| `hit`, `miss`, `stale`, `refresh`, `bypass` | A GET or HEAD request to a `@cache` route was answered: the values of [`X-Cache`](#telling-a-hit-from-a-miss), reported whether or not `debug_header` is set, and also when the handler raised. With `source="app"`, `hit` and `miss` say whether `CacheManager.get()` or `get_or_set()` (and so `@cached`) found the value; a `get_or_set()` that waited for another caller to compute the value is a `hit`, and one that returned a value past its ttl ([`stale_ttl`](APP_CACHE.md#stale-values)) is `stale`. |
 | `store` | A response or a value was written. |
 | `invalidate` | An entry was deleted by `invalidate()`, `invalidate_path()` or `CacheManager.delete()`. |
 | `error` | A backend call failed. For `@cache`: any exception from the backend, whether the request then went on without the cache (`fail_open=True`) or failed with it. For `CacheManager` and `@cached`: only a backend that could not be reached (`BackendUnavailableError`, which is raised as before). |

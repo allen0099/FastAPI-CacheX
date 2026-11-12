@@ -283,6 +283,62 @@ Stampede protection is on by default since 0.4.0 ([#280](https://github.com/alle
 
 Waiters poll with the backoff above: about five polls in the first second, then one every 500 ms, so each waiter adds about four backend operations per second for as long as `factory` runs. The memory backend does the same steps in process. Pass `lock=False` to a call, or to `CacheManager(...)`, for keys where a duplicate computation is cheaper than the extra round trips; for `AppCache`, register your own manager with `CacheManagerProxy.set(CacheManager(lock=False))`.
 
+## Stale values {#stale-values}
+
+When a value's `ttl` runs out, every caller waits for `factory`, and a failing
+upstream turns into errors although the last good value was known a moment
+ago. `stale_ttl` keeps the value that much longer and uses it meanwhile:
+
+```python
+rates = await cache.get_or_set("rates", load_rates, ttl=60, stale_ttl=300)
+
+
+@cached(ttl=60, stale_ttl=300)
+async def load_rates() -> dict[str, float]: ...
+```
+
+The value is kept for `ttl + stale_ttl` (360 seconds here). For the first
+`ttl` seconds it is a normal hit. After that, for `stale_ttl` seconds:
+
+- The first caller to find it stale runs `factory` and stores the result,
+  which is fresh for another `ttl`.
+- Callers that arrive while it runs get the stale value at once instead of
+  waiting.
+- If `factory` raises, that caller gets the stale value too, and a warning
+  is logged. The next caller tries again.
+
+Past `ttl + stale_ttl` the value is gone, and a failing `factory` raises as
+usual.
+
+- **No background task.** The refresh runs inside the call that found the
+  value stale, so that one caller waits for `factory`, and nothing runs after
+  your request has ended.
+- **One refresh at a time** per key in a process. With `lock=True` (the
+  default) it is also one across the processes that share the backend: the
+  others return the stale value rather than wait for the lock.
+- **It needs a `ttl`**, on the call or as the manager's `default_ttl`;
+  otherwise `ValueError` is raised.
+- **Only a call with `stale_ttl` gets a stale value.** `get()`, `get_many()`
+  and `has()` take it as a miss, `add()` replaces it, and a `get_or_set()`
+  without `stale_ttl` runs its `factory` as for any miss. So code that reads
+  the key directly never sees a value older than its `ttl`.
+- **Only an exception raised by `factory` is answered with the stale value.**
+  A backend that cannot be reached, a value that cannot be stored as JSON and
+  a value that does not fit `type_` are raised as on a miss. Each failed
+  refresh runs `factory` again on the next call and logs the warning
+  `Refreshing a stale value failed`, so a slow failure costs one caller its
+  duration each time: `stale_ttl` hides the error, not the wait. Give the
+  call to the upstream inside `factory` a short timeout of its own.
+- A value whose tag was invalidated is a miss, not a stale value.
+- When the value turns stale is stored with it, as a wall-clock time, and
+  compared on the clock of the process that reads it; servers whose clocks
+  differ by seconds disagree by that much. A release before 0.6.3 does not
+  know that time: during a rolling upgrade it returns the value for the whole
+  `ttl + stale_ttl`.
+- A caller that got the stale value is reported as a `stale`
+  [event](HTTP_CACHING.md#counting-hits-and-misses); the caller that refreshed, as a
+  `miss`, followed by `stale` if its `factory` raised.
+
 ## JSON round-trip
 
 Values are stored as JSON and read back with `json.loads`, so what you get

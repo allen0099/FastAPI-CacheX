@@ -61,8 +61,9 @@ cache to behave like an HTTP cache:
 What it does not do, or does only simply:
 
 - Only `GET` (and `HEAD`) responses are cached; there is no caching of `POST`.
-- Function caching is basic: no early or probabilistic refresh, no serving of
-  stale values while one caller refreshes.
+- Function caching is basic: no early or probabilistic refresh. A stale value
+  can be returned while one caller refreshes it, or when the refresh fails
+  (`stale_ttl`, 0.6.3), but there is no refresh in the background.
 - Three backends: memory, Redis and Memcached. Memcached cannot enumerate
   keys, so pattern and path clearing do nothing there.
 - The server-side cache serves stale content only where a route asks for it

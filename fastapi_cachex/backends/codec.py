@@ -53,6 +53,8 @@ def encode_entry(entry: CacheEntry) -> bytes:
     if entry.tags:
         # Only when there are any: an entry without tags is stored as before.
         document["tags"] = dict(entry.tags)
+    if entry.stale_at is not None:
+        document["stale_at"] = entry.stale_at
     serialized: str | bytes = json.dumps(document)
     # orjson returns bytes, stdlib json returns str
     return serialized if isinstance(serialized, bytes) else serialized.encode("utf-8")
@@ -99,7 +101,7 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
     Documents written before entries carried a status code and headers simply
     lack those keys and decode to a plain ``200`` with no extra headers; those
     written before entries carried ``stored_at`` decode with ``None``, and
-    those without ``tags`` with none. Headers
+    those without ``tags`` or ``stale_at`` with none. Headers
     are a list of ``[name, value]`` lines; the object 0.3.x wrote (one value
     per name) is still read.
     """
@@ -129,6 +131,7 @@ def decode_entry(raw: str | bytes | None) -> CacheEntry | None:
             headers=data.get("headers"),
             stored_at=_stored_at(data.get("stored_at")),
             tags=_tags(data.get("tags")),
+            stale_at=_stored_at(data.get("stale_at")),
         )
     except _DECODE_ERRORS:
         return None
