@@ -58,7 +58,7 @@ Every answer then gets its `Cache-Control`, `Vary` and, with
 | Backend skipped? | Yes for `private=True`, a route without a positive `ttl`, or a request with `Authorization` or session data on a route without `public` or `cache_authorized`; and for every route while caching is [switched off](TESTING.md#switching-off). The key builder does not run; `If-None-Match` is compared with the fresh response to decide between 304 and 200; with credentials, `Cache-Control` says `private` instead of `public`. With `cache_authorized` the backend is used, but every answer still says `private`. |
 | Client asks for a fresh response? | Only on a route with `client_cache_control`. A request's `no-cache` or `max-age=0` skips the read: the handler runs and its response replaces the entry. A request's `no-store` is decided earlier and counts as "backend skipped". |
 | Build the cache key | `key_builder` (default `http:v2\|method\|host\|path\|query`), plus one `name=value` component per `vary` header. |
-| Read the entry | With `fail_open`, a backend error counts as a miss. So does an entry one of whose tags was invalidated since it was stored, and one stored before the route had its tags. With `coalesce=True`, a request that finds nothing waits for a request already rendering the same key, then reads again. |
+| Read the entry | With `fail_open`, a backend error counts as a miss. So does an entry one of whose tags was invalidated since it was stored, and one stored before the route had its tags. With `coalesce=True`, a request that finds nothing waits for a request already rendering the same key, then reads again. With `coalesce="distributed"`, the request that leads in its process also takes a lock on the key, or waits for the worker that holds it. |
 | Stale | Only with `serve_stale`, which keeps the entry for `ttl + stale_ttl`. `stale="revalidate"`: the entry answers at once (a 304 for a matching `If-None-Match`), and for a GET the handler runs after the response, as a background task of the request, to replace it. `stale="error"`: the handler runs, and the entry answers only if it raises or returns 5xx; an `HTTPException` below 500, or an exception the application handles, is the handler's answer and is sent as it is. |
 | `no_cache` | The handler runs on every request; a matching `If-None-Match` gets a 304 after the fresh response is compared with it. |
 | Answer from the entry | The stored status code, headers and body, plus `Age`. A request whose `If-None-Match` matches the entry's ETag gets a 304. |
@@ -171,7 +171,7 @@ raised if `public` and `private` are both set, if only one of `stale` /
 of whole seconds, is negative or is larger than `MAX_TTL`, if `vary` is not a
 list of header field names, if `sort_query` is
 not a `bool` or is passed with a custom `key_builder`, if `key_builder` is
-an `async` callable, if `coalesce` is not a `bool`, or is set without a
+an `async` callable, if `coalesce` is neither a `bool` nor `"distributed"`, or is set without a
 positive `ttl` or together with `private` or `no_cache`, or if `debug_header`
 is not a `bool`. So do `serve_stale` that is not a `bool`, is set without
 `stale` or a positive `ttl`, or together with `private`, `no_cache` or
@@ -278,6 +278,9 @@ entry = None if asked == "no-cache" else await backend.get(cache_key)
 if coalesce and entry is None and (leader := running_miss(cache_key)):
     await leader  # GET only leads; HEAD only waits
     entry = await backend.get(cache_key)  # None: render below, without waiting
+elif coalesce == "distributed" and entry is None and not take_lock(cache_key):
+    await lock_released(cache_key)  # another worker is rendering; HEAD only waits
+    entry = await backend.get(cache_key)  # None: render below, without the lock
 
 stale = (
     serve_stale and entry and age(entry) >= ttl

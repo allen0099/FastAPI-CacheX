@@ -1,5 +1,6 @@
 """Core caching functionality and decorators."""
 
+import asyncio
 import inspect
 import logging
 import threading
@@ -79,12 +80,25 @@ from .exceptions import RequestNotFoundError
 from .exceptions import TTLTypeError
 from .exceptions import TTLValueError
 from .headers import add_vary
+from .lock import CacheLock
 from .proxy import BackendProxy
 from .proxy import get_backend_or_fallback
 from .switch import is_enabled
 from .types import CacheEntry
 from .types import CacheKeyBuilder
 from .types import log_ref
+
+# `coalesce="distributed"`: the lock a rendering request holds renews itself
+# every third of this, and a worker that died frees it within it. A request
+# in another worker polls for the lock to go, backing off between the two
+# delays.
+_LOCK_TTL = 30
+_LOCK_POLL_MIN = 0.05
+_LOCK_POLL_MAX = 0.5
+# The longest a request waits for another worker before it renders itself:
+# the lock renews for as long as its holder's handler runs, so a handler
+# that hangs must not hang the same URL in every worker.
+_LOCK_WAIT_MAX = 30.0
 
 # The public names of this module, kept when #422 split it into smaller ones.
 __all__ = [
@@ -752,6 +766,9 @@ class _Call:
     tags_before: _tags.VersionsBefore | None = None
     tag_names: tuple[str, ...] | None = None
     flight: _Flight = field(default_factory=_Flight)
+    # The lock this request holds across workers while it renders
+    # (`coalesce="distributed"`); the wrapper releases it.
+    lock: CacheLock | None = None
     outcome: str | None = None
     # Why the backend was bypassed or the rendered response was not stored.
     reason: CacheReason | None = None
@@ -759,6 +776,12 @@ class _Call:
     @property
     def client_etag(self) -> str | None:
         return self.request.headers.get("if-none-match")
+
+    async def finish(self) -> None:
+        """The request has been answered, however it ended."""
+        self.flight.finish()
+        if self.lock is not None:
+            await _release_lock(self.lock)
 
 
 @dataclass(frozen=True, eq=False)
@@ -782,7 +805,7 @@ class _Route:
     private: bool
     fail_open: bool
     cache_authorized: bool
-    coalesce: bool
+    coalesce: bool | Literal["distributed"]
     client_cache_control: _ClientCacheControl
     tags: tuple[str, ...] | Callable[[Request], Iterable[str]]
     key_builder: CacheKeyBuilder
@@ -1187,7 +1210,15 @@ class _Route:
         """
         if not _claim_refresh(backend, cache_key):
             return
+        lock = None
         try:
+            if self.coalesce == "distributed":
+                lock = CacheLock(
+                    cache_key, ttl=_LOCK_TTL, backend=backend, auto_extend=True
+                )
+                if not await lock.acquire(blocking=False):
+                    # Another worker is refreshing the key.
+                    return
             await self._replace_stale(call, backend, cache_key)
         except Exception as e:  # noqa: BLE001 - there is no response to fail
             logger.warning(
@@ -1198,6 +1229,8 @@ class _Route:
             )
         finally:
             _release_refresh(backend, cache_key)
+            if lock is not None:
+                await _release_lock(lock)
 
     async def _replace_stale(
         self, call: _Call, backend: BaseCacheBackend, cache_key: str
@@ -1325,11 +1358,65 @@ class _Route:
             if leader is not None:
                 logger.debug("Waiting for a running miss; key=%s", cache_key)
                 await _wait_for(leader)
+                waited = True
+            else:
+                waited = await self._lock_or_wait(call, backend, cache_key)
+            if waited:
                 entry, _ = await _read_entry(
                     backend, cache_key, req, fail_open=self.fail_open
                 )
                 entry = self._usable(call, entry)
         return entry
+
+    async def _lock_or_wait(
+        self, call: _Call, backend: BaseCacheBackend, cache_key: str
+    ) -> bool:
+        """Take the key's lock across workers, or wait for the one who has it.
+
+        Only with ``coalesce="distributed"``, and only for the request that
+        leads in this process. A GET that gets the lock keeps it on ``call``
+        while it renders. Otherwise another worker is rendering the key: this
+        waits until its lock is gone, and returns True for the caller to read
+        the backend again. Like a follower in one process, a request waits
+        once and never takes the lock afterwards, so requests do not queue
+        behind a response that is not stored. A HEAD never takes the lock.
+        The wait ends after ``_LOCK_WAIT_MAX`` seconds at the latest.
+
+        The lock renews itself while it is held, so a slow handler keeps it,
+        and a worker that died frees it within ``_LOCK_TTL`` seconds.
+        """
+        if self.coalesce != "distributed":
+            return False
+        lock = CacheLock(cache_key, ttl=_LOCK_TTL, backend=backend, auto_extend=True)
+        try:
+            if call.request.method == "GET" and await lock.acquire(blocking=False):
+                call.lock = lock
+                return False
+            waited = False
+            delay = _LOCK_POLL_MIN
+            deadline = time.monotonic() + _LOCK_WAIT_MAX
+            while await lock.locked():
+                if time.monotonic() >= deadline:
+                    logger.warning(
+                        "Another worker still renders after %ss; rendering "
+                        "too; path=%s",
+                        _LOCK_WAIT_MAX,
+                        call.request.url.path,
+                    )
+                    break
+                waited = True
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, _LOCK_POLL_MAX)
+        except Exception as e:
+            if not self.fail_open:
+                raise
+            _log_backend_failure(
+                "lock failed; rendering without it", call.request, cache_key, e
+            )
+            return False
+        if waited:
+            logger.debug("Waited for another worker's miss; key=%s", cache_key)
+        return waited
 
     def _hit(
         self,
@@ -1446,6 +1533,22 @@ class _Route:
             _emit("store", "http", cache_key, route=_route_template(call.request))
 
 
+async def _release_lock(lock: CacheLock) -> None:
+    """Release a ``coalesce="distributed"`` lock; a failure is only logged.
+
+    The response is already made, and the lock expires on its own.
+    """
+    try:
+        await lock.release()
+    except Exception as e:  # noqa: BLE001 - there is nothing left to fail
+        logger.warning(
+            "Releasing the miss lock failed (%s: %s); it expires in %ss",
+            type(e).__name__,
+            e,
+            _LOCK_TTL,
+        )
+
+
 def _add_debug_headers(response: Response, call: _Call) -> None:
     """``X-Cache`` and ``X-Cache-Reason`` for a GET or HEAD response.
 
@@ -1560,8 +1663,8 @@ def _check_arguments(
                 "to shared caches, which do not store a private response"
             )
             raise CacheXError(msg)
-    if not isinstance(coalesce, bool):
-        msg = f"coalesce must be a bool, got {type(coalesce).__name__}"
+    if not isinstance(coalesce, bool) and coalesce != "distributed":
+        msg = f'coalesce must be a bool or "distributed", got {coalesce!r}'
         raise CacheXError(msg)
     if not isinstance(debug_header, bool):
         msg = f"debug_header must be a bool, got {type(debug_header).__name__}"
@@ -1605,7 +1708,7 @@ def cache(
     cache_authorized: bool = False,
     vary: Vary | None = None,
     sort_query: bool | None = None,
-    coalesce: bool = False,
+    coalesce: bool | Literal["distributed"] = False,
     debug_header: bool = False,
     client_cache_control: _ClientCacheControl = False,
     serve_stale: bool = False,
@@ -1760,6 +1863,16 @@ def cache(
             running GET but never makes others wait. Requires a positive
             ``ttl`` and is rejected with ``private`` or ``no_cache``, which
             never serve a stored entry.
+            ``"distributed"`` does the same across the workers that share
+            the backend: the request that leads in its process takes a
+            ``CacheLock`` on the key while it renders, and a request in
+            another worker waits until that lock is gone, then reads the
+            backend again. An uncontended miss costs two more backend round
+            trips (take and release); a hit costs none. The lock renews
+            itself while the handler runs and expires within 30 seconds if
+            its worker dies; a request waits for it 30 seconds at most and
+            then runs the handler itself. With ``serve_stale`` one worker at a time
+            refreshes a stale entry.
         debug_header: Send ``X-Cache`` on every GET or HEAD response, saying
             how it was answered: ``HIT`` for a response served from the
             stored entry (a 200, or a 304 for the entry's ETag), ``MISS``
@@ -1822,7 +1935,8 @@ def cache(
             list of header field names (a single string is rejected), if
             ``sort_query`` is not a ``bool`` or is passed with
             ``key_builder``, if ``key_builder`` is an ``async`` callable, if
-            ``coalesce`` is not a ``bool`` or is set without a positive
+            ``coalesce`` is not a ``bool`` or ``"distributed"``, or is set
+            without a positive
             ``ttl`` or with ``private`` or ``no_cache``, or if
             ``debug_header`` is not a ``bool``.
             At request time, if
@@ -1993,8 +2107,9 @@ def cache(
             try:
                 response = await route.respond(call, backend)
             finally:
-                # Releases the requests waiting on this one (#252).
-                call.flight.finish()
+                # Releases the requests waiting on this one (#252), then
+                # the ones in other workers (#558).
+                await call.finish()
                 # Also when the handler raised: that request was a miss or a
                 # bypass all the same.
                 if call.outcome is not None:
