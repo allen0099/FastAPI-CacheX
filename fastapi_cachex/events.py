@@ -48,6 +48,7 @@ CacheReason = Literal[
     "tag-read-failed",
     "tag-invalidated",
     "write-failed",
+    "read-failed",
 ]
 
 

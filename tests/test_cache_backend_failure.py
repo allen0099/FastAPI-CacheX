@@ -87,7 +87,10 @@ def test_failing_backend_serves_the_handler_response(
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     if fail_get:
         assert any("read failed" in m for m in warnings)
-    if fail_set:
+        # A failed read skips the write, which would wait out its own
+        # timeout against the same backend (#582).
+        assert not any("write failed" in m for m in warnings)
+    else:
         assert any("write failed" in m for m in warnings)
 
 
@@ -237,3 +240,21 @@ async def test_failure_warning_escapes_control_characters_in_the_path(
     for raw in ("\n", "\r", "\x1b", "\u2028"):
         assert raw not in warning
     assert "\\x1b[2K\\u2028FAKE entry'" in warning
+
+
+async def test_a_failed_read_skips_the_write_and_says_so() -> None:
+    """The write would wait out its own timeout on the same backend (#582)."""
+    backend = FailingBackend(fail_get=True, fail_set=False)
+    BackendProxy.set(backend)
+    app = FastAPI()
+
+    @app.get("/item")
+    @cache(ttl=60, debug_header=True)
+    async def item() -> dict[str, int]:
+        return {"n": 1}
+
+    response = TestClient(app).get("/item")
+    assert response.json() == {"n": 1}
+    assert response.headers["X-Cache"] == "MISS"
+    assert response.headers["X-Cache-Reason"] == "read-failed"
+    assert not await backend.get_all_keys()

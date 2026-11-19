@@ -267,6 +267,7 @@ async def items() -> list[str]: ...
 | `head` | `MISS`、`REFRESH` | handler 為 `HEAD` 請求執行了；只有 `GET` 的回應會被儲存。 |
 | `tag-read-failed`、`tag-invalidated` | `MISS`、`REFRESH` | [有 tag](#by-tag) 的路由，其 tag 版本讀取失敗，或在 handler 執行期間改變：儲存這個回應可能留下一個失效操作沒有涵蓋到的項目。 |
 | `write-failed` | `MISS`、`REFRESH` | 後端拒絕寫入或無法連線，而路由為 `fail_open=True`。 |
+| `read-failed` | `MISS` | 無法讀取後端（且為 `fail_open=True`），因此不嘗試寫入：寫入多半也會失敗，而且要等它自己的逾時。0.6.3 之前仍會嘗試，因此中斷期間每個請求都要等兩次逾時。 |
 
 沒有這個標頭的回應，就是照常使用了快取。handler 以拋出例外代替回傳回應時也沒有原因：它的事件是不帶 `reason` 的 `miss` 或 `bypass`。同一個值也會出現在該請求[事件](#counting-hits-and-misses)的 `reason` 上，型別為 `fastapi_cachex.CacheReason`。這些值屬於公開 API，所以可以當作指標的 label：只有在破壞性變更時才會改名或移除。
 
