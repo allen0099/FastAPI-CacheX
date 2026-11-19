@@ -268,19 +268,19 @@ if no_store:
     return await render()  # no read, no write
 
 bypass = private or not ttl
-# Authorization header, non-empty request.session, or an API key or cookie the
-# route's dependencies read; with the header that carries it
-credential = None if private or public else request_credential(request)
-header = private_header if credential else decorator_header  # for every answer below
-# key_identifies: a key_builder, or vary listing the credential's header
-if bypass or (credential and not (cache_authorized and key_identifies(credential))):
+# every credential: Authorization header, non-empty request.session, an API key
+# or cookie the route's dependencies read; each with the header that carries it
+credentials = [] if private or public else request_credentials(request)
+header = private_header if credentials else decorator_header  # for every answer below
+# key_identifies: a key_builder, or vary listing (unnormalised, hashed) its header
+unkeyed = [c for c in credentials if not (cache_authorized and key_identifies(c))]
+if bypass or unkeyed:
     response, etag = await render()  # backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
 # HEAD: key_builder sees the request with method GET
-asked = client_asks(
-    request
-)  # client_cache_control only: "no-cache" (also for max-age=0), "no-store" or None
+# client_cache_control only: "no-cache" (also for max-age=0), "no-store" or None
+asked = client_asks(request)
 if asked == "no-store":
     ...  # as the bypass above: render, backend neither read nor written
 
@@ -326,9 +326,8 @@ if entry and not no_cache and not stale:
     ...  # Age: now - stored_at, clamped to 0..stored_ttl (ttl, or ttl + stale_ttl)
     return hit
 
-tags_before = await tag_versions(
-    route_tags
-)  # read before the handler runs; None if they cannot be read
+# read before the handler runs; None if they cannot be read
+tags_before = await tag_versions(route_tags)
 # stale="error": if this raises or answers 5xx, the stale entry answers instead
 response, body, etag = await render()  # miss (reused if no-cache already rendered)
 if not is_cacheable_status(response.status_code):

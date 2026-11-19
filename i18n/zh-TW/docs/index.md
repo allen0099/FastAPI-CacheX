@@ -63,10 +63,10 @@ def build_report() -> dict:
 
 
 @app.get("/report")
-async def report(cache: AppCache):
+async def report(app_cache: AppCache):
     # 在自己的程式碼中快取任意 JSON 值。同時未命中時只執行一次
     # build_report：get_or_set() 預設會取鎖。
-    return await cache.get_or_set("report", build_report, ttl=300)
+    return await app_cache.get_or_set("report", build_report, ttl=300)
 ```
 
 > [!IMPORTANT]

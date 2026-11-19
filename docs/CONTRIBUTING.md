@@ -43,10 +43,10 @@ closes it again.
 ## Development Process
 
 1. Fork the project
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+2. Create a branch named after the issue (`git checkout -b fix/123-short-name`)
+3. Commit your changes (`git commit -m 'fix(cache): what changed (#123)'`)
+4. Push the branch (`git push origin fix/123-short-name`)
+5. Open a pull request
 
 ## Development Setup
 
@@ -61,9 +61,10 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
 
 ## Pull Request Process
 
-1. Update the matching guide under `docs/` (and the README if the change belongs on the front page) when you change the interface. Only the English
-   pages need updating: the [Traditional Chinese translation](DEVELOPMENT.md#traditional-chinese-translation)
-   is allowed to lag behind them
+1. Update the matching guide under `docs/` (and the README if the change belongs on the front page) when you change the interface. The maintainers
+   keep the [Traditional Chinese translation](DEVELOPMENT.md#traditional-chinese-translation)
+   in step: update its page under `i18n/zh-TW/docs/` too if you can, or say
+   in the pull request that you did not, and a maintainer adds it
 2. Add a changelog fragment if your change alters behaviour, adds public
    API, or fixes something a user could have hit: a file
    `changelog.d/<issue>.<section>.md` (section `added`, `changed`,

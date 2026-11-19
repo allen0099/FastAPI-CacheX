@@ -9,7 +9,7 @@ lives in one backend, registered once at startup with `BackendProxy.set()`.
 |----------|---------------------|-----|
 | Development and testing | MemoryBackend | Fast, no dependencies |
 | Distributed systems | Redis | Async, efficient, supports pattern clearing |
-| Simple caching | Memcached | Stable, mature (but no key enumeration, so no pattern/path clearing or monitoring) |
+| Simple caching | Memcached | Stable, mature (but no key enumeration, so no pattern/path clearing or monitoring; clear groups with [tags](HTTP_CACHING.md#by-tag)) |
 | Multi-process deployments | Redis | Shared cache, consistency |
 
 The Redis and Memcached backends namespace their keys with a prefix

@@ -461,7 +461,8 @@ as the backend keeps it, stale or not.
 ### Telling a hit from a miss
 
 Nothing in a response says whether the handler ran, short of adding counters
-to it. `debug_header=True` sends `X-Cache` on every GET or HEAD response:
+to it. `debug_header=True` sends `X-Cache` on every GET or HEAD response the
+route returns (an error response from a raised `HTTPException` gets none):
 
 ```python
 @app.get("/items")

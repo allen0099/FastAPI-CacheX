@@ -764,8 +764,8 @@ class MemcachedBackend(BaseCacheBackend):
         warnings.warn(
             "Memcached backend does not support pattern matching. "
             "Pattern-based cache clearing is not available with Memcached. "
-            "Consider using Redis backend for pattern support, "
-            "or track keys manually in your application logic.",
+            "Use tags (@cache(tags=...), invalidate_tags()) to clear a group "
+            "of entries, or the Redis backend for pattern support.",
             RuntimeWarning,
             stacklevel=caller_stacklevel(),
         )
@@ -786,8 +786,8 @@ class MemcachedBackend(BaseCacheBackend):
         warnings.warn(
             "Memcached backend does not support key enumeration. "
             "get_all_keys() returns an empty list. "
-            "Consider using Redis backend if you need cache monitoring, "
-            "or track keys manually in your application.",
+            "Use the Redis backend if you need cache monitoring; tags "
+            "(invalidate_tags()) clear a group of entries without it.",
             RuntimeWarning,
             stacklevel=caller_stacklevel(),
         )

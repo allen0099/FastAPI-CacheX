@@ -1,6 +1,6 @@
 # Migrating from fastapi-cache2 {#migrating-from-fastapi-cache2}
 
-[fastapi-cache2](https://github.com/long2ice/fastapi-cache) (imported as `fastapi_cache`) is the most installed FastAPI cache; its latest release, 0.2.2, is from July 2024. This page maps its API onto FastAPI-CacheX, lists the behaviour that differs, and names what has no equivalent. It describes fastapi-cache2 0.2.2 and FastAPI-CacheX 0.5.0. If you are still deciding whether to switch, see [When to use it](COMPARISON.md).
+[fastapi-cache2](https://github.com/long2ice/fastapi-cache) (imported as `fastapi_cache`) is the most installed FastAPI cache; its latest release, 0.2.2, is from July 2024. This page maps its API onto FastAPI-CacheX, lists the behaviour that differs, and names what has no equivalent. It describes fastapi-cache2 0.2.2 and FastAPI-CacheX 0.6. If you are still deciding whether to switch, see [When to use it](COMPARISON.md).
 
 FastAPI-CacheX needs FastAPI 0.128.2 or newer, and Python 3.11 or newer from 0.6.0 on (0.5.x: Python 3.10).
 
@@ -80,15 +80,15 @@ The decorator order is the same in both: the route decorator first, `@cache` dir
 | `DynamoBackend` | — | No DynamoDB backend. |
 | `@cache(expire=60)` | `@cache(ttl=60)` | `ttl` also takes a `timedelta`. Without `ttl` nothing is stored. |
 | `FastAPICache.init(expire=...)` | — | No global default for `@cache`; give each route its `ttl`. `CacheManager(default_ttl=...)` has one for the application cache. |
-| `@cache(namespace="items")` | — | Keys are built from the request (see [Keys](#keys)); clear a group of routes by path or pattern instead. |
+| `@cache(namespace="items")` | `@cache(tags=["items"])` | Keys are built from the request (see [Keys](#keys)); a tag names a group of routes to clear together, on every backend. |
 | `@cache(key_builder=f)` | `@cache(key_builder=f)` | The function takes only the `Request` and returns a `str`. Build it with `build_cache_key(request, *components)` (see [Adding components to the key](HTTP_CACHING.md#adding-components-to-the-key)). |
 | `@cache(coder=...)`, `JsonCoder`, `PickleCoder` | — | The rendered response body is stored as is (see [Storage](#storage)). |
-| `FastAPICache.clear(namespace=...)` | `await backend.clear_path(path, include_params=True)` or `clear_pattern(...)` | On the backend from the `CacheBackend` dependency or `BackendProxy.get()`. See [Clearing the cache](HTTP_CACHING.md#clearing-the-cache). |
+| `FastAPICache.clear(namespace=...)` | `await invalidate_tags("items")`, or `await backend.clear_path(path, include_params=True)` / `clear_pattern(...)` | On the backend from the `CacheBackend` dependency or `BackendProxy.get()`. See [Clearing the cache](HTTP_CACHING.md#clearing-the-cache). |
 | `FastAPICache.clear(key=...)` | `await invalidate(request)` | Rebuilds the key of the request and deletes it. |
 | `FastAPICache.clear()` | `await backend.clear()` | On Memcached this flushes the whole server. |
 | `X-FastAPI-Cache: HIT` / `MISS` (`cache_status_header=`) | `@cache(debug_header=True)` sends `X-Cache: HIT`, `MISS` or `BYPASS` | Off by default. |
 | `@cache` on a function that is not an endpoint | `@cached(ttl=60)`, or `CacheManager.get_or_set()` | Keyed on the arguments, like fastapi-cache2. See [Caching a function](APP_CACHE.md#caching-a-function). |
-| `FastAPICache.init(enable=False)` | — | There is no switch that turns caching off. In tests, set a fresh `MemoryBackend` for each test. |
+| `FastAPICache.init(enable=False)` | `set_enabled(False)`, or `FASTAPI_CACHEX_DISABLED=1` | Every `@cache` route and `@cached` function then runs without reading or writing the cache; `CacheManager` calls still work. See [Turning the cache off](TESTING.md#switching-off). |
 
 ## Behaviour that differs {#behaviour-that-differs}
 
@@ -130,7 +130,6 @@ Both libraries cache only `GET`. On a route that also accepts `HEAD`, FastAPI-Ca
 ## What has no equivalent {#no-equivalent}
 
 - A DynamoDB backend.
-- `namespace=`, and clearing by namespace. Clear by path, by pattern, or with `invalidate()`.
 - Coders, and decoding the cached value back into the return annotation.
-- A global default `expire`, and `enable=False`.
+- A global default `expire`.
 - Python 3.8 and 3.9, and FastAPI releases older than 0.128.2.

@@ -229,7 +229,7 @@ async def report() -> dict: ...
 
 ### 分辨命中與未命中 {#telling-a-hit-from-a-miss}
 
-回應本身看不出 handler 是否執行過，除非在 handler 裡加計數器。`debug_header=True` 會在每個 GET 或 HEAD 回應送出 `X-Cache`：
+回應本身看不出 handler 是否執行過，除非在 handler 裡加計數器。`debug_header=True` 會在路由回傳的每個 GET 或 HEAD 回應送出 `X-Cache`（拋出 `HTTPException` 產生的錯誤回應則沒有）：
 
 ```python
 @app.get("/items")

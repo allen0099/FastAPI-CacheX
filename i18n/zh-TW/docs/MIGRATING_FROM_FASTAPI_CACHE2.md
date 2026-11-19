@@ -1,6 +1,6 @@
 # 從 fastapi-cache2 遷移 {#migrating-from-fastapi-cache2}
 
-[fastapi-cache2](https://github.com/long2ice/fastapi-cache)（以 `fastapi_cache` 匯入）是安裝數最多的 FastAPI 快取，最新版本 0.2.2 發行於 2024 年 7 月。本頁把它的 API 對應到 FastAPI-CacheX，列出行為上的差異，並指出沒有對應功能的部分。內容以 fastapi-cache2 0.2.2 與 FastAPI-CacheX 0.5.0 為準。如果你還在考慮是否要轉換，請見[何時使用](COMPARISON.md)。
+[fastapi-cache2](https://github.com/long2ice/fastapi-cache)（以 `fastapi_cache` 匯入）是安裝數最多的 FastAPI 快取，最新版本 0.2.2 發行於 2024 年 7 月。本頁把它的 API 對應到 FastAPI-CacheX，列出行為上的差異，並指出沒有對應功能的部分。內容以 fastapi-cache2 0.2.2 與 FastAPI-CacheX 0.6 為準。如果你還在考慮是否要轉換，請見[何時使用](COMPARISON.md)。
 
 FastAPI-CacheX 需要 FastAPI 0.128.2 以上，且自 0.6.0 起需要 Python 3.11 以上（0.5.x：Python 3.10）。
 
@@ -80,15 +80,15 @@ async def read_item(item_id: int) -> dict[str, int]:
 | `DynamoBackend` | — | 沒有 DynamoDB 後端。 |
 | `@cache(expire=60)` | `@cache(ttl=60)` | `ttl` 也接受 `timedelta`。沒有 `ttl` 時不會儲存任何東西。 |
 | `FastAPICache.init(expire=...)` | — | `@cache` 沒有全域預設值，請為每個路由指定 `ttl`。應用層快取可用 `CacheManager(default_ttl=...)` 設定預設值。 |
-| `@cache(namespace="items")` | — | 快取鍵由請求產生（見[快取鍵](#keys)）；改以路徑或模式清除一組路由。 |
+| `@cache(namespace="items")` | `@cache(tags=["items"])` | 快取鍵由請求產生（見[快取鍵](#keys)）；tag 為一組要一起清除的路由命名，所有後端都適用。 |
 | `@cache(key_builder=f)` | `@cache(key_builder=f)` | 函式只接收 `Request`，回傳 `str`。請用 `build_cache_key(request, *components)` 建立（見[在鍵中加入其他段](HTTP_CACHING.md#adding-components-to-the-key)）。 |
 | `@cache(coder=...)`、`JsonCoder`、`PickleCoder` | — | 直接儲存產生好的回應本文（見[儲存方式](#storage)）。 |
-| `FastAPICache.clear(namespace=...)` | `await backend.clear_path(path, include_params=True)` 或 `clear_pattern(...)` | 在 `CacheBackend` 依賴項或 `BackendProxy.get()` 取得的後端上呼叫。見[清除快取](HTTP_CACHING.md#clearing-the-cache)。 |
+| `FastAPICache.clear(namespace=...)` | `await invalidate_tags("items")`，或 `await backend.clear_path(path, include_params=True)`／`clear_pattern(...)` | 在 `CacheBackend` 依賴項或 `BackendProxy.get()` 取得的後端上呼叫。見[清除快取](HTTP_CACHING.md#clearing-the-cache)。 |
 | `FastAPICache.clear(key=...)` | `await invalidate(request)` | 依請求重建快取鍵並刪除該項目。 |
 | `FastAPICache.clear()` | `await backend.clear()` | 在 Memcached 上會清空整台伺服器。 |
 | `X-FastAPI-Cache: HIT`／`MISS`（`cache_status_header=`） | `@cache(debug_header=True)` 送出 `X-Cache: HIT`、`MISS` 或 `BYPASS` | 預設關閉。 |
 | 用在非端點函式上的 `@cache` | `@cached(ttl=60)` 或 `CacheManager.get_or_set()` | 和 fastapi-cache2 一樣以引數作為鍵。見[快取一個函式](APP_CACHE.md#caching-a-function)。 |
-| `FastAPICache.init(enable=False)` | — | 沒有關閉快取的開關。測試時，請為每個測試設定新的 `MemoryBackend`。 |
+| `FastAPICache.init(enable=False)` | `set_enabled(False)`，或 `FASTAPI_CACHEX_DISABLED=1` | 此後每個 `@cache` 路由與 `@cached` 函式都會執行，但不讀寫快取；`CacheManager` 的呼叫照常運作。見[關閉快取](TESTING.md#switching-off)。 |
 
 ## 行為上的差異 {#behaviour-that-differs}
 
@@ -130,7 +130,6 @@ fastapi-cache2 以 coder 儲存回傳值（預設 JSON，可選 pickle），讀�
 ## 沒有對應功能的部分 {#no-equivalent}
 
 - DynamoDB 後端。
-- `namespace=` 以及依命名空間清除。請改以路徑、模式或 `invalidate()` 清除。
 - Coder，以及把快取值解碼回回傳型別註記。
-- 全域預設的 `expire`，以及 `enable=False`。
+- 全域預設的 `expire`。
 - Python 3.8 與 3.9，以及早於 0.128.2 的 FastAPI。
