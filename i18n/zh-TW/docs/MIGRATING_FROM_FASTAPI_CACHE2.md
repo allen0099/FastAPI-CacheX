@@ -88,7 +88,7 @@ async def read_item(item_id: int) -> dict[str, int]:
 | `FastAPICache.clear()` | `await backend.clear()` | 在 Memcached 上會清空整台伺服器。 |
 | `X-FastAPI-Cache: HIT`／`MISS`（`cache_status_header=`） | `@cache(debug_header=True)` 送出 `X-Cache: HIT`、`MISS` 或 `BYPASS` | 預設關閉。 |
 | 用在非端點函式上的 `@cache` | `@cached(ttl=60)` 或 `CacheManager.get_or_set()` | 和 fastapi-cache2 一樣以引數作為鍵。見[快取一個函式](APP_CACHE.md#caching-a-function)。 |
-| `FastAPICache.init(enable=False)` | `set_enabled(False)`，或 `FASTAPI_CACHEX_DISABLED=1` | 此後每個 `@cache` 路由與 `@cached` 函式都會執行，但不讀寫快取；`CacheManager` 的呼叫照常運作。見[關閉快取](TESTING.md#switching-off)。 |
+| `FastAPICache.init(enable=False)` | `set_enabled(False)`，或 `FASTAPI_CACHEX_DISABLED=1` | 此後每個 `@cache` 路由、`@cached` 函式與 `get_or_set()` 呼叫都會執行，但不讀寫快取；`CacheManager.get()` 與 `set()` 照常運作。見[關閉快取](TESTING.md#switching-off)。 |
 
 ## 行為上的差異 {#behaviour-that-differs}
 

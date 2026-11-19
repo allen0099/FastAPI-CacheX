@@ -9,9 +9,9 @@ configured backend.
 
 ::: fastapi_cachex.cache.invalidate_path
 
-::: fastapi_cachex._invalidation.invalidate_tags
+::: fastapi_cachex.invalidate_tags
 
-::: fastapi_cachex._vary.VaryNormaliser
+::: fastapi_cachex.VaryNormaliser
 
 ::: fastapi_cachex.cache.build_cache_key
 

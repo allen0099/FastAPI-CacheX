@@ -322,7 +322,8 @@ server must not tie up the thread pool.
   as the path, ignores `include_params` and emits a `RuntimeWarning` on every call.
   To drop a cached route's entry after a write, call
   [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route), which
-  rebuilds the exact key
+  rebuilds the exact key, or tag the routes and call
+  [`invalidate_tags()`](HTTP_CACHING.md#by-tag), which works on Memcached
 - `backend.clear()` (`MemcachedBackend.clear()`) issues `flush_all`, which wipes the whole
   Memcached server, not just this namespace, and emits a `RuntimeWarning` each time.
   `CacheManager.clear()` is different: it
