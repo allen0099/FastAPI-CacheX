@@ -43,3 +43,5 @@ async def test_a_cached_method_keeps_its_parameters() -> None:
     assert repo.load.cache_key(1) == "user:1"
     # Wrong arguments are flagged on a method as on a function.
     await repo.load("1")  # type: ignore[arg-type]
+    repo.load.cache_key("1")  # type: ignore[arg-type]
+    await repo.load.invalidate("1")  # type: ignore[arg-type]

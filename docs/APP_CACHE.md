@@ -100,7 +100,9 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
 - `fn.cache_key(*args, **kwargs)` is the key a call uses (without the
   prefix) and `await fn.invalidate(*args, **kwargs)` drops its value,
   returning whether one was cached. On a method, `obj.load.invalidate(1)`
-  binds `obj` as on a call.
+  binds `obj` as on a call, and type checkers check the arguments after
+  `self`. They misread a `@staticmethod` over `@cached` as such a method;
+  cache a module-level function for it instead.
 
 ## Behavior
 
