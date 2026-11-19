@@ -7,10 +7,17 @@ from typing import Any
 
 import pytest
 
+from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends.base import BaseCacheBackend
+from fastapi_cachex.backends.memory import MemoryBackend
+from fastapi_cachex.backends.redis import AsyncRedisCacheBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
+
+# `DictBackend` runs BaseCacheBackend's fallbacks on purpose; the warning they
+# give is tested in tests/backends/test_base.py (#579).
+pytestmark = pytest.mark.filterwarnings("ignore:.*non-atomic fallback:RuntimeWarning")
 
 
 class DictBackend(BaseCacheBackend):
@@ -246,7 +253,53 @@ async def test_fallbacks_count_a_none_delete_as_not_removed(
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
+        # Only the #579 fallback warning is expected; no None-delete one.
+        warnings.filterwarnings("ignore", ".*non-atomic fallback", RuntimeWarning)
         result = await call(backend, entry)
 
     assert result == expected
     assert "k" not in backend.store
+
+
+_ATOMIC = (
+    "increment",
+    "get_and_delete",
+    "set_if_absent",
+    "delete_if_equals",
+    "expire_if_equals",
+    "set_if_equals",
+    "delete_many",
+    "get_many",
+    "set_many",
+)
+
+
+@pytest.mark.parametrize("name", _ATOMIC)
+@pytest.mark.parametrize(
+    "backend_class",
+    [MemoryBackend, AsyncRedisCacheBackend, MemcachedBackend],
+    ids=["memory", "redis", "memcached"],
+)
+def test_every_built_in_backend_overrides_the_fallbacks(
+    backend_class: type, name: str
+) -> None:
+    """CLAUDE.md promised it; deleting an override failed no test (#579)."""
+    assert name in vars(backend_class)
+
+
+async def test_a_fallback_warns_once_per_class_and_method() -> None:
+    backend = DictBackend()
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert await backend.set_if_absent("k", entry)
+        assert not await backend.set_if_absent("k", entry)
+        assert await DictBackend().delete_if_equals("k", entry) is False
+        await backend.increment("n")
+    messages = [str(w.message) for w in caught if w.category is RuntimeWarning]
+    assert len(messages) == 3
+    assert (
+        "DictBackend.set_if_absent() runs BaseCacheBackend's non-atomic" in messages[0]
+    )
+    assert "delete_if_equals" in messages[1]
+    assert "increment" in messages[2]

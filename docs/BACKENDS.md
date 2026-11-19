@@ -561,8 +561,13 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   `GETS` + a `CAS` write of the new value.
 
 All six have a non-atomic fallback on `BaseCacheBackend`, so a third-party backend
-that only implements the abstract methods keeps working; override them to get
-real atomicity. The fallbacks rely on `delete()` returning whether the key held
+that only implements the abstract methods keeps working, but without the
+guarantees: concurrent `increment()` calls lose counts, several `add()` calls
+win, `CacheLock` (and so `get_or_set(lock=True)` and `coalesce="distributed"`)
+lets several holders in, and the fallback `increment()` re-applies `ttl` on
+every call, so its window slides. Since 0.6.3 the first call of each fallback
+on a backend class logs a `RuntimeWarning` naming the method; override them to
+get real atomicity, which also silences it. The fallbacks rely on `delete()` returning whether the key held
 an entry; since 0.5.0 a `delete()` that still returns `None`, as in 0.3.x,
 counts as not removed (see [Backend `delete()` returning `None`](MIGRATING_0_5.md#backend-delete-none)).
 
@@ -649,6 +654,15 @@ A third-party backend should call `fastapi_cachex.backends.base.validate_ttl(ttl
 in its `set` and store the `int` it returns, to follow the same rules and
 accept a `timedelta`, and `validate_delta(delta)` in `increment`. (`@cache(ttl=0)` is separate: it sends `max-age=0` and never
 passes `0` to the backend; see [HTTP caching](HTTP_CACHING.md).)
+
+Its `get` must return every field of the `CacheEntry` its `set` was given, not
+only `fingerprint` and `content`: `tags` is what makes a value miss after
+`invalidate_tags()`, `stale_at` what makes a `stale_ttl` value miss for a plain
+`get()` after its `ttl`, and `media_type`, `status_code` and `headers` what
+replays a cached response. A backend that drops one keeps working but serves
+invalidated or stale values with no error (#579). Storing the whole entry as
+one blob is the simplest way; `CacheEntry` is a frozen dataclass of plain
+values.
 
 How each backend stores entries is described in
 [Cache flow](CACHE_FLOW.md#backend-storage-formats); the classes themselves are in

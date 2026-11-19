@@ -28,6 +28,10 @@ from fastapi_cachex.types import CacheEntry
 from tests.backends.test_base import DictBackend
 from tests.live_servers import UNCONNECTED_PORT
 
+# `DictBackend` runs BaseCacheBackend's fallbacks on purpose; the warning they
+# give is tested in tests/backends/test_base.py (#579).
+pytestmark = pytest.mark.filterwarnings("ignore:.*non-atomic fallback:RuntimeWarning")
+
 ENTRY = CacheEntry(fingerprint="e", content=b"v")
 FIVE_MINUTES = timedelta(minutes=5)
 

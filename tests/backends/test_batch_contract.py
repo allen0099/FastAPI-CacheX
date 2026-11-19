@@ -23,6 +23,10 @@ from tests.live_servers import REDIS_PORT
 from tests.live_servers import memcached_skip_reason
 from tests.live_servers import redis_skip_reason
 
+# `DictBackend` runs BaseCacheBackend's fallbacks on purpose; the warning they
+# give is tested in tests/backends/test_base.py (#579).
+pytestmark = pytest.mark.filterwarnings("ignore:.*non-atomic fallback:RuntimeWarning")
+
 
 def _redis() -> BaseCacheBackend:
     return AsyncRedisCacheBackend(

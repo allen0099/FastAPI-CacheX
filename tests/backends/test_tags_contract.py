@@ -16,6 +16,10 @@ from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.types import CacheEntry
 from tests.backends.test_batch_contract import FACTORIES
 
+# `DictBackend` runs BaseCacheBackend's fallbacks on purpose; the warning they
+# give is tested in tests/backends/test_base.py (#579).
+pytestmark = pytest.mark.filterwarnings("ignore:.*non-atomic fallback:RuntimeWarning")
+
 TAGS = ("contract-users", "contract-user:1", "contract tag with space")
 KEYS = ("contract:a", "contract:b", "contract:c")
 

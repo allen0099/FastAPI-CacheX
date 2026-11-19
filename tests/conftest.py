@@ -18,6 +18,7 @@ from fastapi_cachex._coalesce import _REFRESHING
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends import memory
 from fastapi_cachex.backends.base import BaseCacheBackend
+from fastapi_cachex.backends.base import _warned_fallbacks
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.backends.redis import AsyncRedisCacheBackend
 from fastapi_cachex.manager_proxy import CacheManagerProxy
@@ -196,6 +197,8 @@ def reset_proxy_singletons():
         proxy.set(None)
     # On for every test, whatever the developer's shell exports (#557).
     set_enabled(True)
+    # Each test sees the once-per-class non-atomic warning afresh (#579).
+    _warned_fallbacks.clear()
     yield
     for proxy in _PROXIES:
         proxy.set(None)
