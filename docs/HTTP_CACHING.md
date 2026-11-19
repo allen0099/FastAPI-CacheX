@@ -506,6 +506,7 @@ causes. With `debug_header=True` such a response also carries
 | `head` | `MISS`, `REFRESH` | The handler ran for a `HEAD` request; only a `GET` response is stored. |
 | `tag-read-failed`, `tag-invalidated` | `MISS`, `REFRESH` | A [tagged](#by-tag) route whose tag versions could not be read, or changed while the handler ran: storing the response could leave an entry that an invalidation missed. |
 | `write-failed` | `MISS`, `REFRESH` | The backend refused the write or could not be reached, and the route has `fail_open=True`. |
+| `read-failed` | `MISS` | The backend could not be read (with `fail_open=True`), so the write is not tried: it would most likely fail too, after its own timeout. Before 0.6.3 it was tried, and each request waited for both timeouts during an outage. |
 
 A response without the header used the cache as usual. A handler that
 raises instead of returning a response has no reason either: its event is a

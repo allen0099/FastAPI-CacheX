@@ -355,6 +355,9 @@ class _Call:
     # The lock this request holds across workers while it renders
     # (`coalesce="distributed"`); the wrapper releases it.
     lock: CacheLock | None = None
+    # The backend read failed: the write would most likely fail too, after
+    # its own timeout, so the response is not stored (#582).
+    read_failed: bool = False
     outcome: str | None = None
     # Why the backend was bypassed or the rendered response was not stored.
     reason: CacheReason | None = None
@@ -986,6 +989,7 @@ class _Route:
         entry, read_ok = await _read_entry(
             backend, cache_key, req, fail_open=self.fail_open
         )
+        call.read_failed = not read_ok
         entry = self._usable(call, entry)
         # A failed read does not wait: the backend is likely down, so the
         # leader could not store its response either. A miss read just
@@ -1140,6 +1144,10 @@ class _Route:
         if skip_reason is not None:
             logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
             call.reason = skip_reason
+            return
+        if call.read_failed:
+            logger.debug("Not storing key=%s: the backend could not be read", cache_key)
+            call.reason = "read-failed"
             return
         if call.tags_before is None:
             # Without the tag versions read before the handler ran, the entry
