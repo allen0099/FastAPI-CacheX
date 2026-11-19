@@ -18,7 +18,7 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 | 序列化 | JSON，不用 pickle；透過 pydantic 讓值以原本的型別回傳（`type_=`，或 `@cached` 的回傳型別註記，0.6.0） | 預設 JSON，可選 pickle | 預設 pickle，可選 HMAC 簽章；可選 JSON | pickle、JSON、msgpack、字串或不序列化 |
 | 後端 | 記憶體、Redis、Memcached | 記憶體、Redis、Memcached、DynamoDB | 記憶體、Redis（含 cluster 與 client-side caching）、diskcache | 記憶體、Redis、Memcached |
 | Stampede 防護 | `get_or_set()` 搭配分散式鎖；`@cache` 的 `coalesce=True` 在單一行程內合併（0.5.0），`coalesce="distributed"` 跨 worker 合併（0.6.2） | 無 | `locked`、`early`、`soft`、`thunder_protection` | `cached_stampede`（以鎖實作） |
-| 標籤、提前更新、指標 | 在 handler 更新期間或失敗時提供過期的項目（`serve_stale`，0.6.1）；可接上自己指標的事件 hook（`set_event_handler`，0.6.1）；每個後端都能用的 tag（`invalidate_tags`，0.6.1） | 無 | 標籤、early 與 soft 提前更新、Prometheus 中介軟體、回呼 | 命中率與計時外掛 |
+| tag、提前更新、指標 | 在 handler 更新期間或失敗時提供過期的項目（`serve_stale`，0.6.1）；可接上自己指標的事件 hook（`set_event_handler`，0.6.1）；每個後端都能用的 tag（`invalidate_tags`，0.6.1） | 無 | tag、early 與 soft 提前更新、Prometheus 中介軟體、回呼 | 命中率與計時外掛 |
 | 其他功能 | `CacheLock`、原子計數器、監控路由 | — | 速率限制、斷路器、Bloom filter、鎖 | `RedLock`、`OptimisticLock`、`multi_cached` |
 | 比較的版本 | 0.6.0；Python 3.11–3.15、FastAPI 0.128.2+ | 0.2.2（2024-07-24）；Python 3.8+ | 7.6.0（2026-09-17）；Python 3.10+ | 0.12.3（2024-09-25） |
 
@@ -65,7 +65,7 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 當你主要快取的是**函式結果**而不是 HTTP 回應，而且需要的不只是 TTL 時，選擇它：
 
 - early 或 soft 提前更新：熱門的鍵在過期前就重新計算，不必讓每個呼叫者都等待快取未命中。
-- 標籤：一次讓所有依賴同一筆資料的項目失效。
+- tag：一次讓所有依賴同一筆資料的項目失效。
 - 同一套設定中提供速率限制、斷路器、Bloom filter 與鎖。
 - Prometheus 指標、Redis Cluster、Redis client-side caching 或磁碟快取。
 
@@ -95,6 +95,6 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 |----------|------------|
 | 快取 FastAPI 的 GET 回應，正確處理 `Cache-Control`、`ETag` 與 `304`，並讓每個使用者各自不同的回應不進入共用快取 | FastAPI-CacheX |
 | 以最低成本把公開頁面提供給大量訪客 | CDN 或反向 proxy，由 `@cache` 產生它需要的標頭 |
-| 快取函式結果，並需要提前更新、標籤、速率限制或指標 | cashews |
+| 快取函式結果，並需要提前更新、tag、速率限制或指標 | cashews |
 | 與框架無關的非同步鍵值快取 | aiocache 或 cashews |
 | 保留運作良好的既有 fastapi-cache2 設定 | fastapi-cache2 |

@@ -46,7 +46,7 @@ await backend.clear_pattern("oauth_state:*")
 
 請先確認你自己的鍵沒有以這兩個前綴開頭。Memcached 無法列舉鍵，因此只能等它們過期。
 
-已移除套件的 0.4.x 文件仍可在儲存庫的 [v0.4.1 標籤](https://github.com/allen0099/FastAPI-CacheX/tree/v0.4.1/i18n/zh-TW/docs)中閱讀。
+已移除套件的 0.4.x 文件仍可在儲存庫的 [v0.4.1 git tag](https://github.com/allen0099/FastAPI-CacheX/tree/v0.4.1/i18n/zh-TW/docs)中閱讀。
 
 ### jwt extra {#jwt-extra}
 

@@ -22,7 +22,7 @@
 
 修改 `fastapi_cachex/` 底下的程式時，還需要在 `tests/` 底下加上測試，並附上 changelog 片段（見 [Pull Request 流程](#pull-request-process)）。
 
-名為 **PR gate** 的檢查會對外部貢獻者執行這些規則；維護者、協作者，以及 Renovate 等機器人不受此限制。Pull Request 沒有關閉一個指派給作者本人的 issue 時，它會關閉該 Pull Request。編輯已關閉的 Pull Request 不會讓它重新開啟，因此請在 issue 指派給你之後開一個新的 Pull Request。如果只缺少測試或 changelog 片段，Pull Request 會保持開啟，檢查會失敗並留言列出缺少的項目，之後每次推送或編輯都會重新檢查。只要修改了 `fastapi_cachex/` 底下的程式，這項檢查就會要求 changelog 片段；若變更不需要片段（例如重構），維護者可以加上 `skip-pr-gate` 標籤略過檢查。維護者要重新開啟被檢查關閉的 Pull Request 時，請先加上該標籤，否則檢查會再次關閉它。
+名為 **PR gate** 的檢查會對外部貢獻者執行這些規則；維護者、協作者，以及 Renovate 等機器人不受此限制。Pull Request 沒有關閉一個指派給作者本人的 issue 時，它會關閉該 Pull Request。編輯已關閉的 Pull Request 不會讓它重新開啟，因此請在 issue 指派給你之後開一個新的 Pull Request。如果只缺少測試或 changelog 片段，Pull Request 會保持開啟，檢查會失敗並留言列出缺少的項目，之後每次推送或編輯都會重新檢查。只要修改了 `fastapi_cachex/` 底下的程式，這項檢查就會要求 changelog 片段；若變更不需要片段（例如重構），維護者可以加上 `skip-pr-gate` label略過檢查。維護者要重新開啟被檢查關閉的 Pull Request 時，請先加上該label，否則檢查會再次關閉它。
 
 ## 開發流程 {#development-process}
 
@@ -48,4 +48,4 @@
 
 ## 有任何問題？ {#any-questions}
 
-如果需要任何協助，歡迎開一個帶有 `question` 標籤的 issue！
+如果需要任何協助，歡迎開一個帶有 `question` label的 issue！

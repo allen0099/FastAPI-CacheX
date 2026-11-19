@@ -39,6 +39,13 @@
 | revalidation | 重新驗證 | |
 | invalidate / invalidation | 使……失效／快取失效 | |
 | expire / expiration | 過期 | |
+| stale | 過期 | 超過 `ttl`、但仍保留且可以送出的項目（`serve_stale`、`stale_ttl`）。與 expired（已無法讀取）同譯；句中需要區分兩者時，寫作「過期（stale）」 |
+| tag（快取） | 保留 | `@cache(tags=...)`、`invalidate_tags()` 的 tag；不譯為「標籤」 |
+| format tag（鍵格式） | 格式標籤 | 快取鍵開頭的 `http:v2`；「標籤」只用在這裡 |
+| tag（git） | 保留（git tag） | |
+| label（GitHub） | 保留 | issue 與 pull request 的 label |
+| coalesce / coalescing | 合併（並行的未命中） | `coalesce=` 參數保留 |
+| fail open / fail closed | 保留 | 後端發生錯誤時照常回應／拋出錯誤 |
 | evict / eviction | 淘汰 | 後端因容量或 TTL 移除項目 |
 | background task | 背景任務 | Starlette 回應的 `background` |
 | sliding expiration | 滑動過期 | |
@@ -57,10 +64,6 @@
 | secret key | 密鑰 | |
 | stateful / stateless | 有狀態／無狀態 | |
 | revoke / revocation | 撤銷 | |
-| issuer / audience | 發行者／受眾 | claim 名稱 `iss`、`aud` 保留 |
-| key rotation | 金鑰輪替 | |
-| absolute timeout | 絕對逾時 | |
-| session fixation | Session 固定攻擊（session fixation） | |
 | config / configuration | 設定 | 不用「組態」 |
 | proxy / reverse proxy | 保留：proxy／反向 proxy | 與 `BackendProxy` 等類別名稱一致 |
 | session | 保留（Session） | |
