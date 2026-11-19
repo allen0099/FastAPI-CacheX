@@ -8,6 +8,7 @@ log line. Nothing is built or called while no handler is set.
 """
 
 import logging
+import time
 from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -99,9 +100,12 @@ class CacheEvent:
 EventHandler = Callable[[CacheEvent], None]
 
 _handler: EventHandler | None = None
-# How often the current handler raised; its traceback is logged on the first
-# failure only, so a broken handler does not log one per event (#583).
-_handler_failures = 0
+# A failing handler's traceback is logged at most once a minute, so a broken
+# handler does not log one per event (#583); the failures in between are
+# counted into the next log line.
+_HANDLER_FAILURE_LOG_INTERVAL = 60.0
+# When the current handler's failure was last logged, and failures since.
+_handler_failures: tuple[float | None, int] = (None, 0)
 # Set while the library reads through its own public API (``get_or_set``
 # calling ``get``), so that one call is reported once.
 _muted: ContextVar[bool] = ContextVar("fastapi_cachex_events_muted", default=False)
@@ -113,8 +117,9 @@ def set_event_handler(handler: EventHandler | None) -> None:
     The handler is called synchronously, on the request's path: keep it to
     incrementing a counter or recording a number, since a slow one delays
     every request. It must be a plain function. An exception it raises does
-    not reach the request: the first is logged with its traceback, later ones
-    at DEBUG with a count. Setting a handler replaces the previous one.
+    not reach the request: it is logged with its traceback at most once a
+    minute, with the number of failures since, and the others at DEBUG.
+    Setting a handler replaces the previous one.
 
     Raises:
         TypeError: If ``handler`` is not callable, or is an ``async``
@@ -127,7 +132,7 @@ def set_event_handler(handler: EventHandler | None) -> None:
         raise TypeError(msg)
     global _handler, _handler_failures  # noqa: PLW0603 - one process-wide hook, like logging's
     _handler = handler
-    _handler_failures = 0
+    _handler_failures = (None, 0)
 
 
 @contextmanager
@@ -156,20 +161,19 @@ def _emit(  # noqa: PLR0913
         handler(CacheEvent(kind, source, key, route, duration, reason))
     except Exception:
         global _handler_failures  # noqa: PLW0603
-        _handler_failures += 1
-        if _handler_failures == 1:
+        now = time.monotonic()
+        last, skipped = _handler_failures
+        if last is None or now - last >= _HANDLER_FAILURE_LOG_INTERVAL:
+            _handler_failures = (now, 0)
             logger.exception(
-                "The cache event handler raised; kind=%s. Later failures are "
-                "logged at DEBUG only.",
+                "The cache event handler raised; kind=%s%s. Logged at most "
+                "once a minute; the others at DEBUG.",
                 kind,
+                f" ({skipped} more since the last time)" if skipped else "",
             )
         else:
-            logger.debug(
-                "The cache event handler raised again (%d times); kind=%s",
-                _handler_failures,
-                kind,
-                exc_info=True,
-            )
+            _handler_failures = (last, skipped + 1)
+            logger.debug("The cache event handler raised; kind=%s", kind, exc_info=True)
 
 
 __all__ = [

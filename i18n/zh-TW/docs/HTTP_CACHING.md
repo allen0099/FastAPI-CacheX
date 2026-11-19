@@ -311,7 +311,7 @@ logging.getLogger("fastapi_cachex.cache").setLevel(logging.ERROR)
 
 ### 後端發生錯誤時 {#when-the-backend-fails}
 
-`@cache` 採取 fail open。讀取時後端拋出錯誤（例如 Redis 或 Memcached 無法連線），該請求會被當成快取未命中，照常執行 handler。儲存回應時拋出錯誤（例如回應超過 Memcached 的項目大小上限，預設為 1 MB），回應會照常送出，只是不會被儲存。兩種情況都會在 `fastapi_cachex.cache` logger 記錄一則警告，因此後端中斷不會讓有快取的路由變成 500；負載會轉到你的 handler 上，請留意這些警告。每一種失敗（讀取失敗、寫入失敗……）每分鐘最多以 `WARNING` 記錄一次，並附上自上次警告以來的失敗次數；每次失敗都會以 `DEBUG` 記錄，並回報為 [`error` 事件](#counting-hits-and-misses)。0.6.3 之前每個失敗的請求都會各自記錄一則警告，因此中斷期間日誌會被大量洗版。
+`@cache` 採取 fail open。讀取時後端拋出錯誤（例如 Redis 或 Memcached 無法連線），該請求會被當成快取未命中，照常執行 handler。儲存回應時拋出錯誤（例如回應超過 Memcached 的項目大小上限，預設為 1 MB），回應會照常送出，只是不會被儲存。兩種情況都會在 `fastapi_cachex.cache` logger 記錄一則警告，因此後端中斷不會讓有快取的路由變成 500；負載會轉到你的 handler 上，請留意這些警告。每一種失敗（讀取失敗、寫入失敗……）每分鐘最多以 `WARNING` 記錄一次，並附上自上次警告以來的失敗次數（因此一波失敗的次數會在下一次同類失敗時才出現）；每次失敗都會以 `DEBUG` 記錄，並回報為 [`error` 事件](#counting-hits-and-misses)。0.6.3 之前每個失敗的請求都會各自記錄一則警告，因此中斷期間日誌會被大量洗版。
 
 fail open 的速度取決於後端多快回報錯誤。redis-py 8 預設會以指數退避重試失敗的 Redis 指令 10 次，因此在 Redis 拒絕連線時，每次讀取與寫入都要約 3 到 4 秒才會失敗，而同時進行兩者的快取請求約需 7 秒。若 Redis 主機完全沒有回應，每次嘗試還得等到連線逾時，一個請求可能需要約 30 秒。若要在逾時設定內就失敗，可透過後端的關鍵字引數關閉重試並縮短逾時：
 
@@ -727,7 +727,7 @@ def record(event: CacheEvent) -> None:
 set_event_handler(record)
 ```
 
-handler 在請求的路徑上同步執行，每個事件一次：慢的 handler 會拖慢每個請求，因此請只用它更新計數器。再次呼叫 `set_event_handler()` 會取代先前的 handler；若要同時送往指標與追蹤，請在同一個函式中呼叫兩者。handler 拋出的例外絕不會影響請求：第一次會連同 traceback 記錄在 `fastapi_cachex.events` logger，之後的則以 `DEBUG` 記錄並附上次數，直到再次設定 handler 為止。
+handler 在請求的路徑上同步執行，每個事件一次：慢的 handler 會拖慢每個請求，因此請只用它更新計數器。再次呼叫 `set_event_handler()` 會取代先前的 handler；若要同時送往指標與追蹤，請在同一個函式中呼叫兩者。handler 拋出的例外絕不會影響請求：它會連同 traceback 記錄在 `fastapi_cachex.events` logger，每分鐘最多一次，並附上這段期間的失敗次數，其餘則以 `DEBUG` 記錄。
 
 | `kind` | 發生時機 |
 |---|---|
