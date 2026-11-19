@@ -818,6 +818,10 @@ class _Route:
         if not names:
             call.tags_before = {}
             return
+        if call.read_failed:
+            # Nothing is stored after a failed read, so the versions are not
+            # needed, and reading them would wait out another timeout.
+            return
         try:
             call.tags_before = await _tags.versions_before(backend, names)
         except Exception as e:
@@ -1007,9 +1011,10 @@ class _Route:
             else:
                 waited = await self._lock_or_wait(call, backend, cache_key)
             if waited:
-                entry, _ = await _read_entry(
+                entry, read_ok = await _read_entry(
                     backend, cache_key, req, fail_open=self.fail_open
                 )
+                call.read_failed = not read_ok
                 entry = self._usable(call, entry)
         return entry
 
