@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import math
+import numbers
 import secrets
 import time
 from datetime import timedelta
@@ -26,32 +27,39 @@ _LOCK_FINGERPRINT = "lock"
 _pending_withdrawals: set["asyncio.Task[bool]"] = set()
 
 
-def _check_poll_interval(value: float) -> float:
+def _check_poll_interval(value: object) -> float:
     """``value`` if it is a positive, finite number of seconds.
 
     Zero made a blocking ``acquire()`` retry in a tight loop, about 100,000
     backend calls a second against a held lock (#578).
     """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
         msg = f"poll_interval must be a number of seconds, got {type(value).__name__}"
         raise TypeError(msg)
-    if not (value > 0 and math.isfinite(value)):
+    seconds = float(value)
+    if not (seconds > 0 and math.isfinite(seconds)):
         msg = f"poll_interval must be positive and finite, got {value!r}"
         raise ValueError(msg)
-    return value
+    return seconds
 
 
-def _check_timeout(value: float | None) -> float | None:
-    """``value`` if it is ``None`` or a non-negative number of seconds."""
+def _check_timeout(value: object) -> float | None:
+    """``value`` if it is ``None`` or a number of seconds other than NaN.
+
+    NaN waited forever, since no elapsed time compares as reaching it. A
+    negative timeout tries once, like ``0``: a caller passing what is left of
+    its own deadline gets ``False`` once the deadline has passed.
+    """
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
         msg = f"timeout must be a number of seconds or None, got {type(value).__name__}"
         raise TypeError(msg)
-    if not value >= 0:
-        msg = f"timeout must not be negative, got {value!r}"
+    seconds = float(value)
+    if math.isnan(seconds):
+        msg = "timeout must be a number of seconds, got nan"
         raise ValueError(msg)
-    return value
+    return seconds
 
 
 def _lock_entry(token: str) -> CacheEntry:
@@ -96,7 +104,7 @@ class CacheLock:
         TTLValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
             or not a whole number of seconds (also a ``ValueError``)
         TypeError: If ``timeout`` or ``poll_interval`` is not a number
-        ValueError: If ``timeout`` is negative, or ``poll_interval`` is not
+        ValueError: If ``timeout`` is NaN, or ``poll_interval`` is not
             positive and finite
     """
 
@@ -177,7 +185,7 @@ class CacheLock:
             BackendNotFoundError: If no ``backend`` was passed and none is
                 registered with ``BackendProxy.set()``.
             TypeError: If ``timeout`` or ``poll_interval`` is not a number
-            ValueError: If ``timeout`` is negative, or ``poll_interval`` is
+            ValueError: If ``timeout`` is NaN, or ``poll_interval`` is
                 not positive and finite
         """
         if self._is_held:
