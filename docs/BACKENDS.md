@@ -66,7 +66,10 @@ The cleanup task starts on the event loop of the first cache call. If a later ca
 runs on a different loop, for example after the first loop was closed, the task is
 started again there. To stop it on shutdown, `await backend.aclose()` cancels the
 task and waits until it has finished (see [Closing a backend](#closing-a-backend)).
-`stop_cleanup()` only requests cancellation.
+`stop_cleanup()` only requests cancellation. The task holds the backend only
+weakly, so a backend dropped without `aclose()` is still freed, entries and all,
+and its task ends at its next wake-up. Earlier releases kept such a backend in
+memory until its event loop closed.
 
 By default the cache has no size limit: entries leave only when they expire, so
 memory grows with request rate × `ttl` × body size, per worker, and a client can
@@ -345,7 +348,11 @@ after one second. Before 0.3.8, calls in the second after a
 failure returned made-up results instead: `get()` a miss, `set()` nothing (the write
 was lost), `increment()` a fresh counter of 0. With several servers, a failed one is
 taken out of rotation at once and its keys go to the remaining servers until it
-answers again.
+answers again. Calls that fail on the same server at the same time each raise
+`BackendUnavailableError`. Earlier releases could raise a `KeyError`, `ValueError`
+or `RuntimeError` instead, because pymemcache's `HashClient` updates its table of
+failed servers without a lock, and could leave a failed server out of rotation for
+good; the backend now updates that table under a lock.
 
 ## Closing a backend
 
