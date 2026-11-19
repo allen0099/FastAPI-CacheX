@@ -524,13 +524,18 @@ A request carries credentials when it has any of:
   caller: FastAPI's `APIKeyHeader` or `APIKeyCookie`, or a `Cookie()`
   parameter, anywhere in the dependency tree, when the request sends it. An
   API key in the query string (`APIKeyQuery`) is part of the key already, and
-  a cookie the route does not read does not count.
+  a cookie the route does not read does not count. A cookie that is only a
+  preference (`theme: Cookie()`) counts too; such a route keeps its cache hits
+  with `public=True` and the cookie in `vary` with a normaliser.
 
 Such a request reads and writes the backend only when the route is
 `public=True`, or sets `cache_authorized=True` **and** its key tells the callers
 apart: a `key_builder`, or `vary` listing the header that carries the
 credential (`Authorization`, `Cookie` for session data and cookies, or the API
-key header). Otherwise it bypasses the backend and is answered with `private`,
+key header), without a normaliser, which could map every caller to one value.
+Every credential the request carries must be keyed so: a gate token in
+`Authorization` that every caller shares says nothing about whose session it
+is. Otherwise it bypasses the backend and is answered with `private`,
 so one caller's response is never served to another. Before 0.6.3 an API key or
 cookie did not count, and `cache_authorized=True` with the default key shared
 one entry between every caller (#574).
@@ -902,9 +907,14 @@ The same token always gives the same digest, so it hits its own entry, and two
 tokens give two entries. A missing or empty credential header is not hashed:
 it stays `authorization=`, like any other empty header, so every anonymous
 caller shares one entry and the key still shows that it is the anonymous one.
-Every other header, including a custom token header such as `X-API-Key`,
-stays readable; if yours carries a secret, key on it through a `key_builder`
-(hashing it yourself) rather than `vary`.
+Any other header whose name contains `key`, `token`, `secret`, `auth`,
+`session` or `password` (matched in any case), such as `X-API-Key` or
+`X-Auth-Token`, is hashed the same way: listing the header that carries an API
+key is how a `cache_authorized` route keys on it (see
+[Requests with credentials](#requests-with-credentials)). Before 0.6.3 those
+stayed readable, so the API key itself was in the key (#575). Every other
+header stays readable; if yours carries a secret under another name, key on it
+through a `key_builder` (hashing it yourself) rather than `vary`.
 
 `vary=["Authorization"]` alone does not lift the rule for authorized requests
 (see [Requests with credentials](#requests-with-credentials)): a request with
@@ -1002,7 +1012,8 @@ request it is given selects.
 > `@cache` recognises the credentials listed under
 > [Requests with credentials](#requests-with-credentials). One it cannot see,
 > such as a token cookie your middleware reads from `request.cookies` without a
-> `Cookie()` parameter or `APIKeyCookie`, triggers no bypass: a plain `@cache`
+> `Cookie()` parameter or `APIKeyCookie`, or a token header read with
+> `Header()` instead of `APIKeyHeader`, triggers no bypass: a plain `@cache`
 > serves the first caller's response to everyone, so use one of the two
 > options above.
 

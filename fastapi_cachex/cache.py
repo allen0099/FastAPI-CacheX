@@ -173,8 +173,9 @@ def cache(
             route's dependencies read (FastAPI's ``APIKeyHeader`` or
             ``APIKeyCookie``, a ``Cookie()`` parameter), when the key
             identifies the caller: a ``key_builder`` is set, or ``vary``
-            lists the header carrying the credential (``Authorization``,
-            ``Cookie``, the API key header). Otherwise such a request still
+            lists the header carrying each credential the request has
+            (``Authorization``, ``Cookie``, the API key header) without a
+            normaliser. Otherwise such a request still
             bypasses, so one caller's response is never served to another;
             pass ``key_builder=default_key_builder`` to share one entry
             between callers on purpose. By default such a request bypasses the
@@ -210,7 +211,9 @@ def cache(
             request that is looked up in the cache, before the backend is
             read, and an exception it raises fails the request. The credential
             headers ``Authorization``, ``Proxy-Authorization``, ``Cookie``
-            and ``X-Session-Token`` are keyed on ``sha256:<hex digest>`` of
+            and ``X-Session-Token``, and any header whose name contains
+            ``key``, ``token``, ``secret``, ``auth``, ``session`` or
+            ``password`` (``X-API-Key``), are keyed on ``sha256:<hex digest>`` of
             the value rather than the value, so no token or session cookie
             appears in the key; missing or empty, they stay ``name=``.
             A normalised value is hashed the same way. Listing ``Cookie``

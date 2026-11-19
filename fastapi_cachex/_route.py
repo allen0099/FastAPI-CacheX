@@ -19,6 +19,7 @@ from fastapi import Request
 from fastapi import Response
 from fastapi.security import APIKeyCookie
 from fastapi.security import APIKeyHeader
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import _tags
@@ -205,14 +206,25 @@ async def _read_entry(
     return entry, True
 
 
+def _cookie_names(param: object) -> list[str]:
+    """The cookies a ``Cookie()`` parameter reads: its alias, or a model's fields."""
+    annotation = getattr(getattr(param, "field_info", None), "annotation", None)
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        # `Annotated[Cookies, Cookie()]` reads each field as a cookie.
+        return [info.alias or name for name, info in annotation.model_fields.items()]
+    return [getattr(param, "alias", "")]
+
+
 def _route_credentials(route: object) -> tuple[tuple[str, str], ...]:
     """The API keys and cookies the dependencies of ``route`` identify callers by.
 
     ``("header", name)`` for FastAPI's ``APIKeyHeader``, ``("cookie", name)``
-    for ``APIKeyCookie`` and every ``Cookie()`` parameter, anywhere in the
-    dependency tree (#574). An API key in the query string is in the key
+    for ``APIKeyCookie`` and every cookie a ``Cookie()`` parameter reads,
+    anywhere in the dependency tree, including the router's and the app's
+    ``dependencies=`` (#574). An API key in the query string is in the key
     already, and the HTTP schemes (``HTTPBearer``, ``OAuth2PasswordBearer``,
-    ...) send ``Authorization``.
+    ...) send ``Authorization``. A value read with ``Header()`` is not
+    recognised.
     """
     found: list[tuple[str, str]] = []
     pending = [getattr(route, "dependant", None)]
@@ -225,32 +237,55 @@ def _route_credentials(route: object) -> tuple[tuple[str, str], ...]:
             found.append(("header", call.model.name))
         elif isinstance(call, APIKeyCookie):
             found.append(("cookie", call.model.name))
-        found.extend(("cookie", param.alias) for param in dependant.cookie_params)
+        for param in dependant.cookie_params:
+            found.extend(("cookie", name) for name in _cookie_names(param))
         pending.extend(dependant.dependencies)
     return tuple(found)
 
 
-def _request_credential(
+# Routes one decorated function remembers the credentials of.
+_MAX_REMEMBERED_ROUTES = 256
+
+
+def _effective_route(request: Request) -> object:
+    """What holds the dependencies FastAPI runs for ``request``.
+
+    For a route of an included router, FastAPI keeps the dependencies of the
+    app and of every router it went through in the route context it puts in
+    ``scope["fastapi"]``; the route itself has only its own (#574).
+    """
+    fastapi_scope = request.scope.get("fastapi")
+    if isinstance(fastapi_scope, dict):
+        context = fastapi_scope.get("effective_route_context")
+        if getattr(context, "dependant", None) is not None:
+            return context
+    return request.scope.get("route")
+
+
+def _request_credentials(
     request: Request, route_credentials: Iterable[tuple[str, str]] = ()
-) -> tuple[str, str] | None:
-    """What identifies the caller of ``request``, and the header carrying it.
+) -> list[tuple[str, str]]:
+    """What identifies the caller of ``request``, each with the header carrying it.
 
     ``Authorization``; a non-empty ``request.session`` from any session
     middleware (Starlette's ``SessionMiddleware``, for example), carried by
-    ``Cookie``; or an API key or cookie of ``route_credentials`` that the
-    request sends. An empty session does not count, and neither does a
-    ``Cookie`` header the route does not read. ``None`` if nothing does.
+    ``Cookie``; and every API key or cookie of ``route_credentials`` that the
+    request sends. All of them, since the key must tell callers apart by
+    each: a gate token in ``Authorization`` shared by everyone says nothing
+    about whose session it is. An empty session does not count, and neither
+    does a ``Cookie`` header the route does not read.
     """
+    found = []
     if "authorization" in request.headers:
-        return "Authorization header", "authorization"
+        found.append(("Authorization header", "authorization"))
     if request.scope.get("session"):
-        return "Session data", "cookie"
+        found.append(("Session data", "cookie"))
     for where, name in route_credentials:
         if where == "header" and name in request.headers:
-            return f"the {name} header (an API key)", name.lower()
-        if where == "cookie" and name in request.cookies:
-            return f"the {name} cookie", "cookie"
-    return None
+            found.append((f"the {name} header (an API key)", name.lower()))
+        elif where == "cookie" and name in request.cookies:
+            found.append((f"the {name} cookie", "cookie"))
+    return found
 
 
 # `X-Cache-Reason` for a credential bypass; an API key or cookie is
@@ -341,29 +376,43 @@ class _Route:
     private_cache_control: str
     warn_bypass: _BypassWarner
 
-    # `_route_credentials` per route template, so the dependencies are walked
-    # once per route rather than on every request.
-    route_credentials: dict[str | None, tuple[tuple[str, str], ...]] = field(
+    # `_route_credentials` per route, by `id` (routes are not hashable) with
+    # the route kept so the id is not reused: the dependencies are walked once
+    # per route rather than on every request. Not by the template: one
+    # function can sit on two apps' `/items` with different dependencies.
+    route_credentials: dict[int, tuple[object, tuple[tuple[str, str], ...]]] = field(
         default_factory=dict
     )
 
-    def _credential(self, request: Request) -> tuple[str, str] | None:
-        """``_request_credential`` for ``request``, with this route's API keys."""
-        route = request.scope.get("route")
-        path = getattr(route, "path", None)
-        known = self.route_credentials.get(path)
-        if known is None:
-            known = self.route_credentials[path] = _route_credentials(route)
-        return _request_credential(request, known)
+    def _credentials(self, request: Request) -> list[tuple[str, str]]:
+        """``_request_credentials`` for ``request``, with this route's API keys."""
+        route = _effective_route(request)
+        known = self.route_credentials.get(id(route))
+        if known is None or known[0] is not route:
+            if len(self.route_credentials) >= _MAX_REMEMBERED_ROUTES:
+                # ponytail: forget all at once; only reached if FastAPI ever
+                # builds a new route context per request.
+                self.route_credentials.clear()
+            known = self.route_credentials[id(route)] = (
+                route,
+                _route_credentials(route),
+            )
+        return _request_credentials(request, known[1])
 
     def _keys_caller(self, header: str) -> bool:
         """Whether the key tells apart the callers that ``header`` identifies.
 
         A custom ``key_builder`` is trusted to (``key_builder=default_key_builder``
         passed on purpose shares one entry between them); otherwise ``vary``
-        must list the header.
+        must list the header without a normaliser, which could map every
+        caller to one value.
         """
-        return not self.default_key or header in {n.lower() for n in self.vary_names}
+        if not self.default_key:
+            return True
+        return any(
+            name.lower() == header and normaliser is None
+            for name, normaliser in self.vary_names.items()
+        )
 
     @property
     def skips_backend(self) -> bool:
@@ -436,14 +485,19 @@ class _Route:
         # downstream keys on the URL alone (#372). It lifts it only when the
         # key tells the callers apart, and an API key or cookie the route's
         # dependencies identify callers by counts as a credential too (#574).
-        credential = None if self.private or self.public else self._credential(req)
+        credentials = [] if self.private or self.public else self._credentials(req)
         cache_control = (
-            self.cache_control if credential is None else self.private_cache_control
+            self.private_cache_control if credentials else self.cache_control
         )
-        authorized_bypass = credential is not None and not (
-            self.cache_authorized and self._keys_caller(credential[1])
+        # Without the opt-in any credential bypasses; with it, any the key
+        # does not tell callers apart by.
+        candidates = (
+            [c for c in credentials if not self._keys_caller(c[1])]
+            if self.cache_authorized
+            else credentials
         )
-        if credential is not None and authorized_bypass:
+        credential = candidates[0] if candidates else None
+        if credential is not None:
             logger.debug(
                 "%s present; bypassing the backend for path=%s",
                 credential[0],
@@ -460,15 +514,13 @@ class _Route:
                     else _BYPASS_WARNING,
                 )
 
-        if self.skips_backend or authorized_bypass:
+        if self.skips_backend or credential is not None:
             call.reason = (
                 "private"
                 if self.private
                 else "no-ttl"
-                if not self.ttl
+                if not self.ttl or credential is None
                 else _BYPASS_REASONS.get(credential[0], "credential")
-                if credential is not None
-                else "session"
             )
             return await self._uncached(call, cache_control)
         if not is_enabled():
