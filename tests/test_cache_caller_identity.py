@@ -17,6 +17,7 @@ import logging
 from typing import Annotated
 
 import pytest
+from fastapi import APIRouter
 from fastapi import Cookie
 from fastapi import Depends
 from fastapi import FastAPI
@@ -25,12 +26,16 @@ from fastapi.security import APIKeyCookie
 from fastapi.security import APIKeyHeader
 from fastapi.security import APIKeyQuery
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
+from fastapi_cachex import BackendProxy
 from fastapi_cachex import cache
 from fastapi_cachex import default_key_builder
 
 _LOGGER = "fastapi_cachex.cache"
 _API_KEY = APIKeyHeader(name="X-API-Key")
+_OPTIONAL_KEY = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def _get(client: TestClient, path: str, **kwargs: object) -> tuple[object, str]:
@@ -167,3 +172,120 @@ async def test_an_unrelated_cookie_or_a_query_api_key_is_not_a_credential() -> N
     assert _get(client, "/items?key=a") == ("a", "MISS")
     assert _get(client, "/items?key=b") == ("b", "MISS")
     assert _get(client, "/items?key=a") == ("a", "HIT")
+
+
+async def test_every_credential_must_be_keyed_not_just_the_first() -> None:
+    """A gate token in Authorization shared by everyone keyed nothing else."""
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="s" * 32)
+
+    @app.get("/login/{user}")
+    async def login(user: str, request: Request) -> None:
+        request.session["user"] = user
+
+    @app.get("/me")
+    @cache(ttl=60, debug_header=True, cache_authorized=True, vary=["Authorization"])
+    async def me(
+        request: Request, key: Annotated[str | None, Depends(_OPTIONAL_KEY)]
+    ) -> str:
+        return f"{request.session.get('user')}:{key}"
+
+    gate = {"Authorization": "Basic gate"}
+    alice, bob = TestClient(app, headers=gate), TestClient(app, headers=gate)
+    alice.get("/login/alice")
+    bob.get("/login/bob")
+    assert _get(alice, "/me") == ("alice:None", "BYPASS")
+    assert _get(bob, "/me") == ("bob:None", "BYPASS")
+    anonymous = TestClient(app, headers=gate)
+    assert _get(anonymous, "/me", headers={"X-API-Key": "a"}) == ("None:a", "BYPASS")
+    assert _get(anonymous, "/me", headers={"X-API-Key": "b"}) == ("None:b", "BYPASS")
+    # Only the shared token: keyed by vary, so it is cached.
+    assert _get(anonymous, "/me") == ("None:None", "MISS")
+    assert _get(anonymous, "/me") == ("None:None", "HIT")
+
+
+async def test_a_vary_normaliser_does_not_identify_the_caller() -> None:
+    """`vary={"Cookie": pick_lang}` maps every caller with one language to one entry."""
+    app = FastAPI()
+
+    @app.get("/me")
+    @cache(
+        ttl=60,
+        debug_header=True,
+        cache_authorized=True,
+        vary={"Cookie": lambda value: "en"},
+    )
+    async def me(tok: Annotated[str | None, Cookie()] = None) -> str | None:
+        return tok
+
+    client = TestClient(app)
+    client.cookies.set("tok", "alice")
+    assert _get(client, "/me") == ("alice", "BYPASS")
+    client.cookies.set("tok", "bob")
+    assert _get(client, "/me") == ("bob", "BYPASS")
+
+
+class _Cookies(BaseModel):
+    tok: str | None = None
+
+
+async def test_a_cookie_parameter_model_counts_its_fields() -> None:
+    app = FastAPI()
+
+    @app.get("/me")
+    @cache(ttl=60, debug_header=True)
+    async def me(cookies: Annotated[_Cookies, Cookie()]) -> str | None:
+        return cookies.tok
+
+    client = TestClient(app)
+    client.cookies.set("tok", "alice")
+    assert _get(client, "/me") == ("alice", "BYPASS")
+    client.cookies.set("tok", "bob")
+    assert _get(client, "/me") == ("bob", "BYPASS")
+
+
+async def test_an_aliased_cookie_and_router_and_app_dependencies_count() -> None:
+    inner = FastAPI(dependencies=[Depends(_API_KEY)])
+    router = APIRouter(
+        dependencies=[Depends(APIKeyCookie(name="sid", auto_error=False))]
+    )
+
+    @cache(ttl=60, debug_header=True)
+    async def items(
+        request: Request, name: Annotated[str | None, Cookie(alias="who")] = None
+    ) -> str:
+        return f"{request.headers.get('x-api-key')}:{request.cookies}"
+
+    router.add_api_route("/items", items, methods=["GET", "HEAD"])
+    inner.include_router(router)
+    # The same function on another app without those dependencies.
+    outer = FastAPI()
+    outer.add_api_route("/items", items, methods=["GET"])
+    outer.mount("/v2", inner)
+
+    client = TestClient(outer)
+    # Memoised for the outer route first; the mounted one still walks its own.
+    assert _get(client, "/items") == ("None:{}", "MISS")
+    assert _get(client, "/v2/items", headers={"X-API-Key": "a"})[1] == "BYPASS"
+    assert _get(client, "/v2/items", headers={"X-API-Key": "b"})[0] == "b:{}"
+    response = client.head("/v2/items", headers={"X-API-Key": "a"})
+    assert response.headers["X-Cache"] == "BYPASS"
+    assert response.headers["X-Cache-Reason"] == "credential"
+
+
+async def test_an_api_key_listed_in_vary_is_hashed_in_the_key() -> None:
+    """Following the advice to list the header must not put the key in clear."""
+    app = FastAPI()
+
+    @app.get("/me")
+    @cache(ttl=60, vary=["X-API-Key"], cache_authorized=True)
+    async def me(key: Annotated[str, Depends(_API_KEY)]) -> str:
+        return key
+
+    client = TestClient(app)
+    client.get("/me", headers={"X-API-Key": "SECRET123"})
+    backend = BackendProxy.get()
+    keys = await backend.get_all_keys()
+    assert keys
+    assert not any("SECRET123" in key for key in keys)
+    assert any("x-api-key=sha256:" in key for key in keys)

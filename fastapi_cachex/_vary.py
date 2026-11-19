@@ -89,6 +89,19 @@ _HASHED_VARY_HEADERS = frozenset(
     }
 )
 _HASHED_VARY_MARKER = "sha256:"
+# Words that mark a header as carrying a secret, such as `X-API-Key` or
+# `X-Auth-Token`: `vary` hashes its value too, so following the advice to list
+# the header that identifies the caller never puts an API key into the key
+# (#574, #575). Only the name decides, so building and invalidating a key
+# agree.
+_SECRET_HEADER_WORDS = ("key", "token", "secret", "auth", "session", "password")
+
+
+def _is_secret_header(lowered: str) -> bool:
+    """Whether ``vary`` keys header ``lowered`` on a digest of its value."""
+    return lowered in _HASHED_VARY_HEADERS or any(
+        word in lowered for word in _SECRET_HEADER_WORDS
+    )
 
 
 def _vary_components(
@@ -100,9 +113,10 @@ def _vary_components(
     joined with ``,`` as RFC 9110 §5.3 allows, and a missing header gives an
     empty value, the same as an empty one. A normaliser then gets that value
     and returns what goes into the key. For a credential header
-    (``Authorization``, ``Proxy-Authorization``, ``Cookie`` and
-    ``X-Session-Token``) a non-empty value, normalised or not, is replaced by
-    ``sha256:`` and its full hex SHA-256; an empty or missing one stays
+    (``Authorization``, ``Proxy-Authorization``, ``Cookie``, and any header
+    whose name contains ``key``, ``token``, ``secret``, ``auth``, ``session``
+    or ``password``, such as ``X-API-Key``) a non-empty value, normalised or
+    not, is replaced by ``sha256:`` and its full hex SHA-256; an empty or missing one stays
     ``name=``, so anonymous requests share one entry.
 
     Raises:
@@ -132,7 +146,7 @@ def _vary_components(
                 if isinstance(normalised, str)
                 else str(int(normalised))
             )
-        if value and lowered in _HASHED_VARY_HEADERS:
+        if value and _is_secret_header(lowered):
             digest = hashlib.sha256(value.encode("utf-8", "surrogatepass"))
             value = _HASHED_VARY_MARKER + digest.hexdigest()
         components.append(f"{lowered}={value}")

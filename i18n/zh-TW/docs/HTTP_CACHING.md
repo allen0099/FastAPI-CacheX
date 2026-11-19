@@ -276,9 +276,9 @@ async def items() -> list[str]: ...
 
 - `Authorization` 標頭；
 - 不是空的 `request.session` 資料，來自任何 Session 中介軟體；
-- 路由的依賴項用來辨識呼叫者的 API 金鑰或 Cookie：FastAPI 的 `APIKeyHeader` 或 `APIKeyCookie`，或 `Cookie()` 參數，位於依賴樹的任何一層，且請求有送出它。放在查詢字串的 API 金鑰（`APIKeyQuery`）本來就是鍵的一部分，路由沒有讀取的 Cookie 也不算。
+- 路由的依賴項用來辨識呼叫者的 API 金鑰或 Cookie：FastAPI 的 `APIKeyHeader` 或 `APIKeyCookie`，或 `Cookie()` 參數，位於依賴樹的任何一層，且請求有送出它。放在查詢字串的 API 金鑰（`APIKeyQuery`）本來就是鍵的一部分，路由沒有讀取的 Cookie 也不算。只是偏好設定的 Cookie（`theme: Cookie()`）同樣算數；這類路由可以設定 `public=True`，並在 `vary` 中以正規化函式列出該 Cookie，以保留快取命中。
 
-這類請求只有在路由設定 `public=True`，或設定 `cache_authorized=True` **而且**鍵能區分呼叫者時，才會讀寫後端：設定了 `key_builder`，或 `vary` 列出攜帶該憑證的標頭（`Authorization`；Session 資料與 Cookie 為 `Cookie`；或 API 金鑰的標頭）。否則它會繞過後端並以 `private` 回應，因此一位呼叫者的回應絕不會提供給另一位。0.6.3 之前，API 金鑰與 Cookie 不算憑證，而 `cache_authorized=True` 搭配預設鍵時，所有呼叫者會共用同一筆項目（#574）。
+這類請求只有在路由設定 `public=True`，或設定 `cache_authorized=True` **而且**鍵能區分呼叫者時，才會讀寫後端：設定了 `key_builder`，或 `vary` 列出攜帶該憑證的標頭（`Authorization`；Session 資料與 Cookie 為 `Cookie`；或 API 金鑰的標頭），而且不帶正規化函式，因為正規化函式可能把每位呼叫者都對應到同一個值。請求帶有的每一項憑證都必須這樣放進鍵中：所有呼叫者共用的 `Authorization` 閘道權杖，無法說明 Session 屬於誰。否則它會繞過後端並以 `private` 回應，因此一位呼叫者的回應絕不會提供給另一位。0.6.3 之前，API 金鑰與 Cookie 不算憑證，而 `cache_authorized=True` 搭配預設鍵時，所有呼叫者會共用同一筆項目（#574）。
 
 因此，每個請求都送出 `Authorization` 的單頁應用程式，或每位訪客都有 Session 資料的網站，在只加上 `@cache` 的路由上完全不會命中快取。請依 handler 回傳的內容選擇：
 
@@ -481,7 +481,7 @@ async def greeting(request: Request):
 http:v2|GET|example.com|/me||authorization=sha256:3f0a…（64 個十六進位字元）
 ```
 
-同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。其他標頭（包括 `X-API-Key` 這類自訂的權杖標頭）都維持可讀；若你的標頭帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
+同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。名稱含有 `key`、`token`、`secret`、`auth`、`session` 或 `password`（不分大小寫）的其他標頭，例如 `X-API-Key` 或 `X-Auth-Token`，也會以相同方式雜湊：`cache_authorized` 路由正是靠列出攜帶 API 金鑰的標頭，以它作為鍵（見[帶有憑證的請求](#requests-with-credentials)）。0.6.3 之前這些標頭維持可讀，因此 API 金鑰本身會出現在鍵中（#575）。其他標頭都維持可讀；若你的標頭以其他名稱帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
 
 單獨使用 `vary=["Authorization"]` 不會解除針對已授權請求的規則（見[帶有憑證的請求](#requests-with-credentials)）：除非路由設定 `public=True` 或同時傳入 `cache_authorized=True`，帶有 `Authorization` 標頭的請求仍會繞過後端。兩者都沒有設定時，只會儲存匿名的 `authorization=` 那一筆。設定 `cache_authorized=True` 時，正是 `vary=["Authorization"]` 辨識呼叫者，因此每個權杖會有自己的項目。
 
@@ -536,7 +536,7 @@ warnings.filterwarnings("ignore", message="cache vary on Cookie")
 > 1. **`private=True`**：回應永遠不會從共用後端讀取，也不會寫入。`Cache-Control: private` 仍允許使用者自己的瀏覽器快取它，而 `If-None-Match` 重新驗證仍會對新產生的內容運作。
 > 2. **包含呼叫者身分的 key builder**：確實需要依使用者區分的伺服器端快取時使用。不要設定 `private`：`private=True` 會繞過後端，key builder 就永遠不會被使用。呼叫者以 `Authorization` 標頭、Session 資料，或路由的依賴項讀取的 API 金鑰或 Cookie 驗證身分時，請傳入 `cache_authorized=True`：沒有它，這類請求同樣會繞過後端。
 >
-> `@cache` 能辨識的憑證列在[帶有憑證的請求](#requests-with-credentials)。它看不到的憑證，例如你的中介軟體不透過 `Cookie()` 參數或 `APIKeyCookie`、直接從 `request.cookies` 讀取的權杖 Cookie，不會觸發繞過：只加上 `@cache` 會把第一位呼叫者的回應提供給所有人，請改用上面兩種做法之一。
+> `@cache` 能辨識的憑證列在[帶有憑證的請求](#requests-with-credentials)。它看不到的憑證，例如你的中介軟體不透過 `Cookie()` 參數或 `APIKeyCookie`、直接從 `request.cookies` 讀取的權杖 Cookie，或以 `Header()` 而不是 `APIKeyHeader` 讀取的權杖標頭，不會觸發繞過：只加上 `@cache` 會把第一位呼叫者的回應提供給所有人，請改用上面兩種做法之一。
 
 ```python
 from fastapi import Request
