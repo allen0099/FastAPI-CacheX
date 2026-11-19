@@ -6,6 +6,7 @@ uncached instead of turning every cached route into a 500.
 
 import hashlib
 import logging
+from collections.abc import Iterable
 from datetime import timedelta
 
 import pytest
@@ -258,3 +259,25 @@ async def test_a_failed_read_skips_the_write_and_says_so() -> None:
     assert response.headers["X-Cache"] == "MISS"
     assert response.headers["X-Cache-Reason"] == "read-failed"
     assert not await backend.get_all_keys()
+
+
+async def test_a_failed_read_skips_the_tag_version_read_too() -> None:
+    """Each backend call during an outage waits out its own timeout (#582)."""
+    calls: list[str] = []
+
+    class Recording(FailingBackend):
+        async def get_many(self, keys: Iterable[str]) -> dict[str, CacheEntry]:
+            calls.append("get_many")
+            return await super().get_many(keys)
+
+    BackendProxy.set(Recording(fail_get=True, fail_set=False))
+    app = FastAPI()
+
+    @app.get("/item")
+    @cache(ttl=60, debug_header=True, tags=["items"])
+    async def item() -> dict[str, int]:
+        return {"n": 1}
+
+    response = TestClient(app).get("/item")
+    assert response.headers["X-Cache-Reason"] == "read-failed"
+    assert calls == []
