@@ -17,6 +17,21 @@ The Redis and Memcached backends namespace their keys with a prefix
 other applications on the same server. `MemoryBackend` lives inside one process
 and has no prefix.
 
+!!! warning "Give every service and environment its own `key_prefix`"
+    The default prefix is the same in every application that uses
+    FastAPI-CacheX. Two services on one Redis or Memcached server with the
+    default read each other's `CacheManager` values, share lock names and
+    tags (`invalidate_tags("users")` in one drops the other's values), and
+    one's `clear()` wipes the other's entries. Set a prefix per service and
+    environment, such as `key_prefix="orders:prod:"` (#585).
+
+A deploy that changes what a route returns (a new `response_model`, a renamed
+field) still serves the old body until its entries expire. To start afresh,
+put a release marker into the prefix (`key_prefix=f"orders:{RELEASE}:"`,
+which leaves the old entries to expire), add it to the key of the routes that
+changed (`build_cache_key(request, "v2")` in a `key_builder`), or tag those
+routes and call `invalidate_tags()` once after the deploy.
+
 ## In-memory (default)
 
 If you don't specify a backend, FastAPI-CacheX will use the in-memory cache by default.
@@ -104,7 +119,11 @@ BackendProxy.set(backend)
 
 - Fully async implementation
 - Supports pattern-based key clearing
-- Uses SCAN instead of KEYS for safe production use (non-blocking)
+- Uses SCAN instead of KEYS for safe production use (non-blocking). SCAN still
+  walks the whole database, about one round trip per 100 keys, whatever
+  matches: `clear_path()` and `clear_pattern()` on a Redis holding 200,000
+  other keys take about 2,000 round trips. On a write path, prefer
+  [tags](HTTP_CACHING.md#by-tag), which cost a constant few commands (#584).
 - Namespaced with `fastapi_cachex:` prefix by default; pass `key_prefix="myapp:cache:"`
   for multi-tenant scenarios
 - `clear()`, `clear_pattern()` and `clear_path()` delete only keys under this backend's
