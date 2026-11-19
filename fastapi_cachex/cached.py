@@ -382,7 +382,7 @@ class CachedFunction(Generic[P, R]):
         if isinstance(self._key, str):
             try:
                 return self._key.format(**bound.arguments)
-            except (KeyError, IndexError, AttributeError, ValueError) as e:
+            except (KeyError, IndexError, AttributeError, ValueError, TypeError) as e:
                 msg = (
                     f"@cached key template {self._key!r} for {self._name} names "
                     f"something its arguments do not have ({e!r})"
@@ -572,10 +572,9 @@ def cached(  # noqa: PLR0913
         raise CacheXError(msg)
 
     def decorator(func: Callable[P, Any]) -> CachedFunction[P, Any]:
-        unwrapped = inspect.unwrap(func)
-        if inspect.isgeneratorfunction(unwrapped) or inspect.isasyncgenfunction(
-            unwrapped
-        ):
+        # The function itself, not what it wraps: a `functools.wraps`
+        # decorator that collects a generator into a list returns a list.
+        if inspect.isgeneratorfunction(func) or inspect.isasyncgenfunction(func):
             # Each call ran the body and then failed to store a generator.
             msg = (
                 f"@cached cannot cache {getattr(func, '__qualname__', func)!r}: it is a generator "
