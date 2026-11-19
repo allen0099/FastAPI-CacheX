@@ -11,6 +11,7 @@ import warnings
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Iterable
+from collections.abc import Iterator
 from datetime import timedelta
 from functools import wraps
 from typing import Any
@@ -19,6 +20,9 @@ from typing import ParamSpec
 from typing import Protocol
 from typing import TypeVar
 from typing import overload
+
+from pydantic_core import PydanticSerializationError
+from pydantic_core import to_jsonable_python
 
 from ._tags import validate_tags
 from .backends.base import validate_ttl
@@ -35,6 +39,77 @@ R = TypeVar("R")
 # Separates the function's name from the digest of its arguments in a default
 # key, as `CacheManager` keys separate their parts.
 _KEY_SEPARATOR = ":"
+
+
+def _jsonable_argument(value: object) -> object:
+    """An argument ``json`` cannot encode, as JSON tagged with its type (#577).
+
+    ``datetime``, ``Decimal``, ``UUID``, ``bytes`` (as base64), a set, a
+    dataclass or a pydantic model, through pydantic's JSON form. The tag
+    keeps ``datetime(2024, 1, 1)`` and the string ``"2024-01-01T00:00:00"``
+    apart, and a set is sorted, so its key is the same in every process.
+    Arguments ``json`` encodes on its own never get here, so their keys are
+    unchanged.
+
+    Raises:
+        TypeError: If pydantic cannot encode it either (an arbitrary object),
+            or it is an iterator, which encoding it would use up
+    """
+    kind = type(value)
+    if isinstance(value, Iterator):
+        # The function would then run on an empty generator, and that
+        # result be cached.
+        msg = f"Object of type {kind.__name__} is an iterator, not hashable as a key"
+        raise TypeError(msg)
+    if isinstance(value, (set, frozenset)):
+        # Each item as canonical JSON, sorted: set order follows string
+        # hashes, which differ between processes. Nested sets go through here
+        # too. A set inside a dataclass or a model is not sorted.
+        encoded: object = sorted(
+            json.dumps(
+                item, sort_keys=True, separators=(",", ":"), default=_jsonable_argument
+            )
+            for item in value
+        )
+    else:
+        try:
+            encoded = to_jsonable_python(value, bytes_mode="base64")
+        except PydanticSerializationError as e:
+            msg = f"Object of type {kind.__name__} is not JSON serializable"
+            raise TypeError(msg) from e
+    return {"$type": f"{kind.__module__}.{kind.__qualname__}", "value": encoded}
+
+
+def _optional_signature(func: Callable[..., Any]) -> inspect.Signature | None:
+    try:
+        return _signature(func)
+    except (TypeError, ValueError, NameError):
+        return None
+
+
+def _call_with_defaults(
+    func: Callable[..., Any],
+    signature: inspect.Signature | None,
+    bound: inspect.BoundArguments,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    """Call a ``key=`` or ``tags=`` callable with the call's arguments, defaults applied.
+
+    Given only what the caller passed, ``key=lambda user_id, locale="fr": ...``
+    named a call to ``def load(user_id, locale="en")`` after a locale it did not
+    use, and ``load(1)`` and ``load(1, "en")`` stored one result twice (#577).
+    A callable that cannot take every argument (``key=lambda user_id: ...``
+    there) still gets only the caller's.
+    """
+    if signature is not None:
+        try:
+            signature.bind(*bound.args, **bound.kwargs)
+        except TypeError:
+            pass
+        else:
+            return func(*bound.args, **bound.kwargs)
+    return func(*args, **kwargs)
 
 
 class _Unset:
@@ -226,11 +301,13 @@ class CachedFunction(Generic[P, R]):
         self._signature = _signature(func)
         self._ttl = ttl
         self._key = key
+        self._key_signature = _optional_signature(key) if callable(key) else None
         self._manager = manager
         self._lock = lock
         self._type = type_
         # A callable is asked on every call; a list is checked once, here.
         self._tags = tags if callable(tags) else validate_tags(tags)
+        self._tags_signature = _optional_signature(tags) if callable(tags) else None
         self._name = f"{func.__module__}.{func.__qualname__}"
         wraps(func)(self)
 
@@ -281,24 +358,50 @@ class CachedFunction(Generic[P, R]):
 
         Raises:
             CacheXError: If an argument is not JSON-serializable and no
-                ``key`` was given, or ``key`` does not give a ``str``
+                ``key`` was given, a ``key`` template names an argument the
+                function does not have, or ``key`` does not give a ``str``
             TypeError: If the arguments do not fit the function's signature
         """
+        return self._key_for(self._bind(args, kwargs), args, kwargs)
+
+    def _bind(
+        self, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> inspect.BoundArguments:
         bound = self._signature.bind(*args, **kwargs)
         bound.apply_defaults()
+        return bound
+
+    def _key_for(
+        self,
+        bound: inspect.BoundArguments,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> str:
         if self._key is None:
             return self._default_key(bound.arguments)
         if isinstance(self._key, str):
-            return self._key.format(**bound.arguments)
-        key = self._key(*args, **kwargs)
+            try:
+                return self._key.format(**bound.arguments)
+            except (KeyError, IndexError, AttributeError, ValueError) as e:
+                msg = (
+                    f"@cached key template {self._key!r} for {self._name} names "
+                    f"something its arguments do not have ({e!r})"
+                )
+                raise CacheXError(msg) from e
+        key = _call_with_defaults(self._key, self._key_signature, bound, args, kwargs)
         if not isinstance(key, str):
-            msg = f"key must return a str, got {type(key).__name__}"  # type: ignore[unreachable]
+            msg = f"key must return a str, got {type(key).__name__}"
             raise CacheXError(msg)
         return key
 
     def _default_key(self, arguments: dict[str, Any]) -> str:
         try:
-            canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+            canonical = json.dumps(
+                arguments,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=_jsonable_argument,
+            )
         except (TypeError, ValueError) as e:
             msg = (
                 f"@cached cannot build a key for {self._name}: an argument is not "
@@ -310,7 +413,8 @@ class CachedFunction(Generic[P, R]):
 
     async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         """Return the cached value, running the function on a miss."""
-        key = self.cache_key(*args, **kwargs)
+        bound = self._bind(args, kwargs)
+        key = self._key_for(bound, args, kwargs)
 
         def factory() -> Awaitable[R] | R:
             return self.__wrapped__(*args, **kwargs)
@@ -320,7 +424,11 @@ class CachedFunction(Generic[P, R]):
         extra: dict[str, Any] = {} if self._type is None else {"type_": self._type}
         if self._tags:
             extra["tags"] = (
-                self._tags(*args, **kwargs) if callable(self._tags) else self._tags
+                _call_with_defaults(
+                    self._tags, self._tags_signature, bound, args, kwargs
+                )
+                if callable(self._tags)
+                else self._tags
             )
         if self._stale_ttl is not None:
             extra["stale_ttl"] = self._stale_ttl
@@ -449,7 +557,7 @@ def cached(  # noqa: PLR0913
             negative, larger than ``MAX_TTL`` or not a whole number of
             seconds (also a ``ValueError``)
         TypeError: When the decorator is applied, if ``lock`` is not a
-            ``bool`` or ``None``
+            ``bool`` or ``None``, or the function is a generator function
         CacheXError: When the decorator is applied, if ``key`` is not a
             ``str``, a callable or ``None``; and when the function is
             called, if the key cannot be built (see ``cache_key``)
@@ -464,6 +572,17 @@ def cached(  # noqa: PLR0913
         raise CacheXError(msg)
 
     def decorator(func: Callable[P, Any]) -> CachedFunction[P, Any]:
+        unwrapped = inspect.unwrap(func)
+        if inspect.isgeneratorfunction(unwrapped) or inspect.isasyncgenfunction(
+            unwrapped
+        ):
+            # Each call ran the body and then failed to store a generator.
+            msg = (
+                f"@cached cannot cache {getattr(func, '__qualname__', func)!r}: it is a generator "
+                "function, whose result cannot be stored. Cache a function "
+                "that returns a list instead."
+            )
+            raise TypeError(msg)
         return CachedFunction(
             func,
             ttl=ttl_seconds,

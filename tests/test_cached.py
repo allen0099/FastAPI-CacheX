@@ -1,15 +1,21 @@
 """``@cached`` caches a plain function's result through ``CacheManager`` (#248)."""
 
 import asyncio
+import functools
 import hashlib
 import json
+import os
+import subprocess
 import sys
 import typing
 from collections.abc import AsyncIterator
+from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
+from decimal import Decimal
 from typing import Any
 from typing import Optional
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -626,3 +632,175 @@ def test_an_annotated_json_type_is_not_validated() -> None:
         return -5
 
     assert cached(ttl=60)(load)._type is None
+
+
+async def test_a_key_callable_sees_the_defaults(manager: CacheManager) -> None:
+    """Given only the passed arguments, a lambda's own default named the key (#577)."""
+    calls: list[str] = []
+
+    @cached(
+        ttl=60,
+        manager=manager,
+        key=lambda user_id, locale="fr": f"u:{user_id}:{locale}",
+    )
+    async def load(user_id: int, locale: str = "en") -> str:
+        calls.append(locale)
+        return locale
+
+    assert load.cache_key(1) == "u:1:en"
+    assert await load(1) == "en"
+    assert await load(1, "en") == "en"
+    assert calls == ["en"]
+
+
+async def test_a_key_callable_that_takes_fewer_arguments_still_works(
+    manager: CacheManager,
+) -> None:
+    @cached(
+        ttl=60,
+        manager=manager,
+        key=lambda user_id: f"u:{user_id}",
+        tags=lambda user_id: [f"user:{user_id}"],
+    )
+    async def load(user_id: int, locale: str = "en") -> str:
+        return locale
+
+    assert load.cache_key(1) == "u:1"
+    assert await load(1) == "en"
+
+
+async def test_a_tags_callable_sees_the_defaults(manager: CacheManager) -> None:
+    @cached(ttl=60, manager=manager, tags=lambda user_id, scope="x": [scope])
+    async def load(user_id: int, scope: str = "users") -> int:
+        return user_id
+
+    await load(1)
+    await manager.invalidate_tags("users")
+    assert not await manager.has(load.cache_key(1))
+
+
+async def test_a_template_naming_a_missing_argument_raises_cachexerror(
+    manager: CacheManager,
+) -> None:
+    @cached(ttl=60, manager=manager, key="user:{uid}")
+    async def load(user_id: int) -> int:
+        return user_id
+
+    with pytest.raises(CacheXError, match="key template"):
+        load.cache_key(1)
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+def test_a_generator_function_is_refused(kind: str, manager: CacheManager) -> None:
+    def numbers() -> typing.Iterator[int]:
+        yield 1
+
+    async def anumbers() -> AsyncIterator[int]:
+        yield 1
+
+    with pytest.raises(TypeError, match="generator"):
+        cached(ttl=60, manager=manager)(numbers if kind == "sync" else anumbers)
+
+
+async def test_arguments_pydantic_can_encode_get_a_typed_key(
+    manager: CacheManager,
+) -> None:
+    """datetime, Decimal, UUID, bytes and sets raised before; now they are keyed (#577)."""
+
+    @cached(ttl=60, manager=manager)
+    async def load(value: object) -> int:
+        return 1
+
+    moment = datetime(2024, 1, 1, tzinfo=UTC)
+    keys = {
+        load.cache_key(value)
+        for value in (
+            moment,
+            moment.isoformat(),
+            Decimal("1.5"),
+            "1.5",
+            UUID(int=1),
+            b"ab",
+            "ab",
+            {"b", "a"},
+            frozenset({"a", "b"}),
+            ["a", "b"],
+        )
+    }
+    assert len(keys) == 10
+    assert load.cache_key({"b", "a"}) == load.cache_key({"a", "b"})
+    # JSON's own types keep the keys they had.
+    assert load.cache_key("ab") == f"{load.__module__}.{load.__qualname__}:" + _digest(
+        value="ab"
+    )
+    assert await load(moment) == 1
+
+
+async def test_an_iterator_argument_is_refused_and_not_used_up(
+    manager: CacheManager,
+) -> None:
+    """Hashing it read it all, and the function then ran on nothing (#577)."""
+
+    @cached(ttl=60, manager=manager)
+    async def total(values: object) -> int:
+        return 0
+
+    items = iter([1, 2])
+    with pytest.raises(CacheXError, match="iterator"):
+        await total(items)
+    assert list(items) == [1, 2]
+
+
+def test_nested_set_keys_are_the_same_in_every_process() -> None:
+    script = (
+        "from fastapi_cachex import cached\n"
+        "@cached(ttl=60)\n"
+        "async def f(v: object) -> int: return 1\n"
+        "print(f.cache_key([frozenset({'a', 'b', frozenset({'c', 'd', 'e'})})]))\n"
+    )
+    keys = {
+        subprocess.run(  # noqa: S603 - our own script, not input
+            [sys.executable, "-c", script],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        for seed in ("1", "2", "3")
+    }
+    assert len(keys) == 1
+
+
+async def test_any_bytes_argument_is_keyed(manager: CacheManager) -> None:
+    @cached(ttl=60, manager=manager)
+    async def load(value: bytes) -> int:
+        return 1
+
+    assert load.cache_key(b"\xff") != load.cache_key(b"\xfe")
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="lazy annotations")
+async def test_a_key_callable_with_an_unresolvable_annotation_works(
+    manager: CacheManager,
+) -> None:
+    """A name imported under TYPE_CHECKING raised NameError on 3.14."""
+    namespace: dict[str, Any] = {}
+    exec("def key(user_id: Missing) -> str:\n    return f'u:{user_id}'", namespace)  # noqa: S102
+
+    @cached(ttl=60, manager=manager, key=namespace["key"])
+    async def load(user_id: int) -> int:
+        return user_id
+
+    assert load.cache_key(1) == "u:1"
+
+
+def test_a_wrapped_generator_function_is_refused(manager: CacheManager) -> None:
+    def numbers() -> typing.Iterator[int]:
+        yield 1
+
+    @functools.wraps(numbers)
+    def wrapper() -> typing.Iterator[int]:
+        return numbers()
+
+    with pytest.raises(TypeError, match="generator"):
+        cached(ttl=60, manager=manager)(wrapper)
