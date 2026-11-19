@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import math
 import secrets
 import time
 from datetime import timedelta
@@ -25,6 +26,34 @@ _LOCK_FINGERPRINT = "lock"
 _pending_withdrawals: set["asyncio.Task[bool]"] = set()
 
 
+def _check_poll_interval(value: float) -> float:
+    """``value`` if it is a positive, finite number of seconds.
+
+    Zero made a blocking ``acquire()`` retry in a tight loop, about 100,000
+    backend calls a second against a held lock (#578).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        msg = f"poll_interval must be a number of seconds, got {type(value).__name__}"
+        raise TypeError(msg)
+    if not (value > 0 and math.isfinite(value)):
+        msg = f"poll_interval must be positive and finite, got {value!r}"
+        raise ValueError(msg)
+    return value
+
+
+def _check_timeout(value: float | None) -> float | None:
+    """``value`` if it is ``None`` or a non-negative number of seconds."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        msg = f"timeout must be a number of seconds or None, got {type(value).__name__}"
+        raise TypeError(msg)
+    if not value >= 0:
+        msg = f"timeout must not be negative, got {value!r}"
+        raise ValueError(msg)
+    return value
+
+
 def _lock_entry(token: str) -> CacheEntry:
     """Wrap a lock token string in the entry model shared by every backend."""
     return CacheEntry(fingerprint=_LOCK_FINGERPRINT, content=token.encode("utf-8"))
@@ -37,7 +66,11 @@ class CacheLock:
 
     Note:
         A single CacheLock instance cannot be shared across concurrent tasks or
-        re-entered. Instantiate a new CacheLock for each acquisition.
+        re-entered. Instantiate a new CacheLock for each acquisition. The lock
+        is not re-entrant either: a task that acquires a name it already
+        holds through another instance waits like anyone else, until the
+        first is released or expires (never, with ``auto_extend``), so pass
+        a ``timeout`` where that can happen.
 
     Args:
         name: Unique lock identifier
@@ -62,6 +95,9 @@ class CacheLock:
             a ``TypeError``)
         TTLValueError: If ``ttl`` is zero, negative, larger than ``MAX_TTL``
             or not a whole number of seconds (also a ``ValueError``)
+        TypeError: If ``timeout`` or ``poll_interval`` is not a number
+        ValueError: If ``timeout`` is negative, or ``poll_interval`` is not
+            positive and finite
     """
 
     def __init__(
@@ -80,8 +116,8 @@ class CacheLock:
         self.name = name
         self.ttl: int = validate_ttl(ttl)
         self.blocking = blocking
-        self.timeout = timeout
-        self.poll_interval = poll_interval
+        self.timeout = _check_timeout(timeout)
+        self.poll_interval = _check_poll_interval(poll_interval)
         self._backend = backend
         self.key_prefix = key_prefix
         self._token = secrets.token_hex(16)
@@ -140,6 +176,9 @@ class CacheLock:
             RuntimeError: If this CacheLock instance is already held.
             BackendNotFoundError: If no ``backend`` was passed and none is
                 registered with ``BackendProxy.set()``.
+            TypeError: If ``timeout`` or ``poll_interval`` is not a number
+            ValueError: If ``timeout`` is negative, or ``poll_interval`` is
+                not positive and finite
         """
         if self._is_held:
             msg = (
@@ -156,8 +195,14 @@ class CacheLock:
         backend: BaseCacheBackend | None = None
         try:
             is_blocking = self.blocking if blocking is None else blocking
-            effective_timeout = self.timeout if timeout is None else timeout
-            interval = self.poll_interval if poll_interval is None else poll_interval
+            effective_timeout = (
+                self.timeout if timeout is None else _check_timeout(timeout)
+            )
+            interval = (
+                self.poll_interval
+                if poll_interval is None
+                else _check_poll_interval(poll_interval)
+            )
             effective_ttl = self.ttl if ttl is None else validate_ttl(ttl)
 
             backend = self._get_backend()
