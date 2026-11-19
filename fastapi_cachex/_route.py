@@ -129,6 +129,15 @@ def _as_get(request: Request) -> Request:
     return Request({**request.scope, "method": "GET"}, request.receive)
 
 
+# A failure of one kind ("read failed; serving uncached") is logged at WARNING
+# at most once per interval; the ones in between go to DEBUG and are counted
+# into the next warning. During an outage every request failed and logged,
+# which turned a cache outage into a log flood (#583).
+_FAILURE_LOG_INTERVAL = 60.0
+# what -> (when it was last logged at WARNING, failures since then)
+_failure_log: dict[str, tuple[float, int]] = {}
+
+
 def _log_backend_failure(
     what: str, request: Request, cache_key: str, error: Exception
 ) -> None:
@@ -141,15 +150,30 @@ def _log_backend_failure(
     could otherwise put a CR/LF into the log.
     """
     key_ref = log_ref(cache_key)
-    logger.warning(
-        "Cache backend %s. method=%s path=%r key_ref=%s error=%r",
+    now = time.monotonic()
+    last = _failure_log.get(what)
+    if last is None or now - last[0] >= _FAILURE_LOG_INTERVAL:
+        _failure_log[what] = (now, 0)
+        logger.warning(
+            "Cache backend %s. method=%s path=%r key_ref=%s error=%r%s",
+            what,
+            request.method,
+            request.url.path,
+            key_ref,
+            error,
+            ""
+            if last is None or not last[1]
+            else f" ({last[1]} more since the last warning, at DEBUG)",
+        )
+    else:
+        _failure_log[what] = (last[0], last[1] + 1)
+    logger.debug(
+        "Cache backend %s; key_ref=%s error=%r key=%s",
         what,
-        request.method,
-        request.url.path,
         key_ref,
         error,
+        cache_key,
     )
-    logger.debug("Cache backend %s; key_ref=%s key=%s", what, key_ref, cache_key)
     _emit("error", "http", cache_key, route=_route_template(request))
 
 

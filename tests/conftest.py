@@ -15,6 +15,7 @@ from fastapi_cachex import set_enabled
 from fastapi_cachex import set_event_handler
 from fastapi_cachex._coalesce import _IN_FLIGHT
 from fastapi_cachex._coalesce import _REFRESHING
+from fastapi_cachex._route import _failure_log
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends import memory
 from fastapi_cachex.backends.base import BaseCacheBackend
@@ -199,6 +200,7 @@ def reset_proxy_singletons():
     set_enabled(True)
     # Each test sees the once-per-class non-atomic warning afresh (#579).
     _warned_fallbacks.clear()
+    _failure_log.clear()
     yield
     for proxy in _PROXIES:
         proxy.set(None)

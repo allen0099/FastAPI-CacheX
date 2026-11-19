@@ -615,7 +615,12 @@ the handler runs. If storing the response raises, for example because it is
 larger than Memcached's item size limit (1 MB by default), the response is
 served unstored. Either way a warning is logged on the `fastapi_cachex.cache`
 logger, and a backend outage cannot turn cached routes into 500s. The load
-goes to your handlers instead, so watch for those warnings.
+goes to your handlers instead, so watch for those warnings. Each kind of
+failure (a failed read, a failed write, ...) is logged at `WARNING` at most
+once a minute, with the number of failures since the last warning; every
+failure is logged at `DEBUG` and reported as an [`error` event](#counting-hits-and-misses).
+Before 0.6.3 every failing request logged its own warning, so an outage
+flooded the logs.
 
 Failing open is only as fast as the backend's error. By default redis-py 8
 retries a failed Redis command 10 times with exponential backoff, so while
@@ -1308,6 +1313,14 @@ def record(event: CacheEvent) -> None:
 
 set_event_handler(record)
 ```
+
+The handler runs synchronously on the request's path, once per event: a slow
+one delays every request, so keep it to updating counters. A second
+`set_event_handler()` call replaces the first handler; to feed metrics and
+tracing, call both from one function. An exception the handler raises never
+reaches the request: the first is logged with its traceback on the
+`fastapi_cachex.events` logger, later ones at `DEBUG` with a count, until a
+handler is set again.
 
 | `kind` | When |
 |---|---|
