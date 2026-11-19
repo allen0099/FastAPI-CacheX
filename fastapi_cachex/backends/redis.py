@@ -63,15 +63,35 @@ _BATCH_SIZE = 100
 
 # INCRBY that attaches a TTL only when it creates the key, so a counter lives in
 # a fixed window. KEYS[1] = key, ARGV[1] = delta, ARGV[2] = ttl (0 = none).
-# The value is returned as the stored string: Lua turns an integer reply into
-# a double, which rounds anything past 2**53 (#364).
-_INCREMENT_SCRIPT = """
+# Replies {status, value}. The value is the stored string: Lua turns an integer
+# reply into a double, which rounds anything past 2**53 (#364).
+#
+# The status tells a failed INCRBY apart without reading its error message,
+# whose wording differs between servers and versions (#504). Both failures
+# carry the generic ERR code; an INCRBY of 0 cannot overflow, so it fails only
+# when the value is not an integer. An error with any other code (WRONGTYPE,
+# OOM, READONLY) is replied as it is. After an overflow the probe is a real
+# write that leaves value and TTL as they were, but still fires a keyspace
+# notification and breaks a WATCH on the key.
+_INCREMENT_OK = 0
+_INCREMENT_NOT_A_COUNTER = 1
+_INCREMENT_OVERFLOW = 2
+_INCREMENT_SCRIPT = f"""
 local created = redis.call('EXISTS', KEYS[1]) == 0
-redis.call('INCRBY', KEYS[1], ARGV[1])
+local reply = redis.pcall('INCRBY', KEYS[1], ARGV[1])
+if type(reply) == 'table' and reply.err then
+    if created or string.sub(reply.err, 1, 4) ~= 'ERR ' then
+        return reply
+    end
+    if type(redis.pcall('INCRBY', KEYS[1], 0)) == 'table' then
+        return {{{_INCREMENT_NOT_A_COUNTER}}}
+    end
+    return {{{_INCREMENT_OVERFLOW}}}
+end
 if created and tonumber(ARGV[2]) > 0 then
     redis.call('EXPIRE', KEYS[1], ARGV[2])
 end
-return redis.call('GET', KEYS[1])
+return {{{_INCREMENT_OK}, redis.call('GET', KEYS[1])}}
 """
 
 # DEL that only fires while the key still holds the exact bytes the caller read,
@@ -607,20 +627,16 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         """
         validate_delta(delta)
         ttl = validate_ttl(ttl)
-        from redis.exceptions import ResponseError
-
-        try:
-            value = await self._increment_script(
-                keys=[self._make_key(key)], args=[delta, ttl or 0]
-            )
-        except ResponseError as e:
-            if "would overflow" in str(e):
-                msg = "Counter increment would overflow a signed 64-bit integer"
-                raise CacheXError(msg) from e
-            if "not an integer" not in str(e):
-                raise
+        reply = await self._increment_script(
+            keys=[self._make_key(key)], args=[delta, ttl or 0]
+        )
+        if reply[0] == _INCREMENT_NOT_A_COUNTER:
             msg = "Cache key holds a value that is not a counter"
-            raise CacheXError(msg) from e
+            raise CacheXError(msg)
+        if reply[0] == _INCREMENT_OVERFLOW:
+            msg = "Counter increment would overflow a signed 64-bit integer"
+            raise CacheXError(msg)
+        value = reply[1]
         logger.debug("Redis INCREMENT; key=%s value=%s ttl=%s", key, value, ttl)
         return int(value)
 

@@ -1017,6 +1017,42 @@ async def test_redis_increment_rejects_a_cached_response(
 
 
 @requires_redis
+async def test_redis_increment_leaves_a_wrong_type_error_as_it_is(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """The script's status codes cover string values only (#504)."""
+    from redis.exceptions import ResponseError
+
+    prefixed = async_redis_backend._make_key("set")
+    await async_redis_backend.client.sadd(prefixed, "member")
+
+    with pytest.raises(ResponseError, match="WRONGTYPE"):
+        await async_redis_backend.increment("set")
+    assert await async_redis_backend.client.smembers(prefixed) == {b"member"}
+
+
+@requires_redis
+async def test_redis_increment_does_not_take_a_refused_write_for_a_bad_value(
+    async_redis_backend: AsyncRedisCacheBackend,
+) -> None:
+    """An OOM refusal fails the probing INCRBY too; it is raised as it is (#504)."""
+    from redis.exceptions import OutOfMemoryError
+
+    client = async_redis_backend.client
+    await async_redis_backend.increment("hits")
+    saved = await client.config_get("maxmemory*")
+    await client.config_set("maxmemory-policy", "noeviction")
+    await client.config_set("maxmemory", 1)
+    try:
+        with pytest.raises(OutOfMemoryError):
+            await async_redis_backend.increment("hits")
+    finally:
+        for name in ("maxmemory", "maxmemory-policy"):
+            await client.config_set(name, str(saved[name]))
+    assert await async_redis_backend.increment("hits") == 2
+
+
+@requires_redis
 async def test_redis_increment_reraises_other_response_errors(
     async_redis_backend: AsyncRedisCacheBackend,
 ) -> None:

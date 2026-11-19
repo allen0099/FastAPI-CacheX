@@ -33,8 +33,20 @@ from .config import DEFAULT_KEY_PREFIX
 
 logger = logging.getLogger(__name__)
 
-# What pymemcache's HashClient raises while every server is out of rotation.
+# Memcached and pymemcache report these failures only as text, so the exception
+# a failure becomes depends on a substring of its message. A wording change in
+# the server or the client changes the type silently, so each one is pinned by
+# a test against the real source (#504).
+#
+# pymemcache's HashClient, while every server is out of rotation
+# (tests/backends/test_unavailable.py, no server needed).
 _ALL_SERVERS_DOWN = "All servers seem to be down"
+# The server's INCR/DECR on a value that is not a number
+# (test_memcached_increment_rejects_a_cached_response).
+_NOT_NUMERIC = "non-numeric"
+# The server refusing an item over its size limit
+# (test_memcached_server_refuses_a_value_over_its_item_size).
+_TOO_LARGE = "too large"
 
 
 def _is_unavailable(error: Exception) -> bool:
@@ -65,7 +77,7 @@ def _refused_as_too_large(key: str, payload: bytes) -> Iterator[None]:
     try:
         yield
     except MemcacheServerError as e:
-        if "too large" not in str(e):
+        if _TOO_LARGE not in str(e):
             raise
         # The message reaches error logs and trackers: a digest, not the key.
         msg = (
@@ -620,7 +632,7 @@ class MemcachedBackend(BaseCacheBackend):
                 self._increment, prefixed_key, delta, exptime
             )
         except MemcacheClientError as e:
-            if "non-numeric" not in str(e):
+            if _NOT_NUMERIC not in str(e):
                 raise
             msg = "Cache key holds a value that is not a counter"
             raise CacheXError(msg) from e
