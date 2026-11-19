@@ -99,6 +99,9 @@ class CacheEvent:
 EventHandler = Callable[[CacheEvent], None]
 
 _handler: EventHandler | None = None
+# How often the current handler raised; its traceback is logged on the first
+# failure only, so a broken handler does not log one per event (#583).
+_handler_failures = 0
 # Set while the library reads through its own public API (``get_or_set``
 # calling ``get``), so that one call is reported once.
 _muted: ContextVar[bool] = ContextVar("fastapi_cachex_events_muted", default=False)
@@ -108,9 +111,10 @@ def set_event_handler(handler: EventHandler | None) -> None:
     """Register the callable told about cache events; ``None`` removes it.
 
     The handler is called synchronously, on the request's path: keep it to
-    incrementing a counter or recording a number. It must be a plain
-    function. An exception it raises is logged and does not reach the
-    request.
+    incrementing a counter or recording a number, since a slow one delays
+    every request. It must be a plain function. An exception it raises does
+    not reach the request: the first is logged with its traceback, later ones
+    at DEBUG with a count. Setting a handler replaces the previous one.
 
     Raises:
         TypeError: If ``handler`` is not callable, or is an ``async``
@@ -121,8 +125,9 @@ def set_event_handler(handler: EventHandler | None) -> None:
     ):
         msg = "the event handler must be a plain function taking the event"
         raise TypeError(msg)
-    global _handler  # noqa: PLW0603 - one process-wide hook, like logging's
+    global _handler, _handler_failures  # noqa: PLW0603 - one process-wide hook, like logging's
     _handler = handler
+    _handler_failures = 0
 
 
 @contextmanager
@@ -150,7 +155,21 @@ def _emit(  # noqa: PLR0913
     try:
         handler(CacheEvent(kind, source, key, route, duration, reason))
     except Exception:
-        logger.exception("The cache event handler raised; kind=%s", kind)
+        global _handler_failures  # noqa: PLW0603
+        _handler_failures += 1
+        if _handler_failures == 1:
+            logger.exception(
+                "The cache event handler raised; kind=%s. Later failures are "
+                "logged at DEBUG only.",
+                kind,
+            )
+        else:
+            logger.debug(
+                "The cache event handler raised again (%d times); kind=%s",
+                _handler_failures,
+                kind,
+                exc_info=True,
+            )
 
 
 __all__ = [

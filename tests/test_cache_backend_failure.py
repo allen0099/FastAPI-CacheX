@@ -18,6 +18,8 @@ from starlette.types import Scope
 
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import cache
+from fastapi_cachex import set_event_handler
+from fastapi_cachex._route import _failure_log
 from fastapi_cachex.backends import MemcachedBackend
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.types import CacheEntry
@@ -281,3 +283,48 @@ async def test_a_failed_read_skips_the_tag_version_read_too() -> None:
     response = TestClient(app).get("/item")
     assert response.headers["X-Cache-Reason"] == "read-failed"
     assert calls == []
+
+
+def test_an_outage_warns_once_a_minute_with_a_count(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every failing request logged a WARNING: 124 lines for 62 requests (#583)."""
+    BackendProxy.set(FailingBackend(fail_get=True, fail_set=False))
+    app, _ = _counting_app()
+    client = TestClient(app)
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.cache"):
+        for _ in range(5):
+            client.get("/item")
+        # A minute passes.
+        [(what, (logged_at, count))] = _failure_log.items()
+        _failure_log[what] = (logged_at - 61, count)
+        client.get("/item")
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2
+    assert "more since" not in warnings[0]
+    assert "(4 more since the last warning, at DEBUG)" in warnings[1]
+
+
+def test_a_failing_event_handler_logs_its_traceback_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def handler(event: object) -> None:
+        msg = "broken metrics"
+        raise RuntimeError(msg)
+
+    set_event_handler(handler)
+    app, _ = _counting_app()
+    client = TestClient(app)
+    with caplog.at_level(logging.ERROR, logger="fastapi_cachex.events"):
+        for _ in range(3):
+            client.get("/item")
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].exc_info is not None
+    # A new handler is reported afresh.
+    set_event_handler(handler)
+    with caplog.at_level(logging.ERROR, logger="fastapi_cachex.events"):
+        client.get("/item")
+    assert len([r for r in caplog.records if r.levelno >= logging.ERROR]) == 2
