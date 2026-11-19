@@ -49,6 +49,18 @@ def _warn_not_atomic(backend: object, method: str) -> None:
     _warned_fallbacks.add((kind, method))
 
 
+def bare_decorator_hint(value: object) -> str:
+    """The fix for ``@cache`` / ``@cached`` written without parentheses (#581).
+
+    Then the decorated function arrives as ``ttl``.
+    """
+    if callable(value) and not isinstance(value, type):
+        return (
+            " (a function: write @cache(ttl=60) or @cached(ttl=60), with parentheses)"
+        )
+    return ""
+
+
 def warn_if_path_shaped(pattern: str, cleared: int) -> None:
     """Warn when a ``clear_pattern`` that cleared nothing was written as a path.
 
@@ -114,7 +126,7 @@ def validate_ttl(ttl: int | timedelta | None) -> int | None:
     elif isinstance(ttl, bool) or not isinstance(ttl, int):
         msg = (
             "ttl must be an int number of seconds, a timedelta or None, "
-            f"got {type(ttl).__name__}"
+            f"got {type(ttl).__name__}{bare_decorator_hint(ttl)}"
         )
         raise TTLTypeError(msg)
     if ttl <= 0:

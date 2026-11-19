@@ -471,7 +471,13 @@ def cache(
             if request is None:
                 # Reached when the wrapper is called outside the router, which
                 # is the only caller that supplies the request parameter.
-                raise RequestNotFoundError
+                msg = (
+                    f"@cache on {func.__qualname__} was called outside a FastAPI "
+                    "route: it caches HTTP route handlers, under @app.get(...) "
+                    "or @router.get(...). For a plain function use "
+                    "@cached(ttl=...)."
+                )
+                raise RequestNotFoundError(msg)
             # The dependencies have run; the handler has not (see
             # `_split_header_lines`).
             call = _Call(

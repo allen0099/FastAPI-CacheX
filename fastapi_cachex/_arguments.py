@@ -11,6 +11,7 @@ from fastapi import Request
 from . import _tags
 from ._callables import _is_coroutine_callable
 from .backends.base import MAX_TTL
+from .backends.base import bare_decorator_hint
 from .exceptions import CacheXError
 from .exceptions import TTLTypeError
 from .exceptions import TTLValueError
@@ -136,7 +137,7 @@ def _seconds(name: str, value: int | timedelta | None) -> int | None:
         # failing open would hide that the route never caches.
         msg = (
             f"{name} must be an int number of seconds or a timedelta, "
-            f"got {type(value).__name__}"
+            f"got {type(value).__name__}{bare_decorator_hint(value)}"
         )
         raise TTLTypeError(msg)
     if value < 0:
