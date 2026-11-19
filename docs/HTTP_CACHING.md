@@ -526,13 +526,21 @@ A request carries credentials when it has any of:
   API key in the query string (`APIKeyQuery`) is part of the key already, and
   a cookie the route does not read does not count. A cookie that is only a
   preference (`theme: Cookie()`) counts too; such a route keeps its cache hits
-  with `public=True` and the cookie in `vary` with a normaliser.
+  with `public=True` and the cookie in `vary` with a normaliser, if its
+  response is the same for every user (`public` also shares it between
+  requests with `Authorization` and sends `Cache-Control: public`), or else
+  with `cache_authorized=True` and a `key_builder` that puts the user and the
+  preference into the key.
 
 Such a request reads and writes the backend only when the route is
 `public=True`, or sets `cache_authorized=True` **and** its key tells the callers
 apart: a `key_builder`, or `vary` listing the header that carries the
 credential (`Authorization`, `Cookie` for session data and cookies, or the API
 key header), without a normaliser, which could map every caller to one value.
+An API key header counts only if `vary` hashes it (its name contains `key`,
+`token`, `secret`, `auth`, `session` or `password`, see
+[Credential headers are hashed](#credential-headers-are-hashed)); for one named
+otherwise, such as `X-Client`, use a `key_builder` that hashes it.
 Every credential the request carries must be keyed so: a gate token in
 `Authorization` that every caller shares says nothing about whose session it
 is. Otherwise it bypasses the backend and is answered with `private`,
