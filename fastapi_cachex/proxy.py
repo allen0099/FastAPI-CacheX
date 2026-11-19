@@ -38,6 +38,8 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
     _instance: ProxyInstance | None = None
     # Raised by `get()` while no instance is set.
     _not_set_error: ClassVar[type[BackendNotFoundError]] = ProxyNotSetError
+    # Appended to the "no instance set" message: how to set one (#581).
+    _not_set_hint: ClassVar[str] = ""
     # Serialises `get_or_create`. A threading lock, because the sync FastAPI
     # dependencies built on it run in worker threads. One per class, so a
     # factory may call another proxy's `get_or_create` (the default
@@ -61,7 +63,7 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
                 for ``BackendProxy``)
         """
         if cls._instance is None:
-            msg = f"No instance set for proxy {cls.__name__}"
+            msg = f"No instance set for proxy {cls.__name__}{cls._not_set_hint}"
             raise cls._not_set_error(msg)
         return cls._instance
 
@@ -108,6 +110,10 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
     """FastAPI CacheX Proxy for backend management."""
 
     _not_set_error = BackendNotFoundError
+    _not_set_hint = (
+        ": call BackendProxy.set(MemoryBackend()) (or a Redis or Memcached "
+        "backend) at startup, or pass backend= where you build it"
+    )
 
 
 def get_backend_or_fallback() -> BaseCacheBackend:

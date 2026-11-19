@@ -146,13 +146,30 @@ def _validate_key_builder(builder: Callable[..., object]) -> None:
     (say a sync wrapper returning a coroutine) is caught by ``_build_key``.
 
     Raises:
-        CacheXError: If calling ``builder`` would return a coroutine.
+        CacheXError: If calling ``builder`` would return a coroutine, or it
+            cannot be called with the request alone (a fastapi-cache2 key
+            builder, ``(func, namespace, request, ...)``, failed on every
+            request instead, #581).
     """
     target = builder
     while isinstance(target, partial):
         target = target.func
     if _is_coroutine_callable(target):
         raise CacheXError(_ASYNC_KEY_BUILDER_MSG)
+    try:
+        signature = inspect.signature(builder)
+    except (TypeError, ValueError, NameError):
+        return
+    try:
+        signature.bind(None)
+    except TypeError as e:
+        msg = (
+            f"key_builder must take the request as its only argument, "
+            f"key_builder(request) -> str; {signature} cannot ({e}). A "
+            "fastapi-cache2 key builder (func, namespace, request, ...) needs "
+            "rewriting; see the fastapi-cache2 migration guide."
+        )
+        raise CacheXError(msg) from e
 
 
 def _build_key(builder: CacheKeyBuilder, request: Request) -> str:
