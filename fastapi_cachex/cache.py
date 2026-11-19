@@ -167,9 +167,17 @@ def cache(
             leaves the response unstored. ``False`` lets the error propagate,
             so the request fails.
         cache_authorized: Read and write the backend for requests that carry
-            an ``Authorization`` header or a non-empty ``request.session``
-            (from any session middleware, such as Starlette's
-            ``SessionMiddleware``). By default such a request bypasses the
+            credentials: an ``Authorization`` header, a non-empty
+            ``request.session`` (from any session middleware, such as
+            Starlette's ``SessionMiddleware``), or an API key or cookie the
+            route's dependencies read (FastAPI's ``APIKeyHeader`` or
+            ``APIKeyCookie``, a ``Cookie()`` parameter), when the key
+            identifies the caller: a ``key_builder`` is set, or ``vary``
+            lists the header carrying the credential (``Authorization``,
+            ``Cookie``, the API key header). Otherwise such a request still
+            bypasses, so one caller's response is never served to another;
+            pass ``key_builder=default_key_builder`` to share one entry
+            between callers on purpose. By default such a request bypasses the
             backend as ``private=True`` does (RFC 9111 §3.5), unless
             ``public`` is set, and its response is sent with ``private``.
             With this option the response to such a request still carries
@@ -184,10 +192,7 @@ def cache(
             value), since it otherwise leaves the route with no cache hits.
             RFC 9111 would also allow reuse under ``must-revalidate``, but
             ``must_revalidate=True`` does not lift the bypass: only this
-            explicit opt-in or ``public`` does. Set this only when
-            ``key_builder`` puts the verified caller's identity into the key;
-            with the default key builder one user's response would be served
-            to the next.
+            explicit opt-in or ``public`` does.
         vary: Request header names the response depends on, e.g.
             ``["Accept-Language"]``. Each header's value (trimmed; empty when
             missing) is appended to the key, after whatever ``key_builder``
@@ -211,10 +216,9 @@ def cache(
             A normalised value is hashed the same way. Listing ``Cookie``
             without a normaliser emits a ``UserWarning`` when the decorator
             is applied, since every visitor then gets their own entry.
-            A request with ``Authorization`` or a non-empty
-            ``request.session`` still bypasses the backend unless ``public``
-            or ``cache_authorized`` is set, and a response that sets a cookie
-            is still not stored.
+            A request with credentials (see ``cache_authorized``) still
+            bypasses the backend unless ``public`` or ``cache_authorized`` is
+            set, and a response that sets a cookie is still not stored.
         sort_query: Order the query parameters by name before building the
             key, so ``?a=1&b=2`` and ``?b=2&a=1`` share one entry. The sort is
             stable: repeated values of one name keep the order the client
@@ -436,6 +440,7 @@ def cache(
             client_cache_control=client_cache_control,
             tags=route_tags,
             key_builder=builder,
+            default_key=key_builder is None,
             vary_names=vary_names,
             cache_control=cache_control,
             # `no_cache` leaves the scope out of the header, so it is added.

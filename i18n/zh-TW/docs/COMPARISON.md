@@ -27,7 +27,7 @@ FastAPI-CacheX 在 FastAPI 應用程式內快取 HTTP 回應，並正確處理�
 當你要快取的是 **FastAPI 回應**，而且希望快取的行為和 HTTP 快取一致時，選擇它：
 
 - **HTTP 語意。** `@cache` 依參數產生 `Cache-Control`，加上弱 `ETag`，並在 `If-None-Match` 相符時回 `304`，快取未命中和 `no_cache` 路由也一樣。命中時送出 `Age`，遵循 `Vary`（`vary=` 把請求標頭加進快取鍵），並以快取的 `GET` 回應 `HEAD`（0.5.0）。見 [HTTP 快取](HTTP_CACHING.md)。
-- **預設對帶憑證的請求安全。** 預設的快取鍵不含使用者身分，所以帶 `Authorization` 或 Session 的請求會略過共用快取，並以 `Cache-Control: private` 回應；設定 cookie 的回應永遠不會存入快取。要共用時設定 `public=True`；要每個使用者各自一筆項目時，設定 `cache_authorized=True` 並搭配把使用者放進快取鍵的 key builder（見[帶有憑證的請求](HTTP_CACHING.md#requests-with-credentials)）。
+- **預設對帶憑證的請求安全。** 預設的快取鍵不含使用者身分，所以帶 `Authorization`、Session，或路由的依賴項讀取的 API 金鑰或 Cookie 的請求會略過共用快取，並以 `Cache-Control: private` 回應；設定 cookie 的回應永遠不會存入快取。要共用時設定 `public=True`；要每個使用者各自一筆項目時，設定 `cache_authorized=True` 並搭配把使用者放進快取鍵的 key builder（見[帶有憑證的請求](HTTP_CACHING.md#requests-with-credentials)）。
 - **快取鍵來自請求。** 快取鍵是方法、主機、路徑與排序後的查詢字串，和下游 HTTP 快取看到的一致，也可以用 `invalidate(request)` 或 `clear_path()` 讓路由的快取失效。
 - **不用 pickle。** 回應與 `CacheManager` 的值都以 JSON 儲存，從共用的 Redis 讀出的項目在反序列化時不會執行程式碼。
 - **失敗時放行（fail open）。** 後端無法使用時，`@cache` 記錄日誌並執行 handler，快取故障不會變成 API 故障。

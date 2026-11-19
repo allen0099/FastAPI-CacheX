@@ -206,7 +206,7 @@ def test_an_authorized_request_revalidates_with_304_and_private() -> None:
     app = FastAPI()
 
     @app.get("/me")
-    @cache(ttl=60, cache_authorized=True)
+    @cache(ttl=60, cache_authorized=True, vary=["Authorization"])
     async def me(request: Request):
         return {"user": request.headers["Authorization"]}
 

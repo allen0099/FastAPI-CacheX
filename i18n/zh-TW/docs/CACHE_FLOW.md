@@ -42,7 +42,7 @@ flowchart TD
 |---|---|
 | GET 或 HEAD？ | 只有 GET 與 HEAD 會經過快取，HEAD 讀取的是 GET 的項目。其他方法直接執行 handler，也不會有 `Cache-Control` 標頭。 |
 | `no_store`？ | 執行 handler，不讀取也不寫入後端，回應帶有 `Cache-Control: no-store`。 |
-| 略過後端？ | 以下情況為「是」：`private=True`、路由沒有正的 `ttl`，或請求帶有 `Authorization` 或 session 資料而路由沒有設定 `public` 或 `cache_authorized`；另外，快取[關閉](TESTING.md#switching-off)期間每個路由都是。此時不執行 key builder；以新產生的回應與 `If-None-Match` 比對，決定回 304 還是 200；帶有憑證時，`Cache-Control` 以 `private` 取代 `public`。設定 `cache_authorized` 時會使用後端，但每個回應仍然是 `private`。 |
+| 略過後端？ | 以下情況為「是」：`private=True`、路由沒有正的 `ttl`，或[帶有憑證的請求](HTTP_CACHING.md#requests-with-credentials)（`Authorization`、session 資料，或路由的依賴項讀取的 API 金鑰或 Cookie），除非路由設定 `public`，或設定 `cache_authorized` 且鍵能辨識呼叫者；另外，快取[關閉](TESTING.md#switching-off)期間每個路由都是。此時不執行 key builder；以新產生的回應與 `If-None-Match` 比對，決定回 304 還是 200；帶有憑證時，`Cache-Control` 以 `private` 取代 `public`。設定 `cache_authorized` 時會使用後端，但每個回應仍然是 `private`。 |
 | 用戶端要求最新的回應？ | 只有設定 `client_cache_control` 的路由才會判斷。請求的 `no-cache` 或 `max-age=0` 會略過讀取：handler 執行，它的回應取代該項目。請求的 `no-store` 在更早的地方就決定了，算在「略過後端」。 |
 | 建立快取鍵 | `key_builder`（預設為 `http:v2\|method\|host\|path\|query`），再為每個 `vary` 標頭附加一個 `name=value` 段。 |
 | 讀取項目 | 設定 `fail_open` 時，後端錯誤視為未命中。儲存之後有任何 tag 被失效的項目，以及在路由有這些 tag 之前就儲存的項目，也視為未命中。設定 `coalesce=True` 時，沒有讀到項目的請求會等待正在產生同一個鍵的請求，然後再讀一次。設定 `coalesce="distributed"` 時，在所屬行程中領頭的請求還會對這個鍵取得鎖，或等待持有鎖的 worker。 |
@@ -144,7 +144,7 @@ cache_key = "|".join(
 > 對於回應內容取決於呼叫者的端點，請擇一處理：
 >
 > 1. `private=True`：永遠不讀取或寫入共用後端。它仍會送出 `Cache-Control: private`，讓使用者自己的瀏覽器可以快取回應，而且 `If-None-Match` 仍會與新產生的內容比對。
-> 2. 包含身分的自訂 `key_builder`，並搭配 `cache_authorized=True`：當你確實需要以使用者為單位的伺服器端快取時使用。未設定 `cache_authorized` 時，帶有 `Authorization` 標頭或不是空的 `request.session` 的請求會繞過後端（見下方說明）。設定之後，回應仍以 `private` 送出，因為下游的共用快取看不到鍵中的身分。
+> 2. 包含身分的自訂 `key_builder`，並搭配 `cache_authorized=True`：當你確實需要以使用者為單位的伺服器端快取時使用。未設定 `cache_authorized` 時，帶有 `Authorization` 標頭、不是空的 `request.session`，或路由的依賴項讀取的 API 金鑰或 Cookie 的請求會繞過後端（見下方說明）；在鍵無法辨識呼叫者的 `cache_authorized` 路由上也一樣。設定之後，回應仍以 `private` 送出，因為下游的共用快取看不到鍵中的身分。
 >
 > 身分請取自可信任的來源（已驗證的權杖 claim、透過依賴注入取得的使用者物件）；不要信任未經檢查的用戶端標頭。
 
@@ -182,10 +182,12 @@ if no_store:
     return await render()  # 不讀取，不寫入
 
 bypass = private or not ttl
-# Authorization 標頭，或不是空的 request.session
+# Authorization 標頭、不是空的 request.session，或路由的依賴項讀取的
+# API 金鑰或 Cookie；連同攜帶它的標頭
 credential = None if private or public else request_credential(request)
 header = private_header if credential else decorator_header  # 用於下方每個回應
-if bypass or (credential and not cache_authorized):
+# key_identifies：有 key_builder，或 vary 列出憑證所在的標頭
+if bypass or (credential and not (cache_authorized and key_identifies(credential))):
     response, etag = await render()  # 既不讀取也不寫入後端
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
@@ -270,7 +272,7 @@ return response
 > 「非 2xx 不寫入」是刻意的設計：暫時性的錯誤不應抹除最後一次正常的快取回應，也不應在之後被當成 200 重播。`206 Partial Content` 同樣不會快取，因為它的內容只對產生它的那個 `Range` 請求有意義。非 2xx 回應也永遠不會以 `304` 回應，且回傳時不帶裝飾器的 `Cache-Control` 標頭（只有 `no_store=True` 會在每個回應加上 `no-store`）。
 
 > [!NOTE]
-> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），帶有不是空的 `request.session`（來自任何 Session 中介軟體）的請求也一樣，除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用（用於包含已驗證身分的 `key_builder`）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及任何帶有 `Authorization` 或 Session 資料的請求的回應（無論繞過後端，或設定 `cache_authorized` 而由後端回應；200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`s-maxage` 與 `proxy-revalidate` 除外；`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 之前這類回應會被儲存並重播給每位呼叫者（#296）；帶有 Session 的請求在 0.3.9 之前也不會繞過（#319）。
+> **屬於單一呼叫者的回應永遠不會被儲存。** 依照 RFC 9111 §3.5，帶有 `Authorization` 標頭的請求會繞過後端（不讀取也不寫入），帶有不是空的 `request.session`（來自任何 Session 中介軟體），或帶有路由的依賴項讀取的 API 金鑰或 Cookie 的請求也一樣，除非路由設定了 `public=True`，或以 `cache_authorized=True` 明確選擇啟用，且鍵能辨識呼叫者（包含已驗證身分的 `key_builder`，或 `vary` 列出憑證所在的標頭）。產生回應時，若回應自己的 `Cache-Control` 含有 `private` 或 `no-store`（完整指令，不分大小寫），或回應設定了 cookie，則照常回傳但不寫入。handler 送出的 `private`／`no-store` 標頭會原樣送出，不會被裝飾器的標頭取代。設定 cookie 的回應，以及任何帶有 `Authorization` 或 Session 資料的請求的回應（無論繞過後端，或設定 `cache_authorized` 而由後端回應；200 或 304），會以 `private` 取代 `public` 送出並保留裝飾器的其他指令（`s-maxage` 與 `proxy-revalidate` 除外；`no_cache` 路由則為 `private, no-cache`），讓下游的共用快取也不會儲存它們。`must_revalidate=True` 不會解除 `Authorization` 的繞過；雖然 RFC 9111 允許在 `must-revalidate` 下重複使用，本函式庫仍要求明確選擇啟用。該鍵下已儲存的項目保持不變，而在 handler 執行前就命中該項目的請求仍照常由它回應。每次略過都會以 `DEBUG` 等級記錄。0.3.9 之前這類回應會被儲存並重播給每位呼叫者（#296）；帶有 Session 的請求在 0.3.9 之前也不會繞過（#319）。
 
 ### 4. ETag 產生與驗證 {#4-etag-generation-and-validation}
 
@@ -426,7 +428,7 @@ async def cleanup_task():
 | `no_store=True` | 既不讀取也不寫入快取；端點每次都會執行 |
 | `no_cache=True` | 端點每次都會執行以重新計算 ETag；與用戶端的 `If-None-Match` 相符時仍回傳 304，ETag 改變時會更新快取 |
 | `private=True` | **共用後端**既不讀取也不寫入；仍會送出 `Cache-Control: private`，並以新產生的內容比對 ETag |
-| 帶有 `Authorization` 或不是空的 `request.session` 的請求 | 與 `private=True` 一樣，既不讀取也不寫入後端，`Cache-Control` 以 `private` 取代 `public`，除非路由設定了 `public=True` 或 `cache_authorized=True`（`must_revalidate=True` 不算）；設定 `cache_authorized=True` 時會使用後端，但 `Cache-Control` 仍帶有 `private` |
+| 帶有 `Authorization`、不是空的 `request.session`，或路由的依賴項讀取的 API 金鑰或 Cookie 的請求 | 與 `private=True` 一樣，既不讀取也不寫入後端，`Cache-Control` 以 `private` 取代 `public`，除非路由設定了 `public=True`，或設定 `cache_authorized=True` 且鍵能辨識呼叫者（`must_revalidate=True` 不算）；設定 `cache_authorized=True` 時會使用後端，但 `Cache-Control` 仍帶有 `private` |
 | handler 送出 `Cache-Control: private`／`no-store` | 回傳時保留 handler 的標頭，不寫入，既有項目也保持不變 |
 | 回應設定了 cookie | 回傳時 `Cache-Control` 以 `private` 取代 `public`，不寫入，既有項目也保持不變 |
 | 沒有 `ttl`（或 `ttl=0`） | 與 `private=True` 一樣，既不讀取也不寫入後端；端點每次都會執行，並以新產生的內容比對 ETag |

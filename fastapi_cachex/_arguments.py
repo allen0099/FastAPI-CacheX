@@ -48,9 +48,23 @@ _BYPASS_WARNING = (
     "so the response is not cached and is sent with Cache-Control: private. "
     "If the response is the same for every user, set @cache(public=True) "
     "(this also sends Cache-Control: public, so shared caches downstream may "
-    "store it). If it is per user, set cache_authorized=True with a key_builder "
-    "that puts the verified caller's identity into the key. Logged once per "
-    "route and credential; each bypass is logged at DEBUG."
+    "store it). If it is per user, put the verified caller's identity into "
+    "the key with a key_builder (or list the header that carries it in vary) "
+    "and set cache_authorized=True. Logged once per route and credential; "
+    "each bypass is logged at DEBUG."
+)
+
+# A `cache_authorized` route whose key does not tell the callers apart: it
+# would serve one caller's response to the next, so it bypasses (#574).
+_UNKEYED_CALLER_WARNING = (
+    "@cache bypassed the shared backend for route %r: the request carried %s "
+    "and the route sets cache_authorized=True, but the cache key does not "
+    "identify the caller, so the response is not cached (it would be served "
+    "to the next caller) and is sent with Cache-Control: private. Put the "
+    "verified caller's identity into the key with a key_builder, or list the "
+    "header that carries it in vary. To share one entry between all callers "
+    "on purpose, pass key_builder=default_key_builder, or set public=True. "
+    "Logged once per route and credential; each bypass is logged at DEBUG."
 )
 
 
@@ -75,7 +89,9 @@ class _BypassWarner:
         # path, which returns before taking it once the pair is recorded.
         self._lock = threading.Lock()
 
-    def __call__(self, request: Request, credential: str) -> None:
+    def __call__(
+        self, request: Request, credential: str, message: str = _BYPASS_WARNING
+    ) -> None:
         route_path = getattr(request.scope.get("route"), "path", None)
         # Without a matched route (not reachable through FastAPI's router),
         # name the handler: the requested path is client input and unbounded.
@@ -90,9 +106,7 @@ class _BypassWarner:
         # Only the route template and the credential kind: never a header
         # value or token. `%r` escapes anything unusual in the template.
         logger.warning(
-            _BYPASS_WARNING,
-            route,
-            _CREDENTIAL_DESCRIPTIONS.get(credential, credential),
+            message, route, _CREDENTIAL_DESCRIPTIONS.get(credential, credential)
         )
 
 

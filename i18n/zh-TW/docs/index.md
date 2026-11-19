@@ -83,7 +83,7 @@ async def report(cache: AppCache):
 > ```
 
 > [!WARNING]
-> 預設的快取鍵不包含使用者身分。需要驗證身分的端點請使用 `private=True`，或依使用者區分的 key builder 搭配 `cache_authorized=True`（否則帶有 `Authorization` 或不是空的 `request.session` 的請求會繞過後端），詳見 [需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
+> 預設的快取鍵不包含使用者身分。需要驗證身分的端點請使用 `private=True`，或依使用者區分的 key builder 搭配 `cache_authorized=True`（否則帶有 `Authorization`、不是空的 `request.session`，或路由的依賴項讀取的 API 金鑰或 Cookie 的請求會繞過後端），詳見 [需驗證身分的端點](HTTP_CACHING.md#authenticated-endpoints)。
 
 ## 文件 {#documentation}
 

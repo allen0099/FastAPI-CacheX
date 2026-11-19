@@ -105,7 +105,7 @@ fastapi-cache2 以函式的模組、名稱與引數計算雜湊。FastAPI-CacheX
 fastapi-cache2 對帶 `Authorization` 標頭的請求和其他請求一樣快取，所以每個使用者各自不同的端點必須自行把使用者放進快取鍵。FastAPI-CacheX 對帶 `Authorization` 或非空 `request.session` 的請求，不讀取也不寫入共用後端，並以 `Cache-Control: private` 回應。如果你原本依賴 fastapi-cache2 快取這類路由：
 
 - 回應對每個使用者都相同時，設定 `@cache(ttl=60, public=True)`。
-- 回應依使用者而不同時，設定 `cache_authorized=True`，並搭配把驗證過的使用者放進快取鍵的 `key_builder`。見[帶有憑證的請求](HTTP_CACHING.md#requests-with-credentials)。
+- 回應依使用者而不同時，設定 `cache_authorized=True`，並搭配把驗證過的使用者放進快取鍵的 `key_builder`；只設定這個旗標仍會繞過後端。見[帶有憑證的請求](HTTP_CACHING.md#requests-with-credentials)。
 
 設定 cookie 的路由也永遠不會被儲存。
 

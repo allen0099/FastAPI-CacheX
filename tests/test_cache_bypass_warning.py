@@ -19,6 +19,7 @@ from starlette.middleware.sessions import (
 )
 
 from fastapi_cachex import cache
+from fastapi_cachex import default_key_builder
 from fastapi_cachex._arguments import _BypassWarner
 
 _LOGGER = "fastapi_cachex.cache"
@@ -143,12 +144,19 @@ async def test_each_credential_kind_warns(caplog: pytest.LogCaptureFixture) -> N
     assert _KINDS["session data"] in warnings[1]
 
 
-@pytest.mark.parametrize("opt_in", ["public", "cache_authorized"])
+@pytest.mark.parametrize(
+    "opt_in",
+    [
+        {"public": True},
+        # Sharing one entry between callers must be asked for (#574).
+        {"cache_authorized": True, "key_builder": default_key_builder},
+    ],
+)
 @pytest.mark.parametrize("kind", list(_KINDS))
 async def test_opted_in_routes_do_not_warn(
-    opt_in: str, kind: str, caplog: pytest.LogCaptureFixture
+    opt_in: dict[str, object], kind: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    client, _ = _client(kind, **{opt_in: True})
+    client, _ = _client(kind, **opt_in)
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         for _ in range(2):
