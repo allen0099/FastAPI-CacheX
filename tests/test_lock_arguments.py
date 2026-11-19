@@ -10,7 +10,7 @@ from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.lock import CacheLock
 
 
-@pytest.mark.parametrize("value", [0, -1, 0.0, math.nan, math.inf])
+@pytest.mark.parametrize("value", [0, -1, 0.0, math.nan, math.inf, 10**400])
 async def test_a_poll_interval_that_would_spin_or_hang_is_refused(value: float) -> None:
     """Zero retried in a tight loop: about 49,000 claims in half a second."""
     with pytest.raises(ValueError, match="poll_interval"):
