@@ -27,6 +27,7 @@ from fastapi.security import APIKeyHeader
 from fastapi.security import APIKeyQuery
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from pydantic import Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_cachex import BackendProxy
@@ -289,3 +290,43 @@ async def test_an_api_key_listed_in_vary_is_hashed_in_the_key() -> None:
     assert keys
     assert not any("SECRET123" in key for key in keys)
     assert any("x-api-key=sha256:" in key for key in keys)
+
+
+class _AliasedCookies(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    session_id: str | None = Field(default=None, alias="sessionId")
+    sid: str | None = Field(default=None, validation_alias="sess")
+
+
+@pytest.mark.parametrize("cookie", ["sessionId", "session_id", "sess", "sx"])
+async def test_every_name_a_cookie_is_read_by_counts(cookie: str) -> None:
+    app = FastAPI()
+
+    @app.get("/me")
+    @cache(ttl=60, debug_header=True)
+    async def me(
+        cookies: Annotated[_AliasedCookies, Cookie()],
+        s: Annotated[str | None, Cookie(validation_alias="sx")] = None,
+    ) -> str | None:
+        return cookies.session_id or cookies.sid or s
+
+    client = TestClient(app)
+    client.cookies.set(cookie, "x")
+    assert _get(client, "/me") == ("x", "BYPASS")
+    client.cookies.set(cookie, "y")
+    assert _get(client, "/me") == ("y", "BYPASS")
+
+
+async def test_an_api_key_header_vary_does_not_hash_does_not_count() -> None:
+    """`vary=["X-Client"]` would put the raw API key into the cache key."""
+    app = FastAPI()
+
+    @app.get("/me")
+    @cache(ttl=60, debug_header=True, vary=["X-Client"], cache_authorized=True)
+    async def me(key: Annotated[str, Depends(APIKeyHeader(name="X-Client"))]) -> str:
+        return key
+
+    client = TestClient(app)
+    assert _get(client, "/me", headers={"X-Client": "a"}) == ("a", "BYPASS")
+    assert not await BackendProxy.get().get_all_keys()

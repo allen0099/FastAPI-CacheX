@@ -50,6 +50,7 @@ from ._stored_response import _fresh_not_modified
 from ._stored_response import _is_cacheable_status
 from ._stored_response import _not_modified
 from ._vary import VaryNormaliser
+from ._vary import _is_secret_header
 from ._vary import _vary_components
 from .backends.base import BaseCacheBackend
 from .events import CacheReason
@@ -206,13 +207,39 @@ async def _read_entry(
     return entry, True
 
 
-def _cookie_names(param: object) -> list[str]:
-    """The cookies a ``Cookie()`` parameter reads: its alias, or a model's fields."""
-    annotation = getattr(getattr(param, "field_info", None), "annotation", None)
+def _field_names(name: str, info: object) -> set[str]:
+    """Every name a field can be read under: its own, ``alias``, ``validation_alias``."""
+    names = {name}
+    for alias in (
+        getattr(info, "alias", None),
+        getattr(info, "validation_alias", None),
+    ):
+        if isinstance(alias, str):
+            names.add(alias)
+    return names
+
+
+def _cookie_names(param: object) -> set[str]:
+    """The cookies a ``Cookie()`` parameter may read: its names, or a model's fields'.
+
+    All of them, as FastAPI also reads a cookie by ``validation_alias`` and,
+    under ``populate_by_name``, by the field name; counting one too many only
+    costs a cache hit.
+    """
+    info = getattr(param, "field_info", None)
+    annotation = getattr(info, "annotation", None)
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         # `Annotated[Cookies, Cookie()]` reads each field as a cookie.
-        return [info.alias or name for name, info in annotation.model_fields.items()]
-    return [getattr(param, "alias", "")]
+        return {
+            cookie
+            for name, field in annotation.model_fields.items()
+            for cookie in _field_names(name, field)
+        }
+    names = _field_names(getattr(param, "name", ""), info)
+    alias = getattr(param, "alias", None)
+    if isinstance(alias, str):
+        names.add(alias)
+    return names
 
 
 def _route_credentials(route: object) -> tuple[tuple[str, str], ...]:
@@ -405,11 +432,13 @@ class _Route:
         A custom ``key_builder`` is trusted to (``key_builder=default_key_builder``
         passed on purpose shares one entry between them); otherwise ``vary``
         must list the header without a normaliser, which could map every
-        caller to one value.
+        caller to one value, and ``vary`` must hash it: an API key header
+        whose name does not mark it as a secret (``X-Client``) would put the
+        key itself into the cache key (#575).
         """
         if not self.default_key:
             return True
-        return any(
+        return _is_secret_header(header) and any(
             name.lower() == header and normaliser is None
             for name, normaliser in self.vary_names.items()
         )

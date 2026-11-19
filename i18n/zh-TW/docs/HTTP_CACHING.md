@@ -276,9 +276,9 @@ async def items() -> list[str]: ...
 
 - `Authorization` 標頭；
 - 不是空的 `request.session` 資料，來自任何 Session 中介軟體；
-- 路由的依賴項用來辨識呼叫者的 API 金鑰或 Cookie：FastAPI 的 `APIKeyHeader` 或 `APIKeyCookie`，或 `Cookie()` 參數，位於依賴樹的任何一層，且請求有送出它。放在查詢字串的 API 金鑰（`APIKeyQuery`）本來就是鍵的一部分，路由沒有讀取的 Cookie 也不算。只是偏好設定的 Cookie（`theme: Cookie()`）同樣算數；這類路由可以設定 `public=True`，並在 `vary` 中以正規化函式列出該 Cookie，以保留快取命中。
+- 路由的依賴項用來辨識呼叫者的 API 金鑰或 Cookie：FastAPI 的 `APIKeyHeader` 或 `APIKeyCookie`，或 `Cookie()` 參數，位於依賴樹的任何一層，且請求有送出它。放在查詢字串的 API 金鑰（`APIKeyQuery`）本來就是鍵的一部分，路由沒有讀取的 Cookie 也不算。只是偏好設定的 Cookie（`theme: Cookie()`）同樣算數；若回應對每位使用者都相同，這類路由可以設定 `public=True`，並在 `vary` 中以正規化函式列出該 Cookie，以保留快取命中（`public` 也會讓帶有 `Authorization` 的請求共用回應，並送出 `Cache-Control: public`）；否則請設定 `cache_authorized=True`，並使用把使用者與偏好設定都放進鍵中的 `key_builder`。
 
-這類請求只有在路由設定 `public=True`，或設定 `cache_authorized=True` **而且**鍵能區分呼叫者時，才會讀寫後端：設定了 `key_builder`，或 `vary` 列出攜帶該憑證的標頭（`Authorization`；Session 資料與 Cookie 為 `Cookie`；或 API 金鑰的標頭），而且不帶正規化函式，因為正規化函式可能把每位呼叫者都對應到同一個值。請求帶有的每一項憑證都必須這樣放進鍵中：所有呼叫者共用的 `Authorization` 閘道權杖，無法說明 Session 屬於誰。否則它會繞過後端並以 `private` 回應，因此一位呼叫者的回應絕不會提供給另一位。0.6.3 之前，API 金鑰與 Cookie 不算憑證，而 `cache_authorized=True` 搭配預設鍵時，所有呼叫者會共用同一筆項目（#574）。
+這類請求只有在路由設定 `public=True`，或設定 `cache_authorized=True` **而且**鍵能區分呼叫者時，才會讀寫後端：設定了 `key_builder`，或 `vary` 列出攜帶該憑證的標頭（`Authorization`；Session 資料與 Cookie 為 `Cookie`；或 API 金鑰的標頭），而且不帶正規化函式，因為正規化函式可能把每位呼叫者都對應到同一個值。API 金鑰標頭只有在 `vary` 會雜湊它時才算數（名稱含有 `key`、`token`、`secret`、`auth`、`session` 或 `password`，見[憑證標頭會雜湊](#credential-headers-are-hashed)）；名稱不是這樣的標頭（例如 `X-Client`），請改用會雜湊它的 `key_builder`。請求帶有的每一項憑證都必須這樣放進鍵中：所有呼叫者共用的 `Authorization` 閘道權杖，無法說明 Session 屬於誰。否則它會繞過後端並以 `private` 回應，因此一位呼叫者的回應絕不會提供給另一位。0.6.3 之前，API 金鑰與 Cookie 不算憑證，而 `cache_authorized=True` 搭配預設鍵時，所有呼叫者會共用同一筆項目（#574）。
 
 因此，每個請求都送出 `Authorization` 的單頁應用程式，或每位訪客都有 Session 資料的網站，在只加上 `@cache` 的路由上完全不會命中快取。請依 handler 回傳的內容選擇：
 
