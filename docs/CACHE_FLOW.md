@@ -168,7 +168,7 @@ The decorator arguments control both the server-side behaviour and the
 @cache(ttl=60, stale="error", stale_ttl=300)                # stale-if-error=300
 
 # Opt-in server-side behaviour
-@cache(ttl=60, stale="revalidate", stale_ttl=30, serve_stale=True)  # serve the expired entry, refresh after the response
+@cache(ttl=60, stale="revalidate", stale_ttl=30, serve_stale=True)  # serve the stale entry, refresh after the response
 @cache(ttl=60, client_cache_control=True)   # honour a request's no-cache and no-store
 @cache(ttl=60, tags=["users"])              # invalidated by invalidate_tags("users")
 ```
