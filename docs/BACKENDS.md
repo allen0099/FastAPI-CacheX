@@ -23,7 +23,9 @@ and has no prefix.
     default read each other's `CacheManager` values, share lock names and
     tags (`invalidate_tags("users")` in one drops the other's values), and
     one's `clear()` wipes the other's entries. Set a prefix per service and
-    environment, such as `key_prefix="orders:prod:"` (#585).
+    environment, such as `key_prefix="orders:prod:"` (#585). On Memcached
+    `clear()` still wipes the whole server, whatever the prefix (it sends
+    `flush_all`).
 
 A deploy that changes what a route returns (a new `response_model`, a renamed
 field) still serves the old body until its entries expire. To start afresh,

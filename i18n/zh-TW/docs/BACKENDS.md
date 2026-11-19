@@ -14,7 +14,7 @@
 Redis 與 Memcached 後端會以前綴為鍵建立命名空間（預設為 `fastapi_cachex:`，可用 `key_prefix=` 變更），以避免與同一台伺服器上的其他應用程式衝突。`MemoryBackend` 只存在於單一行程內，沒有前綴。
 
 !!! warning "請為每個服務與環境設定各自的 `key_prefix`"
-    每個使用 FastAPI-CacheX 的應用程式預設前綴都相同。兩個服務在同一台 Redis 或 Memcached 伺服器上使用預設值時，會讀到彼此的 `CacheManager` 值、共用鎖名稱與 tag（其中一個的 `invalidate_tags("users")` 會丟棄另一個的值），而其中一個的 `clear()` 會清掉另一個的項目。請為每個服務與環境設定前綴，例如 `key_prefix="orders:prod:"`（#585）。
+    每個使用 FastAPI-CacheX 的應用程式預設前綴都相同。兩個服務在同一台 Redis 或 Memcached 伺服器上使用預設值時，會讀到彼此的 `CacheManager` 值、共用鎖名稱與 tag（其中一個的 `invalidate_tags("users")` 會丟棄另一個的值），而其中一個的 `clear()` 會清掉另一個的項目。請為每個服務與環境設定前綴，例如 `key_prefix="orders:prod:"`（#585）。在 Memcached 上，不論前綴為何，`clear()` 仍會清空整台伺服器（它送出的是 `flush_all`）。
 
 部署改變了路由回傳的內容（新的 `response_model`、改名的欄位）時，舊的回應本文仍會被送出，直到項目過期。要重新開始，可以把版本標記放進前綴（`key_prefix=f"orders:{RELEASE}:"`，舊項目會自行過期）、放進有變動的路由的鍵（在 `key_builder` 中使用 `build_cache_key(request, "v2")`），或為這些路由加上 tag，並在部署後呼叫一次 `invalidate_tags()`。
 

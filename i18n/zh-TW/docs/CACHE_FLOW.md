@@ -340,7 +340,7 @@ Redis 與 Memcached 共用同一套 JSON 編解碼器；若已安裝 `orjson` �
 }
 ```
 
-- `content` 使用 **latin-1 來回轉換**，而不是 base64：latin-1 與位元組一一對應，因此任何位元組序列都能放進 JSON 文字中，並原封不動地還原。跳脫字元會讓存入的項目比回應本文大：ASCII JSON 約 1.2 倍，中文等 UTF-8 文字約 1.9 倍，二進位資料約 2.2 倍，因此約 450 kB 的 CJK JSON 就會達到 Memcached 1 MB 的項目上限。這類本文請設定 [`compress_min_size`](BACKENDS.md#compressing-large-entries)（#585）。
+- `content` 使用 **latin-1 來回轉換**，而不是 base64：latin-1 與位元組一一對應，因此任何位元組序列都能放進 JSON 文字中，並原封不動地還原。跳脫字元會讓存入的項目比回應本文大。安裝了 orjson（隨 `redis` extra 安裝）時，ASCII JSON 約 1.2 倍，中文等 UTF-8 文字約 1.9 倍，二進位資料約 2.1 倍；沒有 orjson 時，標準的 `json` 模組會跳脫每個非 ASCII 字元，中文文字約 5 倍，二進位資料約 4 倍。因此約 540 kB 的 CJK JSON（沒有 orjson 時約 200 kB）就會達到 Memcached 1 MB 的項目上限。這類本文請設定 [`compress_min_size`](BACKENDS.md#compressing-large-entries)（#585）。
 - 舊版本寫入、沒有 `status_code`／`headers` 欄位的項目仍可讀取，解碼後為 `200` 且沒有額外標頭。沒有 `stored_at` 的項目（0.3.9 之前）解碼後為 `stored_at=None`，送出時不帶 `Age` 標頭。
 - `headers` 是 `[name, value]` 行組成的清單，因此重複送出的標頭會保留每一行。0.3.x 寫入的物件（每個名稱一個值）仍可解碼。其他任何形式都會讓整個項目視為未命中。
 - 帶有 tag 儲存的項目還會有 `"tags": {"users": "<版本>"}`：項目儲存當下每個 tag 的版本。沒有 tag 的項目寫入的內容與以往完全相同。若 `tags` 無法讀取，該項目視為未命中，不會被當成沒有 tag 來提供。
