@@ -61,7 +61,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 - 未設定 `key=` 時，鍵是 `module.qualname:` 加上引數的 SHA-256；引數會先依函式簽章綁定並套用預設值，因此 `load(1)`、`load(user_id=1)` 與 `load(1, locale="en")` 共用同一個項目。引數以 JSON 雜湊。JSON 無法編碼但 pydantic 可以的引數（`datetime`、`Decimal`、`UUID`、`bytes`、集合、dataclass、模型），會以加上型別標記的 JSON 形式雜湊，因此 `datetime(2024, 1, 1)` 與字串 `"2024-01-01T00:00:00"` 得到兩個不同的鍵；0.6.3 之前這類引數會拋出例外。集合會先排序，因此它的鍵在每個行程中都相同，但 dataclass 或模型裡的集合除外。帶有兩者都無法編碼的引數，或帶有迭代器或產生器（雜湊會把它耗盡）的呼叫，會拋出 `CacheXError`。內容相同的 tuple 與 list、`{1: "a"}` 與 `{"1": "a"}`，或 `StrEnum` 成員與它的字串，會共用同一個鍵。`key="user:{user_id}"` 是以引數名稱填入的 `str.format` 樣板（不含欄位的字串就是固定的鍵；引數中沒有的欄位會拋出 `CacheXError`），`key=lambda self, user_id: f"user:{user_id}"` 則會以引數呼叫，並和樣板一樣套用預設值（無法接受所有引數的可呼叫物件只會收到實際傳入的引數）：方法的 `self` 無法雜湊，或引數是模型時，請用其中一種。manager 的 `key_prefix` 會加在前面，和它儲存的每個鍵一樣。
 - 預設的鍵只認得函式，不認得它的閉包：同一個工廠建立的兩個函式（`def make(v): @cached(...) async def get(): return v`）有相同的 `module.qualname`，會共用項目。請為這類函式設定包含其閉包內容的 `key=`。
 - 產生器函式無法快取（它的結果無法儲存）：對它套用 `@cached` 時會拋出 `TypeError`。
-- `fn.cache_key(*args, **kwargs)` 是該次呼叫使用的鍵（不含前綴），`await fn.invalidate(*args, **kwargs)` 則丟棄它的值，並回傳原本是否有快取。在方法上，`obj.load.invalidate(1)` 會和呼叫時一樣綁定 `obj`。
+- `fn.cache_key(*args, **kwargs)` 是該次呼叫使用的鍵（不含前綴），`await fn.invalidate(*args, **kwargs)` 則丟棄它的值，並回傳原本是否有快取。在方法上，`obj.load.invalidate(1)` 會和呼叫時一樣綁定 `obj`，型別檢查器也會檢查 `self` 之後的引數。型別檢查器會把套在 `@cached` 外層的 `@staticmethod` 誤認為這種方法；這種情況請改為快取模組層級的函式。
 
 ## 行為 {#behavior}
 
