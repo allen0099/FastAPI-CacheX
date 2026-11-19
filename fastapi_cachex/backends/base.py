@@ -36,7 +36,6 @@ def _warn_not_atomic(backend: object, method: str) -> None:
     kind = type(backend)
     if (kind, method) in _warned_fallbacks:
         return
-    _warned_fallbacks.add((kind, method))
     warnings.warn(
         f"{kind.__qualname__}.{method}() runs BaseCacheBackend's non-atomic "
         "fallback: concurrent callers can all succeed (several CacheLock "
@@ -46,6 +45,8 @@ def _warn_not_atomic(backend: object, method: str) -> None:
         RuntimeWarning,
         stacklevel=3,
     )
+    # Recorded after warning: under `-W error` every call raises alike.
+    _warned_fallbacks.add((kind, method))
 
 
 def warn_if_path_shaped(pattern: str, cleared: int) -> None:
@@ -479,8 +480,8 @@ class BaseCacheBackend(ABC):
                 in a signed 64-bit integer
         """
         validate_delta(delta)
-        _warn_not_atomic(self, "increment")
         ttl = validate_ttl(ttl)
+        _warn_not_atomic(self, "increment")
         current = await self.get(key)
         value = delta if current is None else counter_value(current) + delta
         check_counter_range(value)

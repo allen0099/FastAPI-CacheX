@@ -16,7 +16,7 @@ from fastapi_cachex.types import CacheEntry
 from fastapi_cachex.types import counter_entry
 
 # `DictBackend` runs BaseCacheBackend's fallbacks on purpose; the warning they
-# give is tested in tests/backends/test_base.py (#579).
+# give is tested in test_a_fallback_warns_once_per_class_and_method (#579).
 pytestmark = pytest.mark.filterwarnings("ignore:.*non-atomic fallback:RuntimeWarning")
 
 
@@ -303,3 +303,14 @@ async def test_a_fallback_warns_once_per_class_and_method() -> None:
     )
     assert "delete_if_equals" in messages[1]
     assert "increment" in messages[2]
+
+
+async def test_under_an_error_filter_every_fallback_call_raises() -> None:
+    """Recording before warning let only the first call raise, by test order."""
+    backend = DictBackend()
+    entry = CacheEntry(fingerprint="e", content=b"v")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for _ in range(2):
+            with pytest.raises(RuntimeWarning, match="non-atomic"):
+                await backend.set_if_absent("k", entry)
