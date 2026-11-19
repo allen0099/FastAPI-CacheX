@@ -794,13 +794,20 @@ async def test_a_key_callable_with_an_unresolvable_annotation_works(
     assert load.cache_key(1) == "u:1"
 
 
-def test_a_wrapped_generator_function_is_refused(manager: CacheManager) -> None:
+def test_a_wrapper_collecting_a_generator_is_accepted(manager: CacheManager) -> None:
+    """Only the function itself is checked: this one returns a list."""
+
+    def listify(
+        func: typing.Callable[[], typing.Iterator[int]],
+    ) -> typing.Callable[[], list[int]]:
+        @functools.wraps(func)
+        def wrapper() -> list[int]:
+            return list(func())
+
+        return wrapper
+
+    @listify
     def numbers() -> typing.Iterator[int]:
         yield 1
 
-    @functools.wraps(numbers)
-    def wrapper() -> typing.Iterator[int]:
-        return numbers()
-
-    with pytest.raises(TypeError, match="generator"):
-        cached(ttl=60, manager=manager)(wrapper)
+    cached(ttl=60, manager=manager, type_=list[int])(numbers)
