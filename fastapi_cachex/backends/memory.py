@@ -7,6 +7,7 @@ import logging
 import os
 import time
 import warnings
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable
 from collections.abc import Iterable
@@ -49,6 +50,26 @@ def _cancel(task: "asyncio.Task[None]") -> None:
         task.cancel()
     else:
         loop.call_soon_threadsafe(task.cancel)
+
+
+async def _cleanup_loop(ref: "weakref.ref[MemoryBackend]") -> None:
+    """Run ``cleanup()`` every ``cleanup_interval`` seconds while the backend lives.
+
+    The event loop keeps the task alive, so the task holds the backend only
+    weakly between passes: a backend dropped without ``aclose()`` can still be
+    freed, and the loop then ends at its next wake-up (#504).
+    """
+    try:
+        while (backend := ref()) is not None:
+            interval = backend.cleanup_interval
+            del backend
+            await asyncio.sleep(interval)
+            if (backend := ref()) is None:
+                return
+            await backend.cleanup()
+            del backend
+    except asyncio.CancelledError:
+        pass
 
 
 def _validate_max_entries(max_entries: int | None) -> int | None:
@@ -185,7 +206,7 @@ class MemoryBackend(BaseCacheBackend):
             if task.get_loop() is loop:
                 return
             _cancel(task)
-        self._cleanup_task = loop.create_task(self._cleanup_task_impl())
+        self._cleanup_task = loop.create_task(_cleanup_loop(weakref.ref(self)))
         logger.debug(
             "Started memory backend cleanup task (interval=%s)",
             self.cleanup_interval,
@@ -564,15 +585,6 @@ class MemoryBackend(BaseCacheBackend):
                 for key, item in self.cache.items()
                 if _is_live(item, now)
             }
-
-    async def _cleanup_task_impl(self) -> None:
-        try:
-            while True:
-                await asyncio.sleep(self.cleanup_interval)
-                await self.cleanup()
-        except asyncio.CancelledError:
-            # Handle task cancellation gracefully
-            pass
 
     async def cleanup(self) -> None:
         """Remove expired cache entries from memory."""

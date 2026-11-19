@@ -631,7 +631,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             keys=[self._make_key(key)], args=[delta, ttl or 0]
         )
         if reply[0] == _INCREMENT_NOT_A_COUNTER:
-            msg = "Cache key holds a value that is not a counter"
+            # Redis cannot tell the two apart: both fail its integer parse.
+            msg = (
+                "Cache key holds a value that is not a counter, or a counter "
+                "outside the signed 64-bit range Redis counters have"
+            )
             raise CacheXError(msg)
         if reply[0] == _INCREMENT_OVERFLOW:
             msg = "Counter increment would overflow a signed 64-bit integer"

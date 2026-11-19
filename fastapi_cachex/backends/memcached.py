@@ -243,10 +243,11 @@ class MemcachedBackend(BaseCacheBackend):
         _validate_timeout("timeout", timeout)
         self.compress_min_size = validate_compress_min_size(compress_min_size)
         try:
-            from pymemcache import HashClient
+            import pymemcache  # noqa: F401 - only checks that the extra is installed
         except ImportError as exc:
             msg = "pymemcache is not installed. Install it with the extra: pip install 'fastapi-cachex[memcached]'"
             raise CacheXError(msg) from exc
+        from ._hash_client import LockedHashClient
 
         # Pooled connections have no ordering guarantee between each other, so
         # every write waits for the server's acknowledgement; otherwise a
@@ -259,7 +260,7 @@ class MemcachedBackend(BaseCacheBackend):
         # counter. ``retry_attempts=0`` takes a failed server out of rotation
         # at once instead, so calls raise until it is tried again after
         # ``_DEAD_TIMEOUT`` seconds.
-        self.client = HashClient(
+        self.client = LockedHashClient(
             servers,
             connect_timeout=connect_timeout,
             timeout=timeout,
@@ -616,7 +617,8 @@ class MemcachedBackend(BaseCacheBackend):
         pair is retried, starting a new window at ``delta``.
 
         Raises:
-            CacheXError: If the key holds a value that is not a counter, the
+            CacheXError: If the key holds a value that is not a counter or a
+                counter outside 0 to 2**64 - 1 (a negative one included), the
                 result would pass 2**64 - 1 (the counter is restored), or
                 the counter vanished after every ADD + INCR attempt.
         """
@@ -634,7 +636,11 @@ class MemcachedBackend(BaseCacheBackend):
         except MemcacheClientError as e:
             if _NOT_NUMERIC not in str(e):
                 raise
-            msg = "Cache key holds a value that is not a counter"
+            # Memcached cannot tell the two apart: both are "non-numeric".
+            msg = (
+                "Cache key holds a value that is not a counter, or a counter "
+                "outside 0 to 2**64 - 1 (Memcached counters are unsigned)"
+            )
             raise CacheXError(msg) from e
         if value is None:
             msg = f"Counter vanished between ADD and INCR on each of {_CAS_MAX_RETRIES} attempts"

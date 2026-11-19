@@ -19,6 +19,7 @@ from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.backends.memcached import _CAS_MAX_RETRIES
 from fastapi_cachex.backends.memcached import _DEAD_TIMEOUT
 from fastapi_cachex.backends.memcached import _expiry
+from fastapi_cachex.exceptions import BackendUnavailableError
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import ValueTooLargeError
 from fastapi_cachex.lock import CacheLock
@@ -375,6 +376,44 @@ async def test_memcached_tries_a_failed_server_again_after_the_dead_timeout(
 
     with pytest.raises(ConnectionRefusedError):
         await backend.get("k")
+
+
+async def test_memcached_calls_failing_at_once_raise_only_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent failures keep `HashClient`'s server tables consistent (#504).
+
+    The backend calls the client from many threads, and pymemcache updates
+    its failed and dead server tables without a lock. Calls failing together
+    raised `KeyError`, `ValueError` or `RuntimeError` from those tables, and a
+    server could leave the hash ring without being recorded as dead, so it
+    was never tried again.
+    """
+    monkeypatch.setattr("fastapi_cachex.backends.memcached._DEAD_TIMEOUT", 0)
+    ports = []
+    for _ in range(2):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            ports.append(probe.getsockname()[1])
+    backend = MemcachedBackend(servers=[f"127.0.0.1:{port}" for port in ports])
+    # Switch threads as often as possible so the races show up at once.
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        results = await asyncio.gather(
+            *(backend.get(f"k{i}") for i in range(2000)), return_exceptions=True
+        )
+    finally:
+        sys.setswitchinterval(interval)
+
+    odd = {repr(r) for r in results if not isinstance(r, BackendUnavailableError)}
+    assert not odd
+    client = backend.client
+    in_ring = set(client.hasher.nodes)
+    dead = {client._make_client_key(server) for server in client._dead_clients}
+    # Each server is either in rotation or waiting to be tried again.
+    assert in_ring | dead == {f"127.0.0.1:{port}" for port in ports}
+    assert not in_ring & dead
 
 
 @requires_memcached
