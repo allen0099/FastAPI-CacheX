@@ -88,7 +88,7 @@ The decorator order is the same in both: the route decorator first, `@cache` dir
 | `FastAPICache.clear()` | `await backend.clear()` | On Memcached this flushes the whole server. |
 | `X-FastAPI-Cache: HIT` / `MISS` (`cache_status_header=`) | `@cache(debug_header=True)` sends `X-Cache: HIT`, `MISS` or `BYPASS` | Off by default. |
 | `@cache` on a function that is not an endpoint | `@cached(ttl=60)`, or `CacheManager.get_or_set()` | Keyed on the arguments, like fastapi-cache2. See [Caching a function](APP_CACHE.md#caching-a-function). |
-| `FastAPICache.init(enable=False)` | `set_enabled(False)`, or `FASTAPI_CACHEX_DISABLED=1` | Every `@cache` route and `@cached` function then runs without reading or writing the cache; `CacheManager` calls still work. See [Turning the cache off](TESTING.md#switching-off). |
+| `FastAPICache.init(enable=False)` | `set_enabled(False)`, or `FASTAPI_CACHEX_DISABLED=1` | Every `@cache` route, `@cached` function and `get_or_set()` call then runs without reading or writing the cache; `CacheManager.get()` and `set()` still work. See [Turning the cache off](TESTING.md#switching-off). |
 
 ## Behaviour that differs {#behaviour-that-differs}
 

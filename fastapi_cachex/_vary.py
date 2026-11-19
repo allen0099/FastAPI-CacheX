@@ -16,9 +16,12 @@ _FIELD_NAME_CHARS = frozenset(
 )
 
 
-# What ``vary={name: normaliser}`` maps a header to: the header's value in,
-# the key component's value out.
 VaryNormaliser = Callable[[str], str | int]
+"""What ``vary={name: normaliser}`` maps a header to.
+
+It gets the header's value (lines joined with ``,``; ``""`` when missing) and
+returns the key component's value, a ``str`` or an ``int``.
+"""
 Vary = Sequence[str] | Mapping[str, VaryNormaliser | None]
 
 
