@@ -38,7 +38,7 @@ import warnings
 warnings.filterwarnings("ignore", message="memory backend with several workers")
 ```
 
-清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束（參見[關閉後端](#closing-a-backend)）；`stop_cleanup()` 只會要求取消。
+清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束（參見[關閉後端](#closing-a-backend)）；`stop_cleanup()` 只會要求取消。task 只以弱參考（weak reference）持有後端，因此沒有呼叫 `aclose()` 就被丟棄的後端仍會連同其中的項目一起被釋放，它的 task 則在下次醒來時結束。先前的版本會把這樣的後端一直留在記憶體中，直到它的事件迴圈關閉。
 
 預設沒有容量上限：項目只會在過期時離開，因此記憶體用量會隨「請求速率 × `ttl` × 回應大小」成長，而且每個 worker 各自一份；用戶端也可以刻意變換快取路由的查詢字串來撐大它。`MemoryBackend(max_entries=10_000)` 限制項目數量：再多存一筆時，會淘汰最久未使用的項目，不論它是否已過期（讀取命中與每一次寫入都算使用）。請依預期的項目數乘以 worker 數來決定上限，因為每個 worker 各有一份快取；上限計算的是項目數，不是位元組數。
 
@@ -204,7 +204,7 @@ BackendProxy.set(backend)
 
 同步的 pymemcache 用戶端在工作執行緒中執行，並使用連線池，因此並行的請求絕不會共用同一個 socket。寫入會等待伺服器確認（`default_noreply=False`），因此只要 `set()` 返回，就能從連線池中的任何連線讀到該值。每次呼叫只切換到工作執行緒一次，多步驟的[原子操作](#atomic-backend-primitives)也是如此。`delete_many()` 在這一次呼叫中逐一對每個鍵送出 `DELETE`，並回傳實際存在的鍵數；0.3.8 之前它每個鍵都要切換一次執行緒，回傳的是傳入的鍵數。
 
-伺服器無法連線時，所有要送往它的呼叫都會拋出 [`BackendUnavailableError`](#backend-unavailable)，一秒後會再嘗試連線。0.3.8 之前，失敗後一秒內的呼叫會回傳虛構的結果：`get()` 當成未命中、`set()` 沒有任何反應（寫入遺失）、`increment()` 當成新的計數器並回傳 0。設定多台伺服器時，失敗的那台會立即移出輪替，它的鍵會改由其餘伺服器處理，直到它恢復回應。
+伺服器無法連線時，所有要送往它的呼叫都會拋出 [`BackendUnavailableError`](#backend-unavailable)，一秒後會再嘗試連線。0.3.8 之前，失敗後一秒內的呼叫會回傳虛構的結果：`get()` 當成未命中、`set()` 沒有任何反應（寫入遺失）、`increment()` 當成新的計數器並回傳 0。設定多台伺服器時，失敗的那台會立即移出輪替，它的鍵會改由其餘伺服器處理，直到它恢復回應。同時在同一台伺服器上失敗的多個呼叫，每一個都會拋出 `BackendUnavailableError`。先前的版本可能改為拋出 `KeyError`、`ValueError` 或 `RuntimeError`，因為 pymemcache 的 `HashClient` 更新失敗伺服器表時沒有加鎖，也可能讓失敗的伺服器永遠留在輪替之外；後端現在會在鎖內更新這張表。
 
 ## 關閉後端 {#closing-a-backend}
 
