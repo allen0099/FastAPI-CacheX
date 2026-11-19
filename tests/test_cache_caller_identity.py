@@ -303,22 +303,26 @@ class _AliasedCookies(BaseModel):
 async def test_every_name_a_cookie_is_read_by_counts(cookie: str) -> None:
     app = FastAPI()
 
-    @app.get("/me")
+    # One `Cookie()` per route: next to a second one, FastAPI 0.128 reads the
+    # model from a cookie named after the parameter.
+    @app.get("/model")
     @cache(ttl=60, debug_header=True)
-    async def me(
-        cookies: Annotated[_AliasedCookies, Cookie()],
+    async def model(cookies: Annotated[_AliasedCookies, Cookie()]) -> str | None:
+        return cookies.session_id or cookies.sid
+
+    @app.get("/scalar")
+    @cache(ttl=60, debug_header=True)
+    async def scalar(
         s: Annotated[str | None, Cookie(validation_alias="sx")] = None,
     ) -> str | None:
-        return cookies.session_id or cookies.sid or s
+        return s
 
+    path = "/scalar" if cookie == "sx" else "/model"
     client = TestClient(app)
     client.cookies.set(cookie, "x")
-    if client.get("/me").status_code == 422:
-        # Older FastAPI and pydantic refuse these models: nothing to leak.
-        pytest.skip("this FastAPI does not read the cookie by that name")
-    assert _get(client, "/me") == ("x", "BYPASS")
+    assert _get(client, path) == ("x", "BYPASS")
     client.cookies.set(cookie, "y")
-    assert _get(client, "/me") == ("y", "BYPASS")
+    assert _get(client, path) == ("y", "BYPASS")
 
 
 async def test_an_api_key_header_vary_does_not_hash_does_not_count() -> None:
