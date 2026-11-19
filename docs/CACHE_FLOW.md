@@ -471,7 +471,11 @@ and the standard library `json` otherwise:
 
 - `content` uses a **latin-1 round-trip**, not base64: latin-1 maps one-to-one
   onto bytes, so any byte sequence can be placed in JSON text and recovered
-  unchanged.
+  unchanged. Escaping makes a stored entry larger than its body: about 1.2
+  times for ASCII JSON, 1.9 times for UTF-8 text such as Chinese, and 2.2
+  times for binary data, so Memcached's 1 MB item limit is reached with about
+  450 kB of CJK JSON. For such bodies, set
+  [`compress_min_size`](BACKENDS.md#compressing-large-entries) (#585).
 - Entries written by older releases, without the `status_code`/`headers`
   fields, remain readable and decode to `200` with no extra headers. Those
   without `stored_at` (before 0.3.9) decode with `stored_at=None` and are

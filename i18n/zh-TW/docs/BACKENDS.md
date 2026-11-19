@@ -13,6 +13,11 @@
 
 Redis 與 Memcached 後端會以前綴為鍵建立命名空間（預設為 `fastapi_cachex:`，可用 `key_prefix=` 變更），以避免與同一台伺服器上的其他應用程式衝突。`MemoryBackend` 只存在於單一行程內，沒有前綴。
 
+!!! warning "請為每個服務與環境設定各自的 `key_prefix`"
+    每個使用 FastAPI-CacheX 的應用程式預設前綴都相同。兩個服務在同一台 Redis 或 Memcached 伺服器上使用預設值時，會讀到彼此的 `CacheManager` 值、共用鎖名稱與 tag（其中一個的 `invalidate_tags("users")` 會丟棄另一個的值），而其中一個的 `clear()` 會清掉另一個的項目。請為每個服務與環境設定前綴，例如 `key_prefix="orders:prod:"`（#585）。
+
+部署改變了路由回傳的內容（新的 `response_model`、改名的欄位）時，舊的回應本文仍會被送出，直到項目過期。要重新開始，可以把版本標記放進前綴（`key_prefix=f"orders:{RELEASE}:"`，舊項目會自行過期）、放進有變動的路由的鍵（在 `key_builder` 中使用 `build_cache_key(request, "v2")`），或為這些路由加上 tag，並在部署後呼叫一次 `invalidate_tags()`。
+
 ## 記憶體（預設） {#in-memory-default}
 
 若未指定後端，FastAPI-CacheX 預設會使用記憶體快取。這適合開發與測試用途。此後端會自動執行清理工作，每 60 秒移除一次已過期的項目（`MemoryBackend(cleanup_interval=60)`；間隔必須大於 0）。它存入與回傳的都是 `CacheEntry` 的副本，因此修改讀到或寫入的項目不會改變快取內容，與每次讀取都解碼出新項目的 Redis、Memcached 一致（0.4.1 之前，記憶體後端會直接交出存放的物件本身）。
@@ -62,7 +67,7 @@ BackendProxy.set(backend)
 
 - 完全非同步的實作
 - 支援依模式清除鍵
-- 使用 SCAN 而非 KEYS，可安全用於正式環境（不會阻塞）
+- 使用 SCAN 而非 KEYS，可安全用於正式環境（不會阻塞）。但 SCAN 仍會走過整個資料庫，不論符合與否，大約每 100 個鍵一次往返：在存有 200,000 個其他鍵的 Redis 上，`clear_path()` 與 `clear_pattern()` 約需 2,000 次往返。在寫入路徑上，建議改用 [tag](HTTP_CACHING.md#by-tag)，它只需固定的少數幾個指令（#584）。
 - 預設以 `fastapi_cachex:` 前綴建立命名空間；多租戶情境可傳入 `key_prefix="myapp:cache:"`
 - `clear()`、`clear_pattern()` 與 `clear_path()` 只刪除這個後端 `key_prefix` 之下的鍵；同一台伺服器上其他應用程式的鍵不受影響
 - 只有傳給 `clear_pattern()` 的模式是萬用字元（glob）模式。鍵前綴與傳給 `clear_path()` 的路徑都以字面值比對，因此其中的 `*`、`?`、`[` 或 `]` 不會觸及前綴以外的鍵，也不會漏掉該路徑
