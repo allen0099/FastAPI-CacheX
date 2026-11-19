@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from datetime import timedelta
 from functools import wraps
 from typing import Any
+from typing import Concatenate
 from typing import Generic
 from typing import ParamSpec
 from typing import Protocol
@@ -34,6 +35,7 @@ from .manager import _adapter
 logger = logging.getLogger(__name__)
 
 P = ParamSpec("P")
+Q = ParamSpec("Q")
 R = TypeVar("R")
 
 # Separates the function's name from the digest of its arguments in a default
@@ -329,11 +331,17 @@ class CachedFunction(Generic[P, R]):
     ) -> "CachedFunction[P, R]": ...
     @overload
     def __get__(
+        self: "CachedFunction[Concatenate[Any, Q], R]",
+        instance: object,
+        owner: type | None = None,
+    ) -> "_BoundCachedFunction[Q, R]": ...
+    @overload
+    def __get__(
         self, instance: object, owner: type | None = None
-    ) -> "_BoundCachedFunction[R]": ...
+    ) -> "_BoundCachedFunction[..., R]": ...
     def __get__(
         self, instance: object | None, owner: type | None = None
-    ) -> "CachedFunction[P, R] | _BoundCachedFunction[R]":
+    ) -> "CachedFunction[P, R] | _BoundCachedFunction[Any, R]":
         """Bind ``instance`` as the first argument, so methods work.
 
         ``obj.load(1)``, ``obj.load.cache_key(1)`` and ``obj.load.invalidate(1)``
@@ -448,23 +456,27 @@ class CachedFunction(Generic[P, R]):
         return removed
 
 
-class _BoundCachedFunction(Generic[R]):
-    """A ``CachedFunction`` looked up on an instance (see ``__get__``)."""
+class _BoundCachedFunction(Generic[Q, R]):
+    """A ``CachedFunction`` looked up on an instance (see ``__get__``).
+
+    ``Q`` is the method's parameters after ``self``, so a type checker checks
+    ``obj.load(1)`` as it checks a plain function's call (#580).
+    """
 
     def __init__(self, function: "CachedFunction[Any, R]", instance: object) -> None:
         """Bind ``instance`` to ``function``."""
         self.__wrapped__ = function
         self.__self__ = instance
 
-    def cache_key(self, *args: Any, **kwargs: Any) -> str:
+    def cache_key(self, *args: Q.args, **kwargs: Q.kwargs) -> str:
         """``CachedFunction.cache_key`` with the instance as ``self``."""
         return self.__wrapped__.cache_key(self.__self__, *args, **kwargs)
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> R:
+    async def __call__(self, *args: Q.args, **kwargs: Q.kwargs) -> R:
         """``CachedFunction.__call__`` with the instance as ``self``."""
         return await self.__wrapped__(self.__self__, *args, **kwargs)
 
-    async def invalidate(self, *args: Any, **kwargs: Any) -> bool:
+    async def invalidate(self, *args: Q.args, **kwargs: Q.kwargs) -> bool:
         """``CachedFunction.invalidate`` with the instance as ``self``."""
         return await self.__wrapped__.invalidate(self.__self__, *args, **kwargs)
 

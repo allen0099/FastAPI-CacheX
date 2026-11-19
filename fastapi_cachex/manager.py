@@ -483,6 +483,16 @@ class CacheManager:
         logger.debug("Cache SET; key=%s ttl=%s", key, effective_ttl)
         _emit("store", "app", key)
 
+    @overload
+    async def get_many(
+        self, /, keys: Iterable[str], *, type_: type[T]
+    ) -> dict[str, T]: ...
+
+    @overload
+    async def get_many(
+        self, /, keys: Iterable[str], *, type_: Any = None
+    ) -> dict[str, Any]: ...
+
     @_reports_backend_errors
     async def get_many(
         self, keys: Iterable[str], *, type_: Any = None
@@ -979,6 +989,40 @@ class CacheManager:
                 return await self._execute_as_winner(
                     key, factory, ttl, lock_instance, type_
                 )
+
+    @overload
+    async def get_or_set(
+        self,
+        /,
+        key: str,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        ttl: int | timedelta | None = None,
+        *,
+        lock: bool | None = None,
+        lock_ttl: int | timedelta | None = None,
+        wait_timeout: float | None = None,
+        raise_on_timeout: bool = False,
+        type_: type[T],
+        tags: Iterable[str] | None = None,
+        stale_ttl: int | timedelta | None = None,
+    ) -> T: ...
+
+    @overload
+    async def get_or_set(
+        self,
+        /,
+        key: str,
+        factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
+        ttl: int | timedelta | None = None,
+        *,
+        lock: bool | None = None,
+        lock_ttl: int | timedelta | None = None,
+        wait_timeout: float | None = None,
+        raise_on_timeout: bool = False,
+        type_: Any = None,
+        tags: Iterable[str] | None = None,
+        stale_ttl: int | timedelta | None = None,
+    ) -> Any: ...
 
     @_reports_backend_errors
     async def get_or_set(  # noqa: PLR0913

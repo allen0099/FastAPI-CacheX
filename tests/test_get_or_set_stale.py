@@ -391,7 +391,7 @@ async def test_stale_ttl_needs_a_ttl(factory: _Factory) -> None:
     with pytest.raises(ValueError, match="stale_ttl needs a ttl"):
         await manager.get_or_set("k", factory, stale_ttl=30)
     with pytest.raises(TypeError):
-        await manager.get_or_set("k", factory, ttl=60, stale_ttl=1.5)  # type: ignore[arg-type]
+        await manager.get_or_set("k", factory, ttl=60, stale_ttl=1.5)  # type: ignore[call-overload]
     with pytest.raises(ValueError, match=r"greater than|positive"):
         await manager.get_or_set("k", factory, ttl=60, stale_ttl=0)
 

@@ -1100,16 +1100,16 @@ async def test_stampede_protection_validation(memory_backend: MemoryBackend) -> 
     manager = CacheManager(backend=memory_backend, lock=False)
 
     with pytest.raises(TypeError, match="lock must be a bool or None"):
-        await manager.get_or_set("key", lambda: 1, lock="yes")  # type: ignore[arg-type]
+        await manager.get_or_set("key", lambda: 1, lock="yes")  # type: ignore[call-overload]
 
     with pytest.raises(TypeError, match="lock must be a bool or None"):
-        await manager.get_or_set("key", lambda: 1, lock=1)  # type: ignore[arg-type]
+        await manager.get_or_set("key", lambda: 1, lock=1)  # type: ignore[call-overload]
 
     with pytest.raises(ValueError, match="ttl must be a positive number"):
         await manager.get_or_set("key", lambda: 1, lock_ttl=0)
 
     with pytest.raises(TypeError, match="ttl must be an int"):
-        await manager.get_or_set("key", lambda: 1, lock_ttl=1.5)  # type: ignore[arg-type]
+        await manager.get_or_set("key", lambda: 1, lock_ttl=1.5)  # type: ignore[call-overload]
 
     with pytest.raises(ValueError, match="wait_timeout must be greater than zero"):
         await manager.get_or_set("key", lambda: 1, wait_timeout=0)
@@ -1121,7 +1121,7 @@ async def test_stampede_protection_validation(memory_backend: MemoryBackend) -> 
         await manager.get_or_set("key", lambda: 1, wait_timeout=True)
 
     with pytest.raises(TypeError, match="wait_timeout"):
-        await manager.get_or_set("key", lambda: 1, wait_timeout="5")  # type: ignore[arg-type]
+        await manager.get_or_set("key", lambda: 1, wait_timeout="5")  # type: ignore[call-overload]
 
 
 async def test_stampede_protection_module_clock_and_sleep_hooks(
