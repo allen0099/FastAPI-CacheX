@@ -217,9 +217,12 @@ uv run mypy tests
 uv run mypy scripts
 ```
 
-Or as one line, which covers the same (pre-commit runs ruff and the strict
-mypy over the package; `mypy tests` and `mypy scripts` are the two it does not
-run):
+Or as one line. Pre-commit runs ruff (fixing and formatting, so it rewrites
+files: re-add and re-run until it passes) and strict mypy over everything but
+`docs/` and `scripts/`; `mypy tests` (as CI runs it) and `mypy scripts` are
+the two it does not run. `git add -A` lets `--all-files` see new files, so
+check `git status` first. The workflow's wheel check
+(`scripts/check_wheel.py`) is not part of it.
 
 ```bash
 git add -A && uv run pre-commit run --all-files && uv run mypy tests && uv run mypy scripts
@@ -228,19 +231,23 @@ git add -A && uv run pre-commit run --all-files && uv run mypy tests && uv run m
 ## Where a request goes
 
 A request to an `@cache` route passes through these modules, in this order.
-`cache.py` holds only the decorator; the rest is private (`_*.py`).
+The modules behind `cache.py` are private (`_*.py`).
 
 | Step | Module |
 |---|---|
-| Decoration: check the arguments, add the `Request` parameter to the signature | `_arguments.py`, `_params.py` |
-| Bypass checks: `private`, `no_store`, credentials, `set_enabled` | `_route.py` (`_Route.respond`) |
+| Decoration: check the arguments, add the `Request` parameter to the signature | `cache.py`, `_arguments.py`, `_params.py` |
+| Per request: pick the backend, build the `_Call`, call `respond`; afterwards release coalesced waiters, report the outcome, add the dependencies', debug and `Vary` headers | `cache.py` (the `wrapper`) |
+| Bypass checks: `private`, `no_store`, credentials, the `set_enabled` switch | `_route.py` (`_Route.respond`), `switch.py` |
 | Build the key: key builder, then `vary` components | `_key_builders.py`, `cache_key.py`, `_vary.py` |
-| Read the entry, wait for a running miss (`coalesce`) | `_route.py`, `_coalesce.py`, `lock.py` |
+| Read the entry, wait for a running miss (`coalesce`; `lock.py` only for `"distributed"`) | `_route.py`, `_coalesce.py`, `lock.py` |
 | Serve a hit, a 304, or a stale entry | `_stored_response.py`, `_cache_control.py` |
+| Read the route's tag versions, before the handler runs (no versions, nothing stored) | `_route.py` (`_read_tag_versions`), `_tags.py` |
 | Run the handler on a miss, keep its dependencies' headers | `_rendering.py` |
-| Store the response, tag versions | `_route.py` (`_store`), `_stored_response.py`, `_tags.py`, `backends/codec.py` |
+| Store the response under the tag versions | `_route.py` (`_store`), `_stored_response.py`, `_tags.py`; `backends/codec.py` on Redis and Memcached |
 | Report what happened | `events.py` |
-| Invalidate afterwards | `_invalidation.py` |
+
+`invalidate()`, `invalidate_path()` and `invalidate_tags()`, which other
+handlers call after a write, are in `_invalidation.py`.
 
 ## Type Checking with mypy
 
