@@ -416,6 +416,32 @@ async def test_memcached_calls_failing_at_once_raise_only_unavailable(
     assert not in_ring & dead
 
 
+def test_memcached_failed_server_skips_the_unlocked_failed_table() -> None:
+    """A failed server never passes through `_failed_clients` (#504).
+
+    `HashClient` reads that table without a lock. pymemcache wrote a failed
+    server into it and removed it again, so a call reading it in between
+    could find the entry and then get a `KeyError` reading it.
+    """
+    backend = _unreachable_backend()
+    client = backend.client
+    writes = []
+
+    class Spy(dict[object, object]):
+        def __setitem__(self, key, value):
+            writes.append(key)
+            super().__setitem__(key, value)
+
+    client._failed_clients = Spy()
+    server = next(iter(client.clients.values())).server
+
+    client._mark_failed_server(server)
+
+    assert not writes
+    assert client.hasher.nodes == []
+    assert server in client._dead_clients
+
+
 @requires_memcached
 async def test_memcached_clear_path_propagates_client_errors(
     monkeypatch,
