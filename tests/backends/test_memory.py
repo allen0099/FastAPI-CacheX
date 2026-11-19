@@ -1,8 +1,10 @@
 import asyncio
+import gc
 import ntpath
 import os
 import time
 import warnings
+import weakref
 from collections.abc import Awaitable
 from collections.abc import Callable
 from typing import Any
@@ -291,6 +293,34 @@ def test_aclose_only_cancels_a_task_on_another_loop():
     finally:
         _close(other)
         _close(current)
+
+
+async def test_a_backend_dropped_without_aclose_is_freed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The cleanup task must not keep its backend alive (#504).
+
+    The event loop holds the task, and the task held the backend, so a
+    backend that was never closed stayed in memory with every entry in it.
+    """
+    # `close_memory_backends` keeps every backend built to close it later.
+    monkeypatch.setattr(
+        MemoryBackend, "__new__", lambda cls, *_args, **_kwargs: object.__new__(cls)
+    )
+    backend = MemoryBackend(cleanup_interval=1)
+    # Not monkeypatch: it keeps the backend alive to undo the change.
+    setattr(backend, "cleanup_interval", 0.01)  # noqa: B010 - a float, typed int
+    await backend.set("k", CacheEntry(fingerprint="e", content=b"v"))
+    task = backend._cleanup_task
+    assert task is not None
+    ref = weakref.ref(backend)
+
+    del backend
+    gc.collect()
+
+    assert ref() is None
+    # With the backend gone, the loop ends at its next wake-up.
+    await asyncio.wait_for(task, timeout=1)
 
 
 async def test_memory_backend_cleanup_task_impl(
