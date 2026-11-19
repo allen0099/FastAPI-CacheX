@@ -22,6 +22,31 @@ from fastapi_cachex.types import counter_value
 if TYPE_CHECKING:
     from typing import Self
 
+# (backend class, method) pairs already warned about by `_warn_not_atomic`.
+_warned_fallbacks: set[tuple[type, str]] = set()
+
+
+def _warn_not_atomic(backend: object, method: str) -> None:
+    """Warn once per backend class that ``method`` runs the non-atomic fallback.
+
+    A backend implementing only the abstract methods kept working, but
+    ``CacheLock`` let several holders in, ``add()`` had several winners and
+    counters lost increments, with nothing said (#579).
+    """
+    kind = type(backend)
+    if (kind, method) in _warned_fallbacks:
+        return
+    _warned_fallbacks.add((kind, method))
+    warnings.warn(
+        f"{kind.__qualname__}.{method}() runs BaseCacheBackend's non-atomic "
+        "fallback: concurrent callers can all succeed (several CacheLock "
+        "holders, several add() winners, lost increments). Override it with "
+        "an atomic operation; see 'Atomic backend primitives' in the backends "
+        "docs. Warned once per backend class.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
 
 def warn_if_path_shaped(pattern: str, cleared: int) -> None:
     """Warn when a ``clear_pattern`` that cleared nothing was written as a path.
@@ -287,6 +312,7 @@ class BaseCacheBackend(ABC):
         Returns:
             The entry that was stored under ``key``, or ``None`` if there was none
         """
+        _warn_not_atomic(self, "get_and_delete")
         value = await self.get(key)
         if value is None or not await self.delete(key):
             # Absent, or another caller removed it between the get and the
@@ -318,6 +344,7 @@ class BaseCacheBackend(ABC):
             Whether ``value`` was stored
         """
         ttl = validate_ttl(ttl)
+        _warn_not_atomic(self, "set_if_absent")
         if await self.get(key) is not None:
             return False
         await self.set(key, value, ttl=ttl)
@@ -342,6 +369,7 @@ class BaseCacheBackend(ABC):
         Returns:
             Whether the entry was removed
         """
+        _warn_not_atomic(self, "delete_if_equals")
         if await self.get(key) != expected:
             return False
         return bool(await self.delete(key))
@@ -375,6 +403,7 @@ class BaseCacheBackend(ABC):
                 ``MAX_TTL``
         """
         ttl = require_ttl(ttl)
+        _warn_not_atomic(self, "expire_if_equals")
         if await self.get(key) != expected:
             return False
         await self.set(key, expected, ttl=ttl)
@@ -408,6 +437,7 @@ class BaseCacheBackend(ABC):
             Whether ``value`` was stored
         """
         ttl = validate_ttl(ttl)
+        _warn_not_atomic(self, "set_if_equals")
         if await self.get(key) != expected:
             return False
         await self.set(key, value, ttl=ttl)
@@ -449,6 +479,7 @@ class BaseCacheBackend(ABC):
                 in a signed 64-bit integer
         """
         validate_delta(delta)
+        _warn_not_atomic(self, "increment")
         ttl = validate_ttl(ttl)
         current = await self.get(key)
         value = delta if current is None else counter_value(current) + delta
