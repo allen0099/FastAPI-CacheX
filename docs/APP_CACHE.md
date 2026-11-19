@@ -75,12 +75,28 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
 - Without `key=` the key is `module.qualname:` followed by a SHA-256 of the
   arguments, bound to the signature with defaults applied, so `load(1)`,
   `load(user_id=1)` and `load(1, locale="en")` share one entry. The
-  arguments are hashed as JSON, so they must be JSON-serializable; a call
-  with one that is not raises `CacheXError`. `key="user:{user_id}"` is a
-  `str.format` template over the arguments by name (a plain string is a fixed
-  key), and `key=lambda self, user_id: f"user:{user_id}"` is called with
-  them: use either for a method, whose `self` cannot be hashed, or for a
-  model. The manager's `key_prefix` goes in front, as for every key it stores.
+  arguments are hashed as JSON. One JSON cannot encode but pydantic can
+  (`datetime`, `Decimal`, `UUID`, `bytes`, a set, a dataclass, a model) is
+  hashed as its JSON form tagged with its type, so `datetime(2024, 1, 1)` and
+  the string `"2024-01-01T00:00:00"` get two keys; before 0.6.3 such an
+  argument raised. A set is sorted, so its key is the same in every process,
+  except a set inside a dataclass or a model. A call with an argument neither
+  can encode, or with an iterator or a generator (hashing it would use it up),
+  raises `CacheXError`. A tuple and a list with the same items, `{1: "a"}` and
+  `{"1": "a"}`, or a `StrEnum` member and its string, share a key.
+  `key="user:{user_id}"` is a `str.format` template over the arguments by
+  name (a plain string is a fixed key; a field the arguments lack raises
+  `CacheXError`), and `key=lambda self, user_id: f"user:{user_id}"` is called
+  with them, defaults applied as for the template (a callable that does not
+  take every argument gets only the ones passed): use either for a method,
+  whose `self` cannot be hashed, or for a model. The manager's `key_prefix`
+  goes in front, as for every key it stores.
+- The default key names the function, not its closure: two functions made by
+  one factory (`def make(v): @cached(...) async def get(): return v`) have
+  the same `module.qualname` and share entries. Give such a function a `key=`
+  that includes what it closes over.
+- A generator function cannot be cached (its result cannot be stored):
+  `@cached` on one raises `TypeError` when applied.
 - `fn.cache_key(*args, **kwargs)` is the key a call uses (without the
   prefix) and `await fn.invalidate(*args, **kwargs)` drops its value,
   returning whether one was cached. On a method, `obj.load.invalidate(1)`
