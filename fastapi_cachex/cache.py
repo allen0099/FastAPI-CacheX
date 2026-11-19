@@ -472,8 +472,9 @@ def cache(
                 # Reached when the wrapper is called outside the router, which
                 # is the only caller that supplies the request parameter.
                 msg = (
-                    f"@cache on {func.__qualname__} was called outside a FastAPI "
-                    "route: it caches HTTP route handlers, under @app.get(...) "
+                    f"@cache on {getattr(func, '__qualname__', func)} was called "
+                    "outside a FastAPI HTTP route (directly, or on a websocket "
+                    "route): it caches HTTP route handlers, under @app.get(...) "
                     "or @router.get(...). For a plain function use "
                     "@cached(ttl=...)."
                 )

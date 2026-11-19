@@ -157,7 +157,9 @@ def _validate_key_builder(builder: Callable[..., object]) -> None:
     if _is_coroutine_callable(target):
         raise CacheXError(_ASYNC_KEY_BUILDER_MSG)
     try:
-        signature = inspect.signature(builder)
+        # Not the wrapped function's: a `functools.wraps` adapter around a
+        # fastapi-cache2 builder takes the request alone.
+        signature = inspect.signature(builder, follow_wrapped=False)
     except (TypeError, ValueError, NameError):
         return
     try:

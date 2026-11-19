@@ -1,5 +1,6 @@
 """The common misuses raise errors that name the fix (#581)."""
 
+import functools
 from typing import Any
 
 import pytest
@@ -32,7 +33,9 @@ def test_a_non_callable_ttl_gets_no_hint() -> None:
 
 
 async def test_cache_outside_a_route_names_cached() -> None:
-    with pytest.raises(RequestNotFoundError, match=r"outside a FastAPI route.*@cached"):
+    with pytest.raises(
+        RequestNotFoundError, match=r"outside a FastAPI HTTP route.*@cached"
+    ):
         await cache(ttl=60)(_handler)()
 
 
@@ -62,3 +65,16 @@ def test_a_key_builder_with_optional_extras_is_accepted() -> None:
         return "k" + suffix
 
     cache(ttl=60, key_builder=key_builder)(_handler)
+
+
+def test_a_wraps_adapter_around_a_fastapi_cache2_builder_is_accepted() -> None:
+    """The adapter's own signature counts, not the one it wraps."""
+
+    def fc2_builder(func: Any, namespace: str, request: Request) -> str:
+        return request.url.path
+
+    @functools.wraps(fc2_builder)
+    def adapter(request: Request) -> str:
+        return fc2_builder(None, "", request)
+
+    cache(ttl=60, key_builder=adapter)(_handler)
