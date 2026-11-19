@@ -17,9 +17,13 @@ from typing import Literal
 from fastapi import BackgroundTasks
 from fastapi import Request
 from fastapi import Response
+from fastapi.security import APIKeyCookie
+from fastapi.security import APIKeyHeader
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import _tags
+from ._arguments import _BYPASS_WARNING
+from ._arguments import _UNKEYED_CALLER_WARNING
 from ._arguments import _BypassWarner
 from ._cache_control import _NO_STORE
 from ._cache_control import _cache_control_for
@@ -201,18 +205,60 @@ async def _read_entry(
     return entry, True
 
 
-def _request_credential(request: Request) -> str | None:
-    """What identifies the caller of ``request``, or ``None`` if nothing does.
+def _route_credentials(route: object) -> tuple[tuple[str, str], ...]:
+    """The API keys and cookies the dependencies of ``route`` identify callers by.
 
-    ``Authorization``, or a non-empty ``request.session`` from any session
-    middleware (Starlette's ``SessionMiddleware``, for example). An empty
-    session does not count, and neither does a ``Cookie`` header alone.
+    ``("header", name)`` for FastAPI's ``APIKeyHeader``, ``("cookie", name)``
+    for ``APIKeyCookie`` and every ``Cookie()`` parameter, anywhere in the
+    dependency tree (#574). An API key in the query string is in the key
+    already, and the HTTP schemes (``HTTPBearer``, ``OAuth2PasswordBearer``,
+    ...) send ``Authorization``.
+    """
+    found: list[tuple[str, str]] = []
+    pending = [getattr(route, "dependant", None)]
+    while pending:
+        dependant = pending.pop()
+        if dependant is None:
+            continue
+        call = dependant.call
+        if isinstance(call, APIKeyHeader):
+            found.append(("header", call.model.name))
+        elif isinstance(call, APIKeyCookie):
+            found.append(("cookie", call.model.name))
+        found.extend(("cookie", param.alias) for param in dependant.cookie_params)
+        pending.extend(dependant.dependencies)
+    return tuple(found)
+
+
+def _request_credential(
+    request: Request, route_credentials: Iterable[tuple[str, str]] = ()
+) -> tuple[str, str] | None:
+    """What identifies the caller of ``request``, and the header carrying it.
+
+    ``Authorization``; a non-empty ``request.session`` from any session
+    middleware (Starlette's ``SessionMiddleware``, for example), carried by
+    ``Cookie``; or an API key or cookie of ``route_credentials`` that the
+    request sends. An empty session does not count, and neither does a
+    ``Cookie`` header the route does not read. ``None`` if nothing does.
     """
     if "authorization" in request.headers:
-        return "Authorization header"
+        return "Authorization header", "authorization"
     if request.scope.get("session"):
-        return "Session data"
+        return "Session data", "cookie"
+    for where, name in route_credentials:
+        if where == "header" and name in request.headers:
+            return f"the {name} header (an API key)", name.lower()
+        if where == "cookie" and name in request.cookies:
+            return f"the {name} cookie", "cookie"
     return None
+
+
+# `X-Cache-Reason` for a credential bypass; an API key or cookie is
+# "credential".
+_BYPASS_REASONS: dict[str, CacheReason] = {
+    "Authorization header": "authorization",
+    "Session data": "session",
+}
 
 
 @dataclass
@@ -287,10 +333,37 @@ class _Route:
     client_cache_control: _ClientCacheControl
     tags: tuple[str, ...] | Callable[[Request], Iterable[str]]
     key_builder: CacheKeyBuilder
+    # Whether `key_builder` was left unset: the built-in key knows nothing of
+    # the caller (#574).
+    default_key: bool
     vary_names: dict[str, VaryNormaliser | None]
     cache_control: str
     private_cache_control: str
     warn_bypass: _BypassWarner
+
+    # `_route_credentials` per route template, so the dependencies are walked
+    # once per route rather than on every request.
+    route_credentials: dict[str | None, tuple[tuple[str, str], ...]] = field(
+        default_factory=dict
+    )
+
+    def _credential(self, request: Request) -> tuple[str, str] | None:
+        """``_request_credential`` for ``request``, with this route's API keys."""
+        route = request.scope.get("route")
+        path = getattr(route, "path", None)
+        known = self.route_credentials.get(path)
+        if known is None:
+            known = self.route_credentials[path] = _route_credentials(route)
+        return _request_credential(request, known)
+
+    def _keys_caller(self, header: str) -> bool:
+        """Whether the key tells apart the callers that ``header`` identifies.
+
+        A custom ``key_builder`` is trusted to (``key_builder=default_key_builder``
+        passed on purpose shares one entry between them); otherwise ``vary``
+        must list the header.
+        """
+        return not self.default_key or header in {n.lower() for n in self.vary_names}
 
     @property
     def skips_backend(self) -> bool:
@@ -360,22 +433,32 @@ class _Route:
         # only `private=True` already sends it.
         # `cache_authorized` lifts the bypass but not `private`: its entries
         # are per caller only in this backend, while a shared cache
-        # downstream keys on the URL alone (#372).
-        credential = None if self.private or self.public else _request_credential(req)
+        # downstream keys on the URL alone (#372). It lifts it only when the
+        # key tells the callers apart, and an API key or cookie the route's
+        # dependencies identify callers by counts as a credential too (#574).
+        credential = None if self.private or self.public else self._credential(req)
         cache_control = (
             self.cache_control if credential is None else self.private_cache_control
         )
-        authorized_bypass = credential is not None and not self.cache_authorized
-        if credential is not None and not self.cache_authorized:
+        authorized_bypass = credential is not None and not (
+            self.cache_authorized and self._keys_caller(credential[1])
+        )
+        if credential is not None and authorized_bypass:
             logger.debug(
                 "%s present; bypassing the backend for path=%s",
-                credential,
+                credential[0],
                 req.url.path,
             )
             # The warning is about lost cache hits, which a route that
             # never reads the backend does not have.
             if not self.skips_backend:
-                self.warn_bypass(req, credential)
+                self.warn_bypass(
+                    req,
+                    credential[0],
+                    _UNKEYED_CALLER_WARNING
+                    if self.cache_authorized
+                    else _BYPASS_WARNING,
+                )
 
         if self.skips_backend or authorized_bypass:
             call.reason = (
@@ -383,8 +466,8 @@ class _Route:
                 if self.private
                 else "no-ttl"
                 if not self.ttl
-                else "authorization"
-                if "authorization" in req.headers
+                else _BYPASS_REASONS.get(credential[0], "credential")
+                if credential is not None
                 else "session"
             )
             return await self._uncached(call, cache_control)

@@ -35,6 +35,7 @@ CacheReason = Literal[
     "no-ttl",
     "authorization",
     "session",
+    "credential",
     "request-no-store",
     "disabled",
     # The handler ran and its response was not stored.

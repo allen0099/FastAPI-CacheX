@@ -42,8 +42,8 @@ cache to behave like an HTTP cache:
   `Vary` (`vary=` adds request headers to the key), and answers `HEAD` from
   the cached `GET` (0.5.0). See [HTTP caching](HTTP_CACHING.md).
 - **Safe by default with credentials.** The default key carries no user
-  identity, so a request with `Authorization` or a session bypasses the shared
-  cache and is answered with `Cache-Control: private`, and a response that sets
+  identity, so a request with `Authorization`, a session, or an API key or
+  cookie the route's dependencies read bypasses the shared cache and is answered with `Cache-Control: private`, and a response that sets
   a cookie is never stored. You opt in to sharing with `public=True`, or to a
   per-user entry with `cache_authorized=True` and a key builder that names
   the user (see [Requests with credentials](HTTP_CACHING.md#requests-with-credentials)).

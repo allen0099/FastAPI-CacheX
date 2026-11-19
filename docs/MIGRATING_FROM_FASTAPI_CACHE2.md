@@ -105,7 +105,7 @@ fastapi-cache2 hashes the function's module, name and arguments. FastAPI-CacheX 
 fastapi-cache2 caches a request with an `Authorization` header like any other, so a per-user endpoint has to put the user into its key. FastAPI-CacheX does not read or write the shared backend for a request with `Authorization` or a non-empty `request.session`, and answers it with `Cache-Control: private`. If you relied on fastapi-cache2 caching such routes:
 
 - When the response is the same for every user, set `@cache(ttl=60, public=True)`.
-- When it is per user, set `cache_authorized=True` with a `key_builder` that puts the verified user into the key. See [Requests with credentials](HTTP_CACHING.md#requests-with-credentials).
+- When it is per user, set `cache_authorized=True` with a `key_builder` that puts the verified user into the key; the flag alone still bypasses. See [Requests with credentials](HTTP_CACHING.md#requests-with-credentials).
 
 A route that sets a cookie is never stored either.
 

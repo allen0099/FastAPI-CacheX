@@ -63,7 +63,7 @@ Every answer then gets its `Cache-Control`, `Vary` and, with
 |---|---|
 | GET or HEAD? | Only GET and HEAD go through the cache, HEAD reading the entry of the GET. Every other method runs the handler directly and gets no `Cache-Control` header. |
 | `no_store`? | The handler runs, the backend is neither read nor written, and the response says `Cache-Control: no-store`. |
-| Backend skipped? | Yes for `private=True`, a route without a positive `ttl`, or a request with `Authorization` or session data on a route without `public` or `cache_authorized`; and for every route while caching is [switched off](TESTING.md#switching-off). The key builder does not run; `If-None-Match` is compared with the fresh response to decide between 304 and 200; with credentials, `Cache-Control` says `private` instead of `public`. With `cache_authorized` the backend is used, but every answer still says `private`. |
+| Backend skipped? | Yes for `private=True`, a route without a positive `ttl`, or a [request with credentials](HTTP_CACHING.md#requests-with-credentials) (`Authorization`, session data, or an API key or cookie the route's dependencies read) unless the route is `public`, or `cache_authorized` with a key that identifies the caller; and for every route while caching is [switched off](TESTING.md#switching-off). The key builder does not run; `If-None-Match` is compared with the fresh response to decide between 304 and 200; with credentials, `Cache-Control` says `private` instead of `public`. With `cache_authorized` the backend is used, but every answer still says `private`. |
 | Client asks for a fresh response? | Only on a route with `client_cache_control`. A request's `no-cache` or `max-age=0` skips the read: the handler runs and its response replaces the entry. A request's `no-store` is decided earlier and counts as "backend skipped". |
 | Build the cache key | `key_builder` (default `http:v2\|method\|host\|path\|query`), plus one `name=value` component per `vary` header. |
 | Read the entry | With `fail_open`, a backend error counts as a miss. So does an entry one of whose tags was invalidated since it was stored, and one stored before the route had its tags. With `coalesce=True`, a request that finds nothing waits for a request already rendering the same key, then reads again. With `coalesce="distributed"`, the request that leads in its process also takes a lock on the key, or waits for the worker that holds it. |
@@ -217,8 +217,10 @@ The header value is built once per decorated route:
 >    content.
 > 2. A custom `key_builder` that includes the identity, together with
 >    `cache_authorized=True` — when you really do want a per-user server-side
->    cache. Without `cache_authorized`, a request with an `Authorization` header
->    or non-empty `request.session` data bypasses the backend (see below). With it, the answer is
+>    cache. Without `cache_authorized`, a request with an `Authorization` header,
+>    non-empty `request.session` data, or an API key or cookie the route's
+>    dependencies read bypasses the backend (see below); so does one on a
+>    `cache_authorized` route whose key does not identify the caller. With it, the answer is
 >    still sent with `private`, since a shared cache downstream cannot see the
 >    identity in the key.
 >
@@ -266,10 +268,12 @@ if no_store:
     return await render()  # no read, no write
 
 bypass = private or not ttl
-# Authorization header, or non-empty request.session
+# Authorization header, non-empty request.session, or an API key or cookie the
+# route's dependencies read; with the header that carries it
 credential = None if private or public else request_credential(request)
 header = private_header if credential else decorator_header  # for every answer below
-if bypass or (credential and not cache_authorized):
+# key_identifies: a key_builder, or vary listing the credential's header
+if bypass or (credential and not (cache_authorized and key_identifies(credential))):
     response, etag = await render()  # backend neither read nor written
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
@@ -372,9 +376,10 @@ return response
 > **Responses that belong to one caller are never stored.** Following RFC 9111
 > §3.5, a request with an `Authorization` header bypasses the backend (no read,
 > no write), and so does one with a non-empty `request.session` (from any
-> session middleware), unless the route is `public=True` or opts in with
-> `cache_authorized=True` (for a `key_builder` that includes the verified
-> identity). On a render, a response whose own `Cache-Control` contains
+> session middleware) or an API key or cookie the route's dependencies read,
+> unless the route is `public=True` or opts in with `cache_authorized=True`
+> and a key that identifies the caller (a `key_builder` that includes the
+> verified identity, or `vary` listing the credential's header). On a render, a response whose own `Cache-Control` contains
 > `private` or `no-store` (whole directive, any case), or that sets a cookie,
 > is served but not written. A `private`/`no-store` header from the handler is
 > sent unchanged instead of the decorator's. A cookie response, and the answer
@@ -572,7 +577,7 @@ Which backend to pick is covered in [Backends](BACKENDS.md#choosing-a-backend).
 | `no_store=True` | The cache is neither read nor written; the endpoint runs every time |
 | `no_cache=True` | The endpoint runs every time to recompute the ETag; a match with the client's `If-None-Match` still returns 304, and the cache is updated when the ETag changes |
 | `private=True` | The **shared backend** is neither read nor written; `Cache-Control: private` is still sent and the ETag is compared against fresh content |
-| Request with `Authorization` or non-empty `request.session` | The backend is neither read nor written, as with `private=True`, and `Cache-Control` has `private` instead of `public`, unless the route has `public=True` or `cache_authorized=True` (`must_revalidate=True` is not enough); with `cache_authorized=True` the backend is used but `Cache-Control` still has `private` |
+| Request with `Authorization`, non-empty `request.session`, or an API key or cookie the route's dependencies read | The backend is neither read nor written, as with `private=True`, and `Cache-Control` has `private` instead of `public`, unless the route has `public=True`, or `cache_authorized=True` with a key that identifies the caller (`must_revalidate=True` is not enough); with `cache_authorized=True` the backend is used but `Cache-Control` still has `private` |
 | Handler sends `Cache-Control: private`/`no-store` | Returned with the handler's header intact, not written, and any existing entry is left untouched |
 | Response sets a cookie | Returned with `private` instead of `public` in `Cache-Control`, not written, and any existing entry is left untouched |
 | No `ttl` (or `ttl=0`) | The backend is neither read nor written, as with `private=True`; the endpoint runs every time and the ETag is compared against fresh content |
