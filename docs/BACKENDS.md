@@ -69,7 +69,7 @@ task and waits until it has finished (see [Closing a backend](#closing-a-backend
 `stop_cleanup()` only requests cancellation. The task holds the backend only
 weakly, so a backend dropped without `aclose()` is still freed, entries and all,
 and its task ends at its next wake-up. Earlier releases kept such a backend in
-memory until its event loop closed.
+memory for as long as its event loop existed.
 
 By default the cache has no size limit: entries leave only when they expire, so
 memory grows with request rate × `ttl` × body size, per worker, and a client can

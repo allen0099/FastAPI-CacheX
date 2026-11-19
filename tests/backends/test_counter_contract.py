@@ -165,18 +165,21 @@ async def test_a_signed_counter_raises_below_its_range(
     assert await backend.get(KEYS[1]) == counter_entry(-(2**63))
 
 
-# A value each backend stores but cannot count with (#504).
-OUT_OF_RANGE = {"memcached": -1}
+# A value each server stores but cannot count with (#504).
+OUT_OF_RANGE = {"redis": 2**63, "memcached": -1}
 
 
 async def test_a_counter_outside_the_servers_range_raises_naming_it(
     backend: BaseCacheBackend, request: pytest.FixtureRequest
 ) -> None:
     """Redis and Memcached reported such a counter only as "not a counter"."""
-    value = OUT_OF_RANGE.get(request.node.callspec.params["backend"], 2**63)
+    name = request.node.callspec.params["backend"]
+    if name not in OUT_OF_RANGE:
+        pytest.skip("checks the result, covered by the overflow tests")
+    value = OUT_OF_RANGE[name]
     await backend.set(KEYS[1], counter_entry(value))
 
-    with pytest.raises(CacheXError, match=r"64-bit|unsigned"):
+    with pytest.raises(CacheXError, match="outside"):
         await backend.increment(KEYS[1])
 
     assert await backend.get(KEYS[1]) == counter_entry(value)

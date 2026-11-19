@@ -31,8 +31,16 @@ class LockedHashClient(HashClient):  # type: ignore[misc]  # pymemcache is untyp
             super()._retry_dead()
 
     def _mark_failed_server(self, server: Any) -> None:
-        with self._tables_lock:
-            super()._mark_failed_server(server)
+        if self.retry_attempts > 0:
+            with self._tables_lock:
+                super()._mark_failed_server(server)
+            return
+        # pymemcache first writes the server into _failed_clients and then
+        # takes it out again, while other threads read that table without the
+        # lock: one could see the entry and then fail to read it (KeyError).
+        # With no retries the table has no use, so the server goes straight
+        # out of rotation and the table stays empty.
+        self.remove_server(server)
 
     def remove_server(self, server: Any, port: int | None = None) -> None:
         """Take ``server`` out of rotation until the dead timeout passes.
