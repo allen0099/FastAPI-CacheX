@@ -182,19 +182,19 @@ if no_store:
     return await render()  # 不讀取，不寫入
 
 bypass = private or not ttl
-# Authorization 標頭、不是空的 request.session，或路由的依賴項讀取的
-# API 金鑰或 Cookie；連同攜帶它的標頭
-credential = None if private or public else request_credential(request)
-header = private_header if credential else decorator_header  # 用於下方每個回應
-# key_identifies：有 key_builder，或 vary 列出憑證所在的標頭
-if bypass or (credential and not (cache_authorized and key_identifies(credential))):
+# 每一項憑證：Authorization 標頭、不是空的 request.session、路由的依賴項
+# 讀取的 API 金鑰或 Cookie；各自連同攜帶它的標頭
+credentials = [] if private or public else request_credentials(request)
+header = private_header if credentials else decorator_header  # 用於下方每個回應
+# key_identifies：有 key_builder，或 vary 列出（不帶正規化函式、會雜湊的）其標頭
+unkeyed = [c for c in credentials if not (cache_authorized and key_identifies(c))]
+if bypass or unkeyed:
     response, etag = await render()  # 既不讀取也不寫入後端
     return not_modified(...) if etag_matches(client_etag, etag) else response
 
 # HEAD：key_builder 拿到的請求方法是 GET
-asked = client_asks(
-    request
-)  # 只有 client_cache_control 時："no-cache"（max-age=0 亦同）、"no-store" 或 None
+# 只有 client_cache_control 時："no-cache"（max-age=0 亦同）、"no-store" 或 None
+asked = client_asks(request)
 if asked == "no-store":
     ...  # 同上方的 bypass：自行產生，既不讀取也不寫入後端
 

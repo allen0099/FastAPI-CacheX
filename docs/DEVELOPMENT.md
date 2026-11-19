@@ -59,7 +59,7 @@ is listening, the suites skip and say so.
 
 A run with nothing opted in still clears the coverage gate (`fail_under = 90`)
 at about 95%, but only because the rest of the suite carries it — `redis.py`
-alone drops below 40%. The margin is thin, so the first place an untested
+alone drops to about 60%. The margin is thin, so the first place an untested
 line shows up as a failure is a local opted-out run, not CI, which sets both
 variables against its own service containers and sees 99.95%.
 
