@@ -160,7 +160,8 @@ async def close_network_clients(
     `__new__` records rather than `__init__`, so the constructor's warnings
     still point at the test that called it.
 
-    Clients are recognised by the module of their type rather than with
+    Clients are recognised by the module of their type or one of its bases
+    (the Memcached backend subclasses pymemcache's client) rather than with
     `isinstance`, so this file imports neither optional client library, and
     a mock a test swapped in is left alone.
     """
@@ -176,8 +177,10 @@ async def close_network_clients(
     yield
     for backend in opened:
         # Missing if the constructor raised; a test may swap in a mock.
-        module = type(getattr(backend, "client", None)).__module__
-        if module.startswith(("redis.", "pymemcache.")):
+        client_types = type(getattr(backend, "client", None)).__mro__
+        if any(
+            t.__module__.startswith(("redis.", "pymemcache.")) for t in client_types
+        ):
             await backend.aclose()
 
 
