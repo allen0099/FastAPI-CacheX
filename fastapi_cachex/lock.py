@@ -27,6 +27,14 @@ _LOCK_FINGERPRINT = "lock"
 _pending_withdrawals: set["asyncio.Task[bool]"] = set()
 
 
+def _seconds(value: numbers.Real, name: str) -> float:
+    try:
+        return float(value)
+    except OverflowError as e:  # an int too large for a float
+        msg = f"{name} is too large, got {value!r}"
+        raise ValueError(msg) from e
+
+
 def _check_poll_interval(value: object) -> float:
     """``value`` if it is a positive, finite number of seconds.
 
@@ -36,7 +44,7 @@ def _check_poll_interval(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         msg = f"poll_interval must be a number of seconds, got {type(value).__name__}"
         raise TypeError(msg)
-    seconds = float(value)
+    seconds = _seconds(value, "poll_interval")
     if not (seconds > 0 and math.isfinite(seconds)):
         msg = f"poll_interval must be positive and finite, got {value!r}"
         raise ValueError(msg)
@@ -55,7 +63,7 @@ def _check_timeout(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         msg = f"timeout must be a number of seconds or None, got {type(value).__name__}"
         raise TypeError(msg)
-    seconds = float(value)
+    seconds = _seconds(value, "timeout")
     if math.isnan(seconds):
         msg = "timeout must be a number of seconds, got nan"
         raise ValueError(msg)
