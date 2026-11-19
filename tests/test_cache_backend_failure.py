@@ -18,6 +18,7 @@ from starlette.types import Scope
 
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import cache
+from fastapi_cachex import events
 from fastapi_cachex import set_event_handler
 from fastapi_cachex._route import _failure_log
 from fastapi_cachex.backends import MemcachedBackend
@@ -307,7 +308,7 @@ def test_an_outage_warns_once_a_minute_with_a_count(
     assert "(4 more since the last warning, at DEBUG)" in warnings[1]
 
 
-def test_a_failing_event_handler_logs_its_traceback_once(
+def test_a_failing_event_handler_logs_its_traceback_once_a_minute(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     def handler(event: object) -> None:
@@ -323,8 +324,18 @@ def test_a_failing_event_handler_logs_its_traceback_once(
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1
     assert errors[0].exc_info is not None
+    # A minute later a failure is logged again, with the count in between:
+    # a handler that broke once at startup still reports a new bug.
+    logged_at, skipped = events._handler_failures
+    assert logged_at is not None
+    events._handler_failures = (logged_at - 61, skipped)
+    with caplog.at_level(logging.ERROR, logger="fastapi_cachex.events"):
+        client.get("/item")
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 2
+    assert f"({skipped} more since the last time)" in errors[1].getMessage()
     # A new handler is reported afresh.
     set_event_handler(handler)
     with caplog.at_level(logging.ERROR, logger="fastapi_cachex.events"):
         client.get("/item")
-    assert len([r for r in caplog.records if r.levelno >= logging.ERROR]) == 2
+    assert len([r for r in caplog.records if r.levelno >= logging.ERROR]) == 3
