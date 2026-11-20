@@ -16,6 +16,8 @@ from fastapi_cachex import invalidate
 from fastapi_cachex import invalidate_path
 from fastapi_cachex import set_event_handler
 from fastapi_cachex.cache_key import CacheKey
+from fastapi_cachex.routes import CachedRecord
+from fastapi_cachex.routes import CacheHitRecord
 from fastapi_cachex.types import CacheEntry
 
 
@@ -158,3 +160,22 @@ def test_a_default_port_in_host_still_reaches_the_other_scheme(
 
     assert response.json() == {"invalidated": True}
     assert reader.get("/page").headers["X-Cache"] == "MISS"
+
+
+@pytest.mark.parametrize(
+    ("record", "fields"),
+    [
+        (CacheHitRecord, ("k", "GET", "h", "/p", "", "e", False, 1.0)),
+        (
+            CachedRecord,
+            ("k", "GET", "h", "/p", "", "e", "bytes", 1, False, 1.0, None, None),
+        ),
+    ],
+)
+def test_a_record_built_by_position_must_name_the_scheme(record, fields) -> None:
+    """A 0.6.x positional call fails instead of shifting every field (#623)."""
+    with pytest.raises(TypeError, match="scheme"):
+        record(*fields)
+
+    built = record(*fields, scheme="https")
+    assert (built.scheme, built.method, built.host) == ("https", "GET", "h")
