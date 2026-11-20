@@ -1422,8 +1422,8 @@ add_routes(
 )
 ```
 
-- `GET {prefix}/cached-hits` — every cached entry split into method, host, path
-  and query (`sha256:<hex>` for a query over 200 bytes), with its ETag and
+- `GET {prefix}/cached-hits` — every cached entry split into scheme, method,
+  host, path and query (`sha256:<hex>` for a query over 200 bytes), with its ETag and
   expiry, in `entries`, counted in `total_entries`, `valid_entries` and
   `expired_entries`, plus the distinct cached paths. Despite the route's name,
   it does not count hits. The older `cached_hits`, `total_hits`, `valid_hits`
