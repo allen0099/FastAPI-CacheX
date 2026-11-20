@@ -1255,7 +1255,9 @@ current Starlette).
 `invalidate(request)` is the same operation for a request you already have:
 it builds the key from that request as it is, method included. Passing it the
 `PUT` request itself therefore deletes nothing, and logs a warning that says
-so, because the key of a `PUT` never matches a cached `GET`.
+so, because the key of a `PUT` never matches a cached `GET`. It takes a
+`Request` only: a path string raises `TypeError`, pointing to
+`invalidate_path()`.
 
 Both return `True` when an entry existed and
 was removed, `False` otherwise, including when no backend is configured. An

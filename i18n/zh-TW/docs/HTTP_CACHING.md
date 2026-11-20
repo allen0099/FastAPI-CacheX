@@ -682,7 +682,7 @@ async def update_item(item_id: int, request: Request):
 
 `invalidate_path(request, path, key_builder=None, vary=None, *, query=None, sort_query=None)` 的主機、scheme 與標頭取自目前的請求，方法（`GET`）、路徑與查詢則來自它的參數。`path` 是被快取的 handler 在 `request.url.path` 看到的路徑：已經過百分比解碼，所以請像上面那樣用解碼後的值組出來，並包含掛載應用程式的前綴。`request.url_for(...).path` 會給出相同的字串，但有兩個例外：在會移除前綴的 proxy 後方（它會加上 `root_path`，而鍵裡沒有），以及路徑參數含有 `?` 或 `#` 時。快取請求的查詢可以放在 `path` 裡（`"/items?page=2"`）或以 `query` 傳入，形式可以是字串、mapping 或成對的序列；沒有查詢時，刪除的是該路徑不帶查詢所儲存的項目。由於 `path` 中的 `?` 代表查詢的開始，路徑內字面上的 `?` 要照 `request.url.path` 顯示的方式寫（在目前的 Starlette 上是 `%3F`）。
 
-`invalidate(request)` 是同一個操作，用在你手上已經有請求的時候：它直接以該請求組出鍵，方法也包含在內。因此把 `PUT` 請求本身傳給它不會刪除任何東西，並會記錄一則說明原因的警告，因為 `PUT` 的鍵永遠不會與快取的 `GET` 相符。
+`invalidate(request)` 是同一個操作，用在你手上已經有請求的時候：它直接以該請求組出鍵，方法也包含在內。因此把 `PUT` 請求本身傳給它不會刪除任何東西，並會記錄一則說明原因的警告，因為 `PUT` 的鍵永遠不會與快取的 `GET` 相符。它只接受 `Request`：傳入路徑字串會拋出 `TypeError`，並指向 `invalidate_path()`。
 
 兩者都在項目存在且已移除時回傳 `True`，否則回傳 `False`，包括尚未設定後端的情況。後端本身的錯誤則會拋給呼叫端（見[後端發生錯誤時](#when-the-backend-fails)）。傳給 `invalidate()` 的請求必須能產生快取路由的鍵：相同的方法、主機、路徑與查詢字串。如果快取路由使用自訂的 `key_builder`、`vary` 或 `sort_query`，兩個函式都要傳入相同的值，否則鍵不會相符：它們無法從路由讀取這些設定。使用 `vary` 時，只會刪除請求本身的標頭值所選中的變體，`clear_path()` 則會移除所有變體。預設情況下，請求的查詢會以 `@cache` 相同的方式排序，因此 `?b=2&a=1` 會刪除為 `?a=1&b=2` 儲存的項目；對設定了 `sort_query=False` 的路由，這裡也要傳入 `sort_query=False`。
 
