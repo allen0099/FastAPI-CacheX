@@ -64,8 +64,8 @@ def _is_unavailable(error: Exception) -> bool:
 
 _unavailable = translate_unavailable(_is_unavailable)
 
-# 0.7.0 requires redis-py 7.4: before it, a client used from a second event
-# loop never recovers (#605). Warned once per process, by the first backend.
+# 0.7.0 requires redis-py 7.4: before it, a client whose first event loop has
+# closed can fail on every later loop (#605). Warned once per process, by the first backend.
 _NEXT_REDIS_FLOOR = (7, 4)
 _warned_old_redis = False
 
@@ -78,15 +78,17 @@ def _warn_if_old_redis(version: str) -> None:
         return
     if (int(found[1]), int(found[2])) >= _NEXT_REDIS_FLOOR:
         return
-    _warned_old_redis = True
     warnings.warn(
         f"fastapi-cachex 0.7.0 will require redis-py 7.4 or later; redis-py "
-        f"{version} is installed. Before 7.4 a client used from a second "
-        "event loop never recovers. Upgrade with 'pip install \"redis>=7.4\"' "
-        "(see the 0.7.0 migration guide).",
+        f"{version} is installed. Before 7.4 a client whose first event loop "
+        "has closed can fail on every later loop. Upgrade with "
+        "'pip install \"redis>=7.4\"'; see "
+        "https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_7/#redis-74",
         FutureWarning,
         stacklevel=caller_stacklevel(),
     )
+    # Recorded after warning: under `-W error` every call raises alike.
+    _warned_old_redis = True
 
 
 # PTTL replies that are not a remaining lifetime.

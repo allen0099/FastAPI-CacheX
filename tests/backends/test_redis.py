@@ -1903,7 +1903,10 @@ def test_redis_config_refuses_negative_retries() -> None:
         ("5.3.0", True),
         ("7.1.0", True),
         ("7.3.9", True),
+        ("7.3.99rc1", True),
         ("7.4.0", False),
+        ("7.4.0b1", False),
+        ("7.10.0", False),
         ("8.1.0", False),
         ("10.0.0", False),
         ("", False),
@@ -1945,3 +1948,19 @@ def test_the_old_redis_py_warning_points_at_the_application(
     with pytest.warns(FutureWarning, match="redis-py 6.0.0 is installed") as record:
         AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
     assert record[0].filename == __file__
+
+
+def test_under_an_error_filter_every_old_redis_py_check_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `-W error` suite fails wherever a backend is built, not only first."""
+    import warnings
+
+    from fastapi_cachex.backends import redis as redis_module
+
+    monkeypatch.setattr(redis_module, "_warned_old_redis", False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for _ in range(2):
+            with pytest.raises(FutureWarning):
+                redis_module._warn_if_old_redis("5.3.0")
