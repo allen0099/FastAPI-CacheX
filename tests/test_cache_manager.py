@@ -354,6 +354,21 @@ async def test_a_typed_read_of_another_shape_names_the_type(
     assert not any("Failed to decode" in w for w in warnings)
 
 
+async def test_corrupt_data_under_type_is_still_a_decode_failure(
+    memory_backend: MemoryBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    """pydantic reports invalid JSON as a ValidationError too (#630)."""
+    manager = CacheManager(backend=memory_backend)
+    entry = CacheEntry(fingerprint="x", content=b"not valid json")
+    await memory_backend.set(f"{manager.key_prefix}k", entry, ttl=60)
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.manager"):
+        assert await manager.get("k", type_=int) is None
+
+    [warning] = [r.getMessage() for r in caplog.records]
+    assert warning.startswith("Failed to decode cached value")
+
+
 # --- add ------------------------------------------------------------------------
 
 

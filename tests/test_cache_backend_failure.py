@@ -180,7 +180,7 @@ def test_failure_warning_does_not_log_the_cache_key(
         assert secret not in warning
     assert "method=GET" in warning
     assert "path='/callback'" in warning
-    assert "error=ConnectionError: backend unreachable" in warning
+    assert "error=ConnectionError: 'backend unreachable'" in warning
 
     # The full key is at DEBUG only, tagged with the same digest.
     [debug] = [
@@ -339,3 +339,25 @@ def test_a_failing_event_handler_logs_its_traceback_once_a_minute(
     with caplog.at_level(logging.ERROR, logger="fastapi_cachex.events"):
         client.get("/item")
     assert len([r for r in caplog.records if r.levelno >= logging.ERROR]) == 3
+
+
+class _NewlineError(MemoryBackend):
+    async def get(self, key: str) -> CacheEntry | None:
+        msg = "first line\r\nforged: second line"
+        raise ConnectionError(msg)
+
+
+def test_a_newline_in_the_error_cannot_split_the_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The message is logged with %r, so a CR/LF stays escaped (#630)."""
+    BackendProxy.set(_NewlineError())
+    app, _ = _counting_app()
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.cache"):
+        TestClient(app).get("/item")
+
+    [warning] = [r.getMessage() for r in caplog.records]
+    assert "\n" not in warning
+    assert "\r" not in warning
+    assert "error=ConnectionError: 'first line\\r\\nforged: second line'" in warning

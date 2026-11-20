@@ -470,7 +470,9 @@ class CacheManager:
             _emit("miss", "app", key)
             # Keys often embed user IDs or e-mails: only a digest at WARNING.
             key_ref = log_ref(key)
-            if isinstance(e, ValidationError):
+            if isinstance(e, ValidationError) and not any(
+                err["type"] == "json_invalid" for err in e.errors()
+            ):
                 # Valid JSON of another shape: usually a schema change (#630).
                 name = type_.__qualname__ if isinstance(type_, type) else repr(type_)
                 what = f"Cached value does not match type_={name}"
