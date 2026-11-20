@@ -263,7 +263,7 @@ async def items() -> list[str]: ...
 | `status` | `MISS`、`REFRESH` | handler 回應的不是 2xx（或是 206）。 |
 | `streamed` | `MISS`、`REFRESH` | `StreamingResponse` 或 `FileResponse`：沒有可儲存的內容。 |
 | `set-cookie` | `MISS`、`REFRESH` | handler 或某個依賴項設定了 cookie，或 handler 修改了 `request.session`（session 中介軟體在 `@cache` 之後才加上它的 cookie）：儲存的副本會把某位訪客的 cookie 或 session 資料交給下一位。回應會以 `private` 送出。其他之後才由中介軟體加上的 cookie 在這裡看不到。 |
-| `vary` | `MISS`、`REFRESH` | handler 或某個依賴項設定了 `Vary: *`，或在使用預設鍵時，設定的 `Vary` 列出了路由 `vary` 以外的標頭：儲存的副本會不論該標頭的值都被送出。請把該標頭加入 `vary=`。 |
+| `vary` | `MISS`、`REFRESH` | handler 或某個依賴項設定了 `Vary: *`，或在使用預設鍵時，設定的 `Vary` 列出了路由 `vary` 以外的標頭：儲存的副本會不論該標頭的值都被送出。每個路由與標頭只會以 `WARNING` 記錄一次。請把該標頭加入 `vary=`。 |
 | `response-cache-control` | `MISS`、`REFRESH` | handler 或某個依賴項在這個回應送出了 `Cache-Control: private` 或 `no-store`。 |
 | `dependency-status` | `MISS`、`REFRESH` | 某個依賴項設定了狀態碼，它可能只對這個請求成立。 |
 | `head` | `MISS`、`REFRESH` | handler 為 `HEAD` 請求執行了；只有 `GET` 的回應會被儲存。 |

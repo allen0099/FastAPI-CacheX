@@ -511,7 +511,7 @@ causes. With `debug_header=True` such a response also carries
 | `status` | `MISS`, `REFRESH` | The handler answered with something other than a 2xx (or with 206). |
 | `streamed` | `MISS`, `REFRESH` | A `StreamingResponse` or `FileResponse`: there is no body to store. |
 | `set-cookie` | `MISS`, `REFRESH` | The handler or a dependency set a cookie, or the handler changed `request.session` (the session middleware adds its cookie after `@cache`): a stored copy would hand one visitor's cookie or session data to the next. Sent with `private`. Another middleware that adds its cookie later is not seen here. |
-| `vary` | `MISS`, `REFRESH` | The handler or a dependency set `Vary: *`, or, with the default key, a `Vary` naming a header that is not in the route's `vary`: a stored copy would be served whatever that header says. Add the header to `vary=`. |
+| `vary` | `MISS`, `REFRESH` | The handler or a dependency set `Vary: *`, or, with the default key, a `Vary` naming a header that is not in the route's `vary`: a stored copy would be served whatever that header says. Logged at `WARNING` once per route and header. Add the header to `vary=`. |
 | `response-cache-control` | `MISS`, `REFRESH` | The handler or a dependency sent `Cache-Control: private` or `no-store` on this response. |
 | `dependency-status` | `MISS`, `REFRESH` | A dependency set the status code, which may hold for this request only. |
 | `head` | `MISS`, `REFRESH` | The handler ran for a `HEAD` request; only a `GET` response is stored. |

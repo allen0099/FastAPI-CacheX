@@ -5,6 +5,7 @@ middleware, outside ``@cache``; a ``Vary`` the handler sets names a header the
 default key does not hold.
 """
 
+import logging
 import secrets
 import threading
 
@@ -146,3 +147,19 @@ def test_a_session_that_cannot_be_copied_is_served_private() -> None:
 
     assert response.status_code == 200
     assert response.headers["X-Cache-Reason"] == "set-cookie"
+
+
+def test_a_vary_outside_the_key_warns_once_and_names_the_header(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Without it the route silently stops caching after the upgrade."""
+    client = TestClient(_vary_app("Accept"))
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex"):
+        client.get("/me")
+        client.get("/me")
+
+    warnings = [r.getMessage() for r in caplog.records]
+    assert len(warnings) == 1
+    assert "Vary: accept" in warnings[0]
+    assert "vary=" in warnings[0]

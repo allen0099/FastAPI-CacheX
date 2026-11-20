@@ -26,6 +26,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import _tags
 from ._arguments import _BYPASS_WARNING
 from ._arguments import _UNKEYED_CALLER_WARNING
+from ._arguments import _UNKEYED_VARY_WARNING
 from ._arguments import _BypassWarner
 from ._cache_control import _NO_STORE
 from ._cache_control import _cache_control_for
@@ -1223,8 +1224,8 @@ class _Route:
 
     def _unkeyed_vary(
         self, response: Response, dependency_lines: Iterable[tuple[bytes, bytes]]
-    ) -> bool:
-        """Whether the handler or a dependency set a ``Vary`` the key does not hold.
+    ) -> str | None:
+        """The name in a ``Vary`` the handler or a dependency set that the key does not hold.
 
         ``Vary: *`` is never stored (RFC 9111 §4.1). Any other name is
         checked against the route's ``vary`` only with the default key: a
@@ -1242,8 +1243,8 @@ class _Route:
         for line in lines:
             for name in (part.strip().lower() for part in line.split(",")):
                 if name == "*" or (name and self.default_key and name not in keyed):
-                    return True
-        return False
+                    return name
+        return None
 
     def _skip_reason(self, call: _Call, response: Response) -> CacheReason | None:
         """Why a rendered response is served but not stored, if it is not.
@@ -1258,8 +1259,13 @@ class _Route:
             reason = "set-cookie"
         if reason is None:
             reason = _dependency_unshareable_reason(call.dependency_lines)
-        if reason is None and self._unkeyed_vary(response, call.dependency_lines):
-            reason = "vary"
+        if reason is None:
+            unkeyed = self._unkeyed_vary(response, call.dependency_lines)
+            if unkeyed is not None:
+                reason = "vary"
+                self.warn_bypass(
+                    call.request, f"Vary: {unkeyed}", _UNKEYED_VARY_WARNING
+                )
         if reason is None and call.dependency_status is not None:
             # It may hold for this request only, and a hit would replay it.
             reason = "dependency-status"
