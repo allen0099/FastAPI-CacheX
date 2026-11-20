@@ -17,7 +17,7 @@ FutureWarning: fastapi-cachex 0.7.0 will require redis-py 7.4 or later; redis-py
 The fix is to upgrade redis-py, which needs no change to your code:
 
 ```bash
-pip install "redis[hiredis]>=7.4"
+pip install "redis>=7.4"
 ```
 
 Until you can, a test suite that turns warnings into errors (`filterwarnings = ["error"]`) can ignore this one warning:
@@ -40,9 +40,11 @@ The key `@cache` builds for a response has no scheme: `http:v2|GET|example.com|/
 
 - Entries written by 0.6.x are not read by 0.7.0: every route starts with a cold cache once. They expire with their `ttl`; to remove them at once on Redis, run `clear_pattern("http:v2|*")` after the upgrade (Memcached cannot enumerate keys, see [Choosing a backend](BACKENDS.md#choosing-a-backend)).
 - During a rolling deploy, 0.6.x and 0.7.0 instances do not read each other's entries, and an invalidation from one version does not reach the other's entries. Keep each `ttl` in mind, or move every instance at once.
-- The scheme is the one Starlette reports (`request.url.scheme`). Behind a proxy that terminates TLS, every request looks like `http` unless the server trusts the proxy's `X-Forwarded-Proto` (`uvicorn --proxy-headers --forwarded-allow-ips=...`); then nothing splits.
-- A custom `key_builder` that calls `build_cache_key()` follows automatically. One that builds the key itself keeps its keys as they are.
-- Code that reads keys from `/cached-hits` or `get_all_keys()` sees the new tag and the scheme field.
+- `invalidate()`, `invalidate_path()` and `clear_path()` clear the entries of both schemes, so a write made over https also removes the http entry of the same URL.
+- A pattern written by hand for `clear_pattern()`, such as `"http:v2|GET|*|/api/users/*"`, matches nothing from 0.7.0 on, without an error. Use `clear_path()`, which follows the key format, or rewrite the pattern for the new tag and the scheme field.
+- The scheme is the one Starlette reports (`request.url.scheme`). Behind a proxy that terminates TLS every request looks like `http`, so http and https still share one entry, unless the server trusts the proxy's `X-Forwarded-Proto` (`uvicorn --proxy-headers --forwarded-allow-ips=...`).
+- A custom `key_builder` that calls `build_cache_key()` follows automatically. One that builds the key itself keeps its keys as they are: they still mix http and https, and keys it writes in the `http:v2|` format are no longer recognised by `CacheKey.parse()`, `clear_path()` and the monitoring routes. Switch it to `build_cache_key()`.
+- `CacheKey` gains a `scheme` field: code that builds a `CacheKey` itself or reads the result of `CacheKey.parse()` needs it, and code that reads keys from `/cached-hits` or `get_all_keys()` sees the new tag and the scheme.
 
 ## `MemoryBackend.lock` and `start_cleanup()` are removed {#memory-backend}
 
