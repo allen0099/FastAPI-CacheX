@@ -136,3 +136,25 @@ async def test_clear_path_clears_both_schemes() -> None:
         )
 
     assert await backend.clear_path("/page") == 2
+
+
+@pytest.mark.parametrize(
+    ("writer", "host"),
+    [("http", "example.com:80"), ("https", "example.com:443")],
+)
+def test_a_default_port_in_host_still_reaches_the_other_scheme(
+    writer: str, host: str
+) -> None:
+    """The port the writer's scheme implies is not carried to the other one."""
+    app = make_app()
+    other = "https" if writer == "http" else "http"
+    reader = TestClient(app, base_url=f"{other}://example.com")
+    reader.get("/page")
+    assert reader.get("/page").headers["X-Cache"] == "HIT"
+
+    response = TestClient(app, base_url=f"{writer}://example.com").put(
+        "/page", headers={"Host": host}
+    )
+
+    assert response.json() == {"invalidated": True}
+    assert reader.get("/page").headers["X-Cache"] == "MISS"

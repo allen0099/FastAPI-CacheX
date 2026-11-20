@@ -688,7 +688,7 @@ async def update_item(item_id: int, request: Request):
 
 ### 寫入之後：`invalidate()` 還是 `clear_path()` {#after-a-write-invalidate-or-clear_path}
 
-`invalidate()` 與 `invalidate_path()` 只刪除一筆項目：由你傳入的請求或路徑組出的那一筆，http 與 https 兩者都會刪除（0.7.0 起 scheme 是鍵的一部分，而一次寫入會讓兩者都變舊）。`PUT /items/42` 之後，它刪的是 `GET /items/42` 不帶查詢字串的項目；在設定了 `vary` 的路由上，則是請求標頭所選中的那一個變體。以其他鍵呈現同一筆資料的項目會繼續提供舊資料，直到過期為止：`/items/42?fields=name`、包含它的 `/items?page=2` 清單，以及你用 `en` 失效時的 `Accept-Language: fr` 變體。
+`invalidate()` 與 `invalidate_path()` 只刪除由你傳入的請求或路徑組出的那一筆項目，包括它的 http 與 https 兩個鍵（0.7.0 起 scheme 是鍵的一部分，而一次寫入會讓兩者都變舊）。`PUT /items/42` 之後，它刪的是 `GET /items/42` 不帶查詢字串的項目；在設定了 `vary` 的路由上，則是請求標頭所選中的那一個變體。以其他鍵呈現同一筆資料的項目會繼續提供舊資料，直到過期為止：`/items/42?fields=name`、包含它的 `/items?page=2` 清單，以及你用 `en` 失效時的 `Accept-Language: fr` 變體。
 
 - 資源只有一個項目，或你只想刪掉那一個時，用 `invalidate_path(request, path)`（或 `invalidate(request)`）。只需一次後端操作，而且在 Memcached 上也可用。
 - 資源有多個項目時，用 `clear_path(path, include_params=True)`：它會移除該路徑儲存的所有項目，不論查詢字串、`vary` 變體、主機與方法。請對該筆資料本身與包含它的清單都呼叫一次。只支援 Redis 與記憶體後端：Memcached 無法列舉鍵。

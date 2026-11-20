@@ -46,7 +46,7 @@ The key `@cache` builds for a response has no scheme: `http:v2|GET|example.com|/
 - A pattern written by hand for `clear_pattern()`, such as `"http:v2|GET|*|/api/users/*"`, matches nothing from 0.7.0 on, without an error. Use `clear_path()`, which follows the key format, or rewrite the pattern for the new tag and the scheme field.
 - The scheme is the one Starlette reports (`request.url.scheme`). Behind a proxy that terminates TLS every request looks like `http`, so http and https still share one entry, unless the server trusts the proxy's `X-Forwarded-Proto` (`uvicorn --proxy-headers --forwarded-allow-ips=...`).
 - A custom `key_builder` that calls `build_cache_key()` follows automatically. One that builds the key itself keeps its keys as they are: they still mix http and https, and keys it writes in the `http:v2|` format are no longer recognised by `CacheKey.parse()`, `clear_path()` and the monitoring routes. Switch it to `build_cache_key()`.
-- `CacheKey` gains a `scheme` field: code that builds a `CacheKey` itself or reads the result of `CacheKey.parse()` needs it, and code that reads keys from `/cached-hits` or `get_all_keys()` sees the new tag and the scheme.
+- `CacheKey` gains a `scheme` field: code that builds a `CacheKey` itself or reads the result of `CacheKey.parse()` needs it, and code that reads keys from `/cached-hits` or `get_all_keys()` sees the new tag and the scheme. The monitoring records (`CacheHitRecord`, `CachedRecord`) have a new `scheme` field, required when you build one yourself.
 
 ## `MemoryBackend.lock` and `start_cleanup()` are removed {#memory-backend}
 
