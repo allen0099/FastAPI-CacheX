@@ -20,35 +20,6 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
-## [0.7.2] - 2026-11-20
-
-### Fixed
-
-- **The docs say the key digests are not secret, and that a `key_prefix`
-  should end with a separator.** The `sha256:` digest of a credential header in
-  an HTTP cache key and the `key_ref` in warnings are plain SHA-256 and can be
-  reversed by guessing. On Redis, `key_prefix="tenant1"` also matches the keys
-  of `"tenant10"`. ([#639](https://github.com/allen0099/FastAPI-CacheX/issues/639))
-
-### Security
-
-- **`@cache` no longer stores a response whose session the handler wrote, or
-  that varies on a header outside its key.** A handler writing to an empty
-  `request.session` (a CSRF token, a visitor ID) had its response stored and sent
-  with a public `Cache-Control`, while the session middleware added a
-  `Set-Cookie` after `@cache`: later visitors got the first one's session data,
-  and a CDN could store their session cookie. Such a response is now sent with
-  `private` and not stored (`X-Cache-Reason: set-cookie`). A response with
-  `Vary: *`, or, under the default key, with a `Vary` naming a header that is not
-  in the route's `vary`, was stored and served to every caller; it is now not
-  stored (`X-Cache-Reason: vary`, a new reason), and a `WARNING` naming the
-  header is logged once per route and header. A route that sets such a `Vary` itself (for
-  example `Vary: Accept`) therefore stops being cached after the upgrade, and
-  its handler runs on every request: add the header to `vary=` to cache it
-  again.
-  An entry stored before the upgrade keeps being served until its `ttl` ends;
-  clear the cache after upgrading to drop it at once. ([#632](https://github.com/allen0099/FastAPI-CacheX/issues/632))
-
 ## [0.7.1] - 2026-11-20
 
 ### Changed
@@ -2065,8 +2036,7 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.2...HEAD
-[0.7.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.1...v0.7.2
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.1...HEAD
 [0.7.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.5...v0.7.0
 [0.6.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.4...v0.6.5
