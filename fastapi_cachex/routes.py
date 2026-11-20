@@ -23,7 +23,9 @@ class CacheHitRecord:
     """One cached route entry. Despite the name, hits are not counted."""
 
     cache_key: str
-    scheme: str
+    # Keyword-only, as on CacheKey: a positional call written for 0.6.x
+    # fails instead of shifting every field (#623).
+    scheme: str = field(kw_only=True)
     method: str
     host: str
     path: str
@@ -72,7 +74,9 @@ class CachedRecord:
     """
 
     cache_key: str
-    scheme: str
+    # Keyword-only, as on CacheKey: a positional call written for 0.6.x
+    # fails instead of shifting every field (#623).
+    scheme: str = field(kw_only=True)
     method: str
     host: str
     path: str
