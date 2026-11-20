@@ -368,6 +368,53 @@ async def test_during_an_outage_followers_get_the_leaders_response(
     assert _IN_FLIGHT == {}
 
 
+@pytest.mark.parametrize(
+    "leader_headers", [{"X-Fail": "1"}, None], ids=["raises", "read-ok"]
+)
+async def test_during_an_outage_followers_render_without_a_shareable_response(
+    client_for: Callable[[FastAPI], httpx.AsyncClient],
+    waiters: Waiters,
+    monkeypatch: pytest.MonkeyPatch,
+    leader_headers: dict[str, str] | None,
+) -> None:
+    """Nothing is handed on from a leader that raised, or that read the backend.
+
+    A leader whose read succeeded checks its tags before storing; its response
+    may be one a tag invalidated while it ran, so it is not handed on.
+    """
+    backend = BackendProxy.get()
+    read = backend.get
+    down = leader_headers is not None
+
+    async def flaky(key: str) -> CacheEntry | None:
+        if down:
+            msg = "backend down"
+            raise ConnectionError(msg)
+        return await read(key)
+
+    monkeypatch.setattr(backend, "get", flaky)
+    handler = Handler(waiters)
+    client = client_for(_app(handler, tags=["items"]))
+    leader = asyncio.ensure_future(client.get("/items", headers=leader_headers))
+    await waiters.until(lambda: bool(handler.calls))
+    down = True  # the followers' reads fail
+    followers = [asyncio.ensure_future(client.get("/items")) for _ in range(FOLLOWERS)]
+    await waiters.until(lambda: waiters.count == FOLLOWERS)
+
+    first_release, handler.release = handler.release, asyncio.Event()
+    first_release.set()
+    if leader_headers:
+        with pytest.raises(RuntimeError, match="handler failed"):
+            await leader
+    else:
+        await leader
+    await waiters.until(lambda: handler.running == FOLLOWERS)
+    handler.release.set()
+    assert {r.status_code for r in await _settle(*followers)} == {200}
+    assert len(handler.calls) == 1 + FOLLOWERS
+    assert _IN_FLIGHT == {}
+
+
 async def test_during_an_outage_an_unstorable_response_is_not_shared(
     client_for: Callable[[FastAPI], httpx.AsyncClient],
     waiters: Waiters,
