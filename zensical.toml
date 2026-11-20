@@ -25,6 +25,7 @@ nav = [
     { "Backends" = "BACKENDS.md" },
     { "Distributed lock" = "LOCK.md" },
     { "Testing your app" = "TESTING.md" },
+    { "Production checklist" = "PRODUCTION.md" },
   ] },
   { "Under the hood" = [
     { "Cache flow" = "CACHE_FLOW.md" },
