@@ -6,14 +6,19 @@ default key does not hold.
 """
 
 import secrets
+import threading
 
+import pytest
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
 
+from fastapi_cachex import _stored_response as stored_response
 from fastapi_cachex import cache
+from tests.conftest import Clock
 
 
 def _session_app(**kwargs: object) -> FastAPI:
@@ -94,3 +99,50 @@ def test_a_vary_the_route_keys_on_is_stored() -> None:
     client.get("/me")
 
     assert client.get("/me").headers["X-Cache"] == "HIT"
+
+
+def test_a_stale_answer_after_a_session_write_is_private(
+    clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``stale="error"``: the handler wrote the session, then failed."""
+    monkeypatch.setattr(stored_response, "_now", clock.time)
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test")
+    failing = [False]
+
+    @app.get("/page")
+    @cache(ttl=1, stale="error", stale_ttl=60, serve_stale=True, debug_header=True)
+    async def page(request: Request) -> dict[str, str]:
+        if failing[0]:
+            request.session["csrf"] = "minted"
+            raise HTTPException(status_code=503)
+        return {"ok": "yes"}
+
+    TestClient(app).get("/page")
+    clock.advance(2)
+    failing[0] = True
+
+    response = TestClient(app).get("/page")
+
+    assert response.headers["X-Cache"] == "STALE"
+    assert response.headers["Cache-Control"].startswith("private")
+
+
+def test_a_session_that_cannot_be_copied_is_served_private() -> None:
+    """A custom middleware's session may hold anything; the request still works."""
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def session(request: Request, call_next):
+        request.scope["session"] = {"lock": threading.Lock()}
+        return await call_next(request)
+
+    @app.get("/shared")
+    @cache(ttl=60, public=True, debug_header=True)
+    async def shared() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    response = TestClient(app).get("/shared")
+
+    assert response.status_code == 200
+    assert response.headers["X-Cache-Reason"] == "set-cookie"

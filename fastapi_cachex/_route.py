@@ -5,6 +5,7 @@ request to it.
 """
 
 import asyncio
+import copy
 import logging
 import time
 from collections.abc import Callable
@@ -352,6 +353,10 @@ _BYPASS_REASONS: dict[str, CacheReason] = {
 }
 
 
+# `_Call.session_before` for a session `deepcopy` could not copy.
+_UNCOPIED_SESSION = object()
+
+
 @dataclass
 class _Call:
     """One GET, HEAD or other request to a decorated handler.
@@ -402,7 +407,13 @@ class _Call:
 
     @property
     def session_written(self) -> bool:
-        """Whether the handler changed ``request.session``."""
+        """Whether the handler changed ``request.session``.
+
+        A session that could not be copied counts as changed: nothing is
+        stored for it and it is sent ``private``.
+        """
+        if self.session_before is _UNCOPIED_SESSION:
+            return True
         return bool(self.request.scope.get("session") != self.session_before)
 
     @property
@@ -414,6 +425,18 @@ class _Call:
         self.flight.finish(self.shared)
         if self.lock is not None:
             await _release_lock(self.lock)
+
+
+def _session_snapshot(request: Request) -> Any:
+    """A copy of ``request.session`` to compare with after the handler, or a marker.
+
+    A custom session middleware may keep values ``deepcopy`` cannot copy; the
+    request must not fail for it (see ``_Call.session_written``).
+    """
+    try:
+        return copy.deepcopy(request.scope.get("session"))
+    except Exception:  # noqa: BLE001 - anything deepcopy may raise
+        return _UNCOPIED_SESSION
 
 
 @dataclass(frozen=True, eq=False)
@@ -768,7 +791,14 @@ class _Route:
         if rendered is None:
             # Only with a fallback: the handler failed, the stale entry answers.
             assert fallback is not None  # noqa: S101 - for the type checker
-            return self._hit(call, fallback, cache_key, cache_control, outcome=_STALE)
+            # The handler may have written the session before it failed.
+            return self._hit(
+                call,
+                fallback,
+                cache_key,
+                self._sent(call, cache_control),
+                outcome=_STALE,
+            )
         return await self._fresh(
             call, backend, cache_key, cache_control, stored=entry, rendered=rendered
         )

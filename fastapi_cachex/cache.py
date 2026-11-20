@@ -1,6 +1,5 @@
 """Core caching functionality and decorators."""
 
-import copy
 import logging
 import time
 import warnings
@@ -40,6 +39,7 @@ from ._route import _Call
 from ._route import _ClientCacheControl
 from ._route import _Route
 from ._route import _route_template
+from ._route import _session_snapshot
 from ._vary import Vary
 from ._vary import _validate_vary
 from .directives import DirectiveType
@@ -497,7 +497,7 @@ def cache(
                     None if sub_response is None else sub_response.status_code
                 ),
                 background=background,
-                session_before=copy.deepcopy(request.scope.get("session")),
+                session_before=_session_snapshot(request),
             )
             started = time.perf_counter()
             try:
