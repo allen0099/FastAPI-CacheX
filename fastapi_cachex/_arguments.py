@@ -68,6 +68,15 @@ _BYPASS_WARNING = (
     "each bypass is logged at DEBUG."
 )
 
+# A response whose `Vary` the key does not hold is served unstored (#632).
+_UNKEYED_VARY_WARNING = (
+    "@cache did not store the response of route %r: it is sent with %s, a "
+    "header the cache key does not hold, so a stored copy would be served "
+    "whatever the request's header says. Add the header to @cache(vary=...) "
+    "to cache the route (Vary: * is never stored). Logged once per route and "
+    "header; X-Cache-Reason: vary with debug_header=True."
+)
+
 # A `cache_authorized` route whose key does not tell the callers apart: it
 # would serve one caller's response to the next, so it bypasses (#574).
 _UNKEYED_CALLER_WARNING = (
