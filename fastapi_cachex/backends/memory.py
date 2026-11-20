@@ -156,17 +156,15 @@ class MemoryBackend(BaseCacheBackend):
         """
         if cleanup_interval <= 0:
             # asyncio.sleep() returns at once for these, so the cleanup loop
-            # would spin, taking the cache lock on every pass.
+            # would spin, sweeping the cache on every pass.
             msg = f"cleanup_interval must be positive, got {cleanup_interval!r}"
             raise ValueError(msg)
         # Ordered from least to most recently used; a plain `dict` for callers
         # (`OrderedDict` is one), with `move_to_end` for the LRU bookkeeping.
         self.cache: OrderedDict[str, CacheItem] = OrderedDict()
-        # Not what makes the operations atomic: no section holding it contains
-        # an `await`, so on one event loop each runs to its end anyway, and an
-        # asyncio.Lock gives no thread safety. Kept until 0.7.0 only so that
-        # code holding the deprecated `lock` still excludes them (#504).
-        self._lock = asyncio.Lock()
+        # No operation awaits between reading and writing `cache`, so on one
+        # event loop each runs to its end before another starts: that, not a
+        # lock, makes them atomic. Keep it so; nothing here is thread safe.
         self.cleanup_interval = cleanup_interval
         self.max_entries = _validate_max_entries(max_entries)
         self._cleanup_task: asyncio.Task[None] | None = None
@@ -212,41 +210,6 @@ class MemoryBackend(BaseCacheBackend):
             self.cleanup_interval,
         )
 
-    @property
-    def lock(self) -> asyncio.Lock:
-        """Deprecated: the lock the operations take; removed in 0.7.0 (#504)."""
-        warnings.warn(
-            "MemoryBackend.lock is deprecated and will be removed in version "
-            "0.7.0. Each operation is already atomic on one event loop; to "
-            "make several of them one step, use CacheLock or your own lock.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._lock
-
-    @lock.setter
-    def lock(self, value: asyncio.Lock) -> None:
-        warnings.warn(
-            "MemoryBackend.lock is deprecated and will be removed in version 0.7.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._lock = value
-
-    def start_cleanup(self) -> None:
-        """Deprecated: start the cleanup task; removed in 0.7.0 (#504).
-
-        The first read or write starts it, so there is nothing to call.
-        """
-        warnings.warn(
-            "MemoryBackend.start_cleanup() is deprecated and will be removed "
-            "in version 0.7.0. Remove the call: the first read or write "
-            "starts the cleanup task.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._ensure_cleanup_started()
-
     def stop_cleanup(self) -> None:
         """Stop the cleanup task if it's running.
 
@@ -280,19 +243,18 @@ class MemoryBackend(BaseCacheBackend):
         """
         self._ensure_cleanup_started()
 
-        async with self._lock:
-            cached_item = self.cache.get(key)
-            if cached_item is None:
-                logger.debug("Memory cache MISS; key=%s", key)
-                return None
-            if not _is_live(cached_item, time.time()):
-                # Entry has expired; clean it up
-                del self.cache[key]
-                logger.debug("Memory cache EXPIRED; key=%s removed", key)
-                return None
-            self._touch(key)
-            logger.debug("Memory cache HIT; key=%s", key)
-            return copy.copy(cached_item.value)
+        cached_item = self.cache.get(key)
+        if cached_item is None:
+            logger.debug("Memory cache MISS; key=%s", key)
+            return None
+        if not _is_live(cached_item, time.time()):
+            # Entry has expired; clean it up
+            del self.cache[key]
+            logger.debug("Memory cache EXPIRED; key=%s removed", key)
+            return None
+        self._touch(key)
+        logger.debug("Memory cache HIT; key=%s", key)
+        return copy.copy(cached_item.value)
 
     async def set(
         self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
@@ -311,57 +273,53 @@ class MemoryBackend(BaseCacheBackend):
         ttl = validate_ttl(ttl)
         self._ensure_cleanup_started()
 
-        async with self._lock:
-            expiry = time.time() + ttl if ttl is not None else None
-            self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
-            logger.debug("Memory cache SET; key=%s ttl=%s", key, ttl)
+        expiry = time.time() + ttl if ttl is not None else None
+        self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
+        logger.debug("Memory cache SET; key=%s ttl=%s", key, ttl)
 
     async def delete(self, key: str) -> bool:
         """Remove a response from the cache; returns whether it had not expired."""
-        async with self._lock:
-            item = self.cache.pop(key, None)
-            removed = item is not None and _is_live(item, time.time())
-            logger.debug("Memory cache DELETE; key=%s removed=%s", key, removed)
-            return removed
+        item = self.cache.pop(key, None)
+        removed = item is not None and _is_live(item, time.time())
+        logger.debug("Memory cache DELETE; key=%s removed=%s", key, removed)
+        return removed
 
     async def delete_many(self, keys: Iterable[str]) -> int:
-        """Remove every key in ``keys`` under one lock; returns how many existed."""
+        """Remove every key in ``keys`` in one step; returns how many existed."""
         doomed = set(keys)
         # Popped key by key: `_evict` would walk the whole cache (#498).
-        async with self._lock:
-            now = time.time()
-            removed = 0
-            for key in doomed:
-                item = self.cache.pop(key, None)
-                removed += item is not None and _is_live(item, now)
+        now = time.time()
+        removed = 0
+        for key in doomed:
+            item = self.cache.pop(key, None)
+            removed += item is not None and _is_live(item, now)
         logger.debug(
             "Memory cache DELETE_MANY; requested=%s removed=%s", len(doomed), removed
         )
         return removed
 
     async def get_many(self, keys: Iterable[str]) -> dict[str, CacheEntry]:
-        """Retrieve the entries stored under ``keys``, under one lock."""
+        """Retrieve the entries stored under ``keys`` in one step."""
         self._ensure_cleanup_started()
 
         found: dict[str, CacheEntry] = {}
-        async with self._lock:
-            now = time.time()
-            for key in dict.fromkeys(keys):
-                item = self.cache.get(key)
-                if item is None:
-                    continue
-                if not _is_live(item, now):
-                    del self.cache[key]
-                    continue
-                self._touch(key)
-                found[key] = copy.copy(item.value)
+        now = time.time()
+        for key in dict.fromkeys(keys):
+            item = self.cache.get(key)
+            if item is None:
+                continue
+            if not _is_live(item, now):
+                del self.cache[key]
+                continue
+            self._touch(key)
+            found[key] = copy.copy(item.value)
         logger.debug("Memory cache GET_MANY; found=%s", len(found))
         return found
 
     async def set_many(
         self, entries: Mapping[str, CacheEntry], ttl: int | timedelta | None = None
     ) -> None:
-        """Store every entry in ``entries`` under one lock (see base class).
+        """Store every entry in ``entries`` in one step (see base class).
 
         With ``max_entries``, a batch larger than the limit keeps only its
         last ``max_entries`` entries.
@@ -369,23 +327,21 @@ class MemoryBackend(BaseCacheBackend):
         ttl = validate_ttl(ttl)
         self._ensure_cleanup_started()
 
-        async with self._lock:
-            expiry = time.time() + ttl if ttl is not None else None
-            for key, value in entries.items():
-                self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
+        expiry = time.time() + ttl if ttl is not None else None
+        for key, value in entries.items():
+            self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
         logger.debug("Memory cache SET_MANY; count=%s ttl=%s", len(entries), ttl)
 
     async def get_and_delete(self, key: str) -> CacheEntry | None:
         """Atomically retrieve and remove a cached entry (see base class)."""
         self._ensure_cleanup_started()
 
-        async with self._lock:
-            item = self.cache.pop(key, None)
-            if item is None or not _is_live(item, time.time()):
-                logger.debug("Memory cache GET_AND_DELETE MISS; key=%s", key)
-                return None
-            logger.debug("Memory cache GET_AND_DELETE HIT; key=%s", key)
-            return item.value
+        item = self.cache.pop(key, None)
+        if item is None or not _is_live(item, time.time()):
+            logger.debug("Memory cache GET_AND_DELETE MISS; key=%s", key)
+            return None
+        logger.debug("Memory cache GET_AND_DELETE HIT; key=%s", key)
+        return item.value
 
     async def set_if_absent(
         self, key: str, value: CacheEntry, ttl: int | timedelta | None = None
@@ -394,48 +350,45 @@ class MemoryBackend(BaseCacheBackend):
         ttl = validate_ttl(ttl)
         self._ensure_cleanup_started()
 
-        async with self._lock:
-            now = time.time()
-            item = self.cache.get(key)
-            if item is not None and _is_live(item, now):
-                logger.debug("Memory cache SET_IF_ABSENT EXISTS; key=%s", key)
-                return False
-            expiry = now + ttl if ttl is not None else None
-            self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
-            logger.debug("Memory cache SET_IF_ABSENT STORED; key=%s ttl=%s", key, ttl)
-            return True
+        now = time.time()
+        item = self.cache.get(key)
+        if item is not None and _is_live(item, now):
+            logger.debug("Memory cache SET_IF_ABSENT EXISTS; key=%s", key)
+            return False
+        expiry = now + ttl if ttl is not None else None
+        self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
+        logger.debug("Memory cache SET_IF_ABSENT STORED; key=%s ttl=%s", key, ttl)
+        return True
 
     async def delete_if_equals(self, key: str, expected: CacheEntry) -> bool:
         """Atomically remove ``key`` while it holds ``expected`` (see base class)."""
-        async with self._lock:
-            item = self.cache.get(key)
-            if item is None or not _is_live(item, time.time()):
-                logger.debug("Memory cache DELETE_IF_EQUALS MISS; key=%s", key)
-                return False
-            if item.value != expected:
-                logger.debug("Memory cache DELETE_IF_EQUALS MISMATCH; key=%s", key)
-                return False
-            del self.cache[key]
-            logger.debug("Memory cache DELETE_IF_EQUALS HIT; key=%s", key)
-            return True
+        item = self.cache.get(key)
+        if item is None or not _is_live(item, time.time()):
+            logger.debug("Memory cache DELETE_IF_EQUALS MISS; key=%s", key)
+            return False
+        if item.value != expected:
+            logger.debug("Memory cache DELETE_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        del self.cache[key]
+        logger.debug("Memory cache DELETE_IF_EQUALS HIT; key=%s", key)
+        return True
 
     async def expire_if_equals(
         self, key: str, expected: CacheEntry, ttl: int | timedelta
     ) -> bool:
         """Atomically update expiry on ``key`` while it holds ``expected`` (see base class)."""
         ttl = require_ttl(ttl)
-        async with self._lock:
-            item = self.cache.get(key)
-            if item is None or not _is_live(item, time.time()):
-                logger.debug("Memory cache EXPIRE_IF_EQUALS MISS; key=%s", key)
-                return False
-            if item.value != expected:
-                logger.debug("Memory cache EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
-                return False
-            item.expiry = time.time() + ttl
-            self._touch(key)
-            logger.debug("Memory cache EXPIRE_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
-            return True
+        item = self.cache.get(key)
+        if item is None or not _is_live(item, time.time()):
+            logger.debug("Memory cache EXPIRE_IF_EQUALS MISS; key=%s", key)
+            return False
+        if item.value != expected:
+            logger.debug("Memory cache EXPIRE_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        item.expiry = time.time() + ttl
+        self._touch(key)
+        logger.debug("Memory cache EXPIRE_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
+        return True
 
     async def set_if_equals(
         self,
@@ -446,19 +399,18 @@ class MemoryBackend(BaseCacheBackend):
     ) -> bool:
         """Atomically store ``value`` while ``key`` holds ``expected`` (see base class)."""
         ttl = validate_ttl(ttl)
-        async with self._lock:
-            now = time.time()
-            item = self.cache.get(key)
-            if item is None or not _is_live(item, now):
-                logger.debug("Memory cache SET_IF_EQUALS MISS; key=%s", key)
-                return False
-            if item.value != expected:
-                logger.debug("Memory cache SET_IF_EQUALS MISMATCH; key=%s", key)
-                return False
-            expiry = now + ttl if ttl is not None else None
-            self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
-            logger.debug("Memory cache SET_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
-            return True
+        now = time.time()
+        item = self.cache.get(key)
+        if item is None or not _is_live(item, now):
+            logger.debug("Memory cache SET_IF_EQUALS MISS; key=%s", key)
+            return False
+        if item.value != expected:
+            logger.debug("Memory cache SET_IF_EQUALS MISMATCH; key=%s", key)
+            return False
+        expiry = now + ttl if ttl is not None else None
+        self._store(key, CacheItem(value=copy.copy(value), expiry=expiry))
+        logger.debug("Memory cache SET_IF_EQUALS HIT; key=%s ttl=%s", key, ttl)
+        return True
 
     async def increment(
         self, key: str, delta: int = 1, ttl: int | timedelta | None = None
@@ -478,25 +430,23 @@ class MemoryBackend(BaseCacheBackend):
         ttl = validate_ttl(ttl)
         self._ensure_cleanup_started()
 
-        async with self._lock:
-            now = time.time()
-            item = self.cache.get(key)
-            if item is not None and _is_live(item, now):
-                value = check_counter_range(counter_value(item.value) + delta)
-                item.value = counter_entry(value)
-                self._touch(key)
-            else:
-                value = delta
-                expiry = now + ttl if ttl is not None else None
-                self._store(key, CacheItem(value=counter_entry(value), expiry=expiry))
-            logger.debug("Memory cache INCREMENT; key=%s value=%s", key, value)
-            return value
+        now = time.time()
+        item = self.cache.get(key)
+        if item is not None and _is_live(item, now):
+            value = check_counter_range(counter_value(item.value) + delta)
+            item.value = counter_entry(value)
+            self._touch(key)
+        else:
+            value = delta
+            expiry = now + ttl if ttl is not None else None
+            self._store(key, CacheItem(value=counter_entry(value), expiry=expiry))
+        logger.debug("Memory cache INCREMENT; key=%s value=%s", key, value)
+        return value
 
     async def clear(self) -> None:
         """Clear all cached responses."""
-        async with self._lock:
-            self.cache.clear()
-            logger.debug("Memory cache CLEAR; all entries removed")
+        self.cache.clear()
+        logger.debug("Memory cache CLEAR; all entries removed")
 
     async def _evict(self, matches: Callable[[str], bool]) -> int:
         """Remove every entry whose key satisfies ``matches``.
@@ -504,10 +454,9 @@ class MemoryBackend(BaseCacheBackend):
         Returns how many of them had not expired yet: an expired entry is
         already gone as far as callers can tell, as it is on Redis.
         """
-        async with self._lock:
-            now = time.time()
-            doomed = [key for key in self.cache if matches(key)]
-            return sum(_is_live(self.cache.pop(key), now) for key in doomed)
+        now = time.time()
+        doomed = [key for key in self.cache if matches(key)]
+        return sum(_is_live(self.cache.pop(key), now) for key in doomed)
 
     async def clear_path(self, path: str, include_params: bool = False) -> int:
         """Clear cached responses for a specific path.
@@ -567,9 +516,8 @@ class MemoryBackend(BaseCacheBackend):
         Returns:
             List of every cache key that has not expired
         """
-        async with self._lock:
-            now = time.time()
-            return [key for key, item in self.cache.items() if _is_live(item, now)]
+        now = time.time()
+        return [key for key, item in self.cache.items() if _is_live(item, now)]
 
     async def get_cache_data(self) -> dict[str, tuple[CacheEntry, float | None]]:
         """Get all cache data with expiry information.
@@ -578,22 +526,18 @@ class MemoryBackend(BaseCacheBackend):
             Dictionary mapping cache keys to (CacheEntry, expiry) tuples, for
             entries that have not expired
         """
-        async with self._lock:
-            now = time.time()
-            return {
-                key: (copy.copy(item.value), item.expiry)
-                for key, item in self.cache.items()
-                if _is_live(item, now)
-            }
+        now = time.time()
+        return {
+            key: (copy.copy(item.value), item.expiry)
+            for key, item in self.cache.items()
+            if _is_live(item, now)
+        }
 
     async def cleanup(self) -> None:
         """Remove expired cache entries from memory."""
-        async with self._lock:
-            now = time.time()
-            expired_keys = [k for k, v in self.cache.items() if not _is_live(v, now)]
-            for key in expired_keys:
-                del self.cache[key]
-            if expired_keys:
-                logger.debug(
-                    "Memory cache CLEANUP; expired removed=%s", len(expired_keys)
-                )
+        now = time.time()
+        expired_keys = [k for k, v in self.cache.items() if not _is_live(v, now)]
+        for key in expired_keys:
+            del self.cache[key]
+        if expired_keys:
+            logger.debug("Memory cache CLEANUP; expired removed=%s", len(expired_keys))
