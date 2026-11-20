@@ -41,7 +41,7 @@
 
 ## Pull Request 流程 {#pull-request-process}
 
-1. 變更介面時，請更新 `docs/en/` 底下對應的指南（若變更應出現在首頁，也請更新 README）。維護者會讓[繁體中文翻譯](https://fastapi-cachex.readthedocs.io/en/stable/DEVELOPMENT/#traditional-chinese-translation)（英文）與英文版保持一致：若可以，請一併更新 `i18n/zh-TW/docs/` 底下的對應頁面；若沒有更新，請在 pull request 中說明，維護者會補上。
+1. 變更介面時，請更新 `docs/en/` 底下對應的指南（若變更應出現在首頁，也請更新 README）。維護者會讓[繁體中文翻譯](https://fastapi-cachex.readthedocs.io/en/stable/DEVELOPMENT/#traditional-chinese-translation)（英文）與英文版保持一致：若可以，請一併更新 `docs/zh-TW/` 底下的對應頁面；若沒有更新，請在 pull request 中說明，維護者會補上。
 2. 若你的變更改變了行為、新增了公開 API，或修正了使用者可能遇到的問題，請新增一個 changelog 片段：檔案 `changelog.d/<issue>.<section>.md`（section 為 `added`、`changed`、`deprecated`、`removed`、`fixed` 或 `security`），內容為該筆項目，以粗體的一行摘要開頭，寫成 `**What changed.** The details...`，不要加上開頭的 `- ` 或 issue 連結——發行時會自動補上。請不要直接編輯 [CHANGELOG.md](https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md)，詳見 [Changelog 片段](https://fastapi-cachex.readthedocs.io/en/stable/DEVELOPMENT/#changelog-fragments)（英文）。發行說明只會列出這些摘要，格式錯誤的片段會讓 CI 失敗。沒有任何可發行的項目時，發行流程也會拒絕執行，因此遺漏終究會被發現，但要到發行時才會發現，而且只會知道「有人忘了寫」，無法得知是哪個 PR。
 3. 為任何新的依賴項、功能或變更更新文件。新的公開 API 需要 docstring；若它位於尚未涵蓋的模組中，還需要在 `docs/en/api/` 底下新增項目。請以 `uv run zensical build --strict` 檢查網站（見[文件網站](https://fastapi-cachex.readthedocs.io/en/stable/DEVELOPMENT/#documentation-site)（英文））。
 4. 取得至少一位其他開發者的同意後，PR 即可合併。
