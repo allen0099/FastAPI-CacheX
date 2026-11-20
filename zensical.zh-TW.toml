@@ -29,6 +29,7 @@ nav = [
     { "後端" = "BACKENDS.md" },
     { "分散式鎖" = "LOCK.md" },
     { "測試你的應用程式" = "TESTING.md" },
+    { "正式環境檢查清單" = "PRODUCTION.md" },
   ] },
   { "深入了解" = [
     { "快取流程" = "CACHE_FLOW.md" },
