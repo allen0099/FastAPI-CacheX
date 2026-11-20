@@ -20,6 +20,41 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-20
+
+### Changed
+
+- **Three common mistakes get an error that says what to do.**
+  `BackendProxy.set()` and `CacheManagerProxy.set()` raise `TypeError` for a
+  class (`BackendProxy.set(MemoryBackend)`, with a hint to call it) or a value
+  without the methods of a backend or manager (a name such as `"memory"`),
+  instead of making every later request fail open. Other objects, test mocks
+  included, are accepted as before. `invalidate()` given a path string raises
+  `TypeError` pointing to `invalidate_path()`, instead of an `AttributeError`. A
+  `key_builder` that cannot take the request names its signature instead of
+  quoting `inspect`'s "too many positional arguments". ([#625](https://github.com/allen0099/FastAPI-CacheX/issues/625))
+- **Three log and warning messages say what happened.** The `@cache` warning
+  for a failed backend call shows the error's message
+  (`error=BackendUnavailableError: 'Error 111 connecting to ...'`), which
+  redis-py 8's own `repr` left out. A typed read whose value is valid JSON but
+  does not validate logs that it does not match `type_`, naming the type, instead
+  of the decode-failure message, which is kept for corrupt data. The Memcached
+  key-enumeration warning says that `CacheManager.clear()` and `clear_prefix()`
+  delete nothing there. ([#630](https://github.com/allen0099/FastAPI-CacheX/issues/630))
+
+### Fixed
+
+- **`CacheHitRecord` and `CachedRecord` take `scheme` by keyword only.** Built
+  positionally as in 0.6.x, they shifted every field by one place; they now raise
+  `TypeError` for the missing `scheme`, as `CacheKey` does. A 0.7.0 call that
+  passes `scheme` by position must pass it as `scheme=`. ([#623](https://github.com/allen0099/FastAPI-CacheX/issues/623))
+- **The docs match 0.7.0 where a validation run found them stale.** Outage
+  timings count one Redis call per request, since nothing is written after a
+  failed read; `LOCK.md` no longer describes the removed memory lock; Memcached
+  users are pointed to `invalidate_path()`; the migration guide covers a direct
+  `redis` pin, tags across a mixed deploy, prefix patterns and uvicorn's
+  `--forwarded-allow-ips`; and the testing guide names `httpx2`. ([#624](https://github.com/allen0099/FastAPI-CacheX/issues/624))
+
 ## [0.7.0] - 2026-11-20
 
 0.7.0 contains breaking changes; read
@@ -2001,7 +2036,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.5...v0.7.0
 [0.6.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.3...v0.6.4
