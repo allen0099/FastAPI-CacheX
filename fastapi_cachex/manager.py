@@ -466,18 +466,22 @@ class CacheManager:
                 # takes a datetime or a tuple from JSON, and refuses a str
                 # or a list.
                 value = _adapter(type_).validate_json(cached.content)
-        except (*_DECODE_ERRORS, ValidationError):
+        except (*_DECODE_ERRORS, ValidationError) as e:
             _emit("miss", "app", key)
             # Keys often embed user IDs or e-mails: only a digest at WARNING.
             key_ref = log_ref(key)
+            if isinstance(e, ValidationError):
+                # Valid JSON of another shape: usually a schema change (#630).
+                name = type_.__qualname__ if isinstance(type_, type) else repr(type_)
+                what = f"Cached value does not match type_={name}"
+            else:
+                what = "Failed to decode cached value"
             log = _DECODE_LOG.get()
             if log is None or not log.warned:
-                logger.warning("Failed to decode cached value; key_ref=%s", key_ref)
+                logger.warning("%s; key_ref=%s", what, key_ref)
                 if log is not None:
                     log.warned = True
-            logger.debug(
-                "Failed to decode cached value; key_ref=%s key=%s", key_ref, key
-            )
+            logger.debug("%s; key_ref=%s key=%s", what, key_ref, key)
             return default
         _emit("hit", "app", key)
         return value

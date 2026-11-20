@@ -155,11 +155,14 @@ def _log_backend_failure(
     if last is None or now - last[0] >= _FAILURE_LOG_INTERVAL:
         _failure_log[what] = (now, 0)
         logger.warning(
-            "Cache backend %s. method=%s path=%r key_ref=%s error=%r%s",
+            "Cache backend %s. method=%s path=%r key_ref=%s error=%s: %s%s",
             what,
             request.method,
             request.url.path,
             key_ref,
+            # Not %r: redis-py 8's errors repr as "network:ConnectionError",
+            # without the message (#630).
+            type(error).__name__,
             error,
             ""
             if last is None or not last[1]
@@ -168,9 +171,10 @@ def _log_backend_failure(
     else:
         _failure_log[what] = (last[0], last[1] + 1)
     logger.debug(
-        "Cache backend %s; key_ref=%s error=%r key=%s",
+        "Cache backend %s; key_ref=%s error=%s: %s key=%s",
         what,
         key_ref,
+        type(error).__name__,
         error,
         cache_key,
     )

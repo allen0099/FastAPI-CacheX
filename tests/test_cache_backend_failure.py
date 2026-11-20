@@ -180,7 +180,7 @@ def test_failure_warning_does_not_log_the_cache_key(
         assert secret not in warning
     assert "method=GET" in warning
     assert "path='/callback'" in warning
-    assert "error=ConnectionError('backend unreachable')" in warning
+    assert "error=ConnectionError: backend unreachable" in warning
 
     # The full key is at DEBUG only, tagged with the same digest.
     [debug] = [
