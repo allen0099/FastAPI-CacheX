@@ -3,7 +3,9 @@
 import copy
 import inspect
 import logging
+import re
 import time
+import warnings
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from collections.abc import Iterable
@@ -14,6 +16,7 @@ from typing import Any
 from urllib.parse import parse_qs
 from urllib.parse import urlsplit
 
+from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.backends.codec import validate_compress_min_size
@@ -60,6 +63,31 @@ def _is_unavailable(error: Exception) -> bool:
 
 
 _unavailable = translate_unavailable(_is_unavailable)
+
+# 0.7.0 requires redis-py 7.4: before it, a client used from a second event
+# loop never recovers (#605). Warned once per process, by the first backend.
+_NEXT_REDIS_FLOOR = (7, 4)
+_warned_old_redis = False
+
+
+def _warn_if_old_redis(version: str) -> None:
+    """Warn once that 0.7.0 will not run with redis-py ``version``."""
+    global _warned_old_redis  # noqa: PLW0603
+    found = re.match(r"(\d+)\.(\d+)", version)
+    if _warned_old_redis or found is None:
+        return
+    if (int(found[1]), int(found[2])) >= _NEXT_REDIS_FLOOR:
+        return
+    _warned_old_redis = True
+    warnings.warn(
+        f"fastapi-cachex 0.7.0 will require redis-py 7.4 or later; redis-py "
+        f"{version} is installed. Before 7.4 a client used from a second "
+        "event loop never recovers. Upgrade with 'pip install \"redis>=7.4\"' "
+        "(see the 0.7.0 migration guide).",
+        FutureWarning,
+        stacklevel=caller_stacklevel(),
+    )
+
 
 # PTTL replies that are not a remaining lifetime.
 _PTTL_NO_EXPIRY = -1
@@ -249,7 +277,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         try:
             # Import top-level package first so tests that monkeypatch
             # builtins.__import__("redis") can simulate absence reliably.
-            import redis  # noqa: F401
+            import redis
             from redis.asyncio import Redis as AsyncRedis
             from redis.asyncio.retry import Retry
         except ImportError as exc:
@@ -258,6 +286,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 "'pip install \"redis[hiredis]\"' "
             )
             raise CacheXError(msg) from exc
+        _warn_if_old_redis(getattr(redis, "__version__", ""))
 
         self.compress_min_size = validate_compress_min_size(compress_min_size)
         pool = kwargs.get("connection_pool")
