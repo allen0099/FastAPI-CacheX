@@ -47,11 +47,6 @@ nav = [
   { "變更紀錄（英文）" = "https://github.com/allen0099/FastAPI-CacheX/blob/master/CHANGELOG.md" },
 ]
 
-[project.extra]
-# Base of the English original; the "may be outdated" banner links each page
-# to its counterpart there.
-english_site = "https://fastapi-cachex.readthedocs.io/en/stable/"
-
 [[project.extra.alternate]]
 name = "English"
 link = "https://fastapi-cachex.readthedocs.io/en/stable/"
@@ -64,7 +59,6 @@ lang = "zh-Hant"
 
 [project.theme]
 language = "zh-Hant"
-custom_dir = "i18n/zh-TW/overrides"
 features = [
   "content.action.edit",
   "content.code.annotate",

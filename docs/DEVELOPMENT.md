@@ -289,8 +289,8 @@ also the PyPI description), the zh-TW links to English pages, `site_url` and
 the links in runtime warnings. That way a reader of a release sees the released
 behaviour (#330). A page added on `master` is therefore reachable through those
 links only after the next release. Zensical cannot tell which version it
-builds, so on `latest` the language switcher and the zh-TW "may be outdated"
-banner also lead to the other language's `stable`. Files read only on GitHub by
+builds, so on `latest` the language switcher also leads to the other
+language's `stable`. Files read only on GitHub by
 contributors, such as `changelog.d/README.md`, link to `latest`.
 
 ```bash
