@@ -237,8 +237,8 @@ BackendProxy.set(backend)
 - 關閉後的後端並不會被鎖住：Redis 與 Memcached 用戶端會在下一次呼叫時重新連線，`MemoryBackend` 也會重新啟動清理 task，因此在 `aclose()` 之後又使用的後端需要再呼叫一次 `aclose()`。
 - `BackendProxy.set(None)` 只會取消註冊後端，不會關閉它。
 - 自訂後端會從 `BaseCacheBackend` 繼承一個什麼都不做的 `aclose()`；若後端持有連線或背景工作，請覆寫它。
-- 若不呼叫 `aclose()`，開啟中的 socket 只會由垃圾回收器關閉，關閉應用程式時可能會產生 `ResourceWarning`。
-- 請在 Redis 後端的事件迴圈結束之前關閉它。它的連線屬於開啟它們的那個迴圈：在之後的迴圈上（第二次 `asyncio.run()`、每個測試各自的迴圈），每個碰到這種連線的呼叫都會在 redis-py 丟棄該連線時失敗，拋出 `BackendUnavailableError: Event loop is closed`，而垃圾回收器會為每條連線回報一個 `ResourceWarning`，這會讓把警告轉為錯誤的測試失敗。在之後的迴圈上呼叫 `aclose()` 會一次丟棄所有這類連線（0.7.0 之前它會改為拋出 `RuntimeError`）。0.3.9 之前只有 `MemoryBackend` 有 `aclose()`，Redis 與 Memcached 後端要透過 `backend.client` 關閉。
+- 若不呼叫 `aclose()`，開啟中的 socket 只會由垃圾回收器關閉，關閉應用程式時可能會產生 `ResourceWarning`。0.3.9 之前只有 `MemoryBackend` 有 `aclose()`，Redis 與 Memcached 後端要透過 `backend.client` 關閉。
+- 請在 Redis 後端的事件迴圈結束之前關閉它。它的連線屬於開啟它們的那個迴圈：在之後的迴圈上（第二次 `asyncio.run()`、每個測試各自的迴圈），每個碰到這種連線的呼叫都會在 redis-py 丟棄該連線時失敗，拋出 `BackendUnavailableError: Event loop is closed`（在 `@cache` 中則是記錄下來的未命中），而垃圾回收器會為每條連線回報一個 `ResourceWarning`，這會讓把警告轉為錯誤的測試失敗。在之後的迴圈上呼叫 `aclose()` 會一次丟棄所有這類連線（0.7.0 之前它會改為拋出 `RuntimeError`）；以 `connection_pool=` 傳入的連線池則交給建立它的人處理。
 
 ## 壓縮大型項目 {#compressing-large-entries}
 

@@ -1976,3 +1976,28 @@ def test_redis_aclose_on_a_new_loop_lets_the_backend_be_used_again() -> None:
     gc.collect()
 
     assert asyncio.run(read_and_close()) == [entry, entry, entry]
+
+
+@requires_redis_package
+async def test_redis_aclose_leaves_a_passed_pool_to_its_creator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pool passed in is not reset, as it is not closed (#617)."""
+    from redis.asyncio import ConnectionPool
+
+    pool = ConnectionPool(host=REDIS_HOST, port=UNCONNECTED_PORT)
+    backend = AsyncRedisCacheBackend(connection_pool=pool)
+    resets: list[bool] = []
+
+    message = "Event loop is closed"
+
+    async def closed_loop() -> None:
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(backend.client, "aclose", closed_loop)
+    monkeypatch.setattr(pool, "reset", lambda: resets.append(True))
+    with pytest.raises(RuntimeError, match="Event loop is closed"):
+        await backend.aclose()
+    assert resets == []
+    monkeypatch.undo()
+    await pool.aclose()
