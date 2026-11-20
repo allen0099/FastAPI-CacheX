@@ -119,6 +119,10 @@ backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set(backend)
 ```
 
+With these defaults a request takes seconds to fail over while Redis is down;
+see [Failing fast when Redis is down](#failing-fast-when-redis-is-down) for the
+settings that make it fail within a fraction of a second.
+
 - Fully async implementation
 - Supports pattern-based key clearing
 - Uses SCAN instead of KEYS for safe production use (non-blocking). SCAN still
@@ -153,6 +157,7 @@ config = RedisConfig(
     db=0,
     socket_timeout=1.0,  # seconds; applies to reads/writes
     socket_connect_timeout=1.0,
+    retries=None,  # None: redis-py's retry policy; 0: fail on the first error
     key_prefix="fastapi_cachex:",
     protocol=2,  # RESP version, 2 or 3
 )
@@ -282,7 +287,9 @@ after about 0.25 s. The costs:
   [`BackendUnavailableError`](#backend-unavailable) instead of
   failing open, see those errors sooner.
 
-`RedisConfig` has no `retry` field, so pass it to the constructor.
+With `RedisConfig`, `retries=0` (or `retries=1`) gives the same retry policy:
+`Retry(NoBackoff(), retries)`. A policy with backoff is passed to the
+constructor as `retry=`.
 
 ## Memcached
 

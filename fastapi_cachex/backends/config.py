@@ -36,6 +36,16 @@ class RedisConfig(BaseModel):
     socket_connect_timeout: float = Field(
         default=1.0, gt=0, description="Timeout for socket connection in seconds"
     )
+    retries: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "How many times to retry a command that failed with a connection "
+            "error or timeout, at once; 0 fails on the first error. None keeps "
+            "redis-py's policy (10 retries with backoff in redis-py 8), which "
+            "takes seconds per command to fail while Redis is down."
+        ),
+    )
     key_prefix: str = Field(
         default=DEFAULT_REDIS_PREFIX,
         description="Prefix applied to all cache keys",
