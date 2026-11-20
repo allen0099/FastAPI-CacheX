@@ -20,6 +20,45 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-11-20
+
+### Added
+
+- **`RedisConfig(retries=...)` sets how often a failed Redis command is retried,
+  without backoff.** `retries=0` makes `@cache` fail over within the timeouts
+  while Redis is down, where redis-py's default policy takes seconds per
+  command; until now a config could not express it. The Redis docs point to the
+  fast-fail settings from the first example. ([#582](https://github.com/allen0099/FastAPI-CacheX/issues/582))
+
+### Changed
+
+- **`@cache(coalesce=...)` runs the handler once per key during a backend
+  outage.** Requests that miss while the first one renders used to skip waiting
+  when the backend could not be read, so every one of them ran the handler,
+  just as the database was taking the full load. They now wait and, when the
+  first request could not read the backend either, are handed its response (a
+  `MISS` with reason `read-failed`), unless it could not be stored; otherwise
+  each renders its own as before. ([#582](https://github.com/allen0099/FastAPI-CacheX/issues/582))
+
+### Fixed
+
+- **Three more misuses report themselves.** `@cache` applied to a `FastAPI` app
+  or an `APIRouter` raises `CacheXError` saying to decorate each route function,
+  instead of caching nothing. A value `CacheManager` cannot store because of an
+  integer over Python's digit limit or a circular reference raises `TypeError`,
+  as the docs say; it is still a `ValueError` as well, which it raised before. A `get_or_set(type_=...)` that cannot
+  decode the stored value warns once per call, not once per read. ([#581](https://github.com/allen0099/FastAPI-CacheX/issues/581))
+- **Redis raises `BackendUnavailableError`, not a bare `RuntimeError`, for a
+  pooled connection opened on an event loop that has since closed.** This
+  happens on the first call after a second `asyncio.run()` or in a test suite
+  with one loop per test; `except BackendUnavailableError` now catches it. With
+  redis-py 7.4 or later the next call reconnects; with earlier versions the
+  client keeps failing on the new loop, so use one backend per event loop. ([#582](https://github.com/allen0099/FastAPI-CacheX/issues/582))
+- **The docs say what to do when invalidation fails during an outage.**
+  Invalidation raises after the application's own write has been committed, and
+  the old entry is served until it expires; the new section shows retrying
+  it as a background task and keeping the `ttl` short where that matters. ([#582](https://github.com/allen0099/FastAPI-CacheX/issues/582))
+
 ## [0.6.3] - 2026-11-20
 
 ### Added
@@ -1888,7 +1927,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.0...v0.6.1
