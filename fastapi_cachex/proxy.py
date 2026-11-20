@@ -41,9 +41,12 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
     _not_set_error: ClassVar[type[BackendNotFoundError]] = ProxyNotSetError
     # Appended to the "no instance set" message: how to set one (#581).
     _not_set_hint: ClassVar[str] = ""
-    # What `set()` accepts besides None: a class or a name passed by mistake
-    # would otherwise fail on every later use, far from the call (#625).
+    # What `set()` refuses: a class, or an object without these methods (a
+    # name passed by mistake), which would fail on every later use, far from
+    # the call (#625). Duck-typed instances and test mocks still pass: an
+    # isinstance check would break them, which waits for a minor release.
     _instance_type: ClassVar[type[Any] | None] = None
+    _required_methods: ClassVar[tuple[str, ...]] = ()
     # Serialises `get_or_create`. A threading lock, because the sync FastAPI
     # dependencies built on it run in worker threads. One per class, so a
     # factory may call another proxy's `get_or_create` (the default
@@ -104,7 +107,7 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
             instance: The instance to set, or None to clear
 
         Raises:
-            TypeError: If ``instance`` is neither None nor an instance of the
+            TypeError: If ``instance`` is a class, or lacks the methods of the
                 proxy's type (a ``BaseCacheBackend`` for ``BackendProxy``, a
                 ``CacheManager`` for ``CacheManagerProxy``)
         """
@@ -112,7 +115,13 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
         if (
             instance is not None
             and expected is not None
-            and not isinstance(instance, expected)
+            and (
+                isinstance(instance, type)
+                or not all(
+                    callable(getattr(instance, name, None))
+                    for name in cls._required_methods
+                )
+            )
         ):
             msg = (
                 f"{cls.__name__}.set() takes a {expected.__name__} instance or "
@@ -133,6 +142,7 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
 
     _not_set_error = BackendNotFoundError
     _instance_type = BaseCacheBackend
+    _required_methods = ("get", "set", "delete")
     _not_set_hint = (
         ": call BackendProxy.set(MemoryBackend()) (or a Redis or Memcached "
         "backend) at startup, or pass backend= where you build it"
