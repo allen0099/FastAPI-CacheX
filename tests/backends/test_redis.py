@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import sys
 import time
 import warnings
@@ -1970,5 +1971,8 @@ def test_redis_aclose_on_a_new_loop_lets_the_backend_be_used_again() -> None:
 
     asyncio.run(write())
     asyncio.run(backend.aclose())
+    # Reclaim the dropped connections here, under this test's filters, not
+    # in whichever test the collector happens to run next.
+    gc.collect()
 
     assert asyncio.run(read_and_close()) == [entry, entry, entry]
