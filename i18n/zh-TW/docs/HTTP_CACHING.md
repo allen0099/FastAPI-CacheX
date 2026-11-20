@@ -170,7 +170,7 @@ async def report() -> dict[str, int]: ...
 
 - 只會合併同一個行程內的請求，不會在後端加鎖：每個 worker 對每個冷鍵仍會執行一次 handler。若要讓所有 worker 合計只執行一次，請使用 [`coalesce="distributed"`](#across-workers)。
 - 等待中的請求會等到第一個請求的 handler 結束，沒有另外的逾時。
-- 無法讀取後端時（後端中斷，且為 `fail_open=True`），等待中的請求不會再讀一次後端，而是直接拿到第一個請求的回應，以 `MISS` 回應、原因為 `read-failed`，因此每個 worker 中每個鍵仍只執行一次 handler。0.6.4 之前每個請求都會各自執行。
+- 無法讀取後端時（後端中斷，且為 `fail_open=True`），等待中的請求不會再讀一次後端。若第一個請求同樣無法讀取後端，等待中的請求會直接拿到它的回應（前提是該回應原本可以儲存），以 `MISS` 回應、原因為 `read-failed`，因此每個 worker 中每個鍵仍只執行一次 handler。0.6.4 之前每個請求都會各自執行。
 - HEAD 請求會等待同一個快取鍵正在執行的 GET，但永遠不會讓其他請求等它，因為它的回應不會儲存。
 - 它需要正的 `ttl`。搭配永遠不會以儲存的項目回應的 `private=True` 或 `no_cache=True` 時，裝飾器會拋出 `CacheXError`；搭配 `no_store=True` 時則會被忽略，並發出一般的警告。帶有憑證而繞過後端的請求不會被合併。
 
