@@ -666,7 +666,9 @@ for the trade-offs.
 The warning names the request's method and path and a `key_ref`, a short
 SHA-256 digest of the cache key, but not the key itself: the key holds the
 raw query string, `vary` header values and any `build_cache_key` components,
-which may be tokens or personal data. The full key is logged at `DEBUG` with
+which may be tokens or personal data. The `key_ref` keeps the key out of
+casual view, not secret: it is 12 hex digits of a plain SHA-256, so a key
+with a guessable shape (`user:83117`) can be recovered from it. The full key is logged at `DEBUG` with
 the same `key_ref`, so enabling `DEBUG` on `fastapi_cachex.cache` while
 troubleshooting ties a warning to its key.
 
@@ -936,7 +938,12 @@ http:v3|https|GET|example.com|/me||authorization=sha256:3f0a…(64 hex digits)
 ```
 
 The same token always gives the same digest, so it hits its own entry, and two
-tokens give two entries. A missing or empty credential header is not hashed:
+tokens give two entries. The digest hides the token from a casual reader of the
+keys, but it is not a secret: it is a plain SHA-256, so whoever can read the
+keys can test guesses against it and recover a short API key or a weak Basic
+password, and the same token gives the same digest in every app. Treat access
+to the keys (the monitoring routes, the server's key space, `DEBUG` logs) as
+access to the credentials' hashes. A missing or empty credential header is not hashed:
 it stays `authorization=`, like any other empty header, so every anonymous
 caller shares one entry and the key still shows that it is the anonymous one.
 Any other header whose name contains `key`, `token`, `secret`, `auth`,
