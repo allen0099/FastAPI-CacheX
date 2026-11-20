@@ -99,7 +99,16 @@ async def invalidate(
             ``async`` callable, or if it returns something other than a
             ``str``. Raised before the
             backend is touched.
+        TypeError: If ``request`` is not a ``Request`` (a path string, for
+            example).
     """
+    if not isinstance(request, Request):
+        msg = (  # type: ignore[unreachable]
+            f"invalidate() takes the Request of the cached route, not "
+            f"{request!r}; to clear a path, use invalidate_path(request, path) "
+            "in a handler, or the backend's clear_path(path)"
+        )
+        raise TypeError(msg)
     builder = _resolve_key_builder(key_builder, sort_query)
     vary_names = _validate_vary(vary)
     # A builder that leaves the scheme out gives one key for both.

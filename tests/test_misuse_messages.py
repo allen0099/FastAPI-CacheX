@@ -172,3 +172,13 @@ async def test_a_value_that_appears_while_polling_still_warns_once(
     failures = [r for r in caplog.records if "Failed to decode" in r.getMessage()]
     assert [r.levelno for r in failures].count(logging.WARNING) == 1
     assert len(failures) > 2  # polled more than once
+
+
+def test_a_key_builder_without_arguments_names_its_signature() -> None:
+    """The message says what is wrong, not inspect's "too many" (#625)."""
+    with pytest.raises(CacheXError) as raised:
+        cache(ttl=60, key_builder=lambda: "k")(_handler)  # type: ignore[arg-type, misc]
+
+    message = str(raised.value)
+    assert "signature () cannot be called with one argument" in message
+    assert "too many" not in message

@@ -6,3 +6,5 @@ from .proxy import ProxyBase
 
 class CacheManagerProxy(ProxyBase[CacheManager]):
     """FastAPI CacheX Proxy for CacheManager instance management."""
+
+    _instance_type = CacheManager

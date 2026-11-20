@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from logging import getLogger
 from typing import TYPE_CHECKING
+from typing import Any
 from typing import ClassVar
 from typing import Generic
 from typing import NoReturn
@@ -40,6 +41,9 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
     _not_set_error: ClassVar[type[BackendNotFoundError]] = ProxyNotSetError
     # Appended to the "no instance set" message: how to set one (#581).
     _not_set_hint: ClassVar[str] = ""
+    # What `set()` accepts besides None: a class or a name passed by mistake
+    # would otherwise fail on every later use, far from the call (#625).
+    _instance_type: ClassVar[type[Any] | None] = None
     # Serialises `get_or_create`. A threading lock, because the sync FastAPI
     # dependencies built on it run in worker threads. One per class, so a
     # factory may call another proxy's `get_or_create` (the default
@@ -98,7 +102,25 @@ class ProxyBase(Generic[ProxyInstance], metaclass=ProxyMeta):
 
         Args:
             instance: The instance to set, or None to clear
+
+        Raises:
+            TypeError: If ``instance`` is neither None nor an instance of the
+                proxy's type (a ``BaseCacheBackend`` for ``BackendProxy``, a
+                ``CacheManager`` for ``CacheManagerProxy``)
         """
+        expected = cls._instance_type
+        if (
+            instance is not None
+            and expected is not None
+            and not isinstance(instance, expected)
+        ):
+            msg = (
+                f"{cls.__name__}.set() takes a {expected.__name__} instance or "
+                f"None, not {instance!r}"
+            )
+            if isinstance(instance, type):
+                msg += f"; call the class: {cls.__name__}.set({instance.__name__}())"
+            raise TypeError(msg)
         logger.debug(
             "Setting instance to: <%s>",
             instance.__class__.__name__ if instance else "None",
@@ -110,6 +132,7 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
     """FastAPI CacheX Proxy for backend management."""
 
     _not_set_error = BackendNotFoundError
+    _instance_type = BaseCacheBackend
     _not_set_hint = (
         ": call BackendProxy.set(MemoryBackend()) (or a Redis or Memcached "
         "backend) at startup, or pass backend= where you build it"
