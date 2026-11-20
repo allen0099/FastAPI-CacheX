@@ -342,9 +342,10 @@ rather than one after another.
 - A waiting request waits as long as the first one's handler takes; there is
   no separate timeout.
 - When the backend cannot be read (an outage, with `fail_open=True`), the
-  waiting requests do not read it again: they get the first request's
-  response directly, as a `MISS` with reason `read-failed`, so the handler
-  still runs once per key in each worker. Before 0.6.4 each request ran it.
+  waiting requests do not read it again. When the first request could not
+  read it either, they get its response directly (if it could have been
+  stored), as a `MISS` with reason `read-failed`, so the handler still runs
+  once per key in each worker. Before 0.6.4 each request ran it.
 - A HEAD request waits for a running GET of the same key but never makes
   others wait, since its response is not stored.
 - It needs a positive `ttl`. With `private=True` or `no_cache=True`, which
