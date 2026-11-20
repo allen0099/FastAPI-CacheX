@@ -20,6 +20,159 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-20
+
+### Added
+
+- **`get_or_set(stale_ttl=...)` and `@cached(stale_ttl=...)` keep a value past
+  its ttl and use it while it is refreshed.** The first caller to find the value
+  stale runs the factory; callers arriving meanwhile get the stale value at
+  once, and so does that caller when the factory raises. The refresh runs
+  inside the call, not in a background task. Every other read (`get()`,
+  `has()`, a `get_or_set()` without `stale_ttl`) takes a stale value as a miss. ([#559](https://github.com/allen0099/FastAPI-CacheX/issues/559))
+- **`compress_min_size` on the Redis and Memcached backends stores large entries
+  compressed.** An entry of at least that many bytes is compressed with zlib
+  (typical JSON shrinks to about a quarter), which saves memory and network time
+  and lets Memcached store responses over its item size limit. Off by default;
+  every reader understands both forms, so it can be changed at any time once all
+  processes run this release. ([#560](https://github.com/allen0099/FastAPI-CacheX/issues/560))
+- **`@cached` keys arguments that pydantic can encode.** A `datetime`,
+  `Decimal`, `UUID`, `bytes` or set argument is keyed by its JSON form tagged
+  with its type; it raised `CacheXError` before. Keys for arguments plain JSON
+  encodes are unchanged. An iterator or generator argument still raises, rather
+  than being used up to build the key. ([#577](https://github.com/allen0099/FastAPI-CacheX/issues/577))
+
+### Changed
+
+- **`CacheLock` refuses a `poll_interval` or `timeout` it cannot wait with.**
+  `poll_interval=0` made a waiting `acquire()` call the backend in a tight loop
+  (tens of thousands of calls a second against a held lock), and
+  `timeout=float("nan")` waited forever. `poll_interval` must now be a positive,
+  finite number and `timeout` `None` or a number other than NaN, in the
+  constructor and in `acquire()`; anything else raises `ValueError` or
+  `TypeError`. A negative `timeout` still tries once, like `0`. The docs also
+  say that the lock is not re-entrant. ([#578](https://github.com/allen0099/FastAPI-CacheX/issues/578))
+- **A backend running `BaseCacheBackend`'s non-atomic fallbacks warns.** The
+  first call of `increment`, `get_and_delete`, `set_if_absent`,
+  `delete_if_equals`, `expire_if_equals` or `set_if_equals` on a backend class
+  that does not override it logs a `RuntimeWarning`. With those fallbacks
+  concurrent counters lost increments, several `add()` calls won and
+  `CacheLock` let several holders in, with nothing said. The built-in backends
+  override all of them, and a test now checks that they do. The backend docs
+  also say that a backend must store every field of a `CacheEntry`. ([#579](https://github.com/allen0099/FastAPI-CacheX/issues/579))
+- **A backend outage and a failing event handler no longer flood the logs.**
+  Each kind of backend failure on a `@cache` route (a failed read, a failed
+  write, ...) is logged at `WARNING` at most once a minute, with the number of
+  failures since the last warning; every failure is still logged at `DEBUG` and
+  reported as an `error` event. During an outage every request used to log its
+  own warning. An event handler that raises has its traceback logged at most
+  once a minute, with the number of failures since, and the others at `DEBUG`;
+  it used to log one per event. ([#583](https://github.com/allen0099/FastAPI-CacheX/issues/583))
+- **The backend docs say to give every service its own `key_prefix`, and how to
+  start afresh after a deploy.** The default prefix is shared by every
+  application using FastAPI-CacheX: two services on one server read each
+  other's values, share locks and tags, and one's `clear()` wipes the other's
+  entries. The docs also give SCAN's cost for `clear_path()` and
+  `clear_pattern()` on a large Redis (#584), and the size overhead of stored
+  entries. ([#585](https://github.com/allen0099/FastAPI-CacheX/issues/585))
+- **The Traditional Chinese docs no longer open every page with a "may be
+  outdated" banner.** The language switcher still leads to the English docs. ([#587](https://github.com/allen0099/FastAPI-CacheX/issues/587))
+
+### Fixed
+
+- **`increment()` on Redis tells a value that is not a counter from an overflow
+  by the error code, not the wording of the server's message.** The Lua script
+  replies with a status code, so a Redis-compatible server that words these
+  errors differently still raises `CacheXError` for both instead of a raw
+  `ResponseError`. Errors with their own code, such as `WRONGTYPE`, `OOM` or
+  `READONLY`, are raised as before. ([#504](https://github.com/allen0099/FastAPI-CacheX/issues/504))
+- **A `MemoryBackend` dropped without `aclose()` is freed.** Its cleanup task
+  held it, and the event loop held the task, so the backend and every entry in it
+  stayed in memory for as long as the loop existed. The task now holds the backend weakly
+  and ends once the backend is gone. ([#504](https://github.com/allen0099/FastAPI-CacheX/issues/504))
+- **Memcached calls failing on the same server at once each raise
+  `BackendUnavailableError`.** pymemcache's `HashClient` updates its table of
+  failed servers without a lock, and the backend calls it from several threads,
+  so such calls could raise a `KeyError`, `ValueError` or `RuntimeError` instead,
+  and a failed server could stay out of rotation for good. The backend now
+  updates that table under a lock. ([#504](https://github.com/allen0099/FastAPI-CacheX/issues/504))
+- **`increment()` on a counter outside the server's range says so.** Redis
+  (beyond the signed 64-bit range) and Memcached (a negative counter, or one
+  past 2**64 - 1) reported it only as "a value that is not a counter". The
+  `CacheXError` is the same; its message now names the range. ([#504](https://github.com/allen0099/FastAPI-CacheX/issues/504))
+- **A `@cached(key=...)` or `tags=` callable gets the function's defaults.** It
+  was called with only the arguments the caller passed, so
+  `key=lambda user_id, locale="fr": ...` on `def load(user_id, locale="en")`
+  named `load(1)` after a locale the call did not use, and `load(1)` and
+  `load(1, "en")` stored one result under two keys. A callable that does not
+  take every argument still gets only the ones passed. A callable that does
+  take them and builds a different key from the defaults (one taking `*args`,
+  or one with defaults of its own) names its calls differently once after the
+  upgrade; values stored under the old key are missed, and code that deletes
+  them by that literal key must use `cache_key()`. A key template naming a
+  field the arguments lack raises `CacheXError` instead of `KeyError`, and
+  `@cached` on a generator function raises `TypeError` when applied instead of
+  failing on every call. ([#577](https://github.com/allen0099/FastAPI-CacheX/issues/577))
+- **Type checkers see the type of `get_or_set(type_=...)` and `get_many(type_=...)`,
+  and the parameters of a `@cached` method.** `get_or_set(..., type_=User)` now
+  returns `User` and `get_many(..., type_=User)` `dict[str, User]`, as `get()`
+  already did; both were `Any`. (mypy, like for `get()`, still falls back to
+  `Any` where the expected type conflicts, and a union stays `Any`.) On an
+  instance, `obj.load(...)`, `obj.load.cache_key(...)` and
+  `obj.load.invalidate(...)` take the method's parameters after `self`, so wrong
+  arguments are flagged as they are for a plain function. A `@staticmethod`
+  over `@cached` is now misread by mypy and pyright as a method whose first
+  argument is `self`; cache a module-level function instead, or call it on the
+  class. Nothing changes at runtime. ([#580](https://github.com/allen0099/FastAPI-CacheX/issues/580))
+- **Common misuses raise errors that name the fix.** `@cache` or `@cached`
+  without parentheses says to write `@cache(ttl=60)`; `@cache` called outside a
+  route says it wraps route handlers and points to `@cached`, where it raised
+  `RequestNotFoundError` with no message; a missing backend says to call
+  `BackendProxy.set(...)`; and a fastapi-cache2 key builder
+  (`func, namespace, request, ...`) is refused when `@cache` is applied, where
+  every request failed with `AttributeError`. ([#581](https://github.com/allen0099/FastAPI-CacheX/issues/581))
+- **`@cache` does not write a response after the backend read failed.** With
+  `fail_open=True` (the default) a read that failed was followed by a write to
+  the same unreachable backend, so during an outage every request waited for
+  the read timeout and then for the write timeout. The response is now served
+  without the write, with `X-Cache-Reason` and the event `reason` set to the
+  new value `read-failed`. ([#582](https://github.com/allen0099/FastAPI-CacheX/issues/582))
+- **Stale docs and messages corrected.** The fastapi-cache2 migration guide maps
+  `enable=False` to `set_enabled(False)` and `namespace=` to `tags=`; the backend
+  table and Memcached's `clear_pattern()` / `get_all_keys()` warnings point to
+  tags; the API reference lists `invalidate_tags` and `VaryNormaliser`; the
+  `debug_header` docs say a raised `HTTPException` gets no `X-Cache`; the
+  request-flow pseudo-code checks every credential; and the README quick start
+  no longer shadows `@cache` with a parameter named `cache`. ([#586](https://github.com/allen0099/FastAPI-CacheX/issues/586))
+- **Traditional Chinese docs use one word per meaning.** A cache tag stays
+  "tag", a GitHub label "label" and a git tag "git tag"; 標籤 now only names the
+  key's format tag. The glossary gains stale, tag, label, coalesce and fail
+  open, drops the rows for the removed OAuth features, and the English request
+  flow says "stale" where it meant a stale entry. ([#587](https://github.com/allen0099/FastAPI-CacheX/issues/587))
+
+### Security
+
+- **`cache_authorized=True` no longer shares one entry between callers when the
+  key cannot tell them apart.** Requests with `Authorization` or session data
+  read and write the backend only when a `key_builder` is set or `vary` lists the
+  header of every credential the request carries, without a normaliser; otherwise they bypass it and are answered with `private`,
+  and the one-time warning says why. Pass `key_builder=default_key_builder` to
+  share one entry between callers on purpose. ([#574](https://github.com/allen0099/FastAPI-CacheX/issues/574))
+- **An API key or cookie read by the route's dependencies counts as a
+  credential.** A request that sends FastAPI's `APIKeyHeader` or `APIKeyCookie`
+  value, or a `Cookie()` parameter the route reads, used to be cached under the
+  URL alone and served to the next caller. It now bypasses the backend like a
+  request with `Authorization`, unless the route is `public=True` or sets
+  `cache_authorized=True` with a key that identifies the caller. `X-Cache-Reason`
+  and the event's `reason` are `credential` for these. ([#574](https://github.com/allen0099/FastAPI-CacheX/issues/574))
+- **`vary` hashes the value of any header whose name marks it as a secret.** A
+  header whose name contains `key`, `token`, `secret`, `auth`, `session` or
+  `password`, such as `X-API-Key`, is now keyed on the SHA-256 of its value, like
+  `Authorization` and `Cookie` already were. `vary=["X-API-Key"]` used to put
+  the API key itself into the cache key, where `get_all_keys()`, the monitoring
+  routes and the Redis or Memcached keyspace show it. Entries keyed on such a
+  header are missed once after the upgrade. ([#575](https://github.com/allen0099/FastAPI-CacheX/issues/575))
+
 ## [0.6.2] - 2026-11-12
 
 ### Added
@@ -1735,7 +1888,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.5.6...v0.6.0
