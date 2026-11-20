@@ -119,7 +119,8 @@ backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set(backend)
 ```
 
-With these defaults a request takes seconds to fail over while Redis is down;
+With these defaults and redis-py 8, a request takes seconds to fail over while
+Redis is down;
 see [Failing fast when Redis is down](#failing-fast-when-redis-is-down) for the
 settings that make it fail within a fraction of a second.
 
