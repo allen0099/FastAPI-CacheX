@@ -108,7 +108,7 @@ a code block that includes one of the runnable examples renders on the site,
 while GitHub shows only its `--8<--` include line (the sentence before each
 block links the example file).
 
-- [Migrating to 0.7.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_7/) — what 0.7.0 changes and how to prepare on 0.6.5
+- [Migrating to 0.7.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_7/) — what 0.7.0 changes and how to upgrade from 0.6.x
 - [Migrating to 0.6.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_6/) — what 0.6.0 changes and how to upgrade from 0.5.x
 - [Migrating to 0.5.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_5/) — what 0.5.0 removes and how to upgrade from 0.4.x
 - [Migrating to 0.4.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_4/) — what 0.4.0 changes and how to upgrade from 0.3.x

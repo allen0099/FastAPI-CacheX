@@ -20,7 +20,7 @@ FastAPI-CacheX version or newer.
 | | FastAPI-CacheX | fastapi-cache2 | cashews | aiocache |
 |---|---|---|---|---|
 | What it caches | FastAPI GET responses; JSON values; function results (`@cached`, 0.5.0) | Return values of endpoints and plain functions | Return values of any async function | Return values of any async function; a key-value API |
-| Key built from | Method, host, path and query of the request | Function module, name and arguments | Function name and arguments, or a template | Function name and arguments, or a key builder |
+| Key built from | Scheme, method, host, path and query of the request | Function module, name and arguments | Function name and arguments, or a template | Function name and arguments, or a key builder |
 | `Cache-Control`, `ETag`, `304` | Written from the decorator's arguments; `304` on a matching `If-None-Match` | `max-age`, a weak `ETag` and `304` when the endpoint takes a `Response` | With its `CacheRequestControlMiddleware` and `CacheEtagMiddleware` | None |
 | A client's `Cache-Control` request header | Ignored by default, so clients cannot skip the cache; a route can opt in with `client_cache_control` (0.6.1) | `no-store` and `no-cache` are honoured | Honoured by the middleware (`no-cache`, `no-store`, `max-age`) | — |
 | Requests with `Authorization` or a session | Bypass the shared cache unless you opt in | Cached like any other request | Your choice of key and middleware settings | — |
@@ -29,7 +29,7 @@ FastAPI-CacheX version or newer.
 | Stampede protection | `get_or_set()` with a distributed lock; `coalesce=True` per process on `@cache` (0.5.0), `coalesce="distributed"` across workers (0.6.2) | None | `locked`, `early`, `soft`, `thunder_protection` | `cached_stampede` (lock based) |
 | Tags, early refresh, metrics | Stale entries served while the handler refreshes, or when it fails (`serve_stale`, 0.6.1); an event hook to feed your own metrics (`set_event_handler`, 0.6.1); tags that work on every backend (`invalidate_tags`, 0.6.1) | No | Tags, early and soft refresh, Prometheus middleware, callbacks | Hit/miss and timing plugins |
 | Also included | `CacheLock`, atomic counters, monitoring routes | — | Rate limiting, circuit breaker, Bloom filters, locks | `RedLock`, `OptimisticLock`, `multi_cached` |
-| Version compared | 0.6.0; Python 3.11–3.15, FastAPI 0.128.2+ | 0.2.2 (2024-07-24); Python 3.8+ | 7.6.0 (2026-09-17); Python 3.10+ | 0.12.3 (2024-09-25) |
+| Version compared | 0.7.0; Python 3.11–3.15, FastAPI 0.128.2+ | 0.2.2 (2024-07-24); Python 3.8+ | 7.6.0 (2026-09-17); Python 3.10+ | 0.12.3 (2024-09-25) |
 
 ## FastAPI-CacheX
 
@@ -47,8 +47,8 @@ cache to behave like an HTTP cache:
   a cookie is never stored. You opt in to sharing with `public=True`, or to a
   per-user entry with `cache_authorized=True` and a key builder that names
   the user (see [Requests with credentials](HTTP_CACHING.md#requests-with-credentials)).
-- **Keys from the request.** The key is the method, host, path and sorted
-  query string, so it matches what an HTTP cache downstream sees, and a route
+- **Keys from the request.** The key is the scheme, method, host, path and
+  sorted query string, so it matches what an HTTP cache downstream sees, and a route
   can be dropped with `invalidate(request)` or `clear_path()`.
 - **No pickle.** Responses and `CacheManager` values are stored as JSON, so
   an entry read from a shared Redis cannot run code when it is decoded.
