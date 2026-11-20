@@ -161,5 +161,5 @@ def test_a_vary_outside_the_key_warns_once_and_names_the_header(
 
     warnings = [r.getMessage() for r in caplog.records]
     assert len(warnings) == 1
-    assert "Vary: accept" in warnings[0]
+    assert "Vary: 'accept'" in warnings[0]
     assert "vary=" in warnings[0]
