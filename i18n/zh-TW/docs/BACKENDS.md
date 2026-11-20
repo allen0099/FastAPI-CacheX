@@ -65,6 +65,8 @@ backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set(backend)
 ```
 
+使用這些預設值時，Redis 停止運作後，一個請求要過好幾秒才會放棄後端；讓它在一秒內失敗的設定，請見 [Redis 停止運作時快速失敗](#failing-fast-when-redis-is-down)。
+
 - 完全非同步的實作
 - 支援依模式清除鍵
 - 使用 SCAN 而非 KEYS，可安全用於正式環境（不會阻塞）。但 SCAN 仍會走過整個資料庫，不論符合與否，大約每 100 個鍵一次往返：在存有 200,000 個其他鍵的 Redis 上，`clear_path()` 與 `clear_pattern()` 約需 2,000 次往返。在寫入路徑上，建議改用 [tag](HTTP_CACHING.md#by-tag)，它只需固定的少數幾個指令（#584）。
@@ -86,6 +88,7 @@ config = RedisConfig(
     db=0,
     socket_timeout=1.0,  # 秒；適用於讀取／寫入
     socket_connect_timeout=1.0,
+    retries=None,  # None：使用 redis-py 的重試策略；0：第一次錯誤就失敗
     key_prefix="fastapi_cachex:",
     protocol=2,  # RESP 版本，2 或 3
 )
@@ -176,7 +179,7 @@ BackendProxy.set(backend)
 - `socket_timeout` 也會限制較慢的回覆。兩個逾時都應設定得比你平常的 Redis 延遲高，包括快取最大項目時的延遲。
 - 這些設定適用於後端送出的所有指令，而不只是 `@cache`。`CacheManager` 與 `CacheLock` 不會 fail open，而是拋出 [`BackendUnavailableError`](#backend-unavailable)，它們也會更早收到這些錯誤。
 
-`RedisConfig` 沒有 `retry` 欄位，因此請將它傳給建構函式。
+使用 `RedisConfig` 時，`retries=0`（或 `retries=1`）會得到相同的重試策略：`Retry(NoBackoff(), retries)`。帶有退避的策略則以 `retry=` 傳給建構函式。
 
 ## Memcached {#memcached}
 

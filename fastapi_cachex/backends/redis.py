@@ -362,6 +362,11 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             shared["ssl"] = True
         if config.url is not None:
             shared["url"] = config.url.get_secret_value()
+        if config.retries is not None:
+            from redis.asyncio.retry import Retry
+            from redis.backoff import NoBackoff
+
+            shared["retry"] = Retry(NoBackoff(), config.retries)
         return cls(
             host=config.host,
             port=config.port,
