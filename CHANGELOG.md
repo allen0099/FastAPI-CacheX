@@ -20,6 +20,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-20
+
 0.7.0 contains breaking changes; read
 [Migrating to 0.7.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_7/)
 before upgrading. HTTP cache keys now include the scheme, so entries stored by
@@ -27,6 +29,43 @@ before upgrading. HTTP cache keys now include the scheme, so entries stored by
 pattern written by hand for the old format silently matches nothing; redis-py
 7.4 or later is required; and `MemoryBackend.lock` and
 `MemoryBackend.start_cleanup()` are removed.
+
+### Changed
+
+- **HTTP cache keys include the scheme, so an http response is no longer served
+  to https.** Keys are now `http:v3|scheme|method|host|path|query`: a response
+  cached for a plain-http request, with absolute links built from the request
+  URL, was served to the next https request of the same URL. Entries written by
+  0.6.x are not read (every route starts cold once; on Redis,
+  `clear_pattern("http:v2|*")` removes them). `invalidate()` and
+  `invalidate_path()` delete the entry of both schemes. `CacheKey` has a
+  required keyword-only `scheme` field, and the monitoring routes report
+  `scheme`. A hand-written `clear_pattern()` pattern needs the new tag and the
+  scheme field. See
+  [HTTP cache keys include the scheme](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_7/#key-scheme). ([#576](https://github.com/allen0099/FastAPI-CacheX/issues/576))
+
+### Removed
+
+- **`MemoryBackend.lock` and `MemoryBackend.start_cleanup()` are removed.** Both
+  were deprecated in 0.6.2. Each memory operation is atomic on one event loop
+  without a lock; to make several of them one step, use `CacheLock` or your own
+  `asyncio.Lock`. The first read or write starts the cleanup task, so drop any
+  `start_cleanup()` call; `stop_cleanup()` stays. See
+  [`MemoryBackend.lock` and `start_cleanup()` are removed](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_7/#memory-backend). ([#504](https://github.com/allen0099/FastAPI-CacheX/issues/504))
+- **redis-py older than 7.4 is no longer supported.** The `redis` extra now
+  requires `redis[hiredis]>=7.4.0`: before 7.4 a client whose first
+  event loop has closed can fail on every later loop. 0.6.5 warned about this
+  when a Redis backend was created. See
+  [redis-py 7.4 or later](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_7/#redis-74). ([#605](https://github.com/allen0099/FastAPI-CacheX/issues/605))
+
+### Fixed
+
+- **`AsyncRedisCacheBackend.aclose()` on a later event loop no longer raises.**
+  Called after the loop its connections were opened on has closed (a second
+  `asyncio.run()`, a test per loop), it raised redis-py's bare
+  `RuntimeError("Event loop is closed")`; it now drops those connections, and
+  the backend can be used again. The docs say to close a Redis backend before
+  its loop ends, and what happens otherwise. ([#617](https://github.com/allen0099/FastAPI-CacheX/issues/617))
 
 ## [0.6.5] - 2026-11-20
 
@@ -1962,7 +2001,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.5...v0.7.0
 [0.6.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.2...v0.6.3
