@@ -65,7 +65,7 @@ backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set(backend)
 ```
 
-使用這些預設值時，Redis 停止運作後，一個請求要過好幾秒才會放棄後端；讓它在一秒內失敗的設定，請見 [Redis 停止運作時快速失敗](#failing-fast-when-redis-is-down)。
+使用這些預設值與 redis-py 8 時，Redis 停止運作後，一個請求要過好幾秒才會放棄後端；讓它在一秒內失敗的設定，請見 [Redis 停止運作時快速失敗](#failing-fast-when-redis-is-down)。
 
 - 完全非同步的實作
 - 支援依模式清除鍵

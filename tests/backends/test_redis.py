@@ -1863,14 +1863,19 @@ async def test_redis_a_connection_from_a_closed_loop_is_unavailable(
         await backend.get("k")
 
 
+@pytest.mark.parametrize("url", [None, "redis://127.0.0.1:6379/0"], ids=["host", "url"])
 @pytest.mark.parametrize("retries", [None, 0, 2])
-def test_redis_config_retries_sets_the_retry_policy(retries: int | None) -> None:
+def test_redis_config_retries_sets_the_retry_policy(
+    retries: int | None, url: str | None
+) -> None:
     """A config could not express the fast-fail retry policy (#582)."""
     from redis.backoff import NoBackoff
 
     from fastapi_cachex.backends.config import RedisConfig
 
-    backend = AsyncRedisCacheBackend.load_from_config(RedisConfig(retries=retries))
+    backend = AsyncRedisCacheBackend.load_from_config(
+        RedisConfig(retries=retries, url=url)
+    )
     policy = backend.client.get_retry()
     if retries is None:
         # redis-py's own policy: with backoff, or none before redis-py 6.
@@ -1888,3 +1893,5 @@ def test_redis_config_refuses_negative_retries() -> None:
 
     with pytest.raises(ValidationError, match="retries"):
         RedisConfig(retries=-1)
+    with pytest.raises(ValidationError, match="retries"):
+        RedisConfig(retries=101)

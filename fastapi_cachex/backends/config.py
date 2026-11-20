@@ -39,11 +39,13 @@ class RedisConfig(BaseModel):
     retries: int | None = Field(
         default=None,
         ge=0,
+        le=100,
         description=(
-            "How many times to retry a command that failed with a connection "
-            "error or timeout, at once; 0 fails on the first error. None keeps "
-            "redis-py's policy (10 retries with backoff in redis-py 8), which "
-            "takes seconds per command to fail while Redis is down."
+            "How many times to retry a failed command, at once; 0 fails on the "
+            "first error. None keeps redis-py's policy: in redis-py 8, 10 "
+            "retries with backoff on a connection error or timeout, which "
+            "takes seconds per command to fail while Redis is down (older "
+            "redis-py retries only errors listed in retry_on_error)."
         ),
     )
     key_prefix: str = Field(
