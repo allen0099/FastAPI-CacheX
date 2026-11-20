@@ -419,7 +419,14 @@ when the block ends, including when the block raises.
 - A custom backend inherits a no-op `aclose()` from `BaseCacheBackend`; override
   it when the backend holds connections or tasks.
 - Without `aclose()`, open sockets are closed only by the garbage collector,
-  which may emit `ResourceWarning`s at shutdown. Before 0.3.9 only
+  which may emit `ResourceWarning`s at shutdown.
+- Close a Redis backend before its event loop ends. Its connections belong to
+  the loop they were opened on: on a later loop (a second `asyncio.run()`, a
+  test per loop), every call that meets one of them fails with
+  `BackendUnavailableError: Event loop is closed` while redis-py drops it, and
+  the garbage collector reports each with a `ResourceWarning`, which fails a
+  suite that turns warnings into errors. `aclose()` on the later loop drops
+  them all at once (before 0.7.0 it raised the `RuntimeError` instead). Before 0.3.9 only
   `MemoryBackend` had `aclose()`, and the Redis and Memcached backends were
   closed through `backend.client`.
 

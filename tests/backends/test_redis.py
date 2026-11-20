@@ -1913,3 +1913,62 @@ def test_redis_config_refuses_negative_retries() -> None:
         RedisConfig(retries=-1)
     with pytest.raises(ValidationError, match="retries"):
         RedisConfig(retries=101)
+
+
+@requires_redis_package
+@pytest.mark.parametrize(
+    ("message", "dropped"),
+    [("Event loop is closed", True), ("something else", False)],
+    ids=["closed-loop", "other"],
+)
+async def test_redis_aclose_drops_connections_of_a_closed_loop(
+    monkeypatch: pytest.MonkeyPatch, *, message: str, dropped: bool
+) -> None:
+    """aclose() on a new loop raised redis-py's bare RuntimeError (#617)."""
+    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
+    resets: list[bool] = []
+
+    async def closed_loop() -> None:
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(backend.client, "aclose", closed_loop)
+    monkeypatch.setattr(
+        backend.client.connection_pool, "reset", lambda: resets.append(True)
+    )
+    if dropped:
+        await backend.aclose()
+        assert resets == [True]
+    else:
+        with pytest.raises(RuntimeError, match=message):
+            await backend.aclose()
+        assert resets == []
+    # The autouse fixture closes every client after the test.
+    monkeypatch.undo()
+
+
+@requires_redis
+# The connections of the first loop cannot be closed any more; the garbage
+# collector reports them, which is what closing before the loop ends avoids.
+@pytest.mark.filterwarnings("ignore::ResourceWarning")
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+def test_redis_aclose_on_a_new_loop_lets_the_backend_be_used_again() -> None:
+    """A backend left open when its loop ended is closed on the next (#617)."""
+    backend = AsyncRedisCacheBackend(
+        host=REDIS_HOST, port=REDIS_PORT, key_prefix="test-617:"
+    )
+    entry = CacheEntry(fingerprint="e", content=b"v")
+
+    async def write() -> None:
+        await asyncio.gather(*(backend.set(f"k{i}", entry, ttl=10) for i in range(3)))
+
+    async def read_and_close() -> list[CacheEntry | None]:
+        try:
+            return await asyncio.gather(*(backend.get(f"k{i}") for i in range(3)))
+        finally:
+            await backend.clear()
+            await backend.aclose()
+
+    asyncio.run(write())
+    asyncio.run(backend.aclose())
+
+    assert asyncio.run(read_and_close()) == [entry, entry, entry]
