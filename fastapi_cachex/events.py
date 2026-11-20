@@ -43,6 +43,7 @@ CacheReason = Literal[
     "status",
     "streamed",
     "set-cookie",
+    "vary",
     "response-cache-control",
     "dependency-status",
     "head",
