@@ -334,6 +334,26 @@ async def test_decode_failure_warning_logs_a_digest_not_the_key(
     )
 
 
+async def test_a_typed_read_of_another_shape_names_the_type(
+    memory_backend: MemoryBackend, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Valid JSON that fails `type_` is not logged as corrupt data (#630)."""
+
+    class Point(BaseModel):
+        x: int
+
+    manager = CacheManager(backend=memory_backend)
+    await manager.set("p", {"y": 1})
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.manager"):
+        assert await manager.get("p", type_=Point) is None
+        assert await manager.get("p", type_=list[int]) is None
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("does not match type_=" in w and "Point" in w for w in warnings)
+    assert not any("Failed to decode" in w for w in warnings)
+
+
 # --- add ------------------------------------------------------------------------
 
 

@@ -1586,3 +1586,17 @@ async def test_memcached_set_many_is_not_atomic(
     # The connection the refusal came in on is not reused half-read.
     await memcached_backend.set_many({"after": _ENTRY}, ttl=60)
     assert await memcached_backend.get_many(["after"]) == {"after": _ENTRY}
+
+
+async def test_manager_clear_warning_says_nothing_was_cleared() -> None:
+    """The warning names the caller's clear(), not only get_all_keys() (#630).
+
+    No server needed: get_all_keys() warns before any I/O, and nothing is
+    deleted.
+    """
+    backend = MemcachedBackend(servers=["127.0.0.1:9"])
+    try:
+        with pytest.warns(RuntimeWarning, match=r"CacheManager\.clear\(\)"):
+            assert await CacheManager(backend=backend).clear() == 0
+    finally:
+        await backend.aclose()
