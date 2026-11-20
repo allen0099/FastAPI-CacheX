@@ -347,7 +347,7 @@ translation's navigation to the English site. The API reference (`docs/en/api/`)
 this development guide and the changelog stay English-only (the API pages are
 generated from the docstrings, which are in English); the translation links to
 their English versions. When translating, follow the
-terms in [`docs/zh-TW/GLOSSARY.md`](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/zh-TW/GLOSSARY.md).
+terms in [`docs/GLOSSARY.zh-TW.md`](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/GLOSSARY.zh-TW.md).
 
 ### Adding API reference pages
 

@@ -38,6 +38,6 @@ Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 
 - Changelog: add a `changelog.d/<issue>.<section>.md` fragment. Edit `CHANGELOG.md` by hand only for a release notice directly under `## [Unreleased]`, or an entry that belongs to no issue. The format is in `changelog.d/README.md`.
 - Rehearse release notes with `uv run python scripts/changelog_release.py --version X.Y.Z --changelog <copy of CHANGELOG.md> --fragments changelog.d --dry-run`. `--fragments` defaults to the `changelog.d/` next to `--changelog`, so it is needed with a copy; and without `--dry-run` the run deletes the fragments it merged.
-- Docs changes go into both `docs/en/` and `docs/zh-TW/`. Terms follow `docs/zh-TW/GLOSSARY.md`.
+- Docs changes go into both `docs/en/` and `docs/zh-TW/`. Terms follow `docs/GLOSSARY.zh-TW.md`.
 - Never edit `version` in `pyproject.toml` by hand. Releases run through the `release.yml` workflow (`docs/en/DEVELOPMENT.md#releasing`).
 - Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in that minor's migration guide (`docs/en/MIGRATING_0_<minor>.md`, with its zh-TW copy and nav entry).
