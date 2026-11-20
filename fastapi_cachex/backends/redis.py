@@ -45,10 +45,15 @@ def _is_unavailable(error: Exception) -> bool:
 
     redis-py's ``ConnectionError`` (its subclasses included) and
     ``TimeoutError``, and a socket error that reaches the caller unwrapped.
+    Also the ``RuntimeError`` of a pooled connection opened on an event loop
+    that has since closed (a second ``asyncio.run()``, a test per loop):
+    redis-py drops that connection, so the next call reconnects (#582).
     """
     from redis.exceptions import ConnectionError as RedisConnectionError
     from redis.exceptions import TimeoutError as RedisTimeoutError
 
+    if isinstance(error, RuntimeError):
+        return str(error) == "Event loop is closed"
     return isinstance(error, (RedisConnectionError, RedisTimeoutError, OSError))
 
 

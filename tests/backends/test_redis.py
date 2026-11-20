@@ -1834,3 +1834,30 @@ def test_redis_config_refuses_a_timeout_that_is_not_positive(
 
     with pytest.raises(ValidationError, match=field):
         RedisConfig(**{field: value})
+
+
+@requires_redis_package
+@pytest.mark.parametrize(
+    ("message", "unavailable"),
+    [("Event loop is closed", True), ("something else", False)],
+    ids=["closed-loop", "other"],
+)
+async def test_redis_a_connection_from_a_closed_loop_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch, *, message: str, unavailable: bool
+) -> None:
+    """A pooled connection from a closed loop raised a bare RuntimeError (#582).
+
+    It happens on the first call after a second ``asyncio.run()``; redis-py
+    then drops the connection, so it is an outage of one call, not a bug.
+    """
+    from fastapi_cachex import BackendUnavailableError
+
+    backend = AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
+
+    async def closed_loop(*_args: object) -> None:
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(backend.client, "get", closed_loop)
+    expected = BackendUnavailableError if unavailable else RuntimeError
+    with pytest.raises(expected, match=message):
+        await backend.get("k")
