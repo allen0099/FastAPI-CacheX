@@ -226,7 +226,7 @@ async def report() -> dict: ...
 
 `serve_stale=True` 需要 `stale`、`stale_ttl` 與正的 `ttl`，而且不能與 `private=True`、`no_cache=True` 或 `must_revalidate=True` 一起使用，因為它們不允許過期的回應。項目是否超過 `ttl`，是依照與它一起儲存的時間、以回應請求的那台伺服器的時鐘來判斷；時鐘相差幾秒的伺服器，對項目何時過期的判斷也會相差那麼多。
 
-維運這種路由時有兩件事要知道。項目會在後端保留 `ttl + stale_ttl`，因此把 `serve_stale` 關掉之後，先前寫入的項目在超過 `ttl` 後最多還會被當成一般命中提供 `stale_ttl` 那麼久；若這會造成問題，請清除該路由的項目。另外，[監控路由](#monitoring-routes)會在後端保留項目的期間都把它回報為有效，不論是否已過期。
+維運這種路由時有兩件事要知道。項目會在後端保留 `ttl + stale_ttl`，因此把 `serve_stale` 關掉之後，先前寫入的項目在超過 `ttl` 後最多還會被當成一般命中提供 `stale_ttl` 那麼久；若這會造成問題，請清除該路由的項目。另外，[監控路由](#monitoring-routes)會在後端保留項目的期間都把它回報為有效，不論是否已過期（stale）。
 
 ### 分辨命中與未命中 {#telling-a-hit-from-a-miss}
 
@@ -710,7 +710,7 @@ async def update_item(item_id: int, cache: CacheBackend):
 使快取失效的操作不會 fail open：`invalidate()`、`invalidate_path()`、`invalidate_tags()` 與 `clear_path()` 會拋出後端的錯誤（Redis 與 Memcached 上為 `BackendUnavailableError`），而此時你自己的寫入已經提交。舊的項目會一直被送出，直到它的 `ttl` 結束（使用 [`serve_stale`](#serving-stale-responses) 時則到 `ttl + stale_ttl`，作為過期的回應送出）。函式庫不會自動重試，因此請依路由能接受的程度決定作法：
 
 - **回應之後再試一次。** 捕捉這個錯誤，以背景任務再執行一次失效；如果只是短暫中斷，項目稍後就會消失。若再次失敗，伺服器會記錄該任務的錯誤。
-- **縮短 `ttl`**：對於整個 `ttl` 期間都送出過期資料無法接受的路由，`ttl`（加上 `stale_ttl`）就是一次沒有執行的失效最多讓舊資料留存的時間。
+- **縮短 `ttl`**：對於整個 `ttl` 期間都送出舊資料無法接受的路由，`ttl`（加上 `stale_ttl`）就是一次沒有執行的失效最多讓舊資料留存的時間。
 - **快速失敗。** 使用 redis-py 預設的重試策略時，呼叫要好幾秒才會拋出錯誤；請見 [Redis 停止運作時快速失敗](BACKENDS.md#failing-fast-when-redis-is-down)。
 - **不要因為快取而讓寫入失敗**：資料已經儲存，回應錯誤只會讓客戶端再送一次。
 

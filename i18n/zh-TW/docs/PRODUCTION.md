@@ -26,7 +26,7 @@ FastAPI-CacheX 應用程式承接真實流量之前要確認的事項。每一�
 
 - [ ] **每次寫入後都使快取失效**，使用 `invalidate()`、`invalidate_path()` 或 tag；tag 在 Memcached 上也能運作（[清除快取](HTTP_CACHING.md#clearing-the-cache)）。
 - [ ] **處理中斷期間失敗的失效操作**：它會在你的寫入提交之後才拋出錯誤（[寫入時後端停止運作](HTTP_CACHING.md#invalidating-during-an-outage)）。
-- [ ] **依資料可以過期多久來選擇每個 `ttl`。** 它就是一次沒有執行的失效最多讓舊資料留存的時間（使用 `serve_stale` 時為 `ttl + stale_ttl`）。
+- [ ] **依資料最多可以多舊來選擇每個 `ttl`。** 它就是一次沒有執行的失效最多讓舊資料留存的時間（使用 `serve_stale` 時為 `ttl + stale_ttl`）。
 - [ ] **為改變回應形狀的部署做好準備**：除非前綴、鍵或 tag 改變，舊的項目會一直被送出，直到過期（[選擇後端](BACKENDS.md#choosing-a-backend)）。
 
 ## 觀察 {#observing-it}
