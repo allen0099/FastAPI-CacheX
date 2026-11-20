@@ -39,4 +39,4 @@ Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 - Changelog: add a `changelog.d/<issue>.<section>.md` fragment and never edit `CHANGELOG.md`. The format is in `changelog.d/README.md`.
 - Docs changes go into both `docs/` and `i18n/zh-TW/docs/`. Terms follow `i18n/zh-TW/GLOSSARY.md`.
 - Never edit `version` in `pyproject.toml` by hand. Releases run through the `release.yml` workflow (`docs/DEVELOPMENT.md#releasing`).
-- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in that minor's migration guide (`docs/MIGRATING_0_4.md` for 0.4.0, `docs/MIGRATING_0_5.md` for 0.5.0, `docs/MIGRATING_0_6.md` for 0.6.0, each with its zh-TW copy and nav entry).
+- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in that minor's migration guide (`docs/MIGRATING_0_4.md` for 0.4.0, `docs/MIGRATING_0_5.md` for 0.5.0, `docs/MIGRATING_0_6.md` for 0.6.0, `docs/MIGRATING_0_7.md` for 0.7.0, each with its zh-TW copy and nav entry).

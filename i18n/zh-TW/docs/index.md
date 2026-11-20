@@ -87,6 +87,7 @@ async def report(app_cache: AppCache):
 
 ## 文件 {#documentation}
 
+- [遷移至 0.7.0](MIGRATING_0_7.md)：0.7.0 的變更，以及如何在 0.6.5 上做好準備
 - [遷移至 0.6.0](MIGRATING_0_6.md)：0.6.0 的變更，以及如何從 0.5.x 升級
 - [遷移至 0.5.0](MIGRATING_0_5.md)：0.5.0 移除的功能，以及如何從 0.4.x 升級
 - [遷移至 0.4.0](MIGRATING_0_4.md)：0.4.0 的變更，以及如何從 0.3.x 升級
