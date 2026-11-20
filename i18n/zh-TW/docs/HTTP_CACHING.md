@@ -705,6 +705,31 @@ async def update_item(item_id: int, cache: CacheBackend):
     await cache.clear_path("/items", include_params=True)
 ```
 
+### 寫入時後端停止運作 {#invalidating-during-an-outage}
+
+使快取失效的操作不會 fail open：`invalidate()`、`invalidate_path()`、`invalidate_tags()` 與 `clear_path()` 會拋出後端的錯誤（Redis 與 Memcached 上為 `BackendUnavailableError`），而此時你自己的寫入已經提交。舊的項目會一直被送出，直到它的 `ttl` 結束。函式庫不會自動重試，因此請依路由能接受的程度決定作法：
+
+- **回應之後再試一次。** 捕捉這個錯誤，以背景任務再執行一次失效；如果只是短暫中斷，項目稍後就會消失。若再次失敗，伺服器會記錄該任務的錯誤。
+- **縮短 `ttl`**：對於整個 `ttl` 期間都送出過期資料無法接受的路由，`ttl` 就是一次沒有執行的失效最多讓舊資料留存的時間。
+- **不要因為快取而讓寫入失敗**：資料已經儲存，回應錯誤只會讓客戶端再送一次。
+
+```python
+from fastapi import BackgroundTasks
+
+from fastapi_cachex import BackendUnavailableError, invalidate_tags
+
+
+@app.put("/items/{item_id}")
+async def update_item(item_id: int, background: BackgroundTasks):
+    await save(item_id)  # 已提交
+    try:
+        await invalidate_tags("items")
+    except BackendUnavailableError:
+        # 回應之後再試一次；在那之前，以及再次失敗時，
+        # 舊的項目會一直被送出，直到它們的 ttl 結束。
+        background.add_task(invalidate_tags, "items")
+```
+
 ## 計算命中與未命中 {#counting-hits-and-misses}
 
 `set_event_handler()` 註冊一個函式，快取做了什麼都會通知它，`@cache` 路由與 `CacheManager`／`@cached` 都包含在內。本函式庫不附帶任何指標相依套件；由這個函式把事件轉送到你用來量測的工具：
