@@ -1329,27 +1329,12 @@ async def test_memory_set_many_keeps_to_max_entries() -> None:
     backend.stop_cleanup()
 
 
-async def test_lock_and_start_cleanup_are_deprecated(memory_backend: MemoryBackend):
-    """Both still work in 0.6.x and warn about their removal in 0.7.0 (#504)."""
-    with pytest.warns(DeprecationWarning, match=r"lock is deprecated.*0\.7\.0"):
-        lock = memory_backend.lock
-    # Still the lock the operations take: holding it keeps them out.
-    async with lock:
-        write = asyncio.create_task(memory_backend.clear())
-        await asyncio.sleep(0)
-        assert not write.done()
-    await write
-
-    # Assigning it, as a subclass could, still replaces the lock taken.
-    with pytest.warns(DeprecationWarning, match="lock is deprecated"):
-        memory_backend.lock = asyncio.Lock()
-    with pytest.warns(DeprecationWarning, match="lock is deprecated"):
-        assert memory_backend.lock is memory_backend._lock is not lock
-
-    memory_backend.stop_cleanup()
-    with pytest.warns(DeprecationWarning, match=r"start_cleanup\(\) is deprecated"):
-        memory_backend.start_cleanup()
-    assert memory_backend._cleanup_task is not None
+def test_lock_and_start_cleanup_are_removed(memory_backend: MemoryBackend) -> None:
+    """Deprecated in 0.6.2, removed in 0.7.0 (#504); stop_cleanup() stays."""
+    assert not hasattr(memory_backend, "lock")
+    assert not hasattr(memory_backend, "_lock")
+    assert not hasattr(memory_backend, "start_cleanup")
+    assert callable(memory_backend.stop_cleanup)
 
 
 async def test_clear_path_does_not_take_an_http_key_as_a_path(
