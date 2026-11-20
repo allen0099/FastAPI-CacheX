@@ -20,6 +20,8 @@ FutureWarning: fastapi-cachex 0.7.0 will require redis-py 7.4 or later; redis-py
 pip install "redis>=7.4"
 ```
 
+安裝 `fastapi-cachex[redis]` 0.7.0 時會自動帶入 redis-py 7.4 或更新版本；請不要把它釘在更低的版本。這個警告只存在於 0.6.5，因此下面的過濾規則只在你仍使用 0.6.5 時需要。
+
 在能升級之前，把警告轉為錯誤的測試（`filterwarnings = ["error"]`）可以忽略這一個警告：
 
 ```toml

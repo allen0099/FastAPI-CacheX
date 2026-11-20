@@ -140,7 +140,7 @@ def _retry(backend: AsyncRedisCacheBackend) -> tuple[Any, ...] | None:
     retry = _connection(backend)[1].get("retry")
     if retry is None:
         return None
-    # Private attributes: redis-py at our floor has no getters for them.
+    # Private: Retry has no public getter for its backoff.
     return (type(retry), retry._retries, type(retry._backoff))
 
 
@@ -153,10 +153,10 @@ def test_redis_url_gets_the_retry_policy_of_host_and_port() -> None:
     by_host = AsyncRedisCacheBackend(host="h", port=1)
     by_url = AsyncRedisCacheBackend.from_url("redis://h:1/0")
 
+    assert _retry(by_host) is not None
     assert _retry(by_url) == _retry(by_host)
     # Each backend has its own policy object.
-    if _retry(by_host) is not None:
-        assert _connection(by_url)[1]["retry"] is not _connection(by_host)[1]["retry"]
+    assert _connection(by_url)[1]["retry"] is not _connection(by_host)[1]["retry"]
 
     explicit = Retry(NoBackoff(), 0)
     chosen = AsyncRedisCacheBackend.from_url("redis://h:1/0", retry=explicit)

@@ -119,8 +119,8 @@ backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set(backend)
 ```
 
-With these defaults and redis-py 8, a request takes seconds to fail over while
-Redis is down;
+With these defaults, a request takes seconds to fail over while Redis is down
+(longer on redis-py 7.x);
 see [Failing fast when Redis is down](#failing-fast-when-redis-is-down) for the
 settings that make it fail within a fraction of a second.
 
@@ -253,7 +253,9 @@ with a connection error or timeout 10 times, with exponential backoff capped at
 takes about 3 to 4 s to fail, so a cached request, which reads and then writes,
 takes about 7 s. When the host does not answer at all, each of the 11 attempts
 also waits for `socket_connect_timeout` (1 s by default), about 15 s per
-command and 30 s per request.
+command and 30 s per request. redis-py 7.x retries 3 times instead, with
+backoff of up to 10 s between attempts: about 7 s per command and 14 s per
+request while Redis refuses connections.
 
 Every keyword argument the backend does not name itself goes to the redis-py
 client, so the retry policy and the timeouts can be set there:
