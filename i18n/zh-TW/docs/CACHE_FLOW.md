@@ -44,7 +44,7 @@ flowchart TD
 | `no_store`？ | 執行 handler，不讀取也不寫入後端，回應帶有 `Cache-Control: no-store`。 |
 | 略過後端？ | 以下情況為「是」：`private=True`、路由沒有正的 `ttl`，或[帶有憑證的請求](HTTP_CACHING.md#requests-with-credentials)（`Authorization`、session 資料，或路由的依賴項讀取的 API 金鑰或 Cookie），除非路由設定 `public`，或設定 `cache_authorized` 且鍵能辨識呼叫者；另外，快取[關閉](TESTING.md#switching-off)期間每個路由都是。此時不執行 key builder；以新產生的回應與 `If-None-Match` 比對，決定回 304 還是 200；帶有憑證時，`Cache-Control` 以 `private` 取代 `public`。設定 `cache_authorized` 時會使用後端，但每個回應仍然是 `private`。 |
 | 用戶端要求最新的回應？ | 只有設定 `client_cache_control` 的路由才會判斷。請求的 `no-cache` 或 `max-age=0` 會略過讀取：handler 執行，它的回應取代該項目。請求的 `no-store` 在更早的地方就決定了，算在「略過後端」。 |
-| 建立快取鍵 | `key_builder`（預設為 `http:v2\|method\|host\|path\|query`），再為每個 `vary` 標頭附加一個 `name=value` 段。 |
+| 建立快取鍵 | `key_builder`（預設為 `http:v3\|scheme\|method\|host\|path\|query`），再為每個 `vary` 標頭附加一個 `name=value` 段。 |
 | 讀取項目 | 設定 `fail_open` 時，後端錯誤視為未命中。儲存之後有任何 tag 被失效的項目，以及在路由有這些 tag 之前就儲存的項目，也視為未命中。設定 `coalesce=True` 時，沒有讀到項目的請求會等待正在產生同一個鍵的請求，然後再讀一次；讀取失敗時，則直接拿到該請求的回應，不再讀一次。設定 `coalesce="distributed"` 時，在所屬行程中領頭的請求還會對這個鍵取得鎖，或等待持有鎖的 worker。 |
 | 過期 | 只有設定 `serve_stale` 時才會出現，項目會保留 `ttl + stale_ttl`。`stale="revalidate"`：立刻以該項目回應（`If-None-Match` 相符時回 304），GET 請求的 handler 會在回應送出之後，以該請求的背景工作執行並取代該項目。`stale="error"`：先執行 handler，只有它拋出例外或回應 5xx 時才以該項目回應；低於 500 的 `HTTPException`，或應用程式自己處理的例外，是 handler 的答案，會原樣送出。 |
 | `no_cache` | 每個請求都執行 handler；`If-None-Match` 相符時，在與新產生的回應比對之後回 304。 |
@@ -67,7 +67,8 @@ from fastapi_cachex.types import escape_key_component
 # build_cache_key(request) 即 CacheKey.from_request(request).to_str()）
 cache_key = "|".join(
     [
-        CacheKey.FORMAT_TAG,  # "http:v2"
+        CacheKey.FORMAT_TAG,  # "http:v3"
+        escape_key_component(request.url.scheme),  # "http" or "https"
         escape_key_component(request.method),
         escape_key_component(host),  # Host 標頭，已正規化（見下文）
         escape_key_component(request.url.path),
@@ -76,11 +77,11 @@ cache_key = "|".join(
 )
 
 # 例如：
-# http:v2|GET|example.com|/api/users|limit=10&page=1  （對應 ?page=1&limit=10）
-# http:v2|GET|api.example.com|/api/users/123|
+# http:v3|https|GET|example.com|/api/users|limit=10&page=1  （對應 ?page=1&limit=10）
+# http:v3|https|GET|api.example.com|/api/users/123|
 ```
 
-每個快取鍵都以格式標籤 `http:v2` 開頭。其他格式的鍵（0.3.x 寫入的是沒有標籤的 `GET|||host|||path|||query`）不會與這些鍵衝突，在 Redis 與記憶體後端上，`clear_pattern("http:v2|*")` 會移除這個格式的所有鍵。`CacheKey.parse()` 只會讀取帶有這個標籤的鍵。
+每個快取鍵都以格式標籤 `http:v3` 開頭。其他格式的鍵（0.3.x 寫入的是沒有標籤的 `GET|||host|||path|||query`，0.4.0 到 0.6.x 寫入的是不含 scheme 的 `http:v2` 鍵）不會與這些鍵衝突，在 Redis 與記憶體後端上，`clear_pattern("http:v3|*")` 會移除這個格式的所有鍵。`CacheKey.parse()` 只會讀取帶有這個標籤的鍵。
 
 分隔符號使用 `|` 而不是冒號，是因為 host 本身可能包含連接埠（`127.0.0.1:8000`）；若使用冒號，快取鍵就無法可靠地拆分，而 `clear_path()` 需要從快取鍵中取回路徑。
 
@@ -304,7 +305,7 @@ If-None-Match: *                  → 只要資源存在就相符 → 304
 ```python
 # dict[str, CacheItem]；CacheItem 包裝 CacheEntry 並記錄其過期時間
 {
-    "http:v2|GET|example.com|/api/users|": CacheItem(
+    "http:v3|https|GET|example.com|/api/users|": CacheItem(
         value=CacheEntry(
             fingerprint='W/"abc123"',
             content=b"...",
@@ -353,7 +354,7 @@ Redis 與 Memcached 共用同一套 JSON 編解碼器；若已安裝 `orjson` �
 ### MemcachedBackend {#memcachedbackend}
 
 ```
-key:   "fastapi_cachex:http:v2|GET|example.com|/api/users|"
+key:   "fastapi_cachex:http:v3|https|GET|example.com|/api/users|"
 value: 上述的 JSON 文件
 
 # 特性：
@@ -378,7 +379,7 @@ value: 上述的 JSON 文件
 ### AsyncRedisCacheBackend {#asyncrediscachebackend}
 
 ```
-key:   "fastapi_cachex:http:v2|GET|example.com|/api/users|"
+key:   "fastapi_cachex:http:v3|https|GET|example.com|/api/users|"
 value: 上述的 JSON 文件
 
 # 特性：

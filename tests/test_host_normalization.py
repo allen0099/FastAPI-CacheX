@@ -77,14 +77,15 @@ def test_spellings_of_one_origin_share_an_entry() -> None:
     for host in ("example.com", "EXAMPLE.com", "example.com:80"):
         assert client.get("/p", headers={"host": host}).json() == {"calls": 1}
 
-    assert list(backend.cache) == ["http:v2|GET|example.com|/p|"]
+    assert list(backend.cache) == ["http:v3|http|GET|example.com|/p|"]
 
 
 async def test_invalidate_finds_the_entry_under_another_spelling() -> None:
     backend = MemoryBackend()
     BackendProxy.set(backend)
     await backend.set(
-        CacheKey("GET", "example.com", "/p").to_str(), CacheEntry("e", b"v")
+        CacheKey("GET", "example.com", "/p", scheme="http").to_str(),
+        CacheEntry("e", b"v"),
     )
 
     assert await invalidate(_request("Example.com:80")) is True

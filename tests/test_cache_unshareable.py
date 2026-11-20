@@ -21,7 +21,7 @@ from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 
 def _key(path: str) -> str:
     """The key `default_key_builder` produces for a TestClient GET."""
-    return f"http:v2|GET|testserver|{path}|"
+    return f"http:v3|http|GET|testserver|{path}|"
 
 
 async def test_issue_repro_private_no_store_with_authorization():

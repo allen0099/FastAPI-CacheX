@@ -715,7 +715,7 @@ class MemcachedBackend(BaseCacheBackend):
         """Delete the key that is exactly ``path``; warns on every call.
 
         Memcached cannot enumerate keys, so this cannot find HTTP route keys
-        (``http:v2|method|host|path|query``): it only deletes a key stored under
+        (``http:v3|scheme|method|host|path|query``): it only deletes a key stored under
         the literal name ``path``, and ``include_params`` has no effect. It
         warns every time, because on this backend ``clear_path()`` after a write
         would otherwise leave the cached response in place without a sign. Use
@@ -732,7 +732,7 @@ class MemcachedBackend(BaseCacheBackend):
         warnings.warn(
             "Memcached backend does not support pattern-based key clearing, so "
             "clear_path() cannot remove HTTP cache entries "
-            "(http:v2|method|host|path|query): it only deletes a key named "
+            "(http:v3|scheme|method|host|path|query): it only deletes a key named "
             "exactly as the path, and include_params has no effect. Use "
             "invalidate(request) to drop a cached route's entry.",
             RuntimeWarning,

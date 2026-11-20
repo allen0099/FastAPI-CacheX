@@ -24,7 +24,7 @@ _PRIVATE = "private, max-age=60"
 
 def _key(path: str) -> str:
     """The key `default_key_builder` produces for a TestClient GET."""
-    return f"http:v2|GET|testserver|{path}|"
+    return f"http:v3|http|GET|testserver|{path}|"
 
 
 def _app(**cache_kwargs: object) -> tuple[FastAPI, dict[str, int]]:

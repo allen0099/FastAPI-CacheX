@@ -177,8 +177,8 @@ def test_default_key_builder_function() -> None:
 
     cache_key = default_key_builder(request)
 
-    # Verify format: http:v2|method|host|path|query, the query sorted by name
-    expected = "http:v2|GET|example.com|/api/items|limit=10&page=1"
+    # Verify format: http:v3|http|method|host|path|query, the query sorted by name
+    expected = "http:v3|http|GET|example.com|/api/items|limit=10&page=1"
     assert cache_key == expected
 
 
@@ -197,5 +197,5 @@ def test_default_key_builder_without_host() -> None:
     cache_key = default_key_builder(request)
 
     # Should use 'unknown' as fallback for host
-    expected = "http:v2|GET|unknown|/api/items|"
+    expected = "http:v3|http|GET|unknown|/api/items|"
     assert cache_key == expected

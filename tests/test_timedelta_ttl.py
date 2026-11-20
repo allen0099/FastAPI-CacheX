@@ -213,7 +213,7 @@ def test_cache_decorator_accepts_timedeltas(memory_backend: MemoryBackend) -> No
     assert first.headers["Cache-Control"] == "max-age=300, stale-while-revalidate=60"
     assert client.get("/items").json() == first.json()
     assert calls["n"] == 1
-    expiry = memory_backend.cache["http:v2|GET|testserver|/items|"].expiry
+    expiry = memory_backend.cache["http:v3|http|GET|testserver|/items|"].expiry
     assert expiry is not None
     assert time.time() + 299 < expiry <= time.time() + 301
 

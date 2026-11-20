@@ -51,8 +51,10 @@ def test_a_longer_query_is_stored_as_its_digest() -> None:
 
     key = build_cache_key(_request(query))
 
-    assert key == f"http:v2|GET|h|/p|{_digest(query)}"
-    assert CacheKey.parse(key) == CacheKey("GET", "h", "/p", _digest(query))
+    assert key == f"http:v3|http|GET|h|/p|{_digest(query)}"
+    assert CacheKey.parse(key) == CacheKey(
+        "GET", "h", "/p", _digest(query), scheme="http"
+    )
 
 
 def test_the_digest_covers_the_encoded_query() -> None:
@@ -80,9 +82,9 @@ def test_extra_components_follow_the_digest() -> None:
 
     key = build_cache_key(_request(query), "tenant", 7)
 
-    assert key == f"http:v2|GET|h|/p|{_digest(query)}|tenant|7"
+    assert key == f"http:v3|http|GET|h|/p|{_digest(query)}|tenant|7"
     assert CacheKey.parse(key) == CacheKey(
-        "GET", "h", "/p", _digest(query), ("tenant", "7")
+        "GET", "h", "/p", _digest(query), ("tenant", "7"), scheme="http"
     )
 
 
@@ -120,7 +122,7 @@ def test_long_queries_are_cached_apart_and_hit_again() -> None:
 
     assert len(calls) == 2
     assert sorted(backend.cache) == sorted(
-        f"http:v2|GET|testserver|/p|{_digest(q)}" for q in (first, second)
+        f"http:v3|http|GET|testserver|/p|{_digest(q)}" for q in (first, second)
     )
 
 

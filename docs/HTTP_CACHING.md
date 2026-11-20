@@ -683,15 +683,20 @@ raise backend errors to the caller.
 Cache keys are generated in the following format to avoid collisions:
 
 ```
-http:v2|{method}|{host}|{path}|{query_params}
+http:v3|{scheme}|{method}|{host}|{path}|{query_params}
 ```
 
-`http:v2` is the format tag (`CacheKey.FORMAT_TAG`). A later key format gets
+`http:v3` is the format tag (`CacheKey.FORMAT_TAG`). A later key format gets
 another tag, so its keys never collide with these; on Redis and memory,
-`clear_pattern("http:v2|*")` removes every HTTP cache entry of this format.
+`clear_pattern("http:v3|*")` removes every HTTP cache entry of this format.
 
 This ensures that:
 
+- http and https get separate entries, so a response with absolute links
+  built from the request URL keeps the scheme it was built for (from 0.7.0,
+  see [Migrating to 0.7.0](MIGRATING_0_7.md#key-scheme)). The scheme is the
+  one the app sees: behind a proxy that terminates TLS it is `http` unless the
+  server applies the proxy's `X-Forwarded-Proto`.
 - The method is part of the key
 - Different hosts don't share cache (useful for multi-tenant scenarios)
 - Different query parameters get separate cache entries
@@ -780,7 +785,7 @@ rebuilding the format by hand. With no components it returns exactly the
 default key; each component is appended after the query string:
 
 ```
-http:v2|{method}|{host}|{path}|{query_params}|{component}|...
+http:v3|{scheme}|{method}|{host}|{path}|{query_params}|{component}|...
 ```
 
 ```python
@@ -808,9 +813,9 @@ path. The monitoring routes show the extra components, decoded, in
 
 `CacheKey` is the same key as a value. `CacheKey.from_request(request,
 *components)` builds it, `to_str()` gives the string `build_cache_key` returns,
-and `CacheKey.parse(key)` decodes a stored key into `method`, `host`, `path`,
-`query` and `extra`, or returns `None` for a key that is not an HTTP key
-(a `CacheManager` key, say, or one without the `http:v2` tag):
+and `CacheKey.parse(key)` decodes a stored key into `scheme`, `method`, `host`,
+`path`, `query` and `extra`, or returns `None` for a key that is not an HTTP key
+(a `CacheManager` key, say, or one without the `http:v3` tag):
 
 ```python
 from fastapi_cachex import CacheKey
@@ -830,7 +835,7 @@ HTTP requests.
 
 A `key_builder` that returns a key of its own making, not built by
 `build_cache_key()` (or `CacheKey`), still caches, invalidates with
-`invalidate()` and clears with `clear_pattern()`. But the key has no `http:v2`
+`invalidate()` and clears with `clear_pattern()`. But the key has no `http:v3`
 tag, so `clear_path()` does not find it and the monitoring routes skip it.
 
 ### Varying on request headers
@@ -851,7 +856,7 @@ lower-cased, the value trimmed (repeated header lines joined with `,`), and a
 missing header treated as an empty one. The components are escaped like the
 rest of the key and come after whatever the `key_builder` returns, so `vary`
 and a custom key builder compose:
-`http:v2|GET|example.com|/greeting||tenant-1|accept-language=de` for
+`http:v3|https|GET|example.com|/greeting||tenant-1|accept-language=de` for
 `key_builder` returning `build_cache_key(request, "tenant-1")`. Routes without
 `vary` keep their keys.
 
@@ -922,7 +927,7 @@ holds the full hex SHA-256 of the value (trimmed and joined as above) instead
 of the value:
 
 ```
-http:v2|GET|example.com|/me||authorization=sha256:3f0a…(64 hex digits)
+http:v3|https|GET|example.com|/me||authorization=sha256:3f0a…(64 hex digits)
 ```
 
 The same token always gives the same digest, so it hits its own entry, and two
@@ -1131,8 +1136,8 @@ async def clear(cache: CacheBackend) -> None:
     # ...or every query-param variant too
     await cache.clear_path("/api/users", include_params=True)
 
-    # Clear by pattern: matched against the whole key http:v2|method|host|path|query
-    await cache.clear_pattern("http:v2|GET|*|/api/users/*")
+    # Clear by pattern: matched against the whole key http:v3|scheme|method|host|path|query
+    await cache.clear_pattern("http:v3|*|GET|*|/api/users/*")
     # Keys you built yourself (e.g. CacheManager keys) match directly
     await cache.clear_pattern("cache:user:*")
 
@@ -1266,8 +1271,8 @@ for a route with `sort_query=False` pass `sort_query=False` here too.
 
 ### After a write: `invalidate()` or `clear_path()`
 
-`invalidate()` and `invalidate_path()` delete exactly one key, the one built from the request or path you
-pass. After `PUT /items/42` that is the entry for `GET /items/42` with no
+`invalidate()` and `invalidate_path()` delete exactly one entry, the one built from the request or path you
+pass, over both http and https (since 0.7.0 the scheme is part of the key, and a write makes both stale). After `PUT /items/42` that is the entry for `GET /items/42` with no
 query string and, on a route with `vary`, the one variant the request's
 headers select. Entries that show the same item under another key keep
 serving the old data until they expire: `/items/42?fields=name`, a list at
@@ -1431,7 +1436,7 @@ add_routes(
   `content_type` is always `"bytes"` and is kept for compatibility; read
   `media_type` instead.
 
-Both routes list only route entries (keys in the `http:v2|method|host|path|query`
+Both routes list only route entries (keys in the `http:v3|scheme|method|host|path|query`
 format); `CacheManager` and lock keys are skipped, and so are
 keys from a `key_builder` that does not use `build_cache_key()`.
 

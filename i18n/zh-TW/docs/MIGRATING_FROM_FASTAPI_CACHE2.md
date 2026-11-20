@@ -94,7 +94,7 @@ async def read_item(item_id: int) -> dict[str, int]:
 
 ### 快取鍵來自請求，而不是引數 {#keys}
 
-fastapi-cache2 以函式的模組、名稱與引數計算雜湊。FastAPI-CacheX 以請求作為鍵：`http:v2|method|host|path|query`，查詢參數會排序。實際上：
+fastapi-cache2 以函式的模組、名稱與引數計算雜湊。FastAPI-CacheX 以請求作為鍵：`http:v3|scheme|method|host|path|query`，查詢參數會排序。實際上：
 
 - 服務同一個應用程式的兩個主機會得到不同的項目；被 FastAPI 解析成相同引數的兩個查詢字串（`?page=1` 與 `?page=01`）也一樣。
 - 回應取決於某個請求標頭時，快取鍵必須包含該標頭：`@cache(vary=["Accept-Language"])` 或自訂 `key_builder`。除非該標頭是函式引數，否則在 fastapi-cache2 中同樣需要自訂 key builder。

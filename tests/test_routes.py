@@ -135,6 +135,7 @@ class TestCachedHitsRoute:
         assert "ttl_remaining" in hit
 
         # Verify values
+        assert hit["scheme"] == "http"
         assert hit["method"] == "GET"
         assert hit["path"] == "/api/test"
         assert hit["query_params"] == "query=value"
@@ -276,6 +277,7 @@ class TestCachedRecordsRoute:
         assert "content_preview" in record
 
         # Verify values
+        assert record["scheme"] == "http"
         assert record["method"] == "GET"
         assert record["path"] == "/api/test"
         assert record["is_expired"] is False
@@ -309,7 +311,7 @@ class TestCachedRecordsRoute:
     def test_cached_records_media_type_null_when_unset(self, app, client, setup_cache):
         """An entry stored without a media type reports ``null``."""
         add_routes(app, dependencies=[])
-        setup_cache.cache["http:v2|GET|h|/raw|"] = CacheItem(
+        setup_cache.cache["http:v3|http|GET|h|/raw|"] = CacheItem(
             value=CacheEntry(fingerprint="e", content=b"x"), expiry=None
         )
 
@@ -602,7 +604,7 @@ class TestExpiredEntryMonitoring:
         add_routes(app, dependencies=[])
 
         # TestClient sends Host: testserver by default
-        cache_key = "http:v2|GET|testserver|/expired-route|"
+        cache_key = "http:v3|http|GET|testserver|/expired-route|"
         expired_entry = CacheEntry(
             fingerprint='W/"expiredtag"', content=b"old data", media_type="text/plain"
         )
@@ -621,7 +623,7 @@ class TestExpiredEntryMonitoring:
         """/cached-records marks is_expired=True for entries whose TTL has passed."""
         add_routes(app, dependencies=[])
 
-        cache_key = "http:v2|GET|testserver|/expired-data|"
+        cache_key = "http:v3|http|GET|testserver|/expired-data|"
         expired_entry = CacheEntry(
             fingerprint='W/"expireddata"', content=b"stale", media_type="text/plain"
         )
@@ -643,12 +645,12 @@ class TestMonitoringEdgeCases:
     """Entries that are not route responses, and a proxy with no backend at all."""
 
     def test_non_route_keys_are_skipped(self, app, client, setup_cache):
-        """A CacheManager/state key has no http:v2|method|host|path shape and must not be listed."""
+        """A CacheManager/state key has no http:v3|http|method|host|path shape and must not be listed."""
         add_routes(app, dependencies=[])
         setup_cache.cache["cache:plain-value"] = CacheItem(
             value=CacheEntry(fingerprint="x", content=b"1"), expiry=None
         )
-        setup_cache.cache["http:v2|GET|testserver|/route|"] = CacheItem(
+        setup_cache.cache["http:v3|http|GET|testserver|/route|"] = CacheItem(
             value=CacheEntry(fingerprint="y", content=b"2"), expiry=None
         )
 
@@ -711,7 +713,7 @@ class TestEntryNamedFields:
         add_routes(app, dependencies=[])
         _report_expired(
             setup_cache,
-            "http:v2|GET|testserver|/old|",
+            "http:v3|http|GET|testserver|/old|",
             CacheEntry(fingerprint='W/"old"', content=b"old"),
         )
 

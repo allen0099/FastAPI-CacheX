@@ -17,7 +17,7 @@ from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
 
-BASE_KEY = "http:v2|GET|testserver|/greet|"
+BASE_KEY = "http:v3|http|GET|testserver|/greet|"
 
 
 def _app(**cache_kwargs: Any) -> tuple[TestClient, dict[str, int]]:
@@ -282,7 +282,7 @@ async def test_invalid_vary_is_rejected_by_invalidate() -> None:
 
 TOKEN_A = "Bearer secret-token-a"
 TOKEN_B = "Bearer secret-token-b"
-ME_KEY = "http:v2|GET|testserver|/me|"
+ME_KEY = "http:v3|http|GET|testserver|/me|"
 
 
 def _digest(value: str) -> str:

@@ -12,7 +12,7 @@ from fastapi_cachex import build_cache_key
 from fastapi_cachex.cache import cache
 from fastapi_cachex.proxy import BackendProxy
 
-GET_KEY = "http:v2|GET|testserver|/items|"
+GET_KEY = "http:v3|http|GET|testserver|/items|"
 
 
 def _app(**cache_kwargs: Any) -> tuple[TestClient, list[str]]:

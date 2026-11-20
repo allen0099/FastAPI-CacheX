@@ -75,11 +75,11 @@ def warn_if_path_shaped(pattern: str, cleared: int) -> None:
         sep = CACHE_KEY_SEPARATOR
         warnings.warn(
             f"clear_pattern({pattern!r}) cleared nothing. Patterns match whole "
-            f"cache keys, which look like '{HTTP_KEY_FORMAT_TAG}{sep}method{sep}"
-            f"host{sep}path{sep}query', so a bare path matches no HTTP cache "
+            f"cache keys, which look like '{HTTP_KEY_FORMAT_TAG}{sep}scheme{sep}"
+            f"method{sep}host{sep}path{sep}query', so a bare path matches no HTTP cache "
             "entry. Use clear_path(path, include_params=True) to clear by "
             "path, or write the whole key out as "
-            f"'{HTTP_KEY_FORMAT_TAG}{sep}GET{sep}*{sep}{pattern}{sep}*'.",
+            f"'{HTTP_KEY_FORMAT_TAG}{sep}*{sep}GET{sep}*{sep}{pattern}{sep}*'.",
             RuntimeWarning,
             stacklevel=3,
         )
@@ -522,11 +522,11 @@ class BaseCacheBackend(ABC):
 
         The pattern is matched against the whole logical key — the key as the
         caller sees it, without whatever prefix the backend adds internally.
-        HTTP cache keys are ``http:v2|method|host|path|query`` (see
+        HTTP cache keys are ``http:v3|scheme|method|host|path|query`` (see
         ``CacheKey``), so matching a path means writing the other components
         out::
 
-            await backend.clear_pattern("http:v2|GET|*|/users/*")
+            await backend.clear_pattern("http:v3|*|GET|*|/users/*")
             await backend.clear_pattern("cache:user:*")  # a CacheManager key
 
         To clear by path, prefer ``clear_path(path, include_params=...)``: it

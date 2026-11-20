@@ -68,7 +68,7 @@ def test_second_run_does_not_see_the_first() -> None:
     assert response.headers["X-Cache"] == "MISS"
 ```
 
-少了這個 fixture，第二個測試會以 `HIT` 拿到 `{"answer": "run-a"}`：兩個應用程式都會建立鍵 `http:v2|GET|testserver|/answer|`，而第一個測試留下的後備後端仍然註冊著。
+少了這個 fixture，第二個測試會以 `HIT` 拿到 `{"answer": "run-a"}`：兩個應用程式都會建立鍵 `http:v3|http|GET|testserver|/answer|`，而第一個測試留下的後備後端仍然註冊著。
 
 ## 關閉快取 {#switching-off}
 

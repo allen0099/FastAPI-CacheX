@@ -24,6 +24,17 @@ from .types import CacheKeyBuilder
 # One logger for the decorator and the modules split from it.
 logger = logging.getLogger("fastapi_cachex.cache")
 
+# A write changes the data behind both, so invalidation clears both (#576).
+_OTHER_SCHEME = {"http": "https", "https": "http"}
+
+
+def _with_both_schemes(request: Request) -> list[Request]:
+    """``request``, and the same request over the other of http and https."""
+    other = _OTHER_SCHEME.get(str(request.scope.get("scheme", "http")).lower())
+    if other is None:
+        return [request]
+    return [request, Request({**request.scope, "scheme": other}, request.receive)]
+
 
 async def invalidate(
     request: Request,
@@ -37,7 +48,9 @@ async def invalidate(
     Builds the same cache key the ``@cache`` decorator would build for
     ``request`` (via ``key_builder`` or ``default_key_builder``) and deletes
     it from the configured backend. Use this after a mutation to bust the
-    cache for a specific cached route response.
+    cache for a specific cached route response. The key holds the scheme, so
+    the entry of the same request over the other of http and https is
+    deleted too: a write makes both stale.
 
     Args:
         request: The request whose cache key should be invalidated: a
@@ -61,7 +74,8 @@ async def invalidate(
             key will not match.
 
     Returns:
-        True if a cache entry existed and was deleted, False otherwise.
+        True if a cache entry existed and was deleted, for either scheme;
+        False otherwise.
 
     Raises:
         CacheXError: If ``vary`` is not a list of header names or a mapping
@@ -74,8 +88,14 @@ async def invalidate(
     """
     builder = _resolve_key_builder(key_builder, sort_query)
     vary_names = _validate_vary(vary)
-    cache_key = _append_key_components(
-        _build_key(builder, request), _vary_components(request, vary_names)
+    # A builder that leaves the scheme out gives one key for both.
+    cache_keys = list(
+        dict.fromkeys(
+            _append_key_components(
+                _build_key(builder, variant), _vary_components(variant, vary_names)
+            )
+            for variant in _with_both_schemes(request)
+        )
     )
 
     try:
@@ -83,7 +103,13 @@ async def invalidate(
     except BackendNotFoundError:
         return False
 
-    if await cache_backend.get_and_delete(cache_key) is None:
+    deleted = False
+    for cache_key in cache_keys:
+        if await cache_backend.get_and_delete(cache_key) is not None:
+            deleted = True
+            logger.debug("Cache INVALIDATE; key=%s", cache_key)
+            _emit("invalidate", "http", cache_key)
+    if not deleted:
         if key_builder is None and request.method != "GET":
             # Only GET responses are stored, and the default key holds the
             # method, so this key can never exist: say so instead of
@@ -95,8 +121,6 @@ async def invalidate(
                 request.method,
             )
         return False
-    logger.debug("Cache INVALIDATE; key=%s", cache_key)
-    _emit("invalidate", "http", cache_key)
     return True
 
 

@@ -17,8 +17,9 @@ from fastapi_cachex.exceptions import CacheXError
 CACHE_KEY_SEPARATOR = "|"
 
 # First component of every HTTP cache key (see ``CacheKey``). 0.3.x keys had no
-# tag and used ``|||``; the next format change bumps it.
-HTTP_KEY_FORMAT_TAG = "http:v2"
+# tag and used ``|||``; ``http:v2`` (0.4.0 to 0.6.x) had no scheme (#576). The
+# next format change bumps it.
+HTTP_KEY_FORMAT_TAG = "http:v3"
 
 # Type for custom cache key builder function
 CacheKeyBuilder = Callable[[Request], str]

@@ -68,7 +68,7 @@ def test_second_run_does_not_see_the_first() -> None:
     assert response.headers["X-Cache"] == "MISS"
 ```
 
-Without the fixture the second test gets `{"answer": "run-a"}` as a `HIT`: both apps build the key `http:v2|GET|testserver|/answer|`, and the fallback backend from the first test is still registered.
+Without the fixture the second test gets `{"answer": "run-a"}` as a `HIT`: both apps build the key `http:v3|http|GET|testserver|/answer|`, and the fallback backend from the first test is still registered.
 
 ## Turning the cache off {#switching-off}
 
