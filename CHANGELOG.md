@@ -23,9 +23,10 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 0.7.0 contains breaking changes; read
 [Migrating to 0.7.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_7/)
 before upgrading. HTTP cache keys now include the scheme, so entries stored by
-0.6.x are no longer read and are left to expire; redis-py 7.4 or later is
-required; and `MemoryBackend.lock` and `MemoryBackend.start_cleanup()` are
-removed.
+0.6.x are no longer read and are left to expire, and a `clear_pattern()`
+pattern written by hand for the old format silently matches nothing; redis-py
+7.4 or later is required; and `MemoryBackend.lock` and
+`MemoryBackend.start_cleanup()` are removed.
 
 ## [0.6.5] - 2026-11-20
 
