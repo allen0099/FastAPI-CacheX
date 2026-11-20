@@ -1,3 +1,4 @@
+import re
 import threading
 import time
 from collections.abc import Iterator
@@ -234,3 +235,17 @@ def test_get_or_create_factory_may_use_another_proxy(
     assert not worker.is_alive(), "nested get_or_create deadlocked"
     assert result == [thing_proxy.get()]
     assert isinstance(BackendProxy.get(), MemoryBackend)
+
+
+@pytest.mark.parametrize(
+    ("proxy", "value", "hint"),
+    [
+        (BackendProxy, MemoryBackend, "BackendProxy.set(MemoryBackend())"),
+        (BackendProxy, "memory", "BaseCacheBackend instance"),
+        (CacheManagerProxy, MemoryBackend(), "CacheManager instance"),
+    ],
+)
+def test_set_rejects_what_is_not_an_instance(proxy, value, hint) -> None:
+    """A class or a name fails at set(), not on every later use (#625)."""
+    with pytest.raises(TypeError, match=re.escape(hint)):
+        proxy.set(value)

@@ -167,7 +167,8 @@ def _validate_key_builder(builder: Callable[..., object]) -> None:
     except TypeError as e:
         msg = (
             f"key_builder must take the request as its only argument, "
-            f"key_builder(request) -> str; {signature} cannot ({e}). A "
+            f"key_builder(request) -> str, and one with the signature "
+            f"{signature} cannot be called with one argument. A "
             "fastapi-cache2 key builder (func, namespace, request, ...) needs "
             "rewriting; see the fastapi-cache2 migration guide."
         )

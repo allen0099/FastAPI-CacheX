@@ -86,3 +86,9 @@ async def test_invalidate_with_custom_key_builder() -> None:
 
     assert removed is True
     assert await backend.get("custom:/x") is None
+
+
+async def test_invalidate_given_a_path_points_to_invalidate_path() -> None:
+    """A path string is a TypeError naming the call to use (#625)."""
+    with pytest.raises(TypeError, match=r"invalidate_path\(request, path\)"):
+        await invalidate("/items")  # type: ignore[arg-type]
