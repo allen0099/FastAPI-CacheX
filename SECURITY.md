@@ -2,19 +2,18 @@
 
 ## Supported versions
 
-Security fixes are released for the latest release line only. `master`
-carries 0.7.0 work, and releases come only from `master`, so the next fix
-ships in 0.7.0: 0.6.5 was the last 0.6.x release, and 0.6.x and earlier lines
-get no further releases. Upgrade to the newest release before reporting, and
+Security fixes are released for the latest release line only, which is
+0.7.x. Releases come only from `master`, so 0.6.x and earlier lines get no
+further releases. Upgrade to the newest release before reporting, and
 check whether the problem is still there.
 
 | Version           | Supported                       |
 |-------------------|---------------------------------|
-| 0.7.x             | Yes, from 0.7.0                 |
+| Latest 0.7.x      | Yes                             |
 | 0.6.x and earlier | No                              |
 
 A fix ships in the next release from `master`; earlier releases are not
-patched. To prepare for 0.7.0 on 0.6.5, see
+patched. To upgrade from 0.6.x, see
 [Migrating to 0.7.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_7/).
 
 ## Supported Python versions
