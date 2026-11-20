@@ -61,9 +61,9 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
 
 ## Pull Request Process
 
-1. Update the matching guide under `docs/` (and the README if the change belongs on the front page) when you change the interface. The maintainers
+1. Update the matching guide under `docs/en/` (and the README if the change belongs on the front page) when you change the interface. The maintainers
    keep the [Traditional Chinese translation](DEVELOPMENT.md#traditional-chinese-translation)
-   in step: update its page under `i18n/zh-TW/docs/` too if you can, or say
+   in step: update its page under `docs/zh-TW/` too if you can, or say
    in the pull request that you did not, and a maintainer adds it
 2. Add a changelog fragment if your change alters behaviour, adds public
    API, or fixes something a user could have hit: a file
@@ -79,7 +79,7 @@ Please refer to our [Development Guide](DEVELOPMENT.md) for detailed instruction
    which PR it was
 3. Update the documentation with any new dependencies, features, or changes.
    New public API needs a docstring and, if it lives in a module not yet
-   covered, an entry under `docs/api/`; check the site with
+   covered, an entry under `docs/en/api/`; check the site with
    `uv run zensical build --strict` (see
    [Documentation site](DEVELOPMENT.md#documentation-site))
 4. The PR may be merged once you have the sign-off of at least one other developer

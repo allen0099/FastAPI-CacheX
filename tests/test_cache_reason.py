@@ -168,7 +168,7 @@ def test_the_event_carries_the_reason(events: list[CacheEvent]) -> None:
 
 
 @pytest.mark.parametrize(
-    "page", ["docs/HTTP_CACHING.md", "i18n/zh-TW/docs/HTTP_CACHING.md"]
+    "page", ["docs/en/HTTP_CACHING.md", "docs/zh-TW/HTTP_CACHING.md"]
 )
 def test_the_docs_list_exactly_the_reasons(page: str) -> None:
     """``CacheReason`` is public: the table and the type name the same values."""

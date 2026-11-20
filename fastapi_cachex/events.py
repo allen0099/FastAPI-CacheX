@@ -27,7 +27,7 @@ EventKind = Literal[
 # Why a request to a ``@cache`` route did not use the cache as usual: the
 # values of ``X-Cache-Reason`` and ``CacheEvent.reason``. Public: a value is
 # renamed or removed only as a breaking change. Each is described in
-# docs/HTTP_CACHING.md ("Why a response was not cached"), which a test keeps
+# docs/en/HTTP_CACHING.md ("Why a response was not cached"), which a test keeps
 # in step with this list.
 CacheReason = Literal[
     # The backend was bypassed.

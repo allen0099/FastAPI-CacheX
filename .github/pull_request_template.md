@@ -1,6 +1,6 @@
 <!--
 Outside contributors: this project only takes pull requests for issues that a
-maintainer has assigned to you. See docs/CONTRIBUTING.md, "Before You Open a
+maintainer has assigned to you. See docs/en/CONTRIBUTING.md, "Before You Open a
 Pull Request". A pull request without an assigned issue is closed automatically.
 -->
 

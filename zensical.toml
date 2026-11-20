@@ -12,8 +12,8 @@ site_description = "HTTP caching and application caching for FastAPI."
 site_url = "https://fastapi-cachex.readthedocs.io/en/stable/"
 repo_url = "https://github.com/allen0099/FastAPI-CacheX"
 repo_name = "allen0099/FastAPI-CacheX"
-edit_uri = "edit/master/docs/"
-docs_dir = "docs"
+edit_uri = "edit/master/docs/en/"
+docs_dir = "docs/en"
 site_dir = "site"
 
 nav = [

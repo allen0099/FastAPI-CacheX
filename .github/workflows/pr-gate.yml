@@ -2,7 +2,7 @@ name: PR gate
 
 # Filters pull requests from outside contributors before a maintainer reads
 # them. Many arrive from accounts that open hundreds of unrequested PRs a
-# month; the rules below are the ones in docs/CONTRIBUTING.md, so a PR that
+# month; the rules below are the ones in docs/en/CONTRIBUTING.md, so a PR that
 # follows the guide passes and one that ignores it is closed with a comment.
 #
 # pull_request_target runs in the context of the base branch, with a token
@@ -42,7 +42,7 @@ jobs:
           const { owner, repo } = context.repo;
           const author = pr.user.login.toLowerCase();
           const marker = '<!-- pr-gate -->';
-          const guide = `https://github.com/${owner}/${repo}/blob/master/docs/CONTRIBUTING.md`;
+          const guide = `https://github.com/${owner}/${repo}/blob/master/docs/en/CONTRIBUTING.md`;
 
           if (pr.state !== 'open') return;
 
