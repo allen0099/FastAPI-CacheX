@@ -3,6 +3,7 @@ import threading
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -15,6 +16,7 @@ from fastapi_cachex import cache
 from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.exceptions import ProxyNotSetError
+from fastapi_cachex.manager import CacheManager
 from fastapi_cachex.manager_proxy import CacheManagerProxy
 from fastapi_cachex.proxy import ProxyBase
 from fastapi_cachex.proxy import get_backend_or_fallback
@@ -243,9 +245,19 @@ def test_get_or_create_factory_may_use_another_proxy(
         (BackendProxy, MemoryBackend, "BackendProxy.set(MemoryBackend())"),
         (BackendProxy, "memory", "BaseCacheBackend instance"),
         (CacheManagerProxy, MemoryBackend(), "CacheManager instance"),
+        (CacheManagerProxy, CacheManager, "CacheManagerProxy.set(CacheManager())"),
     ],
 )
 def test_set_rejects_what_is_not_an_instance(proxy, value, hint) -> None:
     """A class or a name fails at set(), not on every later use (#625)."""
     with pytest.raises(TypeError, match=re.escape(hint)):
         proxy.set(value)
+
+
+@pytest.mark.parametrize("proxy", [BackendProxy, CacheManagerProxy])
+def test_set_still_accepts_a_mock(proxy) -> None:
+    """Only what could never work is refused in 0.7.x (#625)."""
+    try:
+        proxy.set(AsyncMock())
+    finally:
+        proxy.set(None)

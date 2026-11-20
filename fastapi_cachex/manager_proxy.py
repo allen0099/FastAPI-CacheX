@@ -8,3 +8,4 @@ class CacheManagerProxy(ProxyBase[CacheManager]):
     """FastAPI CacheX Proxy for CacheManager instance management."""
 
     _instance_type = CacheManager
+    _required_methods = ("get", "set", "get_or_set")
