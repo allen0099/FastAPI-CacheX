@@ -1,5 +1,6 @@
 """The common misuses raise errors that name the fix (#581)."""
 
+import asyncio
 import functools
 import logging
 import sys
@@ -11,6 +12,7 @@ from fastapi import FastAPI
 from fastapi import Request
 
 from fastapi_cachex import BackendProxy
+from fastapi_cachex import CacheLock
 from fastapi_cachex import CacheManager
 from fastapi_cachex import cache
 from fastapi_cachex import cached
@@ -133,8 +135,40 @@ async def test_a_value_json_refuses_with_valueerror_raises_typeerror(
     limit = sys.get_int_max_str_digits()
     sys.set_int_max_str_digits(4300)  # the default, whatever the runner set
     try:
-        with pytest.raises(TypeError, match="cannot be stored as JSON"):
+        with pytest.raises(TypeError, match="cannot be stored as JSON") as info:
             await manager.set("k", stored)
     finally:
         sys.set_int_max_str_digits(limit)
+    # What it raised before, so code catching that keeps working.
+    assert isinstance(info.value, ValueError)
     assert await manager.get("k") is None
+
+
+async def test_a_value_that_appears_while_polling_still_warns_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Silencing every later read hid a bad value written meanwhile."""
+    backend = MemoryBackend()
+    manager = CacheManager(backend=backend)
+    # Another caller holds the key's lock, so this call polls.
+    holder = CacheLock(name=manager._cache_key("k"), ttl=5, backend=backend)
+    assert await holder.acquire(blocking=False)
+
+    async def factory() -> int:
+        return 5
+
+    async def meanwhile() -> None:
+        await asyncio.sleep(0.1)
+        await manager.set("k", "text")  # a value the call cannot decode
+        await asyncio.sleep(0.3)
+        await holder.release()
+
+    with caplog.at_level(logging.DEBUG, logger="fastapi_cachex.manager"):
+        result, _ = await asyncio.gather(
+            manager.get_or_set("k", factory, type_=int, lock=True, wait_timeout=3),
+            meanwhile(),
+        )
+    assert result == 5
+    failures = [r for r in caplog.records if "Failed to decode" in r.getMessage()]
+    assert [r.levelno for r in failures].count(logging.WARNING) == 1
+    assert len(failures) > 2  # polled more than once
