@@ -38,6 +38,7 @@ nav = [
     { "Types and exceptions" = "api/types.md" },
   ] },
   { "Migration guides" = [
+    { "Migrating to 0.7.0" = "MIGRATING_0_7.md" },
     { "Migrating to 0.6.0" = "MIGRATING_0_6.md" },
     { "Migrating to 0.5.0" = "MIGRATING_0_5.md" },
     { "Migrating to 0.4.0" = "MIGRATING_0_4.md" },

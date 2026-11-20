@@ -20,6 +20,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+0.6.5 is the last 0.6.x release. 0.7.0 contains breaking changes; see [Migrating to 0.7.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_7/).
+
 ## [0.6.4] - 2026-11-20
 
 ### Added

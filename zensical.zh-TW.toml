@@ -36,6 +36,7 @@ nav = [
   ] },
   { "API 參考（英文）" = "https://fastapi-cachex.readthedocs.io/en/stable/api/http-caching/" },
   { "遷移指南" = [
+    { "遷移至 0.7.0" = "MIGRATING_0_7.md" },
     { "遷移至 0.6.0" = "MIGRATING_0_6.md" },
     { "遷移至 0.5.0" = "MIGRATING_0_5.md" },
     { "遷移至 0.4.0" = "MIGRATING_0_4.md" },
