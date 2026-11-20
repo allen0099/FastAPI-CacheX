@@ -1,15 +1,20 @@
 """The common misuses raise errors that name the fix (#581)."""
 
 import functools
+import logging
+import sys
 from typing import Any
 
 import pytest
+from fastapi import APIRouter
+from fastapi import FastAPI
 from fastapi import Request
 
 from fastapi_cachex import BackendProxy
 from fastapi_cachex import CacheManager
 from fastapi_cachex import cache
 from fastapi_cachex import cached
+from fastapi_cachex.backends import MemoryBackend
 from fastapi_cachex.exceptions import BackendNotFoundError
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.exceptions import RequestNotFoundError
@@ -78,3 +83,58 @@ def test_a_wraps_adapter_around_a_fastapi_cache2_builder_is_accepted() -> None:
         return fc2_builder(None, "", request)
 
     cache(ttl=60, key_builder=adapter)(_handler)
+
+
+@pytest.mark.parametrize("target", [APIRouter, FastAPI], ids=["router", "app"])
+def test_cache_on_an_app_or_router_is_refused(target: type) -> None:
+    """Both are callable, so the decorator took them and cached nothing."""
+    with pytest.raises(CacheXError, match=r"route function, not .*@router\.get"):
+        cache(ttl=60)(target())
+
+
+async def test_an_undecodable_value_warns_once_per_get_or_set(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The re-read under the lock logged the same failure a second time."""
+    manager = CacheManager(backend=MemoryBackend())
+    await manager.set("k", "text")
+
+    async def factory() -> int:
+        return 5
+
+    with caplog.at_level(logging.DEBUG, logger="fastapi_cachex.manager"):
+        assert await manager.get_or_set("k", factory, type_=int) == 5
+    failures = [r for r in caplog.records if "Failed to decode" in r.getMessage()]
+    assert [r.levelno for r in failures if r.levelno >= logging.WARNING] == [
+        logging.WARNING
+    ]
+    # Every read is still logged at DEBUG, with the key.
+    assert len([r for r in failures if r.levelno == logging.DEBUG]) == 2
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("huge", id="int-over-the-digit-limit"),
+        pytest.param("cycle", id="cycle"),
+    ],
+)
+async def test_a_value_json_refuses_with_valueerror_raises_typeerror(
+    value: str,
+) -> None:
+    """APP_CACHE.md says a value that cannot be stored raises TypeError."""
+    stored: Any
+    if value == "huge":
+        stored = 10**5000
+    else:
+        stored = []
+        stored.append(stored)
+    manager = CacheManager(backend=MemoryBackend())
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)  # the default, whatever the runner set
+    try:
+        with pytest.raises(TypeError, match="cannot be stored as JSON"):
+            await manager.set("k", stored)
+    finally:
+        sys.set_int_max_str_digits(limit)
+    assert await manager.get("k") is None

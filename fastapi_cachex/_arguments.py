@@ -7,6 +7,8 @@ from collections.abc import Iterable
 from datetime import timedelta
 
 from fastapi import Request
+from starlette.applications import Starlette
+from starlette.routing import Router
 
 from . import _tags
 from ._callables import _is_coroutine_callable
@@ -28,6 +30,17 @@ _COOKIE_VARY_WARNING = (
     "private=True. To keep vary=['Cookie'], silence this with "
     "warnings.filterwarnings('ignore', message='cache vary on Cookie')."
 )
+
+
+def _check_target(func: object) -> None:
+    """Refuse an app or router: callable, so ``@cache`` took it and cached nothing (#581)."""
+    if isinstance(func, (Starlette, Router)):
+        msg = (
+            f"@cache decorates a route function, not {type(func).__name__}: "
+            "put it on each function, below its @app.get(...) or "
+            "@router.get(...)"
+        )
+        raise CacheXError(msg)
 
 
 def _no_store_ignored_warning(ignored: list[str]) -> str:
