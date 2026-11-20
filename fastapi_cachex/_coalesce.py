@@ -6,6 +6,10 @@ answered, then read the backend again. A follower that still finds no entry
 (the leader's response was not stored, or the handler failed) renders its own
 response without waiting again, so followers never queue behind each other.
 
+When the backend could not be read, a follower does not read it again: the
+leader hands it the response it would have stored, if any (#582). During an
+outage the handler then runs once per key, not once per request.
+
 Only requests in this process are coalesced. The registry is keyed by event
 loop and backend as well as the cache key, so two apps or loops never wait on
 each other.
@@ -13,8 +17,11 @@ each other.
 
 import asyncio
 
-# One future per key being rendered by a leader; done once it has answered.
-_IN_FLIGHT: dict[tuple[int, int, str], asyncio.Future[None]] = {}
+from .types import CacheEntry
+
+# One future per key being rendered by a leader; done once it has answered,
+# with the entry of its response when that could be stored.
+_IN_FLIGHT: dict[tuple[int, int, str], asyncio.Future[CacheEntry | None]] = {}
 
 
 class _Flight:
@@ -27,11 +34,11 @@ class _Flight:
 
     def __init__(self) -> None:
         self._key: tuple[int, int, str] | None = None
-        self._future: asyncio.Future[None] | None = None
+        self._future: asyncio.Future[CacheEntry | None] | None = None
 
     def join(
         self, backend: object, cache_key: str, *, may_lead: bool
-    ) -> asyncio.Future[None] | None:
+    ) -> asyncio.Future[CacheEntry | None] | None:
         """Return the leader's future to wait on, or ``None`` to render.
 
         With ``may_lead`` and no leader for the key, this request becomes the
@@ -48,26 +55,26 @@ class _Flight:
         _IN_FLIGHT[key] = self._future
         return None
 
-    def finish(self) -> None:
-        """Release the followers, if this request led."""
+    def finish(self, entry: CacheEntry | None = None) -> None:
+        """Release the followers, if this request led, handing them ``entry``."""
         if self._key is None or self._future is None:
             return
         # Only the leader registers or removes its key, and followers wait
         # through a shield, so the future is still pending. `pop` because a
         # test teardown may have cleared the registry already.
         _IN_FLIGHT.pop(self._key, None)
-        self._future.set_result(None)
+        self._future.set_result(entry)
         self._key = None
         self._future = None
 
 
-async def _wait_for(leader: asyncio.Future[None]) -> None:
-    """Wait until the leader has answered.
+async def _wait_for(leader: asyncio.Future[CacheEntry | None]) -> CacheEntry | None:
+    """Wait until the leader has answered; the entry of its response, if any.
 
     Shielded: a follower that is cancelled stops waiting without cancelling
     the leader's future for the other followers.
     """
-    await asyncio.shield(leader)
+    return await asyncio.shield(leader)
 
 
 # Keys whose stale entry is being replaced after its response was sent
