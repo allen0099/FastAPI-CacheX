@@ -59,7 +59,7 @@ if lock.lost:
 - **後端**：未傳入 `backend=` 時，鎖會使用以 `BackendProxy.set()` 註冊的後端。與 `@cache` 不同，它不會改用 `MemoryBackend`：尚未註冊任何後端時，`acquire()` 會拋出 `BackendNotFoundError`。鎖只能排除共用同一個後端的行程，因此每個行程各自一份的 `MemoryBackend` 只能協調同一個行程內的 task。
 
 > [!NOTE]
-> `CacheLock` 可用於所有內建後端（`MemoryBackend`、`AsyncRedisCacheBackend`、`MemcachedBackend`）。Redis 使用 `SET NX EX` 與 Lua 腳本，Memcached 使用 `ADD` 與 `CAS`，記憶體後端的操作在讀取與寫入之間不會 await，因此在單一 event loop 上是原子的。
+> `CacheLock` 可用於所有內建後端（`MemoryBackend`、`AsyncRedisCacheBackend`、`MemcachedBackend`）。Redis 使用 `SET NX EX` 與 Lua 腳本，Memcached 使用 `ADD` 與 `CAS`，記憶體後端的操作在讀取與寫入之間不會 await，因此在單一事件迴圈上是原子的。
 
 ## 跨 worker 每個週期只執行一次 {#once-per-period-across-workers}
 
