@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - depends on the installed starlette
 # Where the request flow lives, and so the names these tests patch.
 cache_module = importlib.import_module("fastapi_cachex._route")
 
-KEY = "http:v2|GET|testserver|/items|"
+KEY = "http:v3|http|GET|testserver|/items|"
 FOLLOWERS = 4
 
 

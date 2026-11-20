@@ -354,44 +354,44 @@ async def test_memory_backend_cleanup_task_impl(
 
 
 async def test_memory_backend_clear_path(memory_backend: MemoryBackend):
-    # Set up test data with proper cache key format: http:v2|method|host|path|query
+    # Set up test data with proper cache key format: http:v3|http|method|host|path|query
     # default_key_builder always appends a trailing separator for query_params
     path = "/test"
     value1 = CacheEntry(fingerprint="test_etag1", content=b"test_value1")
     value2 = CacheEntry(fingerprint="test_etag2", content=b"test_value2")
     value3 = CacheEntry(fingerprint="test_etag3", content=b"test_value3")
 
-    # Store data with http:v2|method|host|path| format (trailing separator, empty params)
-    await memory_backend.set(f"http:v2|GET|localhost|{path}|", value1)
-    await memory_backend.set(f"http:v2|POST|localhost|{path}|", value2)
-    await memory_backend.set("http:v2|GET|localhost|/other|", value3)
+    # Store data with http:v3|http|method|host|path| format (trailing separator, empty params)
+    await memory_backend.set(f"http:v3|http|GET|localhost|{path}|", value1)
+    await memory_backend.set(f"http:v3|http|POST|localhost|{path}|", value2)
+    await memory_backend.set("http:v3|http|GET|localhost|/other|", value3)
 
     # Test clearing without parameters - should clear entries with exact path
     cleared = await memory_backend.clear_path(path, include_params=False)
     assert cleared == 2  # Should clear GET and POST entries with /test path
 
     # Verify the other path's data still exists
-    other_value = await memory_backend.get("http:v2|GET|localhost|/other|")
+    other_value = await memory_backend.get("http:v3|http|GET|localhost|/other|")
     assert other_value == value3
 
 
 async def test_memory_backend_clear_pattern(memory_backend: MemoryBackend):
-    # Set up test data with proper cache key format: http:v2|method|host|path|query
+    # Set up test data with proper cache key format: http:v3|http|method|host|path|query
     value1 = CacheEntry(fingerprint="test_etag1", content=b"test_value1")
     value2 = CacheEntry(fingerprint="test_etag2", content=b"test_value2")
     value3 = CacheEntry(fingerprint="test_etag3", content=b"test_value3")
 
-    # Store data with http:v2|method|host|path| format (trailing separator)
-    await memory_backend.set("http:v2|GET|localhost|/users/123|", value1)
-    await memory_backend.set("http:v2|POST|localhost|/users/456|", value2)
-    await memory_backend.set("http:v2|GET|localhost|/posts/789|", value3)
+    # Store data with http:v3|http|method|host|path| format (trailing separator)
+    await memory_backend.set("http:v3|http|GET|localhost|/users/123|", value1)
+    await memory_backend.set("http:v3|http|POST|localhost|/users/456|", value2)
+    await memory_backend.set("http:v3|http|GET|localhost|/posts/789|", value3)
 
     # The pattern matches whole keys, so the method and host must be written out
     cleared = await memory_backend.clear_pattern("*|localhost|/users/*")
     assert cleared == 2  # Should clear both user entries
 
     # Verify the posts data still exists
-    posts_value = await memory_backend.get("http:v2|GET|localhost|/posts/789|")
+    posts_value = await memory_backend.get("http:v3|http|GET|localhost|/posts/789|")
     assert posts_value == value3
 
 
@@ -404,11 +404,11 @@ async def test_memory_backend_clear_pattern_needs_a_whole_key_glob(
     path component alone. `clear_path` is the method for clearing by path.
     """
     value = CacheEntry(fingerprint="e1", content=b"v1")
-    await memory_backend.set("http:v2|GET|localhost|/users/123|", value)
+    await memory_backend.set("http:v3|http|GET|localhost|/users/123|", value)
 
     with pytest.warns(RuntimeWarning, match="clear_path"):
         assert await memory_backend.clear_pattern("/users/*") == 0
-    assert await memory_backend.get("http:v2|GET|localhost|/users/123|") == value
+    assert await memory_backend.get("http:v3|http|GET|localhost|/users/123|") == value
 
     assert await memory_backend.clear_path("/users/123") == 1
 
@@ -416,7 +416,7 @@ async def test_memory_backend_clear_pattern_needs_a_whole_key_glob(
 async def test_memory_backend_clear_pattern_separator_less_keys(
     memory_backend: MemoryBackend,
 ):
-    """clear_pattern must also match keys with no http:v2|method|host|path format,
+    """clear_pattern must also match keys with no http:v3|http|method|host|path format,
     e.g. CacheManager ("cache:...") or CacheLock ("lock:...") keys.
     """
     value1 = CacheEntry(fingerprint="e1", content=b"v1")
@@ -454,29 +454,32 @@ async def test_memory_backend_clear_path_with_colon_in_path(
     """Paths containing colons (e.g. gitlab:template) must be clearable."""
     value = CacheEntry(fingerprint="e", content=b"v")
 
-    await memory_backend.set("http:v2|GET|localhost:8000|/gitlab:template|", value)
+    await memory_backend.set("http:v3|http|GET|localhost:8000|/gitlab:template|", value)
     await memory_backend.set(
-        "http:v2|GET|localhost:8000|/gitlab:template:projects|", value
+        "http:v3|http|GET|localhost:8000|/gitlab:template:projects|", value
     )
     await memory_backend.set(
-        "http:v2|GET|localhost:8000|/gitlab:template|tag=v1", value
+        "http:v3|http|GET|localhost:8000|/gitlab:template|tag=v1", value
     )
 
     # include_params=False: only empty-query-param entries
     cleared = await memory_backend.clear_path("/gitlab:template", include_params=False)
     assert cleared == 1
     assert (
-        await memory_backend.get("http:v2|GET|localhost:8000|/gitlab:template|") is None
+        await memory_backend.get("http:v3|http|GET|localhost:8000|/gitlab:template|")
+        is None
     )
     # Sub-path and param variant remain
     assert (
         await memory_backend.get(
-            "http:v2|GET|localhost:8000|/gitlab:template:projects|"
+            "http:v3|http|GET|localhost:8000|/gitlab:template:projects|"
         )
         == value
     )
     assert (
-        await memory_backend.get("http:v2|GET|localhost:8000|/gitlab:template|tag=v1")
+        await memory_backend.get(
+            "http:v3|http|GET|localhost:8000|/gitlab:template|tag=v1"
+        )
         == value
     )
 
@@ -484,13 +487,15 @@ async def test_memory_backend_clear_path_with_colon_in_path(
     cleared = await memory_backend.clear_path("/gitlab:template", include_params=True)
     assert cleared == 1  # only the param variant was left
     assert (
-        await memory_backend.get("http:v2|GET|localhost:8000|/gitlab:template|tag=v1")
+        await memory_backend.get(
+            "http:v3|http|GET|localhost:8000|/gitlab:template|tag=v1"
+        )
         is None
     )
     # Sub-path is a different path, should remain
     assert (
         await memory_backend.get(
-            "http:v2|GET|localhost:8000|/gitlab:template:projects|"
+            "http:v3|http|GET|localhost:8000|/gitlab:template:projects|"
         )
         == value
     )
@@ -502,15 +507,15 @@ async def test_memory_backend_clear_path_include_params(
     """include_params=True should clear path entries with and without query params."""
     value = CacheEntry(fingerprint="e", content=b"v")
 
-    await memory_backend.set("http:v2|GET|localhost|/items|", value)
-    await memory_backend.set("http:v2|GET|localhost|/items|page=2", value)
-    await memory_backend.set("http:v2|GET|localhost|/other|", value)
+    await memory_backend.set("http:v3|http|GET|localhost|/items|", value)
+    await memory_backend.set("http:v3|http|GET|localhost|/items|page=2", value)
+    await memory_backend.set("http:v3|http|GET|localhost|/other|", value)
 
     cleared = await memory_backend.clear_path("/items", include_params=True)
     assert cleared == 2
-    assert await memory_backend.get("http:v2|GET|localhost|/items|") is None
-    assert await memory_backend.get("http:v2|GET|localhost|/items|page=2") is None
-    assert await memory_backend.get("http:v2|GET|localhost|/other|") == value
+    assert await memory_backend.get("http:v3|http|GET|localhost|/items|") is None
+    assert await memory_backend.get("http:v3|http|GET|localhost|/items|page=2") is None
+    assert await memory_backend.get("http:v3|http|GET|localhost|/other|") == value
 
 
 async def test_memory_backend_clear_path_direct_key(
@@ -537,12 +542,12 @@ async def test_memory_backend_clear_path_direct_key_and_separator_key(
     value = CacheEntry(fingerprint="e", content=b"v")
 
     await memory_backend.set("my:path", value)
-    await memory_backend.set("http:v2|GET|localhost|my:path|", value)
+    await memory_backend.set("http:v3|http|GET|localhost|my:path|", value)
 
     cleared = await memory_backend.clear_path("my:path", include_params=False)
     assert cleared == 2
     assert await memory_backend.get("my:path") is None
-    assert await memory_backend.get("http:v2|GET|localhost|my:path|") is None
+    assert await memory_backend.get("http:v3|http|GET|localhost|my:path|") is None
 
 
 async def test_memory_backend_get_all_keys_empty(memory_backend: MemoryBackend):
@@ -555,9 +560,9 @@ async def test_memory_backend_get_all_keys_with_entries(
     memory_backend: MemoryBackend,
 ) -> None:
     """Test get_all_keys returns all cache keys."""
-    key1 = "http:v2|GET|localhost|/users"
-    key2 = "http:v2|POST|localhost|/users"
-    key3 = "http:v2|GET|localhost|/posts"
+    key1 = "http:v3|http|GET|localhost|/users"
+    key2 = "http:v3|http|POST|localhost|/users"
+    key3 = "http:v3|http|GET|localhost|/posts"
 
     value = CacheEntry(fingerprint="test_etag", content=b"test_value")
 
@@ -580,8 +585,8 @@ async def test_memory_backend_get_cache_data_with_entries(
     memory_backend: MemoryBackend,
 ) -> None:
     """Test get_cache_data returns all cache data with expiry."""
-    key1 = "http:v2|GET|localhost|/users"
-    key2 = "http:v2|POST|localhost|/users"
+    key1 = "http:v3|http|GET|localhost|/users"
+    key2 = "http:v3|http|POST|localhost|/users"
     value1 = CacheEntry(fingerprint="etag1", content=b"value1")
     value2 = CacheEntry(fingerprint="etag2", content=b"value2")
 
@@ -1341,7 +1346,7 @@ async def test_clear_path_does_not_take_an_http_key_as_a_path(
     memory_backend: MemoryBackend,
 ):
     """A whole HTTP key given as ``path`` matches nothing, as on Redis."""
-    key = "http:v2|GET|testserver|/items|a=1"
+    key = "http:v3|http|GET|testserver|/items|a=1"
     await memory_backend.set(key, CacheEntry(fingerprint="e", content=b"v"))
 
     assert await memory_backend.clear_path(key, include_params=True) == 0

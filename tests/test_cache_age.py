@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover - depends on the environment
 
 TTL = 60
 START = 1_800_000_000.0
-KEY = "http:v2|GET|testserver|/item|"
+KEY = "http:v3|http|GET|testserver|/item|"
 
 
 class _Clock:

@@ -94,7 +94,7 @@ The decorator order is the same in both: the route decorator first, `@cache` dir
 
 ### Keys come from the request, not the arguments {#keys}
 
-fastapi-cache2 hashes the function's module, name and arguments. FastAPI-CacheX keys on the request: `http:v2|method|host|path|query`, with the query parameters sorted. In practice:
+fastapi-cache2 hashes the function's module, name and arguments. FastAPI-CacheX keys on the request: `http:v3|scheme|method|host|path|query`, with the query parameters sorted. In practice:
 
 - Two hosts serving the same app get separate entries, and so do two query strings that FastAPI parses into the same arguments (`?page=1` and `?page=01`).
 - A response that depends on a request header needs that header in the key: `@cache(vary=["Accept-Language"])`, or a `key_builder`. fastapi-cache2 would have needed a custom key builder too, unless the header was a function argument.

@@ -7,6 +7,7 @@ and nowhere else.
 
 import hashlib
 from dataclasses import dataclass
+from dataclasses import field
 from operator import itemgetter
 from typing import ClassVar
 from urllib.parse import urlencode
@@ -18,8 +19,9 @@ from .types import HTTP_KEY_FORMAT_TAG
 from .types import escape_key_component
 from .types import unescape_key_component
 
-# Format tag, method, host, path and query: a key never has fewer components.
-_MIN_PARTS = 5
+# Format tag, scheme, method, host, path and query: a key never has fewer
+# components.
+_MIN_PARTS = 6
 
 # The port a scheme implies when the Host header names none.
 _DEFAULT_PORTS = {"http": "80", "https": "443", "ws": "80", "wss": "443"}
@@ -96,6 +98,17 @@ def _host_component(request: Request) -> str:
     return host
 
 
+def _scheme_component(request: Request) -> str:
+    """The scheme as it appears in the key: the one the app sees.
+
+    The ASGI scope's ``scheme``, which ``request.url`` also uses; behind a
+    TLS-terminating proxy that is ``http`` unless the proxy's headers are
+    applied. A response cached for ``http`` is never served to ``https``,
+    whose absolute links it may carry (#576).
+    """
+    return str(request.scope.get("scheme", "http")).lower()
+
+
 def _component_text(component: str | int) -> str:
     """``component`` as key text: a ``str`` as is, an ``int`` in decimal.
 
@@ -115,11 +128,11 @@ def _component_text(component: str | int) -> str:
 class CacheKey:
     """An HTTP cache key, decoded into its components.
 
-    The string form is ``http:v2|method|host|path|query``, followed by one
-    component per ``extra`` item. The leading ``FORMAT_TAG`` names the key
+    The string form is ``http:v3|scheme|method|host|path|query``, followed by
+    one component per ``extra`` item. The leading ``FORMAT_TAG`` names the key
     format; a later format gets another tag, so its keys never collide with
     these and ``clear_pattern(f"{CacheKey.FORMAT_TAG}|*")`` removes every key
-    of this one. ``method``, ``host``, ``path`` and every
+    of this one. ``scheme`` (keyword-only), ``method``, ``host``, ``path`` and every
     ``extra`` item hold the plain text and are percent-encoded by ``to_str()``
     (see ``escape_key_component``), so a client-controlled value cannot
     contain the separator; a method token may contain ``|``. ``query`` is
@@ -148,6 +161,9 @@ class CacheKey:
     path: str
     query: str = ""
     extra: tuple[str, ...] = ()
+    # Keyword-only and required: a key built by hand for one scheme must say
+    # which (#576), and the positional fields keep their order.
+    scheme: str = field(kw_only=True)
 
     FORMAT_TAG: ClassVar[str] = HTTP_KEY_FORMAT_TAG
 
@@ -170,6 +186,7 @@ class CacheKey:
             TypeError: If a component is not a ``str`` or ``int``.
         """
         return cls(
+            scheme=_scheme_component(request),
             method=request.method,
             host=_host_component(request),
             path=request.url.path,
@@ -182,6 +199,7 @@ class CacheKey:
         return CACHE_KEY_SEPARATOR.join(
             [
                 self.FORMAT_TAG,
+                escape_key_component(self.scheme),
                 escape_key_component(self.method),
                 escape_key_component(self.host),
                 escape_key_component(self.path),
@@ -195,20 +213,27 @@ class CacheKey:
         """Decode a stored HTTP key, or return ``None`` for any other key.
 
         ``key`` is the logical key, without a backend's ``key_prefix``. Only
-        a key that starts with ``FORMAT_TAG`` and has at least a method, host,
-        path and query is an HTTP key. ``CacheManager`` and ``CacheLock``
-        keys, keys written by 0.3.x (``method|||host|||path|||query``) and keys
-        from a key builder that does not use ``build_cache_key`` are not.
+        a key that starts with ``FORMAT_TAG`` and has at least a scheme,
+        method, host, path and query is an HTTP key. ``CacheManager`` and
+        ``CacheLock`` keys, keys written by 0.3.x (``method|||host|||path|||query``)
+        or by 0.4.0 to 0.6.x (``http:v2|...``, no scheme), and keys from a key
+        builder that does not use ``build_cache_key`` are not.
         """
         parts = key.split(CACHE_KEY_SEPARATOR)
-        if len(parts) < _MIN_PARTS or parts[0] != cls.FORMAT_TAG or not parts[1]:
+        if (
+            len(parts) < _MIN_PARTS
+            or parts[0] != cls.FORMAT_TAG
+            or not parts[1]
+            or not parts[2]
+        ):
             return None
         return cls(
-            method=unescape_key_component(parts[1]),
-            host=unescape_key_component(parts[2]),
-            path=unescape_key_component(parts[3]),
-            query=parts[4],
-            extra=tuple(unescape_key_component(part) for part in parts[5:]),
+            scheme=unescape_key_component(parts[1]),
+            method=unescape_key_component(parts[2]),
+            host=unescape_key_component(parts[3]),
+            path=unescape_key_component(parts[4]),
+            query=parts[5],
+            extra=tuple(unescape_key_component(part) for part in parts[6:]),
         )
 
     @staticmethod
@@ -236,4 +261,5 @@ class CacheKey:
         """
         escaped = escape_glob(escape_key_component(path))
         sep = CACHE_KEY_SEPARATOR
-        return f"{escape_glob(CacheKey.FORMAT_TAG)}{sep}*{sep}{escaped}{sep}*"
+        tag = escape_glob(CacheKey.FORMAT_TAG)
+        return f"{tag}{sep}*{sep}*{sep}*{sep}{escaped}{sep}*"

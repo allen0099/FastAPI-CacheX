@@ -353,13 +353,14 @@ async def report():
 快取鍵以下列格式產生，以避免衝突：
 
 ```
-http:v2|{method}|{host}|{path}|{query_params}
+http:v3|{scheme}|{method}|{host}|{path}|{query_params}
 ```
 
-`http:v2` 是格式標籤（`CacheKey.FORMAT_TAG`）。之後的鍵格式會使用另一個標籤，因此其鍵不會與這些鍵衝突；在 Redis 與記憶體後端上，`clear_pattern("http:v2|*")` 會移除這個格式的所有 HTTP 快取項目。
+`http:v3` 是格式標籤（`CacheKey.FORMAT_TAG`）。之後的鍵格式會使用另一個標籤，因此其鍵不會與這些鍵衝突；在 Redis 與記憶體後端上，`clear_pattern("http:v3|*")` 會移除這個格式的所有 HTTP 快取項目。
 
 這可確保：
 
+- http 與 https 使用各自的項目，因此以請求 URL 建立絕對連結的回應，會保有它建立時的 scheme（0.7.0 起，見[遷移至 0.7.0](MIGRATING_0_7.md#key-scheme)）。scheme 是應用程式看到的值：在終止 TLS 的代理之後，除非伺服器套用代理的 `X-Forwarded-Proto`，否則它是 `http`。
 - 方法是快取鍵的一部分
 - 不同的主機不共用快取（適用於多租戶情境）
 - 不同的查詢參數各有獨立的快取項目
@@ -401,7 +402,7 @@ app.add_middleware(
 需要多一個維度（使用者 ID、租戶、語系）的自訂 `key_builder`，應呼叫 `build_cache_key(request, *components)`，而不是自行重組格式。不傳入任何段時，它回傳的正是預設的鍵；每個段會附加在查詢字串之後：
 
 ```
-http:v2|{method}|{host}|{path}|{query_params}|{component}|...
+http:v3|{scheme}|{method}|{host}|{path}|{query_params}|{component}|...
 ```
 
 ```python
@@ -418,7 +419,7 @@ def per_tenant_key(request: Request) -> str:
 
 由於路徑仍在原本的位置，`clear_path()` 依然找得到這些鍵：不帶 `include_params` 時，會清除該路徑下查詢字串為空的所有項目，不論其他段為何；帶上它則清除該路徑的所有項目。監控路由會把其他段解碼後列在 `extra_components` 中。`default_key_builder(request)` 就是 `build_cache_key(request)`。
 
-`CacheKey` 則是以值的形式表示同一個鍵。`CacheKey.from_request(request, *components)` 建立它，`to_str()` 得到與 `build_cache_key` 相同的字串，`CacheKey.parse(key)` 則把已儲存的鍵解碼為 `method`、`host`、`path`、`query` 與 `extra`；若不是 HTTP 鍵（例如 `CacheManager` 的鍵，或沒有 `http:v2` 格式標籤的鍵），則回傳 `None`：
+`CacheKey` 則是以值的形式表示同一個鍵。`CacheKey.from_request(request, *components)` 建立它，`to_str()` 得到與 `build_cache_key` 相同的字串，`CacheKey.parse(key)` 則把已儲存的鍵解碼為 `scheme`、`method`、`host`、`path`、`query` 與 `extra`；若不是 HTTP 鍵（例如 `CacheManager` 的鍵，或沒有 `http:v3` 格式標籤的鍵），則回傳 `None`：
 
 ```python
 from fastapi_cachex import CacheKey
@@ -431,7 +432,7 @@ for key in await backend.get_all_keys():
 
 Redis 與 Memcached 後端還會在每個鍵前面加上自己的前綴（預設為 `fastapi_cachex:`），讓其他應用程式可以共用同一台伺服器；`MemoryBackend` 沒有前綴。`CacheManager`（見[應用層快取](APP_CACHE.md)）則使用另一個較簡單、以 `cache:` 為前綴的鍵命名空間，而不是這種以 `|` 分隔的格式，因為它的鍵與 HTTP 請求無關。
 
-回傳自行組成、而非由 `build_cache_key()`（或 `CacheKey`）建立之鍵的 `key_builder`，仍可以快取、以 `invalidate()` 使項目失效，也能以 `clear_pattern()` 清除。但這種鍵沒有 `http:v2` 格式標籤，因此 `clear_path()` 找不到它，監控路由也會略過它。
+回傳自行組成、而非由 `build_cache_key()`（或 `CacheKey`）建立之鍵的 `key_builder`，仍可以快取、以 `invalidate()` 使項目失效，也能以 `clear_pattern()` 清除。但這種鍵沒有 `http:v3` 格式標籤，因此 `clear_path()` 找不到它，監控路由也會略過它。
 
 ### 依請求標頭區分 {#varying-on-request-headers}
 
@@ -444,7 +445,7 @@ async def greeting(request: Request):
     return {"text": translate("hello", request.headers.get("accept-language"))}
 ```
 
-每個列出的標頭都會在鍵中加入一個 `name=value` 段：名稱轉為小寫，值去除前後空白（重複的標頭行以 `,` 串接），缺少的標頭視同空值。這些段與鍵的其他部分一樣經過編碼，並接在 `key_builder` 回傳的鍵之後，因此 `vary` 可以與自訂的 key builder 一起使用：`key_builder` 回傳 `build_cache_key(request, "tenant-1")` 時，鍵為 `http:v2|GET|example.com|/greeting||tenant-1|accept-language=de`。沒有設定 `vary` 的路由，鍵維持不變。
+每個列出的標頭都會在鍵中加入一個 `name=value` 段：名稱轉為小寫，值去除前後空白（重複的標頭行以 `,` 串接），缺少的標頭視同空值。這些段與鍵的其他部分一樣經過編碼，並接在 `key_builder` 回傳的鍵之後，因此 `vary` 可以與自訂的 key builder 一起使用：`key_builder` 回傳 `build_cache_key(request, "tenant-1")` 時，鍵為 `http:v3|https|GET|example.com|/greeting||tenant-1|accept-language=de`。沒有設定 `vary` 的路由，鍵維持不變。
 
 這些名稱也會加入該路由對 GET 或 HEAD 請求的每個回應的 `Vary` 標頭，不論是 200 或 304，也不論是否由後端提供（`private`、`no_store`、繞過後端的 `Authorization` 請求，或未儲存的回應），讓應用程式前方的共用快取也依它們區分。回應已列出的名稱（不分大小寫）不會重複加入，帶有 `Vary: *` 的回應則維持原樣。
 
@@ -480,7 +481,7 @@ async def greeting(request: Request):
 快取鍵並非機密：`get_all_keys()` 會列出它、`/cached-records` 與 `/cached-hits` 監控路由會顯示它，Redis 或 Memcached 的鍵空間也會原樣儲存它。因此對於攜帶憑證的標頭，也就是 `Authorization`、`Proxy-Authorization`、`Cookie` 與 `X-Session-Token`（0.5.0 移除的 Session 中介軟體所用的權杖標頭），不分大小寫，該段存放的是值（依上述方式去除空白並串接）的完整十六進位 SHA-256，而不是值本身：
 
 ```
-http:v2|GET|example.com|/me||authorization=sha256:3f0a…（64 個十六進位字元）
+http:v3|https|GET|example.com|/me||authorization=sha256:3f0a…（64 個十六進位字元）
 ```
 
 同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。名稱含有 `key`、`token`、`secret`、`auth`、`session` 或 `password`（不分大小寫）的其他標頭，例如 `X-API-Key` 或 `X-Auth-Token`，也會以相同方式雜湊：`cache_authorized` 路由正是靠列出攜帶 API 金鑰的標頭，以它作為鍵（見[帶有憑證的請求](#requests-with-credentials)）。0.6.3 之前這些標頭維持可讀，因此 API 金鑰本身會出現在鍵中（#575）。其他標頭都維持可讀；若你的標頭以其他名稱帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
@@ -605,8 +606,8 @@ async def clear(cache: CacheBackend) -> None:
     # ……或連同所有查詢參數的變體一起清除
     await cache.clear_path("/api/users", include_params=True)
 
-    # 依模式清除：比對整個鍵 http:v2|method|host|path|query
-    await cache.clear_pattern("http:v2|GET|*|/api/users/*")
+    # 依模式清除：比對整個鍵 http:v3|scheme|method|host|path|query
+    await cache.clear_pattern("http:v3|*|GET|*|/api/users/*")
     # 你自己組成的鍵（例如 CacheManager 的鍵）可以直接比對
     await cache.clear_pattern("cache:user:*")
 
@@ -687,7 +688,7 @@ async def update_item(item_id: int, request: Request):
 
 ### 寫入之後：`invalidate()` 還是 `clear_path()` {#after-a-write-invalidate-or-clear_path}
 
-`invalidate()` 與 `invalidate_path()` 只刪除一個鍵：由你傳入的請求或路徑組出的那一個。`PUT /items/42` 之後，它刪的是 `GET /items/42` 不帶查詢字串的項目；在設定了 `vary` 的路由上，則是請求標頭所選中的那一個變體。以其他鍵呈現同一筆資料的項目會繼續提供舊資料，直到過期為止：`/items/42?fields=name`、包含它的 `/items?page=2` 清單，以及你用 `en` 失效時的 `Accept-Language: fr` 變體。
+`invalidate()` 與 `invalidate_path()` 只刪除一筆項目：由你傳入的請求或路徑組出的那一筆，http 與 https 兩者都會刪除（0.7.0 起 scheme 是鍵的一部分，而一次寫入會讓兩者都變舊）。`PUT /items/42` 之後，它刪的是 `GET /items/42` 不帶查詢字串的項目；在設定了 `vary` 的路由上，則是請求標頭所選中的那一個變體。以其他鍵呈現同一筆資料的項目會繼續提供舊資料，直到過期為止：`/items/42?fields=name`、包含它的 `/items?page=2` 清單，以及你用 `en` 失效時的 `Accept-Language: fr` 變體。
 
 - 資源只有一個項目，或你只想刪掉那一個時，用 `invalidate_path(request, path)`（或 `invalidate(request)`）。只需一次後端操作，而且在 Memcached 上也可用。
 - 資源有多個項目時，用 `clear_path(path, include_params=True)`：它會移除該路徑儲存的所有項目，不論查詢字串、`vary` 變體、主機與方法。請對該筆資料本身與包含它的清單都呼叫一次。只支援 Redis 與記憶體後端：Memcached 無法列舉鍵。
@@ -790,7 +791,7 @@ add_routes(
 - `GET {prefix}/cached-hits`：列出每筆快取項目，拆分為方法、主機、路徑與查詢（超過 200 位元組的查詢為 `sha256:<十六進位>`），附上 ETag 與到期時間，放在 `entries` 中，並以 `total_entries`、`valid_entries` 與 `expired_entries` 統計項目數，另外列出不重複的快取路徑。雖然路由名稱有 hits，它並不會計算命中次數。舊的 `cached_hits`、`total_hits`、`valid_hits` 與 `expired_hits` 欄位已[在 0.6.0 移除](MIGRATING_0_6.md#cached-hits-fields)。
 - `GET {prefix}/cached-records`：列出每筆快取紀錄的大小、到期時間、`media_type`（儲存的回應的媒體類型，沒有時為 `null`），以及在 `include_content_preview=True` 時快取內容前 100 個位元組的預覽。預設 `content_preview` 為 `null`，不會有任何回應本文離開伺服器；鍵、大小與到期時間仍會回報。`content_type` 一律是 `"bytes"`，只為相容而保留；請改讀 `media_type`。
 
-兩個路由都只列出路由項目（格式為 `http:v2|method|host|path|query` 的鍵）；`CacheManager` 與鎖的鍵都會略過，未使用 `build_cache_key()` 的 `key_builder` 產生的鍵也一樣。
+兩個路由都只列出路由項目（格式為 `http:v3|scheme|method|host|path|query` 的鍵）；`CacheManager` 與鎖的鍵都會略過，未使用 `build_cache_key()` 的 `key_builder` 產生的鍵也一樣。
 
 > [!WARNING]
 > **這些路由本身沒有任何身分驗證。** `include_in_schema=False` 只是讓它們不出現在 OpenAPI 文件中；任何猜到路徑的人都能讀取。它們會暴露整個路由結構（包含查詢字串），設定 `include_content_preview=True` 時還會暴露每個快取回應的開頭。因此 `dependencies` 為必填：請傳入 `dependencies=[Depends(your_auth)]`，或將路由掛載在僅供內部使用的應用程式上。若本機或測試用的應用程式確實要保持開放，請傳入 `dependencies=[]` 明確選擇不設防護。

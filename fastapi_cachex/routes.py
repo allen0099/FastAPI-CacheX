@@ -23,6 +23,7 @@ class CacheHitRecord:
     """One cached route entry. Despite the name, hits are not counted."""
 
     cache_key: str
+    scheme: str
     method: str
     host: str
     path: str
@@ -71,6 +72,7 @@ class CachedRecord:
     """
 
     cache_key: str
+    scheme: str
     method: str
     host: str
     path: str
@@ -111,6 +113,7 @@ class _Entry:
     """One parsed backend entry, shared by both monitoring views."""
 
     cache_key: str
+    scheme: str
     method: str
     host: str
     path: str
@@ -134,6 +137,7 @@ def _parse_entries(
         entries.append(
             _Entry(
                 cache_key=cache_key,
+                scheme=key.scheme,
                 method=key.method,
                 host=key.host,
                 path=key.path,
@@ -162,6 +166,7 @@ def _cached_hits(entries: list[_Entry]) -> CacheHitsResponse:
     records = [
         CacheHitRecord(
             cache_key=e.cache_key,
+            scheme=e.scheme,
             method=e.method,
             host=e.host,
             path=e.path,
@@ -196,6 +201,7 @@ def _cached_records(
     cached_records = [
         CachedRecord(
             cache_key=e.cache_key,
+            scheme=e.scheme,
             method=e.method,
             host=e.host,
             path=e.path,
@@ -315,7 +321,7 @@ def add_routes(
         """Display currently cached records.
 
         Returns every route entry in the cache backend (keys in the
-        ``http:v2|method|host|path|query`` format; other keys are skipped) with
+        ``http:v3|scheme|method|host|path|query`` format; other keys are skipped) with
         its content information and expiry details.
 
         Returns:

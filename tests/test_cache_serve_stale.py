@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover - depends on the installed starlette
 
 TTL = 60
 STALE_TTL = 30
-KEY = "http:v2|GET|testserver|/item|"
+KEY = "http:v3|http|GET|testserver|/item|"
 
 
 class _Clock:

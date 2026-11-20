@@ -16,7 +16,7 @@ from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
 
-BASE_KEY = "http:v2|GET|testserver|/greet|"
+BASE_KEY = "http:v3|http|GET|testserver|/greet|"
 
 
 def locale(value: str) -> str:

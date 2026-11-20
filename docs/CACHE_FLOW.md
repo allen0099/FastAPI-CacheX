@@ -65,7 +65,7 @@ Every answer then gets its `Cache-Control`, `Vary` and, with
 | `no_store`? | The handler runs, the backend is neither read nor written, and the response says `Cache-Control: no-store`. |
 | Backend skipped? | Yes for `private=True`, a route without a positive `ttl`, or a [request with credentials](HTTP_CACHING.md#requests-with-credentials) (`Authorization`, session data, or an API key or cookie the route's dependencies read) unless the route is `public`, or `cache_authorized` with a key that identifies the caller; and for every route while caching is [switched off](TESTING.md#switching-off). The key builder does not run; `If-None-Match` is compared with the fresh response to decide between 304 and 200; with credentials, `Cache-Control` says `private` instead of `public`. With `cache_authorized` the backend is used, but every answer still says `private`. |
 | Client asks for a fresh response? | Only on a route with `client_cache_control`. A request's `no-cache` or `max-age=0` skips the read: the handler runs and its response replaces the entry. A request's `no-store` is decided earlier and counts as "backend skipped". |
-| Build the cache key | `key_builder` (default `http:v2\|method\|host\|path\|query`), plus one `name=value` component per `vary` header. |
+| Build the cache key | `key_builder` (default `http:v3\|scheme\|method\|host\|path\|query`), plus one `name=value` component per `vary` header. |
 | Read the entry | With `fail_open`, a backend error counts as a miss. So does an entry one of whose tags was invalidated since it was stored, and one stored before the route had its tags. With `coalesce=True`, a request that finds nothing waits for a request already rendering the same key, then reads again; when the read failed, it is handed that request's response instead of reading again. With `coalesce="distributed"`, the request that leads in its process also takes a lock on the key, or waits for the worker that holds it. |
 | Stale | Only with `serve_stale`, which keeps the entry for `ttl + stale_ttl`. `stale="revalidate"`: the entry answers at once (a 304 for a matching `If-None-Match`), and for a GET the handler runs after the response, as a background task of the request, to replace it. `stale="error"`: the handler runs, and the entry answers only if it raises or returns 5xx; an `HTTPException` below 500, or an exception the application handles, is the handler's answer and is sent as it is. |
 | `no_cache` | The handler runs on every request; a matching `If-None-Match` gets a 304 after the fresh response is compared with it. |
@@ -88,7 +88,8 @@ from fastapi_cachex.types import escape_key_component
 # build_cache_key(request) is CacheKey.from_request(request).to_str())
 cache_key = "|".join(
     [
-        CacheKey.FORMAT_TAG,  # "http:v2"
+        CacheKey.FORMAT_TAG,  # "http:v3"
+        escape_key_component(request.url.scheme),  # "http" or "https"
         escape_key_component(request.method),
         escape_key_component(host),  # Host header, normalised (see below)
         escape_key_component(request.url.path),
@@ -97,13 +98,14 @@ cache_key = "|".join(
 )
 
 # For example:
-# http:v2|GET|example.com|/api/users|limit=10&page=1  (for ?page=1&limit=10)
-# http:v2|GET|api.example.com|/api/users/123|
+# http:v3|https|GET|example.com|/api/users|limit=10&page=1  (for ?page=1&limit=10)
+# http:v3|https|GET|api.example.com|/api/users/123|
 ```
 
-Every key starts with the format tag `http:v2`. Keys written in another format
-(0.3.x wrote `GET|||host|||path|||query` with no tag) never collide with these,
-and `clear_pattern("http:v2|*")` removes every key of this one on Redis and
+Every key starts with the format tag `http:v3`. Keys written in another format
+(0.3.x wrote `GET|||host|||path|||query` with no tag, 0.4.0 to 0.6.x
+`http:v2` keys without the scheme) never collide with these,
+and `clear_pattern("http:v3|*")` removes every key of this one on Redis and
 memory. `CacheKey.parse()` only reads keys with this tag.
 
 The separator is `|` rather than a colon because the host itself may contain a
@@ -431,7 +433,7 @@ handler's `Set-Cookie` lines (such a response is always sent `private`).
 ```python
 # dict[str, CacheItem]; CacheItem wraps the CacheEntry and records its expiry
 {
-    "http:v2|GET|example.com|/api/users|": CacheItem(
+    "http:v3|https|GET|example.com|/api/users|": CacheItem(
         value=CacheEntry(
             fingerprint='W/"abc123"',
             content=b"...",
@@ -500,7 +502,7 @@ and the standard library `json` otherwise:
 ### MemcachedBackend
 
 ```
-key:   "fastapi_cachex:http:v2|GET|example.com|/api/users|"
+key:   "fastapi_cachex:http:v3|https|GET|example.com|/api/users|"
 value: the JSON document above
 
 # Characteristics:
@@ -525,7 +527,7 @@ value: the JSON document above
 ### AsyncRedisCacheBackend
 
 ```
-key:   "fastapi_cachex:http:v2|GET|example.com|/api/users|"
+key:   "fastapi_cachex:http:v3|https|GET|example.com|/api/users|"
 value: the JSON document above
 
 # Characteristics:

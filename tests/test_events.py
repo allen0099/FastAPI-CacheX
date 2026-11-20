@@ -23,7 +23,7 @@ from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CacheEntry
 
-KEY = "http:v2|GET|testserver|/items/7|"
+KEY = "http:v3|http|GET|testserver|/items/7|"
 
 
 @pytest.fixture

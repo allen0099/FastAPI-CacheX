@@ -24,7 +24,7 @@ def build_cache_key(
 ) -> str:
     """Build the default cache key for ``request``, plus extra components.
 
-    With no ``components`` the key is ``http:v2|method|host|path|query``,
+    With no ``components`` the key is ``http:v3|scheme|method|host|path|query``,
     exactly what ``@cache`` uses by default. Each extra component is appended
     after another separator, so a custom ``key_builder`` can add a dimension
     (user ID, tenant, locale) without rebuilding the default key by hand::
@@ -81,7 +81,7 @@ def _append_key_components(key: str, components: Sequence[str]) -> str:
 def default_key_builder(request: Request) -> str:
     """Default cache key builder function: ``build_cache_key(request)``.
 
-    Generates cache key in format: http:v2|method|host|path|query, with the
+    Generates cache key in format: http:v3|scheme|method|host|path|query, with the
     query parameters sorted by name.
 
     Kept as the name ``@cache`` and ``invalidate()`` fall back to. To add

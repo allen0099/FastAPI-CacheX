@@ -44,7 +44,7 @@ def _key_before_264(request: Request) -> str:
     Only the format tag (#266) is added.
     """
     return (
-        f"http:v2{CACHE_KEY_SEPARATOR}{request.method}{CACHE_KEY_SEPARATOR}"
+        f"http:v3{CACHE_KEY_SEPARATOR}http{CACHE_KEY_SEPARATOR}{request.method}{CACHE_KEY_SEPARATOR}"
         f"{escape_key_component(request.headers.get('host', 'unknown'))}"
         f"{CACHE_KEY_SEPARATOR}"
         f"{escape_key_component(request.url.path)}{CACHE_KEY_SEPARATOR}"
@@ -73,14 +73,14 @@ def test_without_components_the_key_is_unchanged(kwargs: dict[str, object]) -> N
 def test_default_key_is_pinned() -> None:
     request = _request(path="/a|b", query=b"x=1", host="h:1")
 
-    assert build_cache_key(request) == "http:v2|GET|h:1|/a%7Cb|x=1"
+    assert build_cache_key(request) == "http:v3|http|GET|h:1|/a%7Cb|x=1"
 
 
 def test_components_are_appended_after_the_query() -> None:
     request = _request(query=b"x=1")
 
     assert build_cache_key(request, "user-1", 42) == (
-        "http:v2|GET|example.com|/items|x=1|user-1|42"
+        "http:v3|http|GET|example.com|/items|x=1|user-1|42"
     )
 
 
@@ -122,7 +122,7 @@ def test_keys_with_components_split_into_query_and_extras() -> None:
     key = build_cache_key(_request(path="/p|q", query=b"x=1"), "a|b", 3)
 
     assert CacheKey.parse(key) == CacheKey(
-        "GET", "example.com", "/p|q", "x=1", ("a|b", "3")
+        "GET", "example.com", "/p|q", "x=1", ("a|b", "3"), scheme="http"
     )
     parsed = CacheKey.parse(build_cache_key(_request(), "u"))
     assert parsed is not None

@@ -24,7 +24,7 @@ LINES = [
 
 
 def _key(path: str) -> str:
-    return f"http:v2|GET|testserver|{path}|"
+    return f"http:v3|http|GET|testserver|{path}|"
 
 
 def _response() -> Response:
