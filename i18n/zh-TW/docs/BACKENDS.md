@@ -65,7 +65,7 @@ backend = AsyncRedisCacheBackend(host="127.0.0.1", port=6379, db=0)
 BackendProxy.set(backend)
 ```
 
-使用這些預設值與 redis-py 8 時，Redis 停止運作後，一個請求要過好幾秒才會放棄後端；讓它在一秒內失敗的設定，請見 [Redis 停止運作時快速失敗](#failing-fast-when-redis-is-down)。
+使用這些預設值時，Redis 停止運作後，一個請求要過好幾秒才會放棄後端（redis-py 7.x 更久）；讓它在一秒內失敗的設定，請見 [Redis 停止運作時快速失敗](#failing-fast-when-redis-is-down)。
 
 - 完全非同步的實作
 - 支援依模式清除鍵
@@ -152,7 +152,7 @@ backend = AsyncRedisCacheBackend(connection_pool=pool)
 
 ### Redis 停止運作時快速失敗 {#failing-fast-when-redis-is-down}
 
-`@cache` 會 [fail open](HTTP_CACHING.md#when-the-backend-fails)，但要等後端放棄之後才會。redis-py 8 預設會將因連線錯誤或逾時而失敗的指令重試 10 次，並採用指數退避，每次嘗試之間最多等待 1 秒。在 Redis 拒絕連線時，每次 `get` 或 `set` 因此要約 3 到 4 秒才會失敗，而先讀取再寫入的快取請求約需 7 秒。若主機完全沒有回應，11 次嘗試中的每一次還要等待 `socket_connect_timeout`（預設 1 秒），每個指令約 15 秒，每個請求約 30 秒。
+`@cache` 會 [fail open](HTTP_CACHING.md#when-the-backend-fails)，但要等後端放棄之後才會。redis-py 8 預設會將因連線錯誤或逾時而失敗的指令重試 10 次，並採用指數退避，每次嘗試之間最多等待 1 秒。在 Redis 拒絕連線時，每次 `get` 或 `set` 因此要約 3 到 4 秒才會失敗，而先讀取再寫入的快取請求約需 7 秒。若主機完全沒有回應，11 次嘗試中的每一次還要等待 `socket_connect_timeout`（預設 1 秒），每個指令約 15 秒，每個請求約 30 秒。redis-py 7.x 則改為重試 3 次，每次嘗試之間最多等待 10 秒：在 Redis 拒絕連線時，每個指令約 7 秒，每個請求約 14 秒。
 
 後端本身沒有具名的關鍵字引數都會傳給 redis-py 用戶端，因此可以在這裡設定重試策略與逾時：
 

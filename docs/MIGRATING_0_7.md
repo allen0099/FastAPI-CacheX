@@ -20,7 +20,9 @@ The fix is to upgrade redis-py, which needs no change to your code:
 pip install "redis>=7.4"
 ```
 
-Until you can, a test suite that turns warnings into errors (`filterwarnings = ["error"]`) can ignore this one warning:
+Installing `fastapi-cachex[redis]` 0.7.0 pulls in redis-py 7.4 or later by itself; pin nothing lower. The warning exists only in 0.6.5, so the filters below are needed only while you are still on it.
+
+Until you can upgrade, a test suite that turns warnings into errors (`filterwarnings = ["error"]`) can ignore this one warning:
 
 ```toml
 [tool.pytest.ini_options]

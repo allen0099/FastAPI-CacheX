@@ -634,7 +634,8 @@ retries a failed Redis command 10 times with exponential backoff, so while
 Redis refuses connections each read and each write takes about 3 to 4 s to
 fail, and a cached request, which does both, about 7 s. When the Redis host
 does not answer at all, every attempt also waits out the connect timeout, and a
-request can take about 30 s. To fail within the timeouts, turn the retries off
+request can take about 30 s. redis-py 7.x retries 3 times with backoff of up to
+10 s, about 7 s per command and 14 s per request. To fail within the timeouts, turn the retries off
 and shorten the timeouts through the backend's keyword arguments:
 
 ```python
