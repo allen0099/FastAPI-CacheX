@@ -382,9 +382,9 @@ class _Call:
     # The backend read failed: the write would most likely fail too, after
     # its own timeout, so the response is not stored (#582).
     read_failed: bool = False
-    # The entry of the rendered response, when it could be stored: a leader
-    # hands it to its followers, which matters when they cannot read the
-    # backend (#582).
+    # The entry of the rendered response, when it could have been stored but
+    # the backend could not be read: a leader hands it to its followers,
+    # which cannot read the backend either (#582).
     shared: CacheEntry | None = None
     outcome: str | None = None
     # Why the backend was bypassed or the rendered response was not stored.
@@ -1205,10 +1205,13 @@ class _Route:
             call.reason = skip_reason
             return
         entry = _entry_for(response, etag, body)
-        call.shared = entry
         if call.read_failed:
             logger.debug("Not storing key=%s: the backend could not be read", cache_key)
             call.reason = "read-failed"
+            # Handed to followers that could not read the backend either. A
+            # leader that read it checks its tags below instead: a response
+            # a tag invalidated while it ran is not handed on.
+            call.shared = entry
             return
         if call.tags_before is None:
             # Without the tag versions read before the handler ran, the entry
