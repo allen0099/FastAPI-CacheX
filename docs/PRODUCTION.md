@@ -15,8 +15,8 @@ to the section that explains it; most are a line of configuration.
   and tags, and one's `clear()` wipes the other's entries
   ([Choosing a backend](BACKENDS.md#choosing-a-backend)).
 - [ ] **Make the backend fail fast.** By default a request takes seconds to
-  give up on a Redis that is down. Set short timeouts and `retries=0` (or
-  `retry=Retry(NoBackoff(), 0)`)
+  give up on a Redis that is down. Set short timeouts and
+  `retry=Retry(NoBackoff(), 0)` on the backend (`retries=0` in `RedisConfig`)
   ([Failing fast when Redis is down](BACKENDS.md#failing-fast-when-redis-is-down));
   on Memcached, `connect_timeout` and `timeout` ([Memcached](BACKENDS.md#memcached)).
 - [ ] **Close the backend on shutdown**, in the app's lifespan
@@ -26,15 +26,18 @@ to the section that explains it; most are a line of configuration.
 
 - [ ] **Know which routes are per user.** A request with `Authorization`, a
   session, an API key or a cookie the route's dependencies read bypasses the
-  backend unless the route is `public=True` or opts in with
-  `cache_authorized=True`, and the opt-in only works when the key tells
-  callers apart: a `key_builder` that adds the user, or `vary` on the
-  credential header
+  backend. `public=True` shares one entry with every caller, so use it only
+  when the response is the same for everyone. `cache_authorized=True` works
+  only when the key tells callers apart: a `key_builder` that adds the user,
+  or `vary` on a credential header such as `Authorization` or `X-API-Key`
   ([Requests with credentials](HTTP_CACHING.md#requests-with-credentials),
   [Authenticated endpoints](HTTP_CACHING.md#authenticated-endpoints)).
 - [ ] **Vary on every header the response depends on**, such as
   `Accept-Language`; without it the first variant is served to everyone
   ([Varying on request headers](HTTP_CACHING.md#varying-on-request-headers)).
+- [ ] **Leave `debug_header` off.** `X-Cache-Reason` tells a client that its
+  request carried a session or that the backend failed
+  ([Telling a hit from a miss](HTTP_CACHING.md#telling-a-hit-from-a-miss)).
 - [ ] **Protect the monitoring routes.** `add_routes()` has no
   authentication of its own; pass `dependencies=[Depends(...)]` that checks an
   admin ([Monitoring routes](HTTP_CACHING.md#monitoring-routes)).
@@ -48,8 +51,8 @@ to the section that explains it; most are a line of configuration.
 - [ ] **Decide what a route does when the handler fails or is slow.**
   `serve_stale` keeps answering from an expired entry
   ([Serving stale responses](HTTP_CACHING.md#serving-stale-responses)).
-- [ ] **Choose `fail_open`.** By default a backend error is logged and the
-  request runs uncached; `fail_open=False` turns it into an error
+- [ ] **Choose `fail_open`.** By default a backend error in `@cache` is
+  logged and the request runs uncached; `fail_open=False` turns it into an error
   ([When the backend fails](HTTP_CACHING.md#when-the-backend-fails)).
 
 ## Writes and deploys
@@ -71,8 +74,9 @@ to the section that explains it; most are a line of configuration.
 
 - [ ] **Count hits, misses and errors** with `set_event_handler()`
   ([Counting hits and misses](HTTP_CACHING.md#counting-hits-and-misses)).
-- [ ] **Keep the library's log warnings**: backend failures are logged at
-  `WARNING` on the `fastapi_cachex.*` loggers, at most once a minute per kind
+- [ ] **Keep the library's log warnings**: `@cache` logs backend failures at
+  `WARNING` on the `fastapi_cachex.cache` logger, at most once a minute per
+  kind; `CacheManager`, `CacheLock` and invalidation raise instead
   ([When the backend fails](HTTP_CACHING.md#when-the-backend-fails)).
 - [ ] **Test with a fresh cache per test**, and turn the cache off where a
   test needs every request to run the handler ([Testing your app](TESTING.md)).
