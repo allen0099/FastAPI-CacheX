@@ -224,7 +224,7 @@ async def report() -> dict: ...
 
 使用 `stale="error"` 時，低於 500 的 `HTTPException` 是 handler 的答案，會原樣送出：404 不算失敗。應用程式以 `add_exception_handler` 註冊了處理函式的例外也一樣，因為應用程式會把它轉成自己的回應。沒有過期項目可用時（冷鍵，或已超過保留時間），錯誤會原樣送出。每次改用過期項目回應都會記錄一行警告。搭配 `coalesce=True` 時，同時發現項目過期的請求只會執行一次 handler，和未命中時一樣。
 
-`serve_stale=True` 需要 `stale`、`stale_ttl` 與正的 `ttl`，而且不能與 `private=True`、`no_cache=True` 或 `must_revalidate=True` 一起使用，因為它們不允許過期的回應。項目是否超過 `ttl`，是依照與它一起儲存的時間、以回應請求的那台伺服器的時鐘來判斷；時鐘相差幾秒的伺服器，對項目何時過期的判斷也會相差那麼多。
+`serve_stale=True` 需要 `stale`、`stale_ttl` 與正的 `ttl`，而且不能與 `private=True`、`no_cache=True` 或 `must_revalidate=True` 一起使用，因為它們不允許過期的回應。項目是否超過 `ttl`，是依照與它一起儲存的時間、以回應請求的那台伺服器的時鐘來判斷；時鐘相差幾秒的伺服器，對項目何時過期（stale）的判斷也會相差那麼多。
 
 維運這種路由時有兩件事要知道。項目會在後端保留 `ttl + stale_ttl`，因此把 `serve_stale` 關掉之後，先前寫入的項目在超過 `ttl` 後最多還會被當成一般命中提供 `stale_ttl` 那麼久；若這會造成問題，請清除該路由的項目。另外，[監控路由](#monitoring-routes)會在後端保留項目的期間都把它回報為有效，不論是否已過期（stale）。
 
