@@ -395,7 +395,8 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             # Not close(): it is aclose()'s deprecated alias and warns.
             await self.client.aclose()
         except RuntimeError as error:
-            if not _is_unavailable(error):
+            # A pool passed in is its creator's to reset, as to close.
+            if not _is_unavailable(error) or not self.client.auto_close_connection_pool:
                 raise
             self.client.connection_pool.reset()  # type: ignore[no-untyped-call]
 
