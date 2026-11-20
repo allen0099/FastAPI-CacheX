@@ -631,11 +631,11 @@ flooded the logs.
 
 Failing open is only as fast as the backend's error. By default redis-py 8
 retries a failed Redis command 10 times with exponential backoff, so while
-Redis refuses connections each read and each write takes about 3 to 4 s to
-fail, and a cached request, which does both, about 7 s. When the Redis host
-does not answer at all, every attempt also waits out the connect timeout, and a
-request can take about 30 s. redis-py 7.x retries 3 times with backoff of up to
-10 s, about 7 s per command and 14 s per request. To fail within the timeouts, turn the retries off
+Redis refuses connections a read takes about 3 to 4 s to fail; a cached
+request pays that once, since nothing is written after a failed read. When the
+Redis host does not answer at all, every attempt also waits out the connect
+timeout, and a request can take about 15 s. redis-py 7.x retries 3 times with
+backoff of up to 10 s, about 7 s per request. To fail within the timeouts, turn the retries off
 and shorten the timeouts through the backend's keyword arguments:
 
 ```python
@@ -760,8 +760,8 @@ scheme's default one (`:80` for http, `:443` for https) is dropped.
 `Example.com`, `example.com:80` and `example.com` on http are one key,
 `example.com`; `example.com:8080` keeps its port, and an IPv6 literal keeps its
 brackets (`[::1]:8000`). The scheme is the one the app sees: behind a proxy that
-terminates TLS it is `http` unless the proxy's headers are applied (for
-example `uvicorn --proxy-headers`), so a `Host: example.com:443` from such a
+terminates TLS it is `http` unless the proxy's headers are applied (uvicorn
+applies them from the addresses in `--forwarded-allow-ips`), so a `Host: example.com:443` from such a
 proxy keeps its port. A request without a `Host` header uses `unknown`.
 
 Otherwise the host is still whatever the client sends. Unless a reverse proxy
@@ -1152,7 +1152,7 @@ cannot match an HTTP key; when such a call clears nothing it emits a
 
 On Memcached, which cannot enumerate keys, `clear_path()` cannot find HTTP
 entries at all: it deletes only a key named exactly as the path and emits a
-`RuntimeWarning` on every call. Use `invalidate()` (below) there instead.
+`RuntimeWarning` on every call. Use `invalidate_path()` (below) there instead.
 
 What each backend supports is listed under [Backends](BACKENDS.md).
 

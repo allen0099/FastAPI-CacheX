@@ -34,6 +34,8 @@ def fresh_cache() -> Iterator[MemoryBackend]:
 
 `BackendProxy.set(None)` only unregisters a backend; it does not empty or close it. Here the backend is dropped with the test. `stop_cleanup()` cancels its cleanup task if that task's event loop is still open and, unlike `aclose()`, needs no `await`, so a sync fixture can call it. Clearing `CacheManagerProxy` matters as much: a manager kept from an earlier test still writes to that test's backend. Resetting the proxies does not reach a backend or manager you pass explicitly (`CacheManager(backend=...)`, `@cached(manager=...)`, `CacheLock(backend=...)`); those need their own fixture.
 
+The examples use Starlette's `TestClient`. From Starlette 1.10 it warns (`StarletteDeprecationWarning`) when it runs on `httpx` and asks for `httpx2`, so a suite with `filterwarnings = ["error"]` fails at collection: install `httpx2` with your test dependencies.
+
 Prove the isolation before relying on it. The first test of a suite should be one that would fail if entries leaked: two apps that answer the same request differently.
 
 ```python

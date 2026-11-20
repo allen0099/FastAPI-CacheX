@@ -250,12 +250,12 @@ backend = AsyncRedisCacheBackend(connection_pool=pool)
 the backend has given up. By default redis-py 8 retries a command that fails
 with a connection error or timeout 10 times, with exponential backoff capped at
 1 s between attempts. With Redis refusing connections, each `get` or `set` then
-takes about 3 to 4 s to fail, so a cached request, which reads and then writes,
-takes about 7 s. When the host does not answer at all, each of the 11 attempts
-also waits for `socket_connect_timeout` (1 s by default), about 15 s per
-command and 30 s per request. redis-py 7.x retries 3 times instead, with
-backoff of up to 10 s between attempts: about 7 s per command and 14 s per
-request while Redis refuses connections.
+takes about 3 to 4 s to fail. A cached request pays that once: after a failed
+read `@cache` does not try to write. When the host does not answer at all, each
+of the 11 attempts also waits for `socket_connect_timeout` (1 s by default),
+about 15 s per command. redis-py 7.x retries 3 times instead, with backoff of
+up to 10 s between attempts: about 7 s per command while Redis refuses
+connections.
 
 Every keyword argument the backend does not name itself goes to the redis-py
 client, so the retry policy and the timeouts can be set there:
@@ -277,8 +277,10 @@ backend = AsyncRedisCacheBackend(
 BackendProxy.set(backend)
 ```
 
-With these settings a refused connection fails at once and an unreachable host
-after about 0.25 s. The costs:
+With these settings a refused connection fails at once, an unreachable host
+after about 0.25 s (`socket_connect_timeout`), and a Redis that accepts the
+connection but does not answer, because it is paused or overloaded, after
+0.5 s (`socket_timeout`). The costs:
 
 - Without retries, a single transient error, such as a connection reset in
   the middle of a command, fails that command. `Retry(NoBackoff(), 1)` retries
@@ -331,8 +333,8 @@ server must not tie up the thread pool.
 - `clear_path()` cannot find HTTP cache entries: it deletes only a key named exactly
   as the path, ignores `include_params` and emits a `RuntimeWarning` on every call.
   To drop a cached route's entry after a write, call
-  [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route), which
-  rebuilds the exact key, or tag the routes and call
+  [`invalidate_path(request, path)`](HTTP_CACHING.md#invalidating-a-single-cached-route)
+  in the handler that writes, which rebuilds the exact key, or tag the routes and call
   [`invalidate_tags()`](HTTP_CACHING.md#by-tag), which works on Memcached
 - `backend.clear()` (`MemcachedBackend.clear()`) issues `flush_all`, which wipes the whole
   Memcached server, not just this namespace, and emits a `RuntimeWarning` each time.
@@ -430,7 +432,9 @@ when the block ends, including when the block raises.
   each with a `ResourceWarning`, which fails a suite that turns warnings into
   errors. `aclose()` on the later loop drops them all at once (before 0.7.0 it
   raised the `RuntimeError` instead); a pool passed as `connection_pool=` is
-  left to its creator.
+  left to its creator. It does not prevent the `ResourceWarning`s: the sockets
+  the earlier loop left can be closed only by that loop, so the garbage
+  collector still reports them.
 
 ## Compressing large entries {#compressing-large-entries}
 
@@ -607,10 +611,16 @@ guarantees: concurrent `increment()` calls lose counts, several `add()` calls
 win, `CacheLock` (and so `get_or_set(lock=True)` and `coalesce="distributed"`)
 lets several holders in, and the fallback `increment()` re-applies `ttl` on
 every call, so its window slides. Since 0.6.3 the first call of each fallback
-on a backend class logs a `RuntimeWarning` naming the method; override them to
+on a backend class emits a `RuntimeWarning` naming the method (with
+`warnings.warn`, so a suite run with `-W error` fails on it); override them to
 get real atomicity, which also silences it. The fallbacks rely on `delete()` returning whether the key held
 an entry; since 0.5.0 a `delete()` that still returns `None`, as in 0.3.x,
 counts as not removed (see [Backend `delete()` returning `None`](MIGRATING_0_5.md#backend-delete-none)).
+
+Of the abstract methods, `clear_path()` has to tell which keys are the HTTP
+entries of a path. `CacheKey.is_for_path(key, path, include_params)` (from
+`fastapi_cachex.cache_key`) is the test the built-in backends use: it parses
+the key, so it follows the key format, both schemes included.
 
 Complete runnable example: [`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py).
 
