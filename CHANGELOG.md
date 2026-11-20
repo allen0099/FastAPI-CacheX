@@ -20,7 +20,32 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-11-20
+
 0.6.5 is the last 0.6.x release. 0.7.0 contains breaking changes; see [Migrating to 0.7.0](https://fastapi-cachex.readthedocs.io/en/stable/MIGRATING_0_7/).
+
+### Added
+
+- **A production checklist in the docs.** One page lists what to check before
+  an app takes real traffic (the backend, `key_prefix`, failing fast, routes
+  with credentials, coalescing, invalidation during an outage, deploys,
+  metrics), each item linking to the section that explains it. ([#586](https://github.com/allen0099/FastAPI-CacheX/issues/586))
+
+### Deprecated
+
+- **redis-py 7.4 or later is required from 0.7.0.** Creating a Redis backend
+  with an older redis-py emits a `FutureWarning` once per process: before 7.4 a
+  client whose first event loop has closed can fail on every later loop. Upgrade with
+  `pip install "redis>=7.4"`; see
+  [redis-py 7.4 or later](https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_7/#redis-74)
+  for how to silence the warning until then. ([#605](https://github.com/allen0099/FastAPI-CacheX/issues/605))
+
+### Fixed
+
+- **The Traditional Chinese docs tell stale from expired where a sentence needs
+  it.** Passages about a value turning stale next to its expiry mark it
+  「過期（stale）」, and two that said 過期 for out-of-date data within the `ttl`
+  now say 舊資料. ([#587](https://github.com/allen0099/FastAPI-CacheX/issues/587))
 
 ## [0.6.4] - 2026-11-20
 
@@ -1929,7 +1954,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.1...v0.6.2
