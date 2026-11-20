@@ -27,9 +27,10 @@ and has no prefix.
     `clear()` still wipes the whole server, whatever the prefix (it sends
     `flush_all`).
 
-    End the prefix with a separator such as `:`. Keys are matched by prefix,
-    so a backend with `key_prefix="tenant1"` also lists, reads and, with
-    `clear()`, deletes the keys of `key_prefix="tenant10"`.
+    End the prefix with a separator such as `:`. On Redis keys are matched
+    by prefix, so a backend with `key_prefix="tenant1"` also lists (and the
+    monitoring routes read) the keys of `key_prefix="tenant10"`, and its
+    `clear()` deletes them.
 
 A deploy that changes what a route returns (a new `response_model`, a renamed
 field) still serves the old body until its entries expire. To start afresh,
