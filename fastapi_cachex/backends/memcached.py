@@ -785,10 +785,9 @@ class MemcachedBackend(BaseCacheBackend):
         """
         warnings.warn(
             "Memcached backend does not support key enumeration. "
-            "get_all_keys() returns an empty list, so what is built on it "
-            "lists or deletes nothing: the monitoring routes and "
-            "CacheManager.clear(), clear_prefix() and clear_pattern(). "
-            "Use the Redis backend if you need those; tags "
+            "get_all_keys() returns an empty list, so CacheManager.clear() "
+            "and clear_prefix(), which are built on it, delete nothing. "
+            "Use the Redis backend if you need them; tags "
             "(invalidate_tags()) clear a group of entries without it.",
             RuntimeWarning,
             stacklevel=caller_stacklevel(),
