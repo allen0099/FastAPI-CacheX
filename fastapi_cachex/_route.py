@@ -1264,7 +1264,7 @@ class _Route:
             if unkeyed is not None:
                 reason = "vary"
                 self.warn_bypass(
-                    call.request, f"Vary: {unkeyed}", _UNKEYED_VARY_WARNING
+                    call.request, f"Vary: {unkeyed!r}", _UNKEYED_VARY_WARNING
                 )
         if reason is None and call.dependency_status is not None:
             # It may hold for this request only, and a hit would replay it.
