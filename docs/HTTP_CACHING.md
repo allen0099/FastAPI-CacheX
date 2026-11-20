@@ -1295,6 +1295,40 @@ async def update_item(item_id: int, cache: CacheBackend):
     await cache.clear_path("/items", include_params=True)
 ```
 
+### When the backend is down during a write {#invalidating-during-an-outage}
+
+Invalidation does not fail open: `invalidate()`, `invalidate_path()`,
+`invalidate_tags()` and `clear_path()` raise the backend's error
+(`BackendUnavailableError` on Redis and Memcached), after your own write has
+already been committed. The old entry is then served until its `ttl` ends.
+Nothing in the library retries it, so decide what the route can live with:
+
+- **Retry after the response.** Catch the error and run the invalidation
+  again as a background task; when the outage was a blip, the entry is gone
+  a moment later. If that fails too, the server logs the task's error.
+- **Keep the `ttl` short** on routes where serving data that is stale for
+  the whole `ttl` is not acceptable: the `ttl` is the longest an invalidation
+  that never ran can leave old data in place.
+- **Do not fail the write** because of the cache: the data is saved, so
+  answering with an error invites the client to send it again.
+
+```python
+from fastapi import BackgroundTasks
+
+from fastapi_cachex import BackendUnavailableError, invalidate_tags
+
+
+@app.put("/items/{item_id}")
+async def update_item(item_id: int, background: BackgroundTasks):
+    await save(item_id)  # committed
+    try:
+        await invalidate_tags("items")
+    except BackendUnavailableError:
+        # Try once more after the response; until then, and if that fails
+        # too, the old entries are served until their ttl ends.
+        background.add_task(invalidate_tags, "items")
+```
+
 ## Counting hits and misses
 
 `set_event_handler()` registers one function that is told what the cache
