@@ -131,7 +131,7 @@ def test_entry_is_gone_after_clear(fresh_cache: MemoryBackend) -> None:
 
 使用網路後端時，還有兩件事要注意。
 
-**在 lifespan 內建立後端。** Redis 用戶端會把連線綁定到它第一次執行所在的事件迴圈（event loop）。在匯入時建立後端、再讓各自執行不同迴圈的測試共用，會因為迴圈已關閉或不同而出錯。在 lifespan 內建立的話，它的壽命就與應用程式實例完全一致，如[關閉後端](BACKENDS.md#closing-a-backend)所示。`TestClient` 只有在當作 context manager 使用時才會執行 lifespan，而搭配 `ASGITransport` 的 `httpx.AsyncClient` 完全不會執行。
+**在 lifespan 內建立後端。** Redis 用戶端會把連線綁定到它第一次執行所在的事件迴圈（event loop）。在匯入時建立後端、再讓各自執行不同迴圈的測試共用，會出現 `BackendUnavailableError: Event loop is closed` 與 `ResourceWarning`（見[關閉後端](BACKENDS.md#closing-a-backend)）。在 lifespan 內建立的話，它的壽命就與應用程式實例完全一致，如[關閉後端](BACKENDS.md#closing-a-backend)所示。`TestClient` 只有在當作 context manager 使用時才會執行 lifespan，而搭配 `ASGITransport` 的 `httpx.AsyncClient` 完全不會執行。
 
 **隔離的是鍵，不只是 proxy。** 清除 `BackendProxy` 之後，所有的鍵仍留在 Redis 裡，下一個測試（或下一次執行）會找到它們。讓每個測試使用自己的 `key_prefix`，並在關閉時清除；`clear()` 只會刪除該後端前綴底下的鍵。
 

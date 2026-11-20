@@ -143,7 +143,7 @@ def test_entry_is_gone_after_clear(fresh_cache: MemoryBackend) -> None:
 
 Two more things matter with a network backend.
 
-**Create the backend inside the lifespan.** The Redis client binds its connections to the event loop it first runs on. A backend created at import time and shared by tests that each run their own loop fails with errors about a closed or different loop. Built in the lifespan, it lives exactly as long as the app instance, as in [Closing a backend](BACKENDS.md#closing-a-backend). `TestClient` runs the lifespan only when it is used as a context manager, and `httpx.AsyncClient` with `ASGITransport` does not run it at all.
+**Create the backend inside the lifespan.** The Redis client binds its connections to the event loop it first runs on. A backend created at import time and shared by tests that each run their own loop fails with `BackendUnavailableError: Event loop is closed` and `ResourceWarning`s (see [Closing a backend](BACKENDS.md#closing-a-backend)). Built in the lifespan, it lives exactly as long as the app instance, as in [Closing a backend](BACKENDS.md#closing-a-backend). `TestClient` runs the lifespan only when it is used as a context manager, and `httpx.AsyncClient` with `ASGITransport` does not run it at all.
 
 **Isolate the keys, not just the proxy.** Clearing `BackendProxy` leaves every key in Redis, where the next test (or the next run) finds them. Give each test its own `key_prefix` and clear it on shutdown; `clear()` deletes only the keys under the backend's prefix.
 

@@ -383,9 +383,21 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         pool passed in through ``connection_pool=`` is left open: redis-py
         leaves a pool it did not create to whoever created it, and so does
         this backend.
+
+        Called on a later event loop than the one the connections were opened
+        on, which has since closed, it drops them instead of raising redis-py's
+        ``RuntimeError("Event loop is closed")`` (#617): they cannot be closed
+        any more, and the garbage collector reports each with a
+        ``ResourceWarning``. Close the backend before its loop ends to avoid
+        both.
         """
-        # Not close(): it is aclose()'s deprecated alias and warns.
-        await self.client.aclose()
+        try:
+            # Not close(): it is aclose()'s deprecated alias and warns.
+            await self.client.aclose()
+        except RuntimeError as error:
+            if not _is_unavailable(error):
+                raise
+            self.client.connection_pool.reset()  # type: ignore[no-untyped-call]
 
     def _make_key(self, key: str) -> str:
         """Add prefix to cache key."""
