@@ -67,7 +67,7 @@ async def update_product(
     if product_id not in PRODUCTS:
         raise HTTPException(status_code=404, detail="Unknown product")
     PRODUCTS[product_id]["price"] = price
-    # Memcached cannot match paths; there, use invalidate() (HTTP_CACHING.md).
+    # Memcached cannot match paths; there, use invalidate_path(request, path).
     await cache_backend.clear_path(f"/products/{product_id}")
     return {"id": product_id, **PRODUCTS[product_id]}
 

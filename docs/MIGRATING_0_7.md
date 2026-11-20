@@ -20,7 +20,7 @@ The fix is to upgrade redis-py, which needs no change to your code:
 pip install "redis>=7.4"
 ```
 
-Installing `fastapi-cachex[redis]` 0.7.0 pulls in redis-py 7.4 or later by itself; pin nothing lower. The warning exists only in 0.6.5, so the filters below are needed only while you are still on it.
+Installing `fastapi-cachex[redis]` 0.7.0 pulls in redis-py 7.4 or later by itself; pin nothing lower. The floor holds only through the extra: an app that lists `redis` itself (`redis==5.3.0`) still installs 0.7.0, with no warning, so raise that pin to 7.4 or later. The warning exists only in 0.6.5, so the filters below are needed only while you are still on it.
 
 Until you can upgrade, a test suite that turns warnings into errors (`filterwarnings = ["error"]`) can ignore this one warning:
 
@@ -40,11 +40,11 @@ The key `@cache` builds for a response has no scheme: `http:v2|GET|example.com|/
 
 0.7.0 adds the scheme to the key and changes the format tag to `http:v3`, so http and https requests get separate entries. What it means for an upgrade:
 
-- Entries written by 0.6.x are not read by 0.7.0: every route starts with a cold cache once. They expire with their `ttl`; to remove them at once on Redis, run `clear_pattern("http:v2|*")` after the upgrade (Memcached cannot enumerate keys, see [Choosing a backend](BACKENDS.md#choosing-a-backend)).
-- During a rolling deploy, 0.6.x and 0.7.0 instances do not read each other's entries, and an invalidation from one version does not reach the other's entries. Keep each `ttl` in mind, or move every instance at once.
+- Entries written by 0.6.x are not read by 0.7.0: every route starts with a cold cache once. They expire with their `ttl`; to remove them at once on Redis, run `clear_pattern("http:v2|*")` after the upgrade, once none of your key builders still writes `http:v2|` keys (see the last item), since it deletes those too (Memcached cannot enumerate keys, see [Choosing a backend](BACKENDS.md#choosing-a-backend)).
+- During a rolling deploy, 0.6.x and 0.7.0 instances do not read each other's entries, and an invalidation by key (`invalidate()`, `invalidate_path()`, `clear_path()`, `clear_pattern()`) from one version does not reach the other's entries. Tags do: `invalidate_tags()` from either version makes the tagged entries of both a miss. `CacheManager` and `@cached` values are read and written by both versions. Keep each `ttl` in mind, use tags, or move every instance at once.
 - `invalidate()`, `invalidate_path()` and `clear_path()` clear the entries of both schemes, so a write made over https also removes the http entry of the same URL.
-- A pattern written by hand for `clear_pattern()`, such as `"http:v2|GET|*|/api/users/*"`, matches nothing from 0.7.0 on, without an error. Use `clear_path()`, which follows the key format, or rewrite the pattern for the new tag and the scheme field.
-- The scheme is the one Starlette reports (`request.url.scheme`). Behind a proxy that terminates TLS every request looks like `http`, so http and https still share one entry, unless the server trusts the proxy's `X-Forwarded-Proto` (`uvicorn --proxy-headers --forwarded-allow-ips=...`).
+- A pattern written by hand for `clear_pattern()`, such as `"http:v2|GET|*|/api/users/*"`, matches nothing from 0.7.0 on, without an error. Use `clear_path()` for one path, which follows the key format; it does not take a prefix. For a prefix, rewrite the pattern for the new tag and the scheme field: `clear_pattern(f"{CacheKey.FORMAT_TAG}|*|GET|*|/api/users/*")` matches both schemes.
+- The scheme is the one Starlette reports (`request.url.scheme`). Behind a proxy that terminates TLS every request looks like `http`, so http and https still share one entry, unless the server trusts the proxy's `X-Forwarded-Proto`. uvicorn reads that header by default, but only from the addresses in `--forwarded-allow-ips` (127.0.0.1 unless set), so a proxy on another host needs `--forwarded-allow-ips=<its address>`.
 - A custom `key_builder` that calls `build_cache_key()` follows automatically. One that builds the key itself keeps its keys as they are: they still mix http and https, and keys it writes in the `http:v2|` format are no longer recognised by `CacheKey.parse()`, `clear_path()` and the monitoring routes. Switch it to `build_cache_key()`.
 - `CacheKey` gains a `scheme` field: code that builds a `CacheKey` itself or reads the result of `CacheKey.parse()` needs it, and code that reads keys from `/cached-hits` or `get_all_keys()` sees the new tag and the scheme. The monitoring records (`CacheHitRecord`, `CachedRecord`) have a new `scheme` field, required when you build one yourself and passed by keyword (from 0.7.1; in 0.7.0 a positional call written for 0.6.x shifts every field by one).
 

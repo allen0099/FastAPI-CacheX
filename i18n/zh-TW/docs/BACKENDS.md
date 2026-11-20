@@ -152,7 +152,7 @@ backend = AsyncRedisCacheBackend(connection_pool=pool)
 
 ### Redis 停止運作時快速失敗 {#failing-fast-when-redis-is-down}
 
-`@cache` 會 [fail open](HTTP_CACHING.md#when-the-backend-fails)，但要等後端放棄之後才會。redis-py 8 預設會將因連線錯誤或逾時而失敗的指令重試 10 次，並採用指數退避，每次嘗試之間最多等待 1 秒。在 Redis 拒絕連線時，每次 `get` 或 `set` 因此要約 3 到 4 秒才會失敗，而先讀取再寫入的快取請求約需 7 秒。若主機完全沒有回應，11 次嘗試中的每一次還要等待 `socket_connect_timeout`（預設 1 秒），每個指令約 15 秒，每個請求約 30 秒。redis-py 7.x 則改為重試 3 次，每次嘗試之間最多等待 10 秒：在 Redis 拒絕連線時，每個指令約 7 秒，每個請求約 14 秒。
+`@cache` 會 [fail open](HTTP_CACHING.md#when-the-backend-fails)，但要等後端放棄之後才會。redis-py 8 預設會將因連線錯誤或逾時而失敗的指令重試 10 次，並採用指數退避，每次嘗試之間最多等待 1 秒。在 Redis 拒絕連線時，每次 `get` 或 `set` 因此要約 3 到 4 秒才會失敗。快取請求只需付出一次：讀取失敗後，`@cache` 不會再嘗試寫入。若主機完全沒有回應，11 次嘗試中的每一次還要等待 `socket_connect_timeout`（預設 1 秒），每個指令約 15 秒。redis-py 7.x 則改為重試 3 次，每次嘗試之間最多等待 10 秒：在 Redis 拒絕連線時，每個指令約 7 秒。
 
 後端本身沒有具名的關鍵字引數都會傳給 redis-py 用戶端，因此可以在這裡設定重試策略與逾時：
 
@@ -173,7 +173,7 @@ backend = AsyncRedisCacheBackend(
 BackendProxy.set(backend)
 ```
 
-使用這些設定時，被拒絕的連線會立即失敗，無法連線的主機則約在 0.25 秒後失敗。代價如下：
+使用這些設定時，被拒絕的連線會立即失敗，無法連線的主機約在 0.25 秒後失敗（`socket_connect_timeout`），而接受連線卻不回應的 Redis（被暫停或過載）則在 0.5 秒後失敗（`socket_timeout`）。代價如下：
 
 - 不重試時，單一暫時性錯誤（例如指令執行到一半時連線被重設）會讓該指令失敗。`Retry(NoBackoff(), 1)` 會立即重試一次。
 - `socket_timeout` 也會限制較慢的回覆。兩個逾時都應設定得比你平常的 Redis 延遲高，包括快取最大項目時的延遲。
@@ -203,7 +203,7 @@ BackendProxy.set(backend)
 
 - Memcached 協定不支援依模式清除鍵（`clear_pattern`）：它會回傳 0 並發出 `RuntimeWarning`
 - 無法列舉鍵：`get_all_keys()`／`get_cache_data()` 會回傳空結果（並發出 `RuntimeWarning`），因此監控路由不會顯示任何內容
-- `clear_path()` 找不到 HTTP 快取項目：它只會刪除名稱與路徑完全相同的鍵，忽略 `include_params`，而且每次呼叫都會發出 `RuntimeWarning`。資料變更後要刪除某個快取路由的項目，請呼叫 [`invalidate(request)`](HTTP_CACHING.md#invalidating-a-single-cached-route)，它會重建完全相同的鍵；或為這些路由加上 tag，並呼叫 [`invalidate_tags()`](HTTP_CACHING.md#by-tag)，它在 Memcached 上也能運作
+- `clear_path()` 找不到 HTTP 快取項目：它只會刪除名稱與路徑完全相同的鍵，忽略 `include_params`，而且每次呼叫都會發出 `RuntimeWarning`。資料變更後要刪除某個快取路由的項目，請在寫入的 handler 中呼叫 [`invalidate_path(request, path)`](HTTP_CACHING.md#invalidating-a-single-cached-route)，它會重建完全相同的鍵；或為這些路由加上 tag，並呼叫 [`invalidate_tags()`](HTTP_CACHING.md#by-tag)，它在 Memcached 上也能運作
 - `backend.clear()`（`MemcachedBackend.clear()`）會發出 `flush_all`，清空整台 Memcached 伺服器，而不只是這個命名空間，且每次呼叫都會發出 `RuntimeWarning`。`CacheManager.clear()` 則不同：它需要列舉鍵，因此在 Memcached 上不會刪除任何東西（見[應用層快取](APP_CACHE.md)）
 - Memcached 會拒絕的鍵（超過 250 位元組、含空白字元或非 ASCII 字元）會改以其 SHA-256 摘要儲存，摘要前面仍帶著 `key_prefix`。因此建立後端時會先檢查前綴本身：含空白字元、控制字元或非 ASCII 字元，或長度達 250 位元組以上的前綴會拋出 `ValueError`；超過 186 位元組、放不下 64 個字元摘要的前綴則會發出警告（0.4.1 之前，這類前綴會讓呼叫以 `MemcacheIllegalInputError` 失敗）
 - 過期時間落在 2038-01-19 之後的 `ttl` 會拋出 `ValueError`（見 [TTL 值](#ttl-values)）
@@ -238,7 +238,7 @@ BackendProxy.set(backend)
 - `BackendProxy.set(None)` 只會取消註冊後端，不會關閉它。
 - 自訂後端會從 `BaseCacheBackend` 繼承一個什麼都不做的 `aclose()`；若後端持有連線或背景工作，請覆寫它。
 - 若不呼叫 `aclose()`，開啟中的 socket 只會由垃圾回收器關閉，關閉應用程式時可能會產生 `ResourceWarning`。0.3.9 之前只有 `MemoryBackend` 有 `aclose()`，Redis 與 Memcached 後端要透過 `backend.client` 關閉。
-- 請在 Redis 後端的事件迴圈結束之前關閉它。它的連線屬於開啟它們的那個迴圈：在之後的迴圈上（第二次 `asyncio.run()`、每個測試各自的迴圈），每個碰到這種連線的呼叫都會在 redis-py 丟棄該連線時失敗，拋出 `BackendUnavailableError: Event loop is closed`（在 `@cache` 中則是記錄下來的未命中），而垃圾回收器會為每條連線回報一個 `ResourceWarning`，這會讓把警告轉為錯誤的測試失敗。在之後的迴圈上呼叫 `aclose()` 會一次丟棄所有這類連線（0.7.0 之前它會改為拋出 `RuntimeError`）；以 `connection_pool=` 傳入的連線池則交給建立它的人處理。
+- 請在 Redis 後端的事件迴圈結束之前關閉它。它的連線屬於開啟它們的那個迴圈：在之後的迴圈上（第二次 `asyncio.run()`、每個測試各自的迴圈），每個碰到這種連線的呼叫都會在 redis-py 丟棄該連線時失敗，拋出 `BackendUnavailableError: Event loop is closed`（在 `@cache` 中則是記錄下來的未命中），而垃圾回收器會為每條連線回報一個 `ResourceWarning`，這會讓把警告轉為錯誤的測試失敗。在之後的迴圈上呼叫 `aclose()` 會一次丟棄所有這類連線（0.7.0 之前它會改為拋出 `RuntimeError`）；以 `connection_pool=` 傳入的連線池則交給建立它的人處理。它無法避免 `ResourceWarning`：先前的迴圈留下的 socket 只有那個迴圈能關閉，因此垃圾回收器仍會回報它們。
 
 ## 壓縮大型項目 {#compressing-large-entries}
 
@@ -324,6 +324,8 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 - `set_if_equals(key, expected, value, ttl=None) -> bool`：只在 `key` 仍存放 `expected` 時才儲存 `value`。這是 compare-and-set：若呼叫端讀取之後有任何操作變更、刪除了該鍵，或它已過期，寫入就會失敗。記憶體後端以單一步驟比較，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `SET`，設定了 `ttl` 時加上 `EX`），Memcached 則使用 `GETS` + 寫入新值的 `CAS`。
 
 這六個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可運作，但沒有這些保證：並行的 `increment()` 會遺失計數、多個 `add()` 都會成功、`CacheLock`（以及使用它的 `get_or_set(lock=True)` 與 `coalesce="distributed"`）會讓多個持有者同時進入，而後備的 `increment()` 每次呼叫都會重新套用 `ttl`，因此時間窗會往後滑動。自 0.6.3 起，每個後端類別第一次呼叫某個後備實作時，會發出指名該方法的 `RuntimeWarning`；覆寫它們才能得到真正的原子性，也不會再有警告。這些後備實作依賴 `delete()` 回傳鍵是否存有項目；仍像 0.3.x 一樣回傳 `None` 的 `delete()` 會發出警告，並在 0.5.0 之前視為已移除（見 [delete() 的回傳值](MIGRATING_0_4.md#backend-delete)）。
+
+在抽象方法中，`clear_path()` 必須判斷哪些鍵是某個路徑的 HTTP 項目。`CacheKey.is_for_path(key, path, include_params)`（來自 `fastapi_cachex.cache_key`）就是內建後端使用的判斷：它會解析鍵，因此會跟著鍵格式變更，兩種 scheme 都包含在內。
 
 完整可執行範例（英文）：[`examples/rate_limit.py`](https://github.com/allen0099/FastAPI-CacheX/blob/master/examples/rate_limit.py)。
 

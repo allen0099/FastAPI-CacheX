@@ -61,7 +61,7 @@ Complete runnable example: [`examples/cache_lock.py`](https://github.com/allen00
 
 > [!NOTE]
 > `CacheLock` works on all built-in backends (`MemoryBackend`, `AsyncRedisCacheBackend`, `MemcachedBackend`).
-> Redis uses `SET NX EX` and Lua scripts, Memcached uses `ADD` and `CAS`, and the memory backend operates under its internal lock.
+> Redis uses `SET NX EX` and Lua scripts, Memcached uses `ADD` and `CAS`, and the memory backend's operations are atomic because none of them awaits between reading and writing (one event loop).
 
 ## Once per period across workers
 

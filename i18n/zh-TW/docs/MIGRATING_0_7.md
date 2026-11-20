@@ -20,7 +20,7 @@ FutureWarning: fastapi-cachex 0.7.0 will require redis-py 7.4 or later; redis-py
 pip install "redis>=7.4"
 ```
 
-安裝 `fastapi-cachex[redis]` 0.7.0 時會自動帶入 redis-py 7.4 或更新版本；請不要把它釘在更低的版本。這個警告只存在於 0.6.5，因此下面的過濾規則只在你仍使用 0.6.5 時需要。
+安裝 `fastapi-cachex[redis]` 0.7.0 時會自動帶入 redis-py 7.4 或更新版本；請不要把它釘在更低的版本。這個下限只透過 extra 生效：自行列出 `redis` 的應用程式（`redis==5.3.0`）仍然裝得上 0.7.0，也不會有任何警告，因此請自行把版本提高到 7.4 或更新。這個警告只存在於 0.6.5，因此下面的過濾規則只在你仍使用 0.6.5 時需要。
 
 在能升級之前，把警告轉為錯誤的測試（`filterwarnings = ["error"]`）可以忽略這一個警告：
 
@@ -40,11 +40,11 @@ filterwarnings = [
 
 0.7.0 會把 scheme 加入鍵中，並把格式標籤改為 `http:v3`，讓 http 與 https 請求使用各自的項目。對升級的影響：
 
-- 0.7.0 不會讀取 0.6.x 寫入的項目：每個路由的快取都會從空的狀態重新開始一次。舊項目會隨各自的 `ttl` 過期；在 Redis 上要立刻移除它們，請在升級後執行 `clear_pattern("http:v2|*")`（Memcached 無法列舉鍵，見[選擇後端](BACKENDS.md#choosing-a-backend)）。
-- 滾動部署期間，0.6.x 與 0.7.0 的實例不會讀取彼此的項目，其中一個版本的失效操作也不會到達另一個版本的項目。請留意各個 `ttl`，或一次更新所有實例。
+- 0.7.0 不會讀取 0.6.x 寫入的項目：每個路由的快取都會從空的狀態重新開始一次。舊項目會隨各自的 `ttl` 過期；在 Redis 上要立刻移除它們，請在升級後執行 `clear_pattern("http:v2|*")`；但要等你的 key builder 都不再寫入 `http:v2|` 鍵之後（見最後一項），因為它也會刪除那些鍵（Memcached 無法列舉鍵，見[選擇後端](BACKENDS.md#choosing-a-backend)）。
+- 滾動部署期間，0.6.x 與 0.7.0 的實例不會讀取彼此的項目，其中一個版本以鍵進行的失效操作（`invalidate()`、`invalidate_path()`、`clear_path()`、`clear_pattern()`）也不會到達另一個版本的項目。tag 則會：任一版本的 `invalidate_tags()` 都會讓兩個版本中帶有該 tag 的項目變成未命中。`CacheManager` 與 `@cached` 的值則由兩個版本共同讀寫。請留意各個 `ttl`、使用 tag，或一次更新所有實例。
 - `invalidate()`、`invalidate_path()` 與 `clear_path()` 會清除兩種 scheme 的項目，因此經由 https 進行的寫入，也會移除同一個 URL 的 http 項目。
-- 為 `clear_pattern()` 手寫的模式，例如 `"http:v2|GET|*|/api/users/*"`，從 0.7.0 起不會符合任何鍵，也不會報錯。請改用會跟著鍵格式變更的 `clear_path()`，或依新的標籤與 scheme 欄位改寫模式。
-- scheme 是 Starlette 回報的值（`request.url.scheme`）。在終止 TLS 的代理之後，每個請求看起來都是 `http`，因此 http 與 https 仍然共用同一個項目，除非伺服器信任代理的 `X-Forwarded-Proto`（`uvicorn --proxy-headers --forwarded-allow-ips=...`）。
+- 為 `clear_pattern()` 手寫的模式，例如 `"http:v2|GET|*|/api/users/*"`，從 0.7.0 起不會符合任何鍵，也不會報錯。單一路徑請改用會跟著鍵格式變更的 `clear_path()`；它不接受前綴。若要清除前綴，請依新的標籤與 scheme 欄位改寫模式：`clear_pattern(f"{CacheKey.FORMAT_TAG}|*|GET|*|/api/users/*")` 會同時符合兩種 scheme。
+- scheme 是 Starlette 回報的值（`request.url.scheme`）。在終止 TLS 的代理之後，每個請求看起來都是 `http`，因此 http 與 https 仍然共用同一個項目，除非伺服器信任代理的 `X-Forwarded-Proto`。uvicorn 預設就會讀取這個標頭，但只接受 `--forwarded-allow-ips` 中的位址（未設定時為 127.0.0.1），因此位於其他主機的代理需要 `--forwarded-allow-ips=<代理的位址>`。
 - 呼叫 `build_cache_key()` 的自訂 `key_builder` 會自動跟著改變。自行組出鍵的則維持原樣：它的鍵仍然混用 http 與 https，而它以 `http:v2|` 格式寫入的鍵，`CacheKey.parse()`、`clear_path()` 與監控路由都不再認得。請改用 `build_cache_key()`。
 - `CacheKey` 新增 `scheme` 欄位：自行建立 `CacheKey` 或讀取 `CacheKey.parse()` 結果的程式碼需要處理它；從 `/cached-hits` 或 `get_all_keys()` 讀取鍵的程式碼，會看到新的標籤與 scheme。監控路由的紀錄（`CacheHitRecord`、`CachedRecord`）新增了 `scheme` 欄位，自行建立時必須以關鍵字引數提供（0.7.1 起；在 0.7.0，為 0.6.x 寫的位置引數呼叫會讓每個欄位錯位一格）。
 

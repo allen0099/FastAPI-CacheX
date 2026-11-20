@@ -34,6 +34,8 @@ def fresh_cache() -> Iterator[MemoryBackend]:
 
 `BackendProxy.set(None)` 只會取消註冊後端，不會清空或關閉它。這裡的後端會隨測試一起丟棄。`stop_cleanup()` 會在清理任務的事件迴圈仍開啟時取消該任務，而且與 `aclose()` 不同，它不需要 `await`，所以同步的 fixture 也能呼叫。清除 `CacheManagerProxy` 同樣重要：從先前測試留下來的 manager 仍會寫入那個測試的後端。重設 proxy 不會影響你明確傳入的後端或 manager（`CacheManager(backend=...)`、`@cached(manager=...)`、`CacheLock(backend=...)`）；它們需要自己的 fixture。
 
+以下範例使用 Starlette 的 `TestClient`。自 Starlette 1.10 起，它在 `httpx` 上執行時會發出警告（`StarletteDeprecationWarning`），要求改用 `httpx2`，因此設定 `filterwarnings = ["error"]` 的測試在收集階段就會失敗：請把 `httpx2` 加入測試依賴。
+
 在依賴這份隔離之前，先證明它有效。套件的第一個測試應該是「項目一旦外洩就會失敗」的測試：兩個應用程式對同一個請求給出不同的答案。
 
 ```python
