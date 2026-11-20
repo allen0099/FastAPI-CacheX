@@ -45,7 +45,7 @@ flowchart TD
 | 略過後端？ | 以下情況為「是」：`private=True`、路由沒有正的 `ttl`，或[帶有憑證的請求](HTTP_CACHING.md#requests-with-credentials)（`Authorization`、session 資料，或路由的依賴項讀取的 API 金鑰或 Cookie），除非路由設定 `public`，或設定 `cache_authorized` 且鍵能辨識呼叫者；另外，快取[關閉](TESTING.md#switching-off)期間每個路由都是。此時不執行 key builder；以新產生的回應與 `If-None-Match` 比對，決定回 304 還是 200；帶有憑證時，`Cache-Control` 以 `private` 取代 `public`。設定 `cache_authorized` 時會使用後端，但每個回應仍然是 `private`。 |
 | 用戶端要求最新的回應？ | 只有設定 `client_cache_control` 的路由才會判斷。請求的 `no-cache` 或 `max-age=0` 會略過讀取：handler 執行，它的回應取代該項目。請求的 `no-store` 在更早的地方就決定了，算在「略過後端」。 |
 | 建立快取鍵 | `key_builder`（預設為 `http:v2\|method\|host\|path\|query`），再為每個 `vary` 標頭附加一個 `name=value` 段。 |
-| 讀取項目 | 設定 `fail_open` 時，後端錯誤視為未命中。儲存之後有任何 tag 被失效的項目，以及在路由有這些 tag 之前就儲存的項目，也視為未命中。設定 `coalesce=True` 時，沒有讀到項目的請求會等待正在產生同一個鍵的請求，然後再讀一次。設定 `coalesce="distributed"` 時，在所屬行程中領頭的請求還會對這個鍵取得鎖，或等待持有鎖的 worker。 |
+| 讀取項目 | 設定 `fail_open` 時，後端錯誤視為未命中。儲存之後有任何 tag 被失效的項目，以及在路由有這些 tag 之前就儲存的項目，也視為未命中。設定 `coalesce=True` 時，沒有讀到項目的請求會等待正在產生同一個鍵的請求，然後再讀一次；讀取失敗時，則直接拿到該請求的回應，不再讀一次。設定 `coalesce="distributed"` 時，在所屬行程中領頭的請求還會對這個鍵取得鎖，或等待持有鎖的 worker。 |
 | 過期 | 只有設定 `serve_stale` 時才會出現，項目會保留 `ttl + stale_ttl`。`stale="revalidate"`：立刻以該項目回應（`If-None-Match` 相符時回 304），GET 請求的 handler 會在回應送出之後，以該請求的背景工作執行並取代該項目。`stale="error"`：先執行 handler，只有它拋出例外或回應 5xx 時才以該項目回應；低於 500 的 `HTTPException`，或應用程式自己處理的例外，是 handler 的答案，會原樣送出。 |
 | `no_cache` | 每個請求都執行 handler；`If-None-Match` 相符時，在與新產生的回應比對之後回 304。 |
 | 以該項目回應 | 儲存的狀態碼、標頭與本文，加上 `Age`。請求的 `If-None-Match` 與項目的 ETag 相符時回 304。 |
@@ -201,7 +201,10 @@ if asked == "no-store":
 cache_key = key_builder(request) + vary_components(request)  # 只在這裡建立
 # 過期的項目已在此略過; 儲存之後有 tag 被失效的項目也會被略過
 entry = None if asked == "no-cache" else await backend.get(cache_key)
-if coalesce and entry is None and (leader := running_miss(cache_key)):
+if coalesce and read_failed:  # 後端中斷：不再讀一次，也不取得鎖
+    if (leader := running_miss(cache_key)) and (shared := await leader):
+        return replay(shared)  # 帶頭請求的回應：MISS，原因為 read-failed
+elif coalesce and entry is None and (leader := running_miss(cache_key)):
     await leader  # 只有 GET 會帶頭；HEAD 只會等待
     entry = await backend.get(cache_key)  # None：在下方自行產生，不再等待
 elif coalesce == "distributed" and entry is None and not take_lock(cache_key):

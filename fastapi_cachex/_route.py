@@ -382,6 +382,10 @@ class _Call:
     # The backend read failed: the write would most likely fail too, after
     # its own timeout, so the response is not stored (#582).
     read_failed: bool = False
+    # The entry of the rendered response, when it could be stored: a leader
+    # hands it to its followers, which matters when they cannot read the
+    # backend (#582).
+    shared: CacheEntry | None = None
     outcome: str | None = None
     # Why the backend was bypassed or the rendered response was not stored.
     reason: CacheReason | None = None
@@ -392,7 +396,7 @@ class _Call:
 
     async def finish(self) -> None:
         """The request has been answered, however it ended."""
-        self.flight.finish()
+        self.flight.finish(self.shared)
         if self.lock is not None:
             await _release_lock(self.lock)
 
@@ -719,6 +723,10 @@ class _Route:
             await self._after_running_miss(call, backend, cache_key)
         else:
             entry = await self._read(call, backend, cache_key)
+        if entry is not None and call.read_failed:
+            # The response a leader rendered meanwhile; not from the backend.
+            call.reason = "read-failed"
+            return self._hit(call, entry, cache_key, cache_control, outcome=_MISS)
         stale = entry is not None and self._is_stale(entry)
         if entry is not None and not self.no_cache and not stale:
             return self._hit(call, entry, cache_key, cache_control)
@@ -1019,14 +1027,17 @@ class _Route:
         )
         call.read_failed = not read_ok
         entry = self._usable(call, entry)
-        # A failed read does not wait: the backend is likely down, so the
-        # leader could not store its response either. A miss read just
-        # before a leader stores may still lead a second render; that
-        # window is one backend round trip.
+        if self.coalesce and not read_ok:
+            # The backend is likely down, so the leader cannot store its
+            # response either: a follower takes it from the leader instead
+            # of reading again (#582).
+            return await self._from_leader(call, backend, cache_key)
+        # A miss read just before a leader stores may still lead a second
+        # render; that window is one backend round trip.
         # A stale entry that only answers for a failing handler is waited
         # for like a miss: the leader's render may make it fresh.
         awaited = entry is None or (self.stale == "error" and self._is_stale(entry))
-        if self.coalesce and read_ok and awaited:
+        if self.coalesce and awaited:
             leader = call.flight.join(backend, cache_key, may_lead=req.method == "GET")
             if leader is not None:
                 logger.debug("Waiting for a running miss; key=%s", cache_key)
@@ -1041,6 +1052,25 @@ class _Route:
                 call.read_failed = not read_ok
                 entry = self._usable(call, entry)
         return entry
+
+    async def _from_leader(
+        self, call: _Call, backend: BaseCacheBackend, cache_key: str
+    ) -> CacheEntry | None:
+        """After a failed read: the running leader's response, or None to render.
+
+        A GET with no leader leads. A follower gets None when the leader's
+        response could not be stored (see ``_skip_reason``) or the handler
+        failed, and then renders its own.
+        """
+        leader = call.flight.join(
+            backend, cache_key, may_lead=call.request.method == "GET"
+        )
+        if leader is None:
+            return None
+        logger.debug(
+            "Backend unreadable; waiting for a running miss; key=%s", cache_key
+        )
+        return await _wait_for(leader)
 
     async def _lock_or_wait(
         self, call: _Call, backend: BaseCacheBackend, cache_key: str
@@ -1174,6 +1204,8 @@ class _Route:
             logger.debug("Not storing key=%s: %s", cache_key, skip_reason)
             call.reason = skip_reason
             return
+        entry = _entry_for(response, etag, body)
+        call.shared = entry
         if call.read_failed:
             logger.debug("Not storing key=%s: the backend could not be read", cache_key)
             call.reason = "read-failed"
@@ -1189,7 +1221,6 @@ class _Route:
             and not self._is_stale(stored)
         ):
             return
-        entry = _entry_for(response, etag, body)
         try:
             versions = await _tags.versions_to_record(backend, call.tags_before)
             if versions is None:

@@ -66,7 +66,7 @@ Every answer then gets its `Cache-Control`, `Vary` and, with
 | Backend skipped? | Yes for `private=True`, a route without a positive `ttl`, or a [request with credentials](HTTP_CACHING.md#requests-with-credentials) (`Authorization`, session data, or an API key or cookie the route's dependencies read) unless the route is `public`, or `cache_authorized` with a key that identifies the caller; and for every route while caching is [switched off](TESTING.md#switching-off). The key builder does not run; `If-None-Match` is compared with the fresh response to decide between 304 and 200; with credentials, `Cache-Control` says `private` instead of `public`. With `cache_authorized` the backend is used, but every answer still says `private`. |
 | Client asks for a fresh response? | Only on a route with `client_cache_control`. A request's `no-cache` or `max-age=0` skips the read: the handler runs and its response replaces the entry. A request's `no-store` is decided earlier and counts as "backend skipped". |
 | Build the cache key | `key_builder` (default `http:v2\|method\|host\|path\|query`), plus one `name=value` component per `vary` header. |
-| Read the entry | With `fail_open`, a backend error counts as a miss. So does an entry one of whose tags was invalidated since it was stored, and one stored before the route had its tags. With `coalesce=True`, a request that finds nothing waits for a request already rendering the same key, then reads again. With `coalesce="distributed"`, the request that leads in its process also takes a lock on the key, or waits for the worker that holds it. |
+| Read the entry | With `fail_open`, a backend error counts as a miss. So does an entry one of whose tags was invalidated since it was stored, and one stored before the route had its tags. With `coalesce=True`, a request that finds nothing waits for a request already rendering the same key, then reads again; when the read failed, it is handed that request's response instead of reading again. With `coalesce="distributed"`, the request that leads in its process also takes a lock on the key, or waits for the worker that holds it. |
 | Stale | Only with `serve_stale`, which keeps the entry for `ttl + stale_ttl`. `stale="revalidate"`: the entry answers at once (a 304 for a matching `If-None-Match`), and for a GET the handler runs after the response, as a background task of the request, to replace it. `stale="error"`: the handler runs, and the entry answers only if it raises or returns 5xx; an `HTTPException` below 500, or an exception the application handles, is the handler's answer and is sent as it is. |
 | `no_cache` | The handler runs on every request; a matching `If-None-Match` gets a 304 after the fresh response is compared with it. |
 | Answer from the entry | The stored status code, headers and body, plus `Age`. A request whose `If-None-Match` matches the entry's ETag gets a 304. |
@@ -287,7 +287,10 @@ if asked == "no-store":
 cache_key = key_builder(request) + vary_components(request)  # built only here
 # expired entries are already skipped here; an entry whose tags were invalidated since it was stored is skipped too
 entry = None if asked == "no-cache" else await backend.get(cache_key)
-if coalesce and entry is None and (leader := running_miss(cache_key)):
+if coalesce and read_failed:  # the backend is down: no second read, no lock
+    if (leader := running_miss(cache_key)) and (shared := await leader):
+        return replay(shared)  # the leader's response: MISS, reason read-failed
+elif coalesce and entry is None and (leader := running_miss(cache_key)):
     await leader  # GET only leads; HEAD only waits
     entry = await backend.get(cache_key)  # None: render below, without waiting
 elif coalesce == "distributed" and entry is None and not take_lock(cache_key):

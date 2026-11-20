@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import time
 from collections.abc import AsyncIterator
+from collections.abc import Awaitable
 from collections.abc import Callable
 from typing import Any
 
@@ -17,6 +18,7 @@ from fastapi_cachex._coalesce import _IN_FLIGHT
 from fastapi_cachex.cache import cache
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.proxy import BackendProxy
+from fastapi_cachex.types import CacheEntry
 
 try:  # Starlette's TestClient moved to httpx2; the `lowest` env still has httpx.
     import httpx2 as httpx  # type: ignore[import-not-found, unused-ignore]
@@ -86,12 +88,16 @@ class Handler:
 @pytest.fixture
 def waiters(monkeypatch: pytest.MonkeyPatch) -> Waiters:
     counter = Waiters()
-    wait_for = cache_module._wait_for
+    wait_for: Callable[
+        [asyncio.Future[CacheEntry | None]], Awaitable[CacheEntry | None]
+    ] = cache_module._wait_for
 
-    async def counting(leader: "asyncio.Future[None]") -> None:
+    async def counting(
+        leader: "asyncio.Future[CacheEntry | None]",
+    ) -> CacheEntry | None:
         counter.count += 1
         counter.notify()
-        await wait_for(leader)
+        return await wait_for(leader)
 
     monkeypatch.setattr(cache_module, "_wait_for", counting)
     return counter
@@ -323,25 +329,69 @@ async def test_different_keys_do_not_wait_on_each_other(
     assert waiters.count == 0
 
 
-async def test_a_failed_backend_read_does_not_wait(
-    client_for: Callable[[FastAPI], httpx.AsyncClient],
-    waiters: Waiters,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _backend_down(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Make every backend read fail; returns the keys read."""
+    reads: list[str] = []
+
     async def unreachable(key: str) -> None:
+        reads.append(key)
         msg = "backend down"
         raise ConnectionError(msg)
 
     monkeypatch.setattr(BackendProxy.get(), "get", unreachable)
+    return reads
+
+
+@pytest.mark.parametrize("coalesce", [True, "distributed"])
+async def test_during_an_outage_followers_get_the_leaders_response(
+    client_for: Callable[[FastAPI], httpx.AsyncClient],
+    waiters: Waiters,
+    monkeypatch: pytest.MonkeyPatch,
+    coalesce: bool | str,
+) -> None:
+    """40 requests ran the handler 40 times while Redis hung (#582)."""
+    reads = _backend_down(monkeypatch)
+    handler = Handler(waiters)
+    client = client_for(_app(handler, coalesce=coalesce, debug_header=True))
+
+    leader, followers = await _leader_then_followers(client, handler, waiters)
+
+    first = await leader
+    assert handler.calls == ["GET"]
+    assert {r.json()["n"] for r in followers} == {1}
+    assert {r.headers["etag"] for r in followers} == {first.headers["etag"]}
+    # Not from the backend: a miss, and why.
+    assert {r.headers["x-cache"] for r in [first, *followers]} == {"MISS"}
+    assert {r.headers["x-cache-reason"] for r in followers} == {"read-failed"}
+    # One read each; no follower reads again.
+    assert len(reads) == 1 + FOLLOWERS
+    assert _IN_FLIGHT == {}
+
+
+async def test_during_an_outage_an_unstorable_response_is_not_shared(
+    client_for: Callable[[FastAPI], httpx.AsyncClient],
+    waiters: Waiters,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response that would not be stored (Set-Cookie) is not handed on."""
+    _backend_down(monkeypatch)
     handler = Handler(waiters)
     client = client_for(_app(handler))
-    requests = [asyncio.ensure_future(client.get("/items")) for _ in range(3)]
+    cookie = {"X-Cookie": "1"}
+    leader = asyncio.ensure_future(client.get("/items", headers=cookie))
+    await waiters.until(lambda: bool(handler.calls))
+    followers = [asyncio.ensure_future(client.get("/items")) for _ in range(FOLLOWERS)]
+    await waiters.until(lambda: waiters.count == FOLLOWERS)
 
-    await waiters.until(lambda: handler.running == len(requests))
+    first_release, handler.release = handler.release, asyncio.Event()
+    first_release.set()
+
+    assert "set-cookie" in (await leader).headers
+    await waiters.until(lambda: handler.running == FOLLOWERS)
     handler.release.set()
-
-    assert {r.status_code for r in await _settle(*requests)} == {200}
-    assert waiters.count == 0
+    responses = await _settle(*followers)
+    assert not any("set-cookie" in r.headers for r in responses)
+    assert len(handler.calls) == 1 + FOLLOWERS
     assert _IN_FLIGHT == {}
 
 

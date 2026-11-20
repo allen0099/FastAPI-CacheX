@@ -169,7 +169,8 @@ async def report() -> dict[str, int]: ...
 第一個未命中的請求照常產生回應。在它執行期間未命中同一個快取鍵的請求，會等它回應後再讀取一次後端，並以儲存的項目回應，`ETag`、`Age` 與 304 的處理與一般命中相同（#252）。若第一個回應沒有儲存（它設定了 cookie、是 `private` 或 `no-store`、狀態碼是錯誤或由依賴項設定、是串流回應，或 handler 拋出例外），每個等待中的請求會自己執行 handler，而且是同時執行，不會一個接一個排隊。
 
 - 只會合併同一個行程內的請求，不會在後端加鎖：每個 worker 對每個冷鍵仍會執行一次 handler。若要讓所有 worker 合計只執行一次，請使用 [`coalesce="distributed"`](#across-workers)。
-- 等待中的請求會等到第一個請求的 handler 結束，沒有另外的逾時。讀取後端失敗的請求不會等待。
+- 等待中的請求會等到第一個請求的 handler 結束，沒有另外的逾時。
+- 無法讀取後端時（後端中斷，且為 `fail_open=True`），等待中的請求不會再讀一次後端，而是直接拿到第一個請求的回應，以 `MISS` 回應、原因為 `read-failed`，因此每個 worker 中每個鍵仍只執行一次 handler。0.6.4 之前每個請求都會各自執行。
 - HEAD 請求會等待同一個快取鍵正在執行的 GET，但永遠不會讓其他請求等它，因為它的回應不會儲存。
 - 它需要正的 `ttl`。搭配永遠不會以儲存的項目回應的 `private=True` 或 `no_cache=True` 時，裝飾器會拋出 `CacheXError`；搭配 `no_store=True` 時則會被忽略，並發出一般的警告。帶有憑證而繞過後端的請求不會被合併。
 
@@ -267,7 +268,7 @@ async def items() -> list[str]: ...
 | `head` | `MISS`、`REFRESH` | handler 為 `HEAD` 請求執行了；只有 `GET` 的回應會被儲存。 |
 | `tag-read-failed`、`tag-invalidated` | `MISS`、`REFRESH` | [有 tag](#by-tag) 的路由，其 tag 版本讀取失敗，或在 handler 執行期間改變：儲存這個回應可能留下一個失效操作沒有涵蓋到的項目。 |
 | `write-failed` | `MISS`、`REFRESH` | 後端拒絕寫入或無法連線，而路由為 `fail_open=True`。 |
-| `read-failed` | `MISS` | 無法讀取後端（且為 `fail_open=True`），因此不嘗試寫入：寫入多半也會失敗，而且要等它自己的逾時。0.6.3 之前仍會嘗試，因此中斷期間每個請求都要等兩次逾時。 |
+| `read-failed` | `MISS` | 無法讀取後端（且為 `fail_open=True`），因此不嘗試寫入：寫入多半也會失敗，而且要等它自己的逾時。0.6.3 之前仍會嘗試，因此中斷期間每個請求都要等兩次逾時。使用 `coalesce` 時，也用於直接拿到同時進行之請求回應的請求。 |
 
 沒有這個標頭的回應，就是照常使用了快取。handler 以拋出例外代替回傳回應時也沒有原因：它的事件是不帶 `reason` 的 `miss` 或 `bypass`。同一個值也會出現在該請求[事件](#counting-hits-and-misses)的 `reason` 上，型別為 `fastapi_cachex.CacheReason`。這些值屬於公開 API，所以可以當作指標的 label：只有在破壞性變更時才會改名或移除。
 

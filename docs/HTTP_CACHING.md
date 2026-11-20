@@ -340,7 +340,11 @@ rather than one after another.
   each worker still runs the handler once per cold key. For one run across
   workers, use [`coalesce="distributed"`](#across-workers).
 - A waiting request waits as long as the first one's handler takes; there is
-  no separate timeout. A request whose backend read fails does not wait.
+  no separate timeout.
+- When the backend cannot be read (an outage, with `fail_open=True`), the
+  waiting requests do not read it again: they get the first request's
+  response directly, as a `MISS` with reason `read-failed`, so the handler
+  still runs once per key in each worker. Before 0.6.4 each request ran it.
 - A HEAD request waits for a running GET of the same key but never makes
   others wait, since its response is not stored.
 - It needs a positive `ttl`. With `private=True` or `no_cache=True`, which
@@ -507,7 +511,7 @@ causes. With `debug_header=True` such a response also carries
 | `head` | `MISS`, `REFRESH` | The handler ran for a `HEAD` request; only a `GET` response is stored. |
 | `tag-read-failed`, `tag-invalidated` | `MISS`, `REFRESH` | A [tagged](#by-tag) route whose tag versions could not be read, or changed while the handler ran: storing the response could leave an entry that an invalidation missed. |
 | `write-failed` | `MISS`, `REFRESH` | The backend refused the write or could not be reached, and the route has `fail_open=True`. |
-| `read-failed` | `MISS` | The backend could not be read (with `fail_open=True`), so the write is not tried: it would most likely fail too, after its own timeout. Before 0.6.3 it was tried, and each request waited for both timeouts during an outage. |
+| `read-failed` | `MISS` | The backend could not be read (with `fail_open=True`), so the write is not tried: it would most likely fail too, after its own timeout. Before 0.6.3 it was tried, and each request waited for both timeouts during an outage. With `coalesce`, also a request handed the response of a concurrent one instead. |
 
 A response without the header used the cache as usual. A handler that
 raises instead of returning a response has no reason either: its event is a
