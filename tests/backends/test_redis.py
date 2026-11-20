@@ -433,7 +433,7 @@ def test_redis_protocol_default_is_resp2() -> None:
 async def test_redis_fail_fast_settings_reach_the_client() -> None:
     """The documented fail-fast example's kwargs reach redis-py (#325).
 
-    Built exactly as in docs/BACKENDS.md "Failing fast when Redis is down",
+    Built exactly as in docs/en/BACKENDS.md "Failing fast when Redis is down",
     against a port with nothing listening: the retry policy and both timeouts
     land in the connection kwargs, and a read fails without redis-py's default
     retries (several seconds on redis-py 8).

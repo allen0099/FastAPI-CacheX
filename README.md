@@ -103,7 +103,7 @@ async def report(app_cache: AppCache):
 
 ## Documentation
 
-The guides are built from `docs/` into the site linked below. Read them there:
+The guides are built from `docs/en/` (English) and `docs/zh-TW/` (繁體中文) into the site linked below. Read them there:
 a code block that includes one of the runnable examples renders on the site,
 while GitHub shows only its `--8<--` include line (the sentence before each
 block links the example file).

@@ -276,7 +276,7 @@ uv run mypy fastapi_cachex --strict
 ## Documentation site
 
 The documentation at <https://fastapi-cachex.readthedocs.io/> is built
-with [Zensical](https://zensical.org/) from `zensical.toml` and the `docs/`
+with [Zensical](https://zensical.org/) from `zensical.toml` and the `docs/en/`
 directory. The home page includes `README.md` and the changelog page includes
 `CHANGELOG.md` through snippets, so links in `README.md` must stay absolute
 (`https://github.com/allen0099/FastAPI-CacheX/blob/master/...`) to work in both
@@ -320,7 +320,7 @@ its English comments on the Traditional Chinese site too; explain it in the
 text around the fence. `README.md` keeps its quick start inline, since PyPI and
 GitHub render it without snippets.
 
-GitHub renders a page under `docs/` without expanding the include: the reader
+GitHub renders a page under `docs/en/` or `docs/zh-TW/` without expanding the include: the reader
 sees the bare `--8<--` line. So the sentence before every fence names the
 example file and links to it on GitHub, in both languages (#394); the
 `README.md` says the same once for the whole `docs/` tree.
@@ -330,8 +330,11 @@ example file and links to it on GitHub, in both languages (#394); the
 A Traditional Chinese (`zh-TW`) translation is published at
 <https://fastapi-cachex.readthedocs.io/zh-tw/stable/>. It is a separate Read the
 Docs translation project built from `zensical.zh-TW.toml` (build settings in
-`i18n/zh-TW/.readthedocs.yaml`), and its pages live in `i18n/zh-TW/docs/` — not
-under `docs/`, which would pull them into the English site.
+`docs/zh-TW/.readthedocs.yaml`, the path its Read the Docs project is set to),
+and its pages live in `docs/zh-TW/`, next to the English `docs/en/`. Neither
+directory may hold the other's pages: Zensical has no `exclude_docs`, so each
+site builds everything under its `docs_dir`. Before 0.7.2 the translation lived
+in `i18n/zh-TW/docs/` and the English pages directly in `docs/`.
 
 ```bash
 uv run zensical serve -f zensical.zh-TW.toml
@@ -340,15 +343,15 @@ uv run zensical build --strict -f zensical.zh-TW.toml  # also run by the Docs wo
 
 The English pages are the source of truth. The translation may lag behind
 them; the language switcher leads each page to its English original. Pages that are not translated yet are linked from the
-translation's navigation to the English site. The API reference (`docs/api/`),
+translation's navigation to the English site. The API reference (`docs/en/api/`),
 this development guide and the changelog stay English-only (the API pages are
 generated from the docstrings, which are in English); the translation links to
 their English versions. When translating, follow the
-terms in [`i18n/zh-TW/GLOSSARY.md`](https://github.com/allen0099/FastAPI-CacheX/blob/master/i18n/zh-TW/GLOSSARY.md).
+terms in [`docs/zh-TW/GLOSSARY.md`](https://github.com/allen0099/FastAPI-CacheX/blob/master/docs/zh-TW/GLOSSARY.md).
 
 ### Adding API reference pages
 
-API pages live under `docs/api/` and are generated from docstrings (Google
+API pages live under `docs/en/api/` and are generated from docstrings (Google
 style) by mkdocstrings. A page is plain markdown with one directive per object:
 
 ```markdown
@@ -419,10 +422,10 @@ release line in prose and are edited by hand, in a pull request merged right
 before the release:
 
 - `SECURITY.md`: the supported line in the text and the table.
-- The migration guide of the new minor (`docs/MIGRATING_<minor>.md` and its
+- The migration guide of the new minor (`docs/en/MIGRATING_<minor>.md` and its
   zh-TW copy): its introduction says the release is still to come until then.
-- `README.md` and `i18n/zh-TW/docs/index.md`: the line that links the guide.
-- `docs/COMPARISON.md` and its zh-TW copy: the "Version compared" row.
+- `README.md` and `docs/zh-TW/index.md`: the line that links the guide.
+- `docs/en/COMPARISON.md` and its zh-TW copy: the "Version compared" row.
 - `zensical.toml` and `zensical.zh-TW.toml`: the guide's entry under
   "Migration guides", when the guide is new.
 

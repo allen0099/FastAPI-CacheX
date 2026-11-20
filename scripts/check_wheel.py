@@ -39,7 +39,7 @@ REQUIRED = (
 )
 
 # Top-level names that belong to the repository, not to the package.
-FORBIDDEN_TOP_LEVEL = frozenset({"tests", "examples", "scripts", "docs", "i18n"})
+FORBIDDEN_TOP_LEVEL = frozenset({"tests", "examples", "scripts", "docs"})
 
 
 def wheel_version(names: list[str]) -> str | None:

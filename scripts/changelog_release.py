@@ -345,7 +345,7 @@ def promote(text: str, version: str, date: str) -> tuple[str, str]:
         msg = (
             f"`## [{UNRELEASED}]` is empty and changelog.d/ has no fragments. "
             f"Write down what changed before releasing {version}; see "
-            "docs/DEVELOPMENT.md#releasing."
+            "docs/en/DEVELOPMENT.md#releasing."
         )
         raise ChangelogError(msg)
 

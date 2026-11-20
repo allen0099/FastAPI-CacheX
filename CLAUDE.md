@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code in this repository. It lists only what the code, `pyproject.toml` and the docs do not make obvious. For the rest, read the source (module docstrings are thorough), `docs/` and `docs/DEVELOPMENT.md`.
+Guidance for Claude Code in this repository. It lists only what the code, `pyproject.toml` and the docs do not make obvious. For the rest, read the source (module docstrings are thorough), `docs/en/` and `docs/en/DEVELOPMENT.md`.
 
 ## Project
 
@@ -22,7 +22,7 @@ Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 - `@cache` fails open by default: a backend error is logged and treated as a miss, or the response is served unstored. Only GET is stored; HEAD reads the GET entry (key built as GET) and is never stored.
 - Backend lookup: `@cache` and the `CacheBackend` / `AppCache` dependencies fall back to a `MemoryBackend` when none is set. `CacheLock` and a directly built `CacheManager(...)` call `BackendProxy.get()` and raise; the monitoring routes and `invalidate()` treat a missing backend as empty. The proxies' lazy creation goes through `ProxyBase.get_or_create` (per-class lock; sync dependencies run in threads).
 - Memcached cannot enumerate keys. `clear_pattern`, `get_all_keys` and every `CacheManager.clear*` are no-ops with a `RuntimeWarning`, while `MemcachedBackend.clear()` issues `flush_all` and wipes the whole server.
-- The atomic primitives on `BaseCacheBackend` (`increment`, `get_and_delete`, `set_if_absent`, `delete_if_equals`, `expire_if_equals`, `set_if_equals`, `delete_many`) have non-atomic fallbacks; all but `delete_many` warn once per backend class when run. Every built-in backend must override them atomically (`test_every_built_in_backend_overrides_the_fallbacks` checks that they do); see "Atomic backend primitives" in `docs/BACKENDS.md`. `get_many` and `set_many` have looping fallbacks and a batched override in every built-in backend. `tests/backends/test_*_contract.py` covers TTL validation, counters, `clear_pattern`, the batch methods and tags; the other primitives are tested in each backend's own test file, so a change needs all three.
+- The atomic primitives on `BaseCacheBackend` (`increment`, `get_and_delete`, `set_if_absent`, `delete_if_equals`, `expire_if_equals`, `set_if_equals`, `delete_many`) have non-atomic fallbacks; all but `delete_many` warn once per backend class when run. Every built-in backend must override them atomically (`test_every_built_in_backend_overrides_the_fallbacks` checks that they do); see "Atomic backend primitives" in `docs/en/BACKENDS.md`. `get_many` and `set_many` have looping fallbacks and a batched override in every built-in backend. `tests/backends/test_*_contract.py` covers TTL validation, counters, `clear_pattern`, the batch methods and tags; the other primitives are tested in each backend's own test file, so a change needs all three.
 - `validate_ttl` / `validate_delta` run before any I/O in every backend; floats and bools raise `TypeError`.
 - Tags (`_tags.py`): each tag has a random version token under the backend key `tag:<name>` (30-day TTL); a tagged `CacheEntry` records the versions in `tags` and reads as a miss when one differs or is gone. `versions_before` runs before the handler or factory, `versions_to_record` at store time (it creates a missing version, or returns None when one appeared meanwhile: then nothing is stored). Every read of an entry (`_read_entry`, `CacheManager.get` / `get_many` / `has`, `add`) must check `outdated`. Built on `get_many`, `set_many` and `set_if_absent` only, so it works on Memcached.
 - Redis and Memcached keys carry `key_prefix` (default `fastapi_cachex:`); memory has no prefix. `CacheManager` (`cache:`) and `CacheLock` (`lock:`) add their own prefixes on top.
@@ -32,12 +32,12 @@ Use `uv` for everything (`uv sync --group dev --all-extras`, `uv run ...`).
 - `filterwarnings = ["error"]`: an expected warning needs `pytest.warns`, or a local `warnings.catch_warnings` (see `flush_memcached` in `tests/live_servers.py`).
 - `tests/conftest.py` sets a `MemoryBackend` for every test and resets the proxies. Tests for Redis or Memcached build their own backend. The autouse `close_network_clients` fixture closes every Redis/Memcached client, because an unclosed socket's `ResourceWarning` would fail a later test.
 - `examples/*.py` are tested by `tests/test_examples.py` and included in the docs with `--8<--` snippets, so editing an example changes the docs.
-- Check that a new test can fail: break the code it guards and confirm the test fails (see `docs/DEVELOPMENT.md`).
+- Check that a new test can fail: break the code it guards and confirm the test fails (see `docs/en/DEVELOPMENT.md`).
 
 ## Conventions
 
 - Changelog: add a `changelog.d/<issue>.<section>.md` fragment. Edit `CHANGELOG.md` by hand only for a release notice directly under `## [Unreleased]`, or an entry that belongs to no issue. The format is in `changelog.d/README.md`.
 - Rehearse release notes with `uv run python scripts/changelog_release.py --version X.Y.Z --changelog <copy of CHANGELOG.md> --fragments changelog.d --dry-run`. `--fragments` defaults to the `changelog.d/` next to `--changelog`, so it is needed with a copy; and without `--dry-run` the run deletes the fragments it merged.
-- Docs changes go into both `docs/` and `i18n/zh-TW/docs/`. Terms follow `i18n/zh-TW/GLOSSARY.md`.
-- Never edit `version` in `pyproject.toml` by hand. Releases run through the `release.yml` workflow (`docs/DEVELOPMENT.md#releasing`).
-- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in that minor's migration guide (`docs/MIGRATING_0_<minor>.md`, with its zh-TW copy and nav entry).
+- Docs changes go into both `docs/en/` and `docs/zh-TW/`. Terms follow `docs/zh-TW/GLOSSARY.md`.
+- Never edit `version` in `pyproject.toml` by hand. Releases run through the `release.yml` workflow (`docs/en/DEVELOPMENT.md#releasing`).
+- Breaking changes need a runtime warning in a release first and land only in the next minor, with a section in that minor's migration guide (`docs/en/MIGRATING_0_<minor>.md`, with its zh-TW copy and nav entry).
