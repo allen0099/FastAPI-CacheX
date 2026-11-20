@@ -323,7 +323,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 - `expire_if_equals(key, expected, ttl) -> bool`：只在 `key` 仍存放 `expected` 時，才把它的 TTL 更新為 `ttl` 秒，因此長時間執行的鎖持有者可以續約租期，而不會在鎖已過期時動到別人的鎖。`ttl` 為必填：傳入 `None` 會引發 `TTLTypeError`。記憶體後端以單一步驟更新，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `EXPIRE`），Memcached 則使用 `GETS` + 以新 exptime 寫回相同位元組的 `CAS`（`TOUCH` 不接受 CAS 權杖）。
 - `set_if_equals(key, expected, value, ttl=None) -> bool`：只在 `key` 仍存放 `expected` 時才儲存 `value`。這是 compare-and-set：若呼叫端讀取之後有任何操作變更、刪除了該鍵，或它已過期，寫入就會失敗。記憶體後端以單一步驟比較，Redis 先在 Python 中比較，再執行 Lua 腳本（`GET` 比較 + `SET`，設定了 `ttl` 時加上 `EX`），Memcached 則使用 `GETS` + 寫入新值的 `CAS`。
 
-這六個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可運作，但沒有這些保證：並行的 `increment()` 會遺失計數、多個 `add()` 都會成功、`CacheLock`（以及使用它的 `get_or_set(lock=True)` 與 `coalesce="distributed"`）會讓多個持有者同時進入，而後備的 `increment()` 每次呼叫都會重新套用 `ttl`，因此時間窗會往後滑動。自 0.6.3 起，每個後端類別第一次呼叫某個後備實作時，會發出指名該方法的 `RuntimeWarning`；覆寫它們才能得到真正的原子性，也不會再有警告。這些後備實作依賴 `delete()` 回傳鍵是否存有項目；仍像 0.3.x 一樣回傳 `None` 的 `delete()` 會發出警告，並在 0.5.0 之前視為已移除（見 [delete() 的回傳值](MIGRATING_0_4.md#backend-delete)）。
+這六個方法在 `BaseCacheBackend` 上都有非原子性的後備實作，因此只實作抽象方法的第三方後端仍可運作，但沒有這些保證：並行的 `increment()` 會遺失計數、多個 `add()` 都會成功、`CacheLock`（以及使用它的 `get_or_set(lock=True)` 與 `coalesce="distributed"`）會讓多個持有者同時進入，而後備的 `increment()` 每次呼叫都會重新套用 `ttl`，因此時間窗會往後滑動。自 0.6.3 起，每個後端類別第一次呼叫某個後備實作時，會發出指名該方法的 `RuntimeWarning`（以 `warnings.warn` 發出，因此以 `-W error` 執行的測試會因此失敗）；覆寫它們才能得到真正的原子性，也不會再有警告。這些後備實作依賴 `delete()` 回傳鍵是否存有項目；仍像 0.3.x 一樣回傳 `None` 的 `delete()` 會發出警告，並在 0.5.0 之前視為已移除（見 [delete() 的回傳值](MIGRATING_0_4.md#backend-delete)）。
 
 在抽象方法中，`clear_path()` 必須判斷哪些鍵是某個路徑的 HTTP 項目。`CacheKey.is_for_path(key, path, include_params)`（來自 `fastapi_cachex.cache_key`）就是內建後端使用的判斷：它會解析鍵，因此會跟著鍵格式變更，兩種 scheme 都包含在內。
 

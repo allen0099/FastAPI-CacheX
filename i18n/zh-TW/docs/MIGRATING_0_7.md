@@ -41,7 +41,7 @@ filterwarnings = [
 0.7.0 會把 scheme 加入鍵中，並把格式標籤改為 `http:v3`，讓 http 與 https 請求使用各自的項目。對升級的影響：
 
 - 0.7.0 不會讀取 0.6.x 寫入的項目：每個路由的快取都會從空的狀態重新開始一次。舊項目會隨各自的 `ttl` 過期；在 Redis 上要立刻移除它們，請在升級後執行 `clear_pattern("http:v2|*")`；但要等你的 key builder 都不再寫入 `http:v2|` 鍵之後（見最後一項），因為它也會刪除那些鍵（Memcached 無法列舉鍵，見[選擇後端](BACKENDS.md#choosing-a-backend)）。
-- 滾動部署期間，0.6.x 與 0.7.0 的實例不會讀取彼此的項目，其中一個版本以鍵進行的失效操作（`invalidate()`、`invalidate_path()`、`clear_path()`、`clear_pattern()`）也不會到達另一個版本的項目。tag 則會：任一版本的 `invalidate_tags()` 都會讓兩個版本中帶有該 tag 的項目變成未命中。`CacheManager` 與 `@cached` 的值則由兩個版本共同讀寫。請留意各個 `ttl`、使用 tag，或一次更新所有實例。
+- 滾動部署期間，0.6.x 與 0.7.0 的實例不會讀取彼此的項目，其中一個版本以鍵進行的失效操作（`invalidate()`、`invalidate_path()`、`clear_path()`、`clear_pattern()`）也不會到達另一個版本的項目。tag 則會：任一版本（0.6.1 或更新，tag 自該版起才有）的 `invalidate_tags()` 都會讓兩個版本中帶有該 tag 的項目變成未命中。`CacheManager` 與 `@cached` 的值則由兩個版本共同讀寫。請留意各個 `ttl`、使用 tag，或一次更新所有實例。
 - `invalidate()`、`invalidate_path()` 與 `clear_path()` 會清除兩種 scheme 的項目，因此經由 https 進行的寫入，也會移除同一個 URL 的 http 項目。
 - 為 `clear_pattern()` 手寫的模式，例如 `"http:v2|GET|*|/api/users/*"`，從 0.7.0 起不會符合任何鍵，也不會報錯。單一路徑請改用會跟著鍵格式變更的 `clear_path()`；它不接受前綴。若要清除前綴，請依新的標籤與 scheme 欄位改寫模式：`clear_pattern(f"{CacheKey.FORMAT_TAG}|*|GET|*|/api/users/*")` 會同時符合兩種 scheme。
 - scheme 是 Starlette 回報的值（`request.url.scheme`）。在終止 TLS 的代理之後，每個請求看起來都是 `http`，因此 http 與 https 仍然共用同一個項目，除非伺服器信任代理的 `X-Forwarded-Proto`。uvicorn 預設就會讀取這個標頭，但只接受 `--forwarded-allow-ips` 中的位址（未設定時為 127.0.0.1），因此位於其他主機的代理需要 `--forwarded-allow-ips=<代理的位址>`。
