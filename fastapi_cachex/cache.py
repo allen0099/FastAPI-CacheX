@@ -1,5 +1,6 @@
 """Core caching functionality and decorators."""
 
+import copy
 import logging
 import time
 import warnings
@@ -496,6 +497,7 @@ def cache(
                     None if sub_response is None else sub_response.status_code
                 ),
                 background=background,
+                session_before=copy.deepcopy(request.scope.get("session")),
             )
             started = time.perf_counter()
             try:

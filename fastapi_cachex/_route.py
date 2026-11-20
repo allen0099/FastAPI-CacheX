@@ -394,6 +394,16 @@ class _Call:
     outcome: str | None = None
     # Why the backend was bypassed or the rendered response was not stored.
     reason: CacheReason | None = None
+    # A copy of `request.session` as the dependencies left it (None without
+    # a session middleware). A session the handler then changes gets a
+    # `Set-Cookie` from the middleware, outside the decorator, so the
+    # response is treated as setting a cookie (see `session_written`).
+    session_before: Any = None
+
+    @property
+    def session_written(self) -> bool:
+        """Whether the handler changed ``request.session``."""
+        return bool(self.request.scope.get("session") != self.session_before)
 
     @property
     def client_etag(self) -> str | None:
@@ -636,9 +646,15 @@ class _Route:
             dependency_lines=call.dependency_lines,
         )
 
-    def _send(self, response: Response, cache_control: str) -> Response:
+    def _send(self, call: _Call, response: Response, cache_control: str) -> Response:
         """A freshly rendered response, with the ``Cache-Control`` it gets."""
-        return _with_cache_control(response, cache_control, self.private_cache_control)
+        return _with_cache_control(
+            response, self._sent(call, cache_control), self.private_cache_control
+        )
+
+    def _sent(self, call: _Call, cache_control: str) -> str:
+        """``private`` for a response whose session the handler changed."""
+        return self.private_cache_control if call.session_written else cache_control
 
     def _revalidated(
         self, call: _Call, response: Response, etag: str, cache_control: str
@@ -648,7 +664,9 @@ class _Route:
             response,
             etag,
             call.client_etag,
-            _cache_control_for(response, cache_control, self.private_cache_control),
+            _cache_control_for(
+                response, self._sent(call, cache_control), self.private_cache_control
+            ),
         )
 
     async def _no_store(self, call: _Call) -> Response:
@@ -686,14 +704,14 @@ class _Route:
             return response
         if etag is None:
             # StreamingResponse/FileResponse — cannot compute ETag
-            return self._send(response, cache_control)
+            return self._send(call, response, cache_control)
         not_modified = self._revalidated(call, response, etag, cache_control)
         if not_modified is not None:
             logger.debug("304 Not Modified (uncached); path=%s", path)
             return not_modified
         response.headers["ETag"] = etag
         logger.debug("Bypassed the backend; path=%s", path)
-        return self._send(response, cache_control)
+        return self._send(call, response, cache_control)
 
     async def _cached(
         self,
@@ -782,7 +800,7 @@ class _Route:
         if body is None or etag is None:
             # StreamingResponse/FileResponse — cannot compute ETag; serve as-is
             call.reason = "streamed"
-            return self._send(response, cache_control)
+            return self._send(call, response, cache_control)
 
         if self.no_cache and call.client_etag:
             # A `no_cache` route answers a matching ETag before storing, so
@@ -813,7 +831,7 @@ class _Route:
         if not_modified is not None:
             logger.debug("304 Not Modified (fresh render); key=%s", cache_key)
             return not_modified
-        return self._send(response, cache_control)
+        return self._send(call, response, cache_control)
 
     def _tag_names(self, call: _Call) -> tuple[str, ...]:
         """The route's tags for this request; a tags function runs once."""
@@ -1173,6 +1191,30 @@ class _Route:
         hit.headers.update(_age_headers(entry, self.stored_ttl))
         return hit
 
+    def _unkeyed_vary(
+        self, response: Response, dependency_lines: Iterable[tuple[bytes, bytes]]
+    ) -> bool:
+        """Whether the handler or a dependency set a ``Vary`` the key does not hold.
+
+        ``Vary: *`` is never stored (RFC 9111 §4.1). Any other name is
+        checked against the route's ``vary`` only with the default key: a
+        custom ``key_builder`` may key on the header itself.
+        """
+        keyed = {name.lower() for name in self.vary_names}
+        lines = [
+            *response.headers.getlist("vary"),
+            *(
+                value.decode("latin-1")
+                for name, value in dependency_lines
+                if name.lower() == b"vary"
+            ),
+        ]
+        for line in lines:
+            for name in (part.strip().lower() for part in line.split(",")):
+                if name == "*" or (name and self.default_key and name not in keyed):
+                    return True
+        return False
+
     def _skip_reason(self, call: _Call, response: Response) -> CacheReason | None:
         """Why a rendered response is served but not stored, if it is not.
 
@@ -1181,8 +1223,13 @@ class _Route:
         response that was shareable.
         """
         reason = _unshareable_reason(response)
+        if reason is None and call.session_written:
+            # The session middleware adds its `Set-Cookie` after us.
+            reason = "set-cookie"
         if reason is None:
             reason = _dependency_unshareable_reason(call.dependency_lines)
+        if reason is None and self._unkeyed_vary(response, call.dependency_lines):
+            reason = "vary"
         if reason is None and call.dependency_status is not None:
             # It may hold for this request only, and a hit would replay it.
             reason = "dependency-status"
