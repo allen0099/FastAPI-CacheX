@@ -46,7 +46,7 @@ filterwarnings = [
 - 為 `clear_pattern()` 手寫的模式，例如 `"http:v2|GET|*|/api/users/*"`，從 0.7.0 起不會符合任何鍵，也不會報錯。請改用會跟著鍵格式變更的 `clear_path()`，或依新的標籤與 scheme 欄位改寫模式。
 - scheme 是 Starlette 回報的值（`request.url.scheme`）。在終止 TLS 的代理之後，每個請求看起來都是 `http`，因此 http 與 https 仍然共用同一個項目，除非伺服器信任代理的 `X-Forwarded-Proto`（`uvicorn --proxy-headers --forwarded-allow-ips=...`）。
 - 呼叫 `build_cache_key()` 的自訂 `key_builder` 會自動跟著改變。自行組出鍵的則維持原樣：它的鍵仍然混用 http 與 https，而它以 `http:v2|` 格式寫入的鍵，`CacheKey.parse()`、`clear_path()` 與監控路由都不再認得。請改用 `build_cache_key()`。
-- `CacheKey` 新增 `scheme` 欄位：自行建立 `CacheKey` 或讀取 `CacheKey.parse()` 結果的程式碼需要處理它；從 `/cached-hits` 或 `get_all_keys()` 讀取鍵的程式碼，會看到新的標籤與 scheme。監控路由的紀錄（`CacheHitRecord`、`CachedRecord`）新增了 `scheme` 欄位，自行建立時必須提供。
+- `CacheKey` 新增 `scheme` 欄位：自行建立 `CacheKey` 或讀取 `CacheKey.parse()` 結果的程式碼需要處理它；從 `/cached-hits` 或 `get_all_keys()` 讀取鍵的程式碼，會看到新的標籤與 scheme。監控路由的紀錄（`CacheHitRecord`、`CachedRecord`）新增了 `scheme` 欄位，自行建立時必須以關鍵字引數提供（0.7.1 起；在 0.7.0，為 0.6.x 寫的位置引數呼叫會讓每個欄位錯位一格）。
 
 ## `MemoryBackend.lock` 與 `start_cleanup()` 已移除 {#memory-backend}
 
