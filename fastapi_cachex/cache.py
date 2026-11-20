@@ -17,6 +17,7 @@ from ._arguments import _COOKIE_VARY_WARNING
 from ._arguments import _BypassWarner
 from ._arguments import _check_arguments
 from ._arguments import _check_tags
+from ._arguments import _check_target
 from ._arguments import _no_store_ignored_warning
 from ._arguments import _seconds
 from ._cache_control import CacheControl
@@ -308,7 +309,8 @@ def cache(
         Decorator function that wraps route handlers with caching logic
 
     Raises:
-        CacheXError: When the decorator is applied, if ``stale`` and
+        CacheXError: When the decorator is applied to an app or router
+            rather than a route function, if ``stale`` and
             ``stale_ttl`` are not given together, if ``public`` and
             ``private`` are both set, if ``s_maxage`` or
             ``proxy_revalidate`` is set with ``private``, if ``ttl``,
@@ -343,6 +345,7 @@ def cache(
     s_maxage = _seconds("s_maxage", s_maxage)
 
     def decorator(func: HandlerCallable) -> AsyncResponseCallable:
+        _check_target(func)
         # Validate parameters eagerly at decoration time
         _check_arguments(
             ttl=ttl,

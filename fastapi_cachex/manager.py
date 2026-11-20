@@ -64,6 +64,11 @@ _HELD_LOCKS: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
     "_HELD_LOCKS", default=frozenset()
 )
 
+# Set while get_or_set reads a key again (after taking the lock, or while
+# polling): a value it could not decode was already reported at WARNING by
+# its first read, so the later reads log at DEBUG only (#581).
+_REREAD: contextvars.ContextVar[bool] = contextvars.ContextVar("_REREAD", default=False)
+
 # Polling configuration for stampede protection waiters
 _INITIAL_POLL_INTERVAL: float = 0.05
 _MAX_POLL_INTERVAL: float = 0.5
@@ -370,7 +375,14 @@ class CacheManager:
 
     @staticmethod
     def _encode(value: Any) -> CacheEntry:
-        content = json.dumps(value, default=_jsonable).encode("utf-8")
+        try:
+            content = json.dumps(value, default=_jsonable).encode("utf-8")
+        except ValueError as e:
+            # An int over the interpreter's digit limit, or a circular
+            # reference: still a value that cannot be stored, which the docs
+            # and the other cases report as TypeError (#581).
+            msg = f"the value cannot be stored as JSON: {e}"
+            raise TypeError(msg) from e
         fingerprint = hashlib.sha256(content).hexdigest()
         return CacheEntry(fingerprint=fingerprint, content=content)
 
@@ -438,7 +450,8 @@ class CacheManager:
             _emit("miss", "app", key)
             # Keys often embed user IDs or e-mails: only a digest at WARNING.
             key_ref = log_ref(key)
-            logger.warning("Failed to decode cached value; key_ref=%s", key_ref)
+            if not _REREAD.get():
+                logger.warning("Failed to decode cached value; key_ref=%s", key_ref)
             logger.debug(
                 "Failed to decode cached value; key_ref=%s key=%s", key_ref, key
             )
@@ -806,19 +819,24 @@ class CacheManager:
                         exc_info=True,
                     )
 
-    async def _lookup(self, key: str, type_: Any) -> Any:
+    async def _lookup(self, key: str, type_: Any, *, again: bool = False) -> Any:
         """``get()`` for ``get_or_set``: the value, or ``_SENTINEL`` on a miss.
 
         ``type_`` is passed only when given, so a subclass that overrides
         ``get()`` with the signature it had before 0.5.5 keeps working.
+        ``again`` for a read after the call's first one.
         """
         # Muted: get_or_set reports its own hit or miss, once per call. Every
         # caller returns a value found here at once, so this is that hit.
-        with _mute():
-            if type_ is None:
-                cached = await self.get(key, default=_SENTINEL)
-            else:
-                cached = await self.get(key, default=_SENTINEL, type_=type_)
+        token = _REREAD.set(again)
+        try:
+            with _mute():
+                if type_ is None:
+                    cached = await self.get(key, default=_SENTINEL)
+                else:
+                    cached = await self.get(key, default=_SENTINEL, type_=type_)
+        finally:
+            _REREAD.reset(token)
         if cached is not _SENTINEL:
             _emit("hit", "app", key)
         return cached
@@ -908,7 +926,7 @@ class CacheManager:
         lock_id = f"{id(self.backend)}:{self._cache_key(key)}"
         token = _HELD_LOCKS.set(_HELD_LOCKS.get() | {lock_id})
         try:
-            cached = await self._lookup(key, type_)
+            cached = await self._lookup(key, type_, again=True)
             if cached is not _SENTINEL:
                 return cached
             return await self._compute_and_store(key, factory, ttl, type_)
@@ -942,7 +960,7 @@ class CacheManager:
             if wait_timeout is not None:
                 elapsed = _monotonic() - start
                 if elapsed >= wait_timeout:
-                    cached = await self._lookup(key, type_)
+                    cached = await self._lookup(key, type_, again=True)
                     if cached is not _SENTINEL:
                         return cached
                     if raise_on_timeout:
@@ -975,7 +993,7 @@ class CacheManager:
             interval = min(interval * _BACKOFF_FACTOR, _MAX_POLL_INTERVAL)
 
             # 1. Check cache, return on hit
-            cached = await self._lookup(key, type_)
+            cached = await self._lookup(key, type_, again=True)
             if cached is not _SENTINEL:
                 return cached
 
