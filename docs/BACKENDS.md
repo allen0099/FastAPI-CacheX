@@ -536,7 +536,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
 ```
 
 - `increment(key, delta=1, ttl=None) -> int` — Memory does the read-modify-write
-  under its lock, Redis runs a Lua script (`EXISTS` + `INCRBY` + `EXPIRE`) and
+  in one step, Redis runs a Lua script (`EXISTS` + `INCRBY` + `EXPIRE`) and
   Memcached uses `ADD` + `INCR`/`DECR` (Memcached counters stop at 0).
   Memcached keeps time in whole seconds, so a new counter with a short `ttl`
   can expire between its `ADD` and the `INCR`; Memcached then retries `ADD` +
@@ -560,7 +560,7 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   the wrapped value. `delta`
   must be an `int` within the signed 64-bit range; anything else raises
   `TypeError` or `ValueError` before the backend is touched.
-- `get_and_delete(key) -> CacheEntry | None` — Memory pops under its lock, Redis
+- `get_and_delete(key) -> CacheEntry | None` — Memory pops in one step, Redis
   uses `GETDEL` (server 6.2+) and Memcached uses `GETS` + a `CAS` write with
   `exptime=-1` (retrying if another writer replaced the value in between). If
   writers keep replacing it for 16 attempts in a row, Memcached raises
@@ -568,11 +568,11 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   `CacheManager.delete` and `invalidate()` are built on it.
 - `set_if_absent(key, value, ttl=None) -> bool` — stores `value` only when
   `key` does not exist (an expired key counts as absent) and reports whether it
-  did. Memory checks under its lock, Redis uses `SET NX EX` and Memcached `ADD`.
+  did. Memory checks in one step, Redis uses `SET NX EX` and Memcached `ADD`.
 - `delete_if_equals(key, expected) -> bool` — removes `key` only while it still
   holds `expected`, so a holder whose entry expired cannot release a lock that
   someone else has claimed since. Put a unique token in the entry you store and
-  release with that same entry. Memory compares under its lock, Redis deletes
+  release with that same entry. Memory compares in one step, Redis deletes
   through a Lua script that re-checks the value it compared, and Memcached uses
   `GETS` + a `CAS` write that expires the entry immediately (the classic
   protocol's `DELETE` takes no CAS token).
@@ -580,13 +580,13 @@ if await backend.set_if_absent(f"stream:{user_id}", owner, ttl=300):
   seconds only while it still holds `expected`, so a long-running lock holder can
   renew its lease without risking overwriting someone else's lock if it expired.
   `ttl` is required: `None` raises `TTLTypeError`.
-  Memory updates under its lock, Redis compares in Python then executes a Lua
+  Memory updates in one step, Redis compares in Python then executes a Lua
   script (`GET` compare + `EXPIRE`), and Memcached uses `GETS` + `CAS` writing the
   same bytes with the new exptime (`TOUCH` takes no CAS token).
 - `set_if_equals(key, expected, value, ttl=None) -> bool` — stores `value` only
   while `key` still holds `expected`: a compare-and-set that fails if anything
   changed, deleted or expired the key since the caller read it. Memory
-  compares under its lock, Redis compares in Python then runs a Lua script
+  compares in one step, Redis compares in Python then runs a Lua script
   (`GET` compare + `SET`, with `EX` when `ttl` is set), and Memcached uses
   `GETS` + a `CAS` write of the new value.
 
@@ -615,14 +615,14 @@ found = await backend.get_many(["a", "b", "c"])  # {"a": entry_a, "b": entry_b}
 
 - `get_many(keys) -> dict[str, CacheEntry]` — returns the entries found, by
   key. A key that is missing, expired or holds bytes that are not an entry is
-  left out, and a key given twice is read once. Memory reads under its lock,
+  left out, and a key given twice is read once. Memory reads in one step,
   Redis sends one `MGET` and Memcached one `get` with every key per server.
   An empty `keys` does no I/O.
 - `set_many(entries, ttl=None) -> None` — stores every entry of a mapping,
   all with the same `ttl`, which is validated before anything is written. An
   empty mapping does no I/O. Whether the batch is atomic depends on the
   backend:
-    - **Memory**: atomic. The whole batch is stored under the backend's lock.
+    - **Memory**: atomic. The whole batch is stored in one step, with no `await` in between.
       With `max_entries`, a batch larger than the limit keeps its last
       `max_entries` entries.
     - **Redis**: atomic. One `SET` per entry inside a single `MULTI`/`EXEC`

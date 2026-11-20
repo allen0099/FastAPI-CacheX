@@ -150,7 +150,7 @@ async def test_memory_backend_cleanup(memory_backend: MemoryBackend, clock: Cloc
     assert retrieved_value2 == value2
 
 
-async def test_memory_backend_start_cleanup(memory_backend: MemoryBackend):
+async def test_memory_backend_starts_cleanup_on_demand(memory_backend: MemoryBackend):
     memory_backend._ensure_cleanup_started()
     assert memory_backend._cleanup_task is not None
     assert not memory_backend._cleanup_task.done()
@@ -164,7 +164,7 @@ async def test_memory_backend_stop_cleanup(memory_backend: MemoryBackend):
     assert memory_backend._cleanup_task is None
 
 
-async def test_memory_backend_double_start_cleanup(memory_backend: MemoryBackend):
+async def test_memory_backend_starts_cleanup_once(memory_backend: MemoryBackend):
     memory_backend._ensure_cleanup_started()
     original_task = memory_backend._cleanup_task
     memory_backend._ensure_cleanup_started()  # Start again
