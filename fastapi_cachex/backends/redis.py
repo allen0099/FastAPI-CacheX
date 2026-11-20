@@ -47,7 +47,9 @@ def _is_unavailable(error: Exception) -> bool:
     ``TimeoutError``, and a socket error that reaches the caller unwrapped.
     Also the ``RuntimeError`` of a pooled connection opened on an event loop
     that has since closed (a second ``asyncio.run()``, a test per loop):
-    redis-py drops that connection, so the next call reconnects (#582).
+    redis-py drops that connection, and from 7.4 the next call reconnects
+    (#582). Before 7.4 the pool stays bound to the first loop, so a client
+    must not be used from more than one event loop.
     """
     from redis.exceptions import ConnectionError as RedisConnectionError
     from redis.exceptions import TimeoutError as RedisTimeoutError
