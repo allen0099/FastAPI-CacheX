@@ -106,7 +106,9 @@ async def test_an_undecodable_value_warns_once_per_get_or_set(
 
     with caplog.at_level(logging.DEBUG, logger="fastapi_cachex.manager"):
         assert await manager.get_or_set("k", factory, type_=int) == 5
-    failures = [r for r in caplog.records if "Failed to decode" in r.getMessage()]
+    failures = [
+        r for r in caplog.records if "does not match type_=int" in r.getMessage()
+    ]
     assert [r.levelno for r in failures if r.levelno >= logging.WARNING] == [
         logging.WARNING
     ]
@@ -169,7 +171,9 @@ async def test_a_value_that_appears_while_polling_still_warns_once(
             meanwhile(),
         )
     assert result == 5
-    failures = [r for r in caplog.records if "Failed to decode" in r.getMessage()]
+    failures = [
+        r for r in caplog.records if "does not match type_=int" in r.getMessage()
+    ]
     assert [r.levelno for r in failures].count(logging.WARNING) == 1
     assert len(failures) > 2  # polled more than once
 
