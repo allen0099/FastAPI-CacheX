@@ -102,6 +102,9 @@ filterwarnings = [
     # deprecates. Later starlette releases no longer use it; nothing in this
     # package or its tests does.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+    # The `lowest` env runs redis-py 5.3.0, the floor until 0.7.0 raises it
+    # (#605); tests/backends/test_redis.py checks the warning itself.
+    "ignore:fastapi-cachex 0.7.0 will require redis-py 7.4:FutureWarning",
 ]
 
 [tool.ruff.lint]
