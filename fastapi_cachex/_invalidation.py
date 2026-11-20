@@ -26,14 +26,27 @@ logger = logging.getLogger("fastapi_cachex.cache")
 
 # A write changes the data behind both, so invalidation clears both (#576).
 _OTHER_SCHEME = {"http": "https", "https": "http"}
+_DEFAULT_PORT = {"http": b":80", "https": b":443"}
 
 
 def _with_both_schemes(request: Request) -> list[Request]:
-    """``request``, and the same request over the other of http and https."""
-    other = _OTHER_SCHEME.get(str(request.scope.get("scheme", "http")).lower())
+    """``request``, and the same request over the other of http and https.
+
+    A ``Host`` that names the first scheme's default port loses it, as the
+    key drops it for that scheme: ``http`` with ``example.com:80`` stands for
+    ``https`` with ``example.com``, the key a real https request builds.
+    """
+    scheme = str(request.scope.get("scheme", "http")).lower()
+    other = _OTHER_SCHEME.get(scheme)
     if other is None:
         return [request]
-    return [request, Request({**request.scope, "scheme": other}, request.receive)]
+    port = _DEFAULT_PORT[scheme]
+    headers = [
+        (name, value.removesuffix(port) if name == b"host" else value)
+        for name, value in request.scope.get("headers", [])
+    ]
+    scope = {**request.scope, "scheme": other, "headers": headers}
+    return [request, Request(scope, request.receive)]
 
 
 async def invalidate(
@@ -50,7 +63,8 @@ async def invalidate(
     it from the configured backend. Use this after a mutation to bust the
     cache for a specific cached route response. The key holds the scheme, so
     the entry of the same request over the other of http and https is
-    deleted too: a write makes both stale.
+    deleted too: a write makes both stale. The two deletes are separate: if
+    the backend fails on the second, the first has already happened.
 
     Args:
         request: The request whose cache key should be invalidated: a
@@ -163,8 +177,8 @@ async def invalidate_path(
     with that handler's own request deletes nothing, since it builds the key
     of the ``PUT``. This builds the request ``invalidate()`` needs: the
     current one with the method ``GET`` and the given path and query, so the
-    host, the scheme and the headers a ``vary`` route keys on stay those of
-    the caller::
+    host and the headers a ``vary`` route keys on stay those of the caller.
+    As with ``invalidate()``, the entry is deleted for both http and https::
 
         @app.put("/items/{item_id}")
         async def update_item(item_id: int, request: Request):
@@ -193,7 +207,8 @@ async def invalidate_path(
         sort_query: As for ``invalidate()``.
 
     Returns:
-        True if a cache entry existed and was deleted, False otherwise.
+        True if a cache entry existed and was deleted, for either scheme;
+        False otherwise.
 
     Raises:
         CacheXError: If ``path`` does not start with ``/``, if a query is

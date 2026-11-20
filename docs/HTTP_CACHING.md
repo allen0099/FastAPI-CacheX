@@ -1271,8 +1271,8 @@ for a route with `sort_query=False` pass `sort_query=False` here too.
 
 ### After a write: `invalidate()` or `clear_path()`
 
-`invalidate()` and `invalidate_path()` delete exactly one entry, the one built from the request or path you
-pass, over both http and https (since 0.7.0 the scheme is part of the key, and a write makes both stale). After `PUT /items/42` that is the entry for `GET /items/42` with no
+`invalidate()` and `invalidate_path()` delete only the entry built from the request or path you
+pass, in its http and https keys (since 0.7.0 the scheme is part of the key, and a write makes both stale). After `PUT /items/42` that is the entry for `GET /items/42` with no
 query string and, on a route with `vary`, the one variant the request's
 headers select. Entries that show the same item under another key keep
 serving the old data until they expire: `/items/42?fields=name`, a list at

@@ -41,7 +41,7 @@
 | expire / expiration | 過期 | |
 | stale | 過期 | 超過 `ttl` 但仍保留、可以送出的項目（`serve_stale`、`stale_ttl`）。與 expired（已無法讀取）同譯；句中需要區分兩者時，寫作「過期（stale）」 |
 | tag（快取） | 保留 | `@cache(tags=...)`、`invalidate_tags()` 的 tag；不譯為「標籤」 |
-| format tag（鍵格式） | 格式標籤 | 快取鍵開頭的 `http:v2`；「標籤」只用在這裡 |
+| format tag（鍵格式） | 格式標籤 | 快取鍵開頭的 `http:v3`；「標籤」只用在這裡 |
 | tag（git） | 保留（git tag） | |
 | label（GitHub） | 保留 | issue 與 pull request 的 label |
 | coalesce / coalescing | 合併（並行的未命中） | `coalesce=` 參數保留 |
