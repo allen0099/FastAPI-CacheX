@@ -485,7 +485,7 @@ async def greeting(request: Request):
 http:v3|https|GET|example.com|/me||authorization=sha256:3f0a…（64 個十六進位字元）
 ```
 
-同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。摘要能讓隨手查看鍵的人看不到權杖，但它並非機密：它只是一般的 SHA-256，能讀取鍵的人可以拿猜測值逐一比對，還原較短的 API key 或強度不足的 Basic 密碼，而且同一個權杖在每個應用程式中都得到相同的摘要。請把讀取鍵的權限（監控路由、伺服器的鍵空間、`DEBUG` 記錄）視同讀取憑證雜湊值的權限。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。名稱含有 `key`、`token`、`secret`、`auth`、`session` 或 `password`（不分大小寫）的其他標頭，例如 `X-API-Key` 或 `X-Auth-Token`，也會以相同方式雜湊：`cache_authorized` 路由正是靠列出攜帶 API 金鑰的標頭，以它作為鍵（見[帶有憑證的請求](#requests-with-credentials)）。0.6.3 之前這些標頭維持可讀，因此 API 金鑰本身會出現在鍵中（#575）。其他標頭都維持可讀；若你的標頭以其他名稱帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
+同一個權杖永遠得到同一個摘要，因此會命中自己的項目；兩個不同的權杖則得到兩筆項目。摘要能讓隨手查看鍵的人看不到權杖，但它並非機密：它只是一般的 SHA-256，能讀取鍵的人可以拿猜測值逐一比對，還原較短的 API 金鑰 或強度不足的 Basic 密碼，而且同一個權杖在每個應用程式中都得到相同的摘要。請把讀取鍵的權限（監控路由、伺服器的鍵空間、`DEBUG` 記錄）視同讀取憑證雜湊值的權限。缺少或空白的憑證標頭不會雜湊，而是與其他空標頭一樣維持 `authorization=`，讓所有匿名呼叫者共用一筆項目，鍵也仍看得出這是匿名的那一筆。名稱含有 `key`、`token`、`secret`、`auth`、`session` 或 `password`（不分大小寫）的其他標頭，例如 `X-API-Key` 或 `X-Auth-Token`，也會以相同方式雜湊：`cache_authorized` 路由正是靠列出攜帶 API 金鑰的標頭，以它作為鍵（見[帶有憑證的請求](#requests-with-credentials)）。0.6.3 之前這些標頭維持可讀，因此 API 金鑰本身會出現在鍵中（#575）。其他標頭都維持可讀；若你的標頭以其他名稱帶有機密，請透過 `key_builder`（自行雜湊）而不是 `vary` 以它作為鍵。
 
 單獨使用 `vary=["Authorization"]` 不會解除針對已授權請求的規則（見[帶有憑證的請求](#requests-with-credentials)）：除非路由設定 `public=True` 或同時傳入 `cache_authorized=True`，帶有 `Authorization` 標頭的請求仍會繞過後端。兩者都沒有設定時，只會儲存匿名的 `authorization=` 那一筆。設定 `cache_authorized=True` 時，正是 `vary=["Authorization"]` 辨識呼叫者，因此每個權杖會有自己的項目。
 
