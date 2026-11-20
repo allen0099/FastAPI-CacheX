@@ -452,9 +452,9 @@ async def test_redis_fail_fast_settings_reach_the_client() -> None:
     assert kwargs["socket_timeout"] == 0.5
     retry = kwargs["retry"]
     assert isinstance(retry, Retry)
-    # Private attributes: redis-py 5 has no public getter.
+    # Private: Retry has no public getter for its backoff.
     assert isinstance(retry._backoff, NoBackoff)
-    assert retry._retries == 0
+    assert retry.get_retries() == 0
 
     from redis.exceptions import ConnectionError as RedisConnectionError
 
@@ -1878,8 +1878,9 @@ def test_redis_config_retries_sets_the_retry_policy(
     )
     policy = backend.client.get_retry()
     if retries is None:
-        # redis-py's own policy: with backoff, or none before redis-py 6.
-        assert policy is None or not isinstance(policy._backoff, NoBackoff)
+        # redis-py's own policy, with backoff.
+        assert policy is not None
+        assert not isinstance(policy._backoff, NoBackoff)
     else:
         assert policy is not None
         assert policy._retries == retries
@@ -1895,72 +1896,3 @@ def test_redis_config_refuses_negative_retries() -> None:
         RedisConfig(retries=-1)
     with pytest.raises(ValidationError, match="retries"):
         RedisConfig(retries=101)
-
-
-@pytest.mark.parametrize(
-    ("version", "warns"),
-    [
-        ("5.3.0", True),
-        ("7.1.0", True),
-        ("7.3.9", True),
-        ("7.3.99rc1", True),
-        ("7.4.0", False),
-        ("7.4.0b1", False),
-        ("7.10.0", False),
-        ("8.1.0", False),
-        ("10.0.0", False),
-        ("", False),
-        ("unknown", False),
-    ],
-)
-def test_an_old_redis_py_warns_that_0_7_0_needs_7_4(
-    monkeypatch: pytest.MonkeyPatch, version: str, *, warns: bool
-) -> None:
-    """0.7.0 raises the floor: a client never recovers on a new loop before 7.4 (#605)."""
-    import warnings
-
-    from fastapi_cachex.backends import redis as redis_module
-
-    monkeypatch.setattr(redis_module, "_warned_old_redis", False)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        redis_module._warn_if_old_redis(version)
-        redis_module._warn_if_old_redis(version)  # once per process
-    messages = [str(w.message) for w in caught if w.category is FutureWarning]
-    if warns:
-        assert len(messages) == 1
-        assert f"redis-py {version} is installed" in messages[0]
-        assert "0.7.0 will require redis-py 7.4" in messages[0]
-    else:
-        assert messages == []
-
-
-@requires_redis_package
-def test_the_old_redis_py_warning_points_at_the_application(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import redis
-
-    from fastapi_cachex.backends import redis as redis_module
-
-    monkeypatch.setattr(redis_module, "_warned_old_redis", False)
-    monkeypatch.setattr(redis, "__version__", "6.0.0")
-    with pytest.warns(FutureWarning, match="redis-py 6.0.0 is installed") as record:
-        AsyncRedisCacheBackend(host=REDIS_HOST, port=UNCONNECTED_PORT)
-    assert record[0].filename == __file__
-
-
-def test_under_an_error_filter_every_old_redis_py_check_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A `-W error` suite fails wherever a backend is built, not only first."""
-    import warnings
-
-    from fastapi_cachex.backends import redis as redis_module
-
-    monkeypatch.setattr(redis_module, "_warned_old_redis", False)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        for _ in range(2):
-            with pytest.raises(FutureWarning):
-                redis_module._warn_if_old_redis("5.3.0")

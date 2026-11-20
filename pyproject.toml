@@ -57,7 +57,7 @@ dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
     "pytest-cov>=6.1.0",
-    "redis[hiredis]>=5.3.0",
+    "redis[hiredis]>=7.4.0",
     "ruff>=0.17.5",
     "tox>=4.25.0",
     "tox-uv>=1.29.0",
@@ -73,7 +73,7 @@ docs = [
 memcached = ["pymemcache>=4.0.0"]
 # orjson 3.8.0 is the first release with Python 3.11 wheels for Linux, macOS
 # and Windows; older ones would be built from source there.
-redis = ["redis[hiredis]>=5.3.0", "orjson>=3.8.0"]
+redis = ["redis[hiredis]>=7.4.0", "orjson>=3.8.0"]
 
 [build-system]
 requires = ["uv_build>=0.13,<0.14"]
@@ -102,9 +102,6 @@ filterwarnings = [
     # deprecates. Later starlette releases no longer use it; nothing in this
     # package or its tests does.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
-    # The `lowest` env runs redis-py 5.3.0, the floor until 0.7.0 raises it
-    # (#605); tests/backends/test_redis.py checks the warning itself.
-    "ignore:fastapi-cachex 0.7.0 will require redis-py 7.4:FutureWarning",
 ]
 
 [tool.ruff.lint]

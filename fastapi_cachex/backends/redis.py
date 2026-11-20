@@ -3,9 +3,7 @@
 import copy
 import inspect
 import logging
-import re
 import time
-import warnings
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from collections.abc import Iterable
@@ -16,7 +14,6 @@ from typing import Any
 from urllib.parse import parse_qs
 from urllib.parse import urlsplit
 
-from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.backends.codec import decode_entry
 from fastapi_cachex.backends.codec import encode_entry
 from fastapi_cachex.backends.codec import validate_compress_min_size
@@ -50,9 +47,8 @@ def _is_unavailable(error: Exception) -> bool:
     ``TimeoutError``, and a socket error that reaches the caller unwrapped.
     Also the ``RuntimeError`` of a pooled connection opened on an event loop
     that has since closed (a second ``asyncio.run()``, a test per loop):
-    redis-py drops that connection, and from 7.4 the next call reconnects
-    (#582). Before 7.4 the pool stays bound to the first loop, so a client
-    must not be used from more than one event loop.
+    redis-py drops that connection and the next call reconnects (#582); that
+    needs redis-py 7.4, the floor since 0.7.0 (#605).
     """
     from redis.exceptions import ConnectionError as RedisConnectionError
     from redis.exceptions import TimeoutError as RedisTimeoutError
@@ -63,33 +59,6 @@ def _is_unavailable(error: Exception) -> bool:
 
 
 _unavailable = translate_unavailable(_is_unavailable)
-
-# 0.7.0 requires redis-py 7.4: before it, a client whose first event loop has
-# closed can fail on every later loop (#605). Warned once per process, by the first backend.
-_NEXT_REDIS_FLOOR = (7, 4)
-_warned_old_redis = False
-
-
-def _warn_if_old_redis(version: str) -> None:
-    """Warn once that 0.7.0 will not run with redis-py ``version``."""
-    global _warned_old_redis  # noqa: PLW0603
-    found = re.match(r"(\d+)\.(\d+)", version)
-    if _warned_old_redis or found is None:
-        return
-    if (int(found[1]), int(found[2])) >= _NEXT_REDIS_FLOOR:
-        return
-    warnings.warn(
-        f"fastapi-cachex 0.7.0 will require redis-py 7.4 or later; redis-py "
-        f"{version} is installed. Before 7.4 a client whose first event loop "
-        "has closed can fail on every later loop. Upgrade with "
-        "'pip install \"redis>=7.4\"'; see "
-        "https://fastapi-cachex.readthedocs.io/en/latest/MIGRATING_0_7/#redis-74",
-        FutureWarning,
-        stacklevel=caller_stacklevel(),
-    )
-    # Recorded after warning: under `-W error` every call raises alike.
-    _warned_old_redis = True
-
 
 # PTTL replies that are not a remaining lifetime.
 _PTTL_NO_EXPIRY = -1
@@ -279,7 +248,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
         try:
             # Import top-level package first so tests that monkeypatch
             # builtins.__import__("redis") can simulate absence reliably.
-            import redis
+            import redis  # noqa: F401
             from redis.asyncio import Redis as AsyncRedis
             from redis.asyncio.retry import Retry
         except ImportError as exc:
@@ -288,7 +257,6 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
                 "'pip install \"redis[hiredis]\"' "
             )
             raise CacheXError(msg) from exc
-        _warn_if_old_redis(getattr(redis, "__version__", ""))
 
         self.compress_min_size = validate_compress_min_size(compress_min_size)
         pool = kwargs.get("connection_pool")
@@ -333,8 +301,7 @@ class AsyncRedisCacheBackend(BaseCacheBackend):
             # redis-py gives its default retry policy to Redis(...) but not
             # to Redis.from_url(...); without this, the same backend would
             # give up on the first connection error only when built from a
-            # URL (#527). Read from the signature, so it follows redis-py
-            # (older versions have no default, and then neither path retries).
+            # URL (#527). Read from the signature, so it follows redis-py.
             # A redis-py that renames the parameter or builds the default
             # elsewhere gives no Retry here, and the URL is used as it is.
             parameter = inspect.signature(AsyncRedis.__init__).parameters.get("retry")
