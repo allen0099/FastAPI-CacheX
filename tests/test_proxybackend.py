@@ -244,6 +244,7 @@ def test_get_or_create_factory_may_use_another_proxy(
     [
         (BackendProxy, MemoryBackend, "BackendProxy.set(MemoryBackend())"),
         (BackendProxy, "memory", "BaseCacheBackend instance"),
+        (BackendProxy, CacheManager(backend=MemoryBackend()), "BaseCacheBackend"),
         (CacheManagerProxy, MemoryBackend(), "CacheManager instance"),
         (CacheManagerProxy, CacheManager, "CacheManagerProxy.set(CacheManager())"),
     ],
