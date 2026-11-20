@@ -1300,15 +1300,19 @@ async def update_item(item_id: int, cache: CacheBackend):
 Invalidation does not fail open: `invalidate()`, `invalidate_path()`,
 `invalidate_tags()` and `clear_path()` raise the backend's error
 (`BackendUnavailableError` on Redis and Memcached), after your own write has
-already been committed. The old entry is then served until its `ttl` ends.
-Nothing in the library retries it, so decide what the route can live with:
+already been committed. The old entry is then served until its `ttl` ends
+(with [`serve_stale`](#serving-stale-responses), until `ttl + stale_ttl`, as a
+stale answer). Nothing in the library retries it, so decide what the route
+can live with:
 
 - **Retry after the response.** Catch the error and run the invalidation
   again as a background task; when the outage was a blip, the entry is gone
   a moment later. If that fails too, the server logs the task's error.
 - **Keep the `ttl` short** on routes where serving data that is stale for
-  the whole `ttl` is not acceptable: the `ttl` is the longest an invalidation
-  that never ran can leave old data in place.
+  the whole `ttl` is not acceptable: the `ttl` (plus `stale_ttl`) is the
+  longest an invalidation that never ran can leave old data in place.
+- **Fail fast.** With redis-py's default retries, the call takes seconds to
+  raise; see [Failing fast when Redis is down](BACKENDS.md#failing-fast-when-redis-is-down).
 - **Do not fail the write** because of the cache: the data is saved, so
   answering with an error invites the client to send it again.
 
@@ -1325,7 +1329,7 @@ async def update_item(item_id: int, background: BackgroundTasks):
         await invalidate_tags("items")
     except BackendUnavailableError:
         # Try once more after the response; until then, and if that fails
-        # too, the old entries are served until their ttl ends.
+        # too, the old entries are served until they expire.
         background.add_task(invalidate_tags, "items")
 ```
 

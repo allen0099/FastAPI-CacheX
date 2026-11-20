@@ -707,10 +707,11 @@ async def update_item(item_id: int, cache: CacheBackend):
 
 ### 寫入時後端停止運作 {#invalidating-during-an-outage}
 
-使快取失效的操作不會 fail open：`invalidate()`、`invalidate_path()`、`invalidate_tags()` 與 `clear_path()` 會拋出後端的錯誤（Redis 與 Memcached 上為 `BackendUnavailableError`），而此時你自己的寫入已經提交。舊的項目會一直被送出，直到它的 `ttl` 結束。函式庫不會自動重試，因此請依路由能接受的程度決定作法：
+使快取失效的操作不會 fail open：`invalidate()`、`invalidate_path()`、`invalidate_tags()` 與 `clear_path()` 會拋出後端的錯誤（Redis 與 Memcached 上為 `BackendUnavailableError`），而此時你自己的寫入已經提交。舊的項目會一直被送出，直到它的 `ttl` 結束（使用 [`serve_stale`](#serving-stale-responses) 時則到 `ttl + stale_ttl`，作為過期的回應送出）。函式庫不會自動重試，因此請依路由能接受的程度決定作法：
 
 - **回應之後再試一次。** 捕捉這個錯誤，以背景任務再執行一次失效；如果只是短暫中斷，項目稍後就會消失。若再次失敗，伺服器會記錄該任務的錯誤。
-- **縮短 `ttl`**：對於整個 `ttl` 期間都送出過期資料無法接受的路由，`ttl` 就是一次沒有執行的失效最多讓舊資料留存的時間。
+- **縮短 `ttl`**：對於整個 `ttl` 期間都送出過期資料無法接受的路由，`ttl`（加上 `stale_ttl`）就是一次沒有執行的失效最多讓舊資料留存的時間。
+- **快速失敗。** 使用 redis-py 預設的重試策略時，呼叫要好幾秒才會拋出錯誤；請見 [Redis 停止運作時快速失敗](BACKENDS.md#failing-fast-when-redis-is-down)。
 - **不要因為快取而讓寫入失敗**：資料已經儲存，回應錯誤只會讓客戶端再送一次。
 
 ```python
@@ -726,7 +727,7 @@ async def update_item(item_id: int, background: BackgroundTasks):
         await invalidate_tags("items")
     except BackendUnavailableError:
         # 回應之後再試一次；在那之前，以及再次失敗時，
-        # 舊的項目會一直被送出，直到它們的 ttl 結束。
+        # 舊的項目會一直被送出，直到它們過期。
         background.add_task(invalidate_tags, "items")
 ```
 
