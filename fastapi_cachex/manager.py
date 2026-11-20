@@ -64,10 +64,29 @@ _HELD_LOCKS: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
     "_HELD_LOCKS", default=frozenset()
 )
 
-# Set while get_or_set reads a key again (after taking the lock, or while
-# polling): a value it could not decode was already reported at WARNING by
-# its first read, so the later reads log at DEBUG only (#581).
-_REREAD: contextvars.ContextVar[bool] = contextvars.ContextVar("_REREAD", default=False)
+
+class _UnstorableValueError(TypeError, ValueError):
+    """A value ``json.dumps`` refused with ``ValueError``: raised as both (#581)."""
+
+
+class _DecodeLog:
+    """Whether one ``get_or_set`` call has warned that it could not decode.
+
+    Its reads (the first one, after taking the lock, while polling) all see
+    the same key, so the call warns once and logs the others at DEBUG (#581).
+    """
+
+    __slots__ = ("warned",)
+
+    def __init__(self) -> None:
+        self.warned = False
+
+
+# The _DecodeLog of the get_or_set read in progress, across the public get(),
+# which a subclass may override; None for a plain get().
+_DECODE_LOG: contextvars.ContextVar[_DecodeLog | None] = contextvars.ContextVar(
+    "_DECODE_LOG", default=None
+)
 
 # Polling configuration for stampede protection waiters
 _INITIAL_POLL_INTERVAL: float = 0.05
@@ -380,9 +399,10 @@ class CacheManager:
         except ValueError as e:
             # An int over the interpreter's digit limit, or a circular
             # reference: still a value that cannot be stored, which the docs
-            # and the other cases report as TypeError (#581).
+            # and the other cases report as TypeError (#581). Still a
+            # ValueError too, so code catching what it raised before works.
             msg = f"the value cannot be stored as JSON: {e}"
-            raise TypeError(msg) from e
+            raise _UnstorableValueError(msg) from e
         fingerprint = hashlib.sha256(content).hexdigest()
         return CacheEntry(fingerprint=fingerprint, content=content)
 
@@ -450,8 +470,11 @@ class CacheManager:
             _emit("miss", "app", key)
             # Keys often embed user IDs or e-mails: only a digest at WARNING.
             key_ref = log_ref(key)
-            if not _REREAD.get():
+            log = _DECODE_LOG.get()
+            if log is None or not log.warned:
                 logger.warning("Failed to decode cached value; key_ref=%s", key_ref)
+                if log is not None:
+                    log.warned = True
             logger.debug(
                 "Failed to decode cached value; key_ref=%s key=%s", key_ref, key
             )
@@ -730,6 +753,7 @@ class CacheManager:
         *,
         lock_ttl: int | None,
         watched: _Watched | None,
+        log: _DecodeLog,
     ) -> Any:
         """``_lookup`` for ``stale_ttl``: a stale value is refreshed or returned.
 
@@ -738,8 +762,12 @@ class CacheManager:
         entry = await self._entry(key)
         if entry is None:
             return _SENTINEL
-        with _mute():
-            cached = self._decode(key, entry, _SENTINEL, type_)
+        token = _DECODE_LOG.set(log)
+        try:
+            with _mute():
+                cached = self._decode(key, entry, _SENTINEL, type_)
+        finally:
+            _DECODE_LOG.reset(token)
         if cached is _SENTINEL:
             return _SENTINEL
         if not _is_stale(entry):
@@ -819,16 +847,16 @@ class CacheManager:
                         exc_info=True,
                     )
 
-    async def _lookup(self, key: str, type_: Any, *, again: bool = False) -> Any:
+    async def _lookup(self, key: str, type_: Any, log: _DecodeLog) -> Any:
         """``get()`` for ``get_or_set``: the value, or ``_SENTINEL`` on a miss.
 
         ``type_`` is passed only when given, so a subclass that overrides
         ``get()`` with the signature it had before 0.5.5 keeps working.
-        ``again`` for a read after the call's first one.
+        ``log`` is the call's, shared by all its reads.
         """
         # Muted: get_or_set reports its own hit or miss, once per call. Every
         # caller returns a value found here at once, so this is that hit.
-        token = _REREAD.set(again)
+        token = _DECODE_LOG.set(log)
         try:
             with _mute():
                 if type_ is None:
@@ -836,7 +864,7 @@ class CacheManager:
                 else:
                     cached = await self.get(key, default=_SENTINEL, type_=type_)
         finally:
-            _REREAD.reset(token)
+            _DECODE_LOG.reset(token)
         if cached is not _SENTINEL:
             _emit("hit", "app", key)
         return cached
@@ -915,18 +943,20 @@ class CacheManager:
             return json.loads(entry.content)
         return _adapter(type_).validate_json(entry.content)
 
-    async def _execute_as_winner(
+    async def _execute_as_winner(  # noqa: PLR0913
         self,
         key: str,
         factory: Callable[[], Any] | Callable[[], Awaitable[Any]],
         ttl: int | None,
         lock_instance: CacheLock,
-        type_: Any = None,
+        *,
+        type_: Any,
+        log: _DecodeLog,
     ) -> Any:
         lock_id = f"{id(self.backend)}:{self._cache_key(key)}"
         token = _HELD_LOCKS.set(_HELD_LOCKS.get() | {lock_id})
         try:
-            cached = await self._lookup(key, type_, again=True)
+            cached = await self._lookup(key, type_, log)
             if cached is not _SENTINEL:
                 return cached
             return await self._compute_and_store(key, factory, ttl, type_)
@@ -952,7 +982,8 @@ class CacheManager:
         wait_timeout: float | None,
         *,
         raise_on_timeout: bool,
-        type_: Any = None,
+        type_: Any,
+        log: _DecodeLog,
     ) -> Any:
         start = _monotonic()
         interval = _INITIAL_POLL_INTERVAL
@@ -960,7 +991,7 @@ class CacheManager:
             if wait_timeout is not None:
                 elapsed = _monotonic() - start
                 if elapsed >= wait_timeout:
-                    cached = await self._lookup(key, type_, again=True)
+                    cached = await self._lookup(key, type_, log)
                     if cached is not _SENTINEL:
                         return cached
                     if raise_on_timeout:
@@ -993,7 +1024,7 @@ class CacheManager:
             interval = min(interval * _BACKOFF_FACTOR, _MAX_POLL_INTERVAL)
 
             # 1. Check cache, return on hit
-            cached = await self._lookup(key, type_, again=True)
+            cached = await self._lookup(key, type_, log)
             if cached is not _SENTINEL:
                 return cached
 
@@ -1005,7 +1036,7 @@ class CacheManager:
             )
             if await lock_instance.acquire(blocking=False):
                 return await self._execute_as_winner(
-                    key, factory, ttl, lock_instance, type_
+                    key, factory, ttl, lock_instance, type_=type_, log=log
                 )
 
     @overload
@@ -1166,8 +1197,9 @@ class CacheManager:
         effective_lock_ttl = self.lock_ttl if lock_ttl is None else lock_ttl
         # A re-entrant call for a key this task holds skips the lock.
         use_lock = use_lock and lock_id not in _HELD_LOCKS.get()
+        log = _DecodeLog()
         if fresh_for is None:
-            cached = await self._lookup(key, type_)
+            cached = await self._lookup(key, type_, log)
         else:
             cached = await self._lookup_or_refresh(
                 key,
@@ -1176,6 +1208,7 @@ class CacheManager:
                 type_,
                 lock_ttl=effective_lock_ttl if use_lock else None,
                 watched=watched,
+                log=log,
             )
         if cached is not _SENTINEL:
             return cached
@@ -1190,7 +1223,7 @@ class CacheManager:
         )
         if await lock_instance.acquire(blocking=False):
             return await self._execute_as_winner(
-                key, factory, ttl, lock_instance, type_
+                key, factory, ttl, lock_instance, type_=type_, log=log
             )
 
         return await self._poll_for_value(
@@ -1201,6 +1234,7 @@ class CacheManager:
             validated_wait_timeout,
             raise_on_timeout=raise_on_timeout,
             type_=type_,
+            log=log,
         )
 
     @_reports_backend_errors
