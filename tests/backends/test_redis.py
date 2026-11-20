@@ -1872,11 +1872,11 @@ def test_redis_config_retries_sets_the_retry_policy(retries: int | None) -> None
 
     backend = AsyncRedisCacheBackend.load_from_config(RedisConfig(retries=retries))
     policy = backend.client.get_retry()
-    assert policy is not None
     if retries is None:
-        # redis-py's own policy, with backoff.
-        assert not isinstance(policy._backoff, NoBackoff)
+        # redis-py's own policy: with backoff, or none before redis-py 6.
+        assert policy is None or not isinstance(policy._backoff, NoBackoff)
     else:
+        assert policy is not None
         assert policy._retries == retries
         assert isinstance(policy._backoff, NoBackoff)
 
