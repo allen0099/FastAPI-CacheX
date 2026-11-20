@@ -142,7 +142,8 @@ class BackendProxy(ProxyBase[BaseCacheBackend]):
 
     _not_set_error = BackendNotFoundError
     _instance_type = BaseCacheBackend
-    _required_methods = ("get", "set", "delete")
+    # clear_path: abstract on every backend, absent on a CacheManager.
+    _required_methods = ("get", "set", "delete", "clear_path")
     _not_set_hint = (
         ": call BackendProxy.set(MemoryBackend()) (or a Redis or Memcached "
         "backend) at startup, or pass backend= where you build it"
