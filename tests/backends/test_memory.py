@@ -1183,6 +1183,32 @@ async def test_with_only_held_locks_the_new_entry_is_kept() -> None:
     assert list(backend.cache) == ["lock:a", "lock:b", "y"]
 
 
+async def test_once_held_locks_expire_one_store_returns_to_the_limit(
+    clock: Clock,
+) -> None:
+    backend = MemoryBackend(max_entries=2)
+    for n in range(5):
+        await backend.set_if_absent(f"lock:{n}", _entry(str(n)), ttl=1)
+    await backend.set("a", _entry("a"))
+    assert len(backend.cache) == 6
+    clock.advance(2)
+
+    await backend.set("b", _entry("b"))
+
+    assert list(backend.cache) == ["a", "b"]
+
+
+async def test_a_lock_under_another_prefix_is_evicted() -> None:
+    backend = MemoryBackend(max_entries=2)
+    held = CacheLock("job", ttl=60, backend=backend, key_prefix="mutex:")
+    assert await held.acquire(blocking=False)
+    await backend.set("a", _entry("a"))
+    await backend.set("b", _entry("b"))
+
+    assert "mutex:job" not in backend.cache
+    assert not await held.release()
+
+
 async def test_replacing_a_key_does_not_evict() -> None:
     backend = MemoryBackend(max_entries=2)
     await backend.set("a", _entry("a"))

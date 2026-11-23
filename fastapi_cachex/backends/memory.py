@@ -13,6 +13,7 @@ from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Mapping
 from datetime import timedelta
+from itertools import islice
 
 from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.cache_key import CacheKey
@@ -134,10 +135,11 @@ class MemoryBackend(BaseCacheBackend):
 
     Without ``max_entries`` the cache grows until entries expire, by request
     rate times TTL times body size, and a client choosing query strings can
-    grow it on purpose. With ``max_entries`` the cache holds at most that
-    many entries: storing one more evicts the least recently used entry,
-    expired or not. A read hit or any write counts as a use. A ``CacheLock``
-    held under the default ``lock:`` prefix is never evicted.
+    grow it on purpose. With ``max_entries``, storing one more entry evicts
+    the least recently used one, expired or not. A read hit or any write
+    counts as a use. A live key under ``lock:`` (where ``CacheLock`` keeps a
+    held lock by default) is never evicted, so held locks can keep the cache
+    over the limit until they are released or expire.
     """
 
     def __init__(
@@ -147,9 +149,9 @@ class MemoryBackend(BaseCacheBackend):
 
         Args:
             cleanup_interval: Interval in seconds between cleanup runs (default: 60)
-            max_entries: How many entries the cache holds at most (default:
-                no limit). When full, the least recently used entry is
-                evicted to make room.
+            max_entries: How many entries the cache holds (default: no
+                limit). When full, the least recently used entry is evicted
+                to make room; live ``lock:`` keys are not evicted.
 
         Raises:
             TypeError: If ``max_entries`` is not an ``int`` or ``None``
@@ -179,33 +181,28 @@ class MemoryBackend(BaseCacheBackend):
     def _store(self, key: str, item: CacheItem) -> None:
         """Put ``item`` under ``key`` as the most recently used entry.
 
-        Evicts the least recently used entry when that leaves the cache over
-        ``max_entries``.
+        Evicts the least recently used entries that leave the cache over
+        ``max_entries``, except live ``lock:`` keys and ``key`` itself.
         """
         self.cache[key] = item
         self.cache.move_to_end(key)
-        if self.max_entries is not None and len(self.cache) > self.max_entries:
-            # A held lock is not a cached value: evicting it would let a second
-            # holder in while the first still works (#634). With only held
-            # locks besides ``key``, the cache stays over the limit until one
-            # is released or expires.
-            now = time.time()
-            evicted = next(
-                (
-                    k
-                    for k, v in self.cache.items()
-                    if k != key
-                    and not (k.startswith(LOCK_KEY_PREFIX) and _is_live(v, now))
-                ),
-                None,
+        if self.max_entries is None or len(self.cache) <= self.max_entries:
+            return
+        # A held lock is not a cached value: evicting it would let a second
+        # holder in while the first still works (#634). Held locks can keep
+        # the cache over the limit, so this evicts every entry over it once
+        # they are released or expire, not only one.
+        now = time.time()
+        evictable = (
+            k
+            for k, v in self.cache.items()
+            if k != key and not (k.startswith(LOCK_KEY_PREFIX) and _is_live(v, now))
+        )
+        for evicted in list(islice(evictable, len(self.cache) - self.max_entries)):
+            del self.cache[evicted]
+            logger.debug(
+                "Memory cache EVICT; key=%s max_entries=%s", evicted, self.max_entries
             )
-            if evicted is not None:
-                del self.cache[evicted]
-                logger.debug(
-                    "Memory cache EVICT; key=%s max_entries=%s",
-                    evicted,
-                    self.max_entries,
-                )
 
     def _ensure_cleanup_started(self) -> None:
         """Ensure a cleanup task runs on the current event loop.
@@ -341,7 +338,7 @@ class MemoryBackend(BaseCacheBackend):
         """Store every entry in ``entries`` in one step (see base class).
 
         With ``max_entries``, a batch larger than the limit keeps only its
-        last ``max_entries`` entries.
+        last ``max_entries`` entries (fewer while locks are held).
         """
         ttl = validate_ttl(ttl)
         self._ensure_cleanup_started()

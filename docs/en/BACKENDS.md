@@ -98,8 +98,12 @@ memory grows with request rate × `ttl` × body size, per worker, and a client c
 grow it on purpose by varying the query string of a cached route.
 `MemoryBackend(max_entries=10_000)` caps the number of entries: storing one more
 evicts the least recently used entry, expired or not (a read hit and every
-write count as a use). A held `CacheLock` under the default `lock:` prefix is
-not evicted (see [Distributed lock](LOCK.md)). Size the limit from the entries
+write count as a use). A live key under `lock:`, where a held `CacheLock`
+lives by default, is not evicted (see [Distributed lock](LOCK.md)), so held
+locks can keep the cache over the limit until they are released or expire.
+Keep client input out of key names that could start with `lock:` (a custom
+`key_builder`, `CacheManager(key_prefix="")`), or a client can store entries
+that are never evicted while they live. Size the limit from the entries
 you expect times the workers you run, since each worker has its own cache; the
 limit counts entries, not bytes.
 
@@ -651,7 +655,7 @@ found = await backend.get_many(["a", "b", "c"])  # {"a": entry_a, "b": entry_b}
   backend:
     - **Memory**: atomic. The whole batch is stored in one step, with no `await` in between.
       With `max_entries`, a batch larger than the limit keeps its last
-      `max_entries` entries.
+      `max_entries` entries (fewer while locks are held).
     - **Redis**: atomic. One `SET` per entry inside a single `MULTI`/`EXEC`
       (`MSET` takes no expiry), sent in one round trip. A concurrent reader
       sees the batch entirely or not at all, and a batch the server refuses,
