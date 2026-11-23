@@ -2,12 +2,14 @@
 
 ``@cached`` builds a model argument's key with the model's own serializer,
 skipping the search for a secret, when its core schema can hold no value but
-plain data (`_plain_model`). That rests on pydantic raising, under
-``warnings="error"``, for a value that does not fit its declared type (one
-put in by ``model_construct()``, assignment or a validator). The behaviour
-differs between pydantic versions, so `_verified_types` tries it on the
-installed one, once, and leaves out each schema type that writes a misfit
-secret without an error.
+plain data (`_plain_model`). That rests on pydantic, under
+``warnings="error"``, never writing a secret held where the declared type
+does not allow one (put in by ``model_construct()``, assignment or a
+validator): it raises, or writes nothing of it (a model field writes only
+its declared fields, so a secret there becomes ``{}``, as on the search
+path). The behaviour differs between pydantic versions, so
+`_verified_types` tries it on the installed one, once, and leaves out each
+schema type that writes a misfit secret's mask without an error.
 """
 
 import enum
@@ -155,45 +157,38 @@ def _plain_model(kind: type[BaseModel]) -> bool:
     ):
         return False
     cached, plain = _built_model_is_plain(kind, id(schema))
+    # Not the same object only if a rebuild ran between the two reads.
     return plain and cached is schema
 
 
 _MIXINS = {"enum:str": str, "enum:int": int, "enum:float": float}
 
 
-def _uuid(cls: type[Any]) -> Any:
-    value = object.__new__(cls)
-    uuid.UUID.__init__(value, int=5)
-    return value
-
-
 # A secret that is also an instance of the type's own class passes its
-# isinstance check; some serializers then write its `str()`, the mask.
-_HYBRIDS: dict[str, Callable[[type[Any]], Any]] = {
-    "str": lambda cls: str.__new__(cls, "p"),
-    "int": lambda cls: int.__new__(cls, 3),
-    "float": lambda cls: float.__new__(cls, 1.5),
-    "complex": lambda cls: complex.__new__(cls, 1),
-    "bytes": lambda cls: bytes.__new__(cls, b"p"),
-    "decimal": lambda cls: Decimal.__new__(cls, "1.5"),
-    "date": lambda cls: date.__new__(cls, 2020, 1, 1),
-    "datetime": lambda cls: datetime.__new__(cls, 2020, 1, 1),
-    "time": lambda cls: time.__new__(cls, 1),
-    "timedelta": lambda cls: timedelta.__new__(cls, 1),
-    "uuid": _uuid,
+# isinstance check; some serializers then write its `str()`, the mask. Each
+# entry gives the class and the arguments to make an instance.
+_HYBRIDS: dict[str, tuple[type[Any], tuple[Any, ...]]] = {
+    "str": (str, ("p",)),
+    "int": (int, (3,)),
+    "float": (float, (1.5,)),
+    "complex": (complex, (1,)),
+    "bytes": (bytes, (b"p",)),
+    "decimal": (Decimal, ("1.5",)),
+    "date": (date, (2020, 1, 1)),
+    "datetime": (datetime, (2020, 1, 1)),
+    "time": (time, (1,)),
+    "timedelta": (timedelta, (1,)),
+    "uuid": (uuid.UUID, ()),  # set up by __init__ below
 }
-_BASES = {
-    "str": str, "int": int, "float": float, "complex": complex, "bytes": bytes,
-    "decimal": Decimal, "date": date, "datetime": datetime, "time": time,
-    "timedelta": timedelta, "uuid": uuid.UUID,
-}  # fmt: skip
 
 
 def _hybrid(kind: str) -> Any:
     """A ``SecretStr`` that is also an instance of a plain type, or None."""
+    base, args = _HYBRIDS[kind]
     try:
-        cls = type("Probe", (SecretStr, _BASES[kind]), {})
-        value = _HYBRIDS[kind](cls)
+        value = base.__new__(type("Probe", (SecretStr, base), {}), *args)
+        if base is uuid.UUID:
+            uuid.UUID.__init__(value, int=5)
         object.__setattr__(value, "_secret_value", "probe")
     except Exception:  # noqa: BLE001 - the two cannot be combined
         return None
@@ -216,6 +211,7 @@ def _own(cls: type[Any]) -> Callable[[], Any]:
 
 
 def _leaf_probes() -> _Probes:
+    """Leaf types and mixin enums, given a secret, or a secret of their class."""
     found: _Probes = {
         kind: [(_core({"type": kind}), _SECRET)]
         for kind, keys in _CHILD_KEYS.items()
@@ -309,7 +305,6 @@ def _container_probes() -> _Probes:
         {
             "tuple": [
                 (_core(tuple_), (secret,)),
-                (_core(tuple_), (1, secret)),
                 (_core(cs.tuple_schema([_INT], variadic_item_index=0)), (1, secret)),
                 (_core(tuple_), secret),
             ],
