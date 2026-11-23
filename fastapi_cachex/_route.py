@@ -416,14 +416,19 @@ class _Call:
         1.0, a custom middleware's dict) counts as written whenever it is
         not empty: Starlette before 1.0 sends the cookie for every such
         response, and the copy below is taken after the dependencies, so it
-        cannot tell what they wrote. The comparison still catches what the
-        flag misses, such as a nested value changed in place. A session
-        that could not be copied counts as written too. A written session
-        is sent ``private`` and not stored.
+        cannot tell what they wrote. The comparison against that copy is
+        kept for an empty session without the flag, and as extra caution
+        with it. A session that could not be copied counts as written too.
+        A written session is sent ``private`` and not stored, and a stored
+        answer served to it is sent ``private`` as well.
         """
         session = self.request.scope.get("session")
         modified = getattr(session, "modified", None)
-        if modified is True or (modified is None and session):
+        # Only an explicit False is trusted; a flag of another kind is not.
+        if modified is None:
+            if session:
+                return True
+        elif modified is not False:
             return True
         if self.session_before is _UNCOPIED_SESSION:
             return True
@@ -1201,6 +1206,9 @@ class _Route:
     ) -> Response:
         """Serve the stored entry: a 304 for its ETag, or the entry itself."""
         call.outcome = outcome
+        # A dependency may have written this caller's session: the middleware
+        # then adds its `Set-Cookie` to the stored answer too (#653).
+        cache_control = self._sent(call, cache_control)
         if _etag_matches(call.client_etag, entry.fingerprint):
             logger.debug("304 Not Modified (cached ETag match); key=%s", cache_key)
             # Answered from the stored entry, so the 304 says how old
