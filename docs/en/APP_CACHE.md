@@ -82,6 +82,7 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
   argument raised. A set is sorted, so its key is the same in every process,
   except a set inside a dataclass or a model. A call with an argument neither
   can encode, or with an iterator or a generator (hashing it would use it up),
+  or a model that holds one (an `Iterable` field, say; #673),
   raises `CacheXError`, and so does one holding a pydantic secret (`SecretStr`,
   `SecretBytes`, `Secret[...]`) at any depth, dict keys included, even one a
   field serializer writes out in JSON: pydantic writes a secret as `"**********"`, so calls that
@@ -89,8 +90,7 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
   another's result (#654). A model's or dataclass's fields with
   `exclude=True`, its private attributes, and the extra fields of a subclass
   passed in a field typed as its parent are not in the key either, so calls
-  that differ only in them share an entry: name such arguments in `key=`. A
-  secret inside an `Iterable` field is not caught either (#670). A tuple and a list with the same items, `{1: "a"}` and
+  that differ only in them share an entry: name such arguments in `key=`. A tuple and a list with the same items, `{1: "a"}` and
   `{"1": "a"}`, or a `StrEnum` member and its string, share a key.
   `key="user:{user_id}"` is a `str.format` template over the arguments by
   name (a plain string is a fixed key; a field the arguments lack raises

@@ -957,6 +957,46 @@ async def test_an_iterator_argument_is_refused_and_not_used_up(
     assert list(items) == [1, 2]
 
 
+class _Stream(BaseModel):
+    values: typing.Iterable[object]
+
+
+class _Batch(BaseModel):
+    stream: _Stream
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        pytest.param(lambda stream: stream, id="model"),
+        pytest.param(lambda stream: _Batch(stream=stream), id="nested-model"),
+        pytest.param(lambda stream: collections.deque([stream]), id="in-a-deque"),
+    ],
+)
+@pytest.mark.parametrize(
+    "items", [[1, 2], [SecretStr("a"), SecretStr("b")]], ids=["plain", "secrets"]
+)
+async def test_a_model_holding_an_iterator_is_refused_and_not_used_up(
+    manager: CacheManager,
+    wrap: Callable[[_Stream], object],
+    items: list[object],
+) -> None:
+    """Building its key read the iterable all, and the function then ran on
+    nothing; a secret in it was keyed as its mask (#673)."""
+    calls: list[object] = []
+
+    @cached(ttl=60, manager=manager)
+    async def total(argument: object) -> int:
+        calls.append(argument)
+        return 0
+
+    stream = _Stream(values=items)
+    with pytest.raises(CacheXError, match="iterator"):
+        await total(wrap(stream))
+    assert calls == []
+    assert list(stream.values) == items
+
+
 def test_nested_set_keys_are_the_same_in_every_process() -> None:
     script = (
         "from fastapi_cachex import cached\n"

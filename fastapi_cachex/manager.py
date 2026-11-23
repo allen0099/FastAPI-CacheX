@@ -237,14 +237,22 @@ def _push_inner(stack: list[Any], items: Iterable[Any]) -> None:
 
 
 def _holds_a_secret(value: Any) -> bool:
-    """Whether a value has a secret pydantic would write as its mask.
+    """Whether a value has a secret pydantic would write as its mask."""
+    return _find_unkeyable(value, iterators=False) is not None
 
+
+def _find_unkeyable(value: Any, *, iterators: bool) -> str | None:
+    """What in a value would make a bad key: ``"secret"``, ``"iterator"`` or None.
+
+    ``"secret"`` for a secret pydantic would write as its mask, and
+    ``"iterator"`` for an iterator, looked for only if ``iterators`` is set.
     At any depth, dict keys included; a model or dataclass is looked through
     in its dumped form, so a field it leaves out does not count and one its
-    serializer writes out does. Walked with a stack rather than by recursion,
-    skipping plain values by their exact type: ``@cached`` runs it on every
-    call whose arguments ``_model_json`` cannot vouch for (#668). Each
-    container is looked at once, so a cycle ends the walk.
+    serializer writes out does. The dump of an ``Iterable`` field is a lazy
+    iterator: it is reported, not iterated (#673). Walked with a stack rather
+    than by recursion, skipping plain values by their exact type: ``@cached``
+    runs it on every call whose arguments ``_model_json`` cannot vouch for
+    (#668). Each container is looked at once, so a cycle ends the walk.
     """
     stack = [value]
     # Holds what it has seen, not just the ids: a dumped model is a new dict,
@@ -255,7 +263,9 @@ def _holds_a_secret(value: Any) -> bool:
         if type(item) in _LEAVES:
             continue
         if isinstance(item, _SECRETS):
-            return True
+            return "secret"
+        if iterators and isinstance(item, Iterator):
+            return "iterator"
         if id(item) in seen:
             continue
         seen[id(item)] = item
@@ -270,7 +280,7 @@ def _holds_a_secret(value: Any) -> bool:
             dataclasses.is_dataclass(item) and not isinstance(item, type)
         ):
             stack.append(_python_dump(item))
-    return False
+    return None
 
 
 def _jsonable(value: Any) -> Any:

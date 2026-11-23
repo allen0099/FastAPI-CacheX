@@ -20,6 +20,10 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+One fix changes behaviour on upgrade: `@cached` raises `CacheXError` for an
+argument whose model holds an iterator, such as an `Iterable` field (pass
+`key=`). Such calls already ran the function on an empty iterable.
+
 ## [0.7.3] - 2026-11-23
 
 This release fixes the security issues listed below. Some of the fixes change
