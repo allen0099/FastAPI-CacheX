@@ -7,6 +7,7 @@ every primitive that writes or compares an entry.
 import json as std_json
 import os
 import types
+import zlib
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from typing import Any
@@ -90,6 +91,14 @@ def test_a_document_over_the_bound_is_neither_compressed_nor_inflated(
     monkeypatch.setattr(codec, "_MAX_COMPRESSED_DOCUMENT", len(plain))
     assert codec.decode_entry(encoded) == BIG
     assert codec.encode_entry(BIG, 1) == encoded
+
+
+def test_a_compressed_value_that_inflates_past_16_mib_is_a_miss() -> None:
+    """A small stored value must not cost 256 MiB to read (#636)."""
+    bomb = codec.COMPRESSED_PREFIX + zlib.compress(b" " * (16 * 1024 * 1024 + 1), 9)
+    assert len(bomb) < 32 * 1024
+
+    assert codec.decode_entry(bomb) is None
 
 
 def test_a_counter_is_never_compressed() -> None:
