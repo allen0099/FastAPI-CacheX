@@ -499,7 +499,10 @@ def cache(
                 ),
                 background=background,
                 session_before=_session_snapshot(request),
-                session_unchanged=await _starsessions_unchanged(request),
+                session_unchanged=(
+                    route.may_store_for_a_session
+                    and await _starsessions_unchanged(request)
+                ),
             )
             started = time.perf_counter()
             try:

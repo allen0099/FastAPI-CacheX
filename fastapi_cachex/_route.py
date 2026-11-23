@@ -386,6 +386,23 @@ def _without_metadata(session: Any) -> Any:
     return session
 
 
+def _same_session(one: Any, other: Any) -> bool:
+    """Whether two sessions are equal.
+
+    A value whose comparison raises (a numpy array, say) counts as a
+    difference: the request must not fail for it.
+    """
+    try:
+        return bool(one == other)
+    except Exception:  # noqa: BLE001 - whatever a session value's `==` raises
+        return False
+
+
+def _same_starsession(one: Any, other: Any) -> bool:
+    """``_same_session`` for starsessions, apart from its ``__metadata__``."""
+    return _same_session(_without_metadata(one), _without_metadata(other))
+
+
 async def _starsessions_unchanged(request: Request) -> bool:
     """Whether a starsessions session is still as its store holds it (#681).
 
@@ -406,7 +423,7 @@ async def _starsessions_unchanged(request: Request) -> bool:
         )
     except Exception:  # noqa: BLE001 - a store or serializer error
         return False
-    return bool(_without_metadata(stored) == _without_metadata(_session(request)))
+    return _same_starsession(stored, _session(request))
 
 
 def _request_credentials(
@@ -524,7 +541,7 @@ class _Call:
             return True
         if self.session_before is _UNCOPIED_SESSION:
             return True
-        return bool(session != self.session_before)
+        return not _same_session(session, self.session_before)
 
     @property
     def session_changed(self) -> bool:
@@ -542,8 +559,7 @@ class _Call:
         return not (
             self.session_unchanged
             and self.session_before is not _UNCOPIED_SESSION
-            and _without_metadata(_session(self.request))
-            == _without_metadata(self.session_before)
+            and _same_starsession(_session(self.request), self.session_before)
             and _starsessions_kept_id(self.request)
         )
 
@@ -654,6 +670,20 @@ class _Route:
         since ``max-age=0`` allows no reuse either.
         """
         return self.private or not self.ttl
+
+    @property
+    def may_store_for_a_session(self) -> bool:
+        """Whether a response to a request with session data may be stored.
+
+        Only a route that reads the backend for such requests: ``public``, or
+        ``cache_authorized`` (whose key must then tell callers apart). Others
+        need not check a starsessions session against its store (#681).
+        """
+        return (
+            not self.skips_backend
+            and not self.no_store
+            and (self.public or self.cache_authorized)
+        )
 
     @property
     def stored_ttl(self) -> int | None:
