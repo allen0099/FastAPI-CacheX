@@ -232,7 +232,9 @@ def _holds_a_secret(value: Any) -> bool:
     container is looked at once, so a cycle ends the walk.
     """
     stack = [value]
-    seen: set[int] = set()
+    # Holds what it has seen, not just the ids: a dumped model is a new dict,
+    # and once freed another could reuse its id and be skipped.
+    seen: dict[int, Any] = {}
     while stack:
         item = stack.pop()
         if type(item) in _LEAVES:
@@ -241,7 +243,7 @@ def _holds_a_secret(value: Any) -> bool:
             return True
         if id(item) in seen:
             continue
-        seen.add(id(item))
+        seen[id(item)] = item
         if isinstance(item, Enum):  # an enum of enums included
             stack.append(item.value)
         elif isinstance(item, dict):
