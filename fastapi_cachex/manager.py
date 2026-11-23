@@ -264,7 +264,7 @@ def _find_unkeyable(value: Any, *, iterators: bool) -> str | None:
             continue
         if isinstance(item, _SECRETS):
             return "secret"
-        if iterators and isinstance(item, Iterator):
+        if iterators and _iterator_in(item):
             return "iterator"
         if id(item) in seen:
             continue
@@ -281,6 +281,44 @@ def _find_unkeyable(value: Any, *, iterators: bool) -> str | None:
         ):
             stack.append(_python_dump(item))
     return None
+
+
+def _iterator_in(item: Any) -> bool:
+    """Whether an item is an iterator, or a model or dataclass holding one.
+
+    Only the fields it writes out count. They are looked at before the dump,
+    which a field serializer or a computed field reading the iterator would
+    use up.
+    """
+    if isinstance(item, Iterator):
+        return True
+    return (
+        isinstance(item, BaseModel)
+        or (dataclasses.is_dataclass(item) and not isinstance(item, type))
+    ) and any(isinstance(field, Iterator) for field in _written_fields(item))
+
+
+@functools.lru_cache(maxsize=256)
+def _excluded_fields(kind: Any) -> frozenset[str]:
+    """The names of a model's or pydantic dataclass's ``exclude=True`` fields."""
+    declared = getattr(kind, "__pydantic_fields__", None)
+    if declared is None:  # a model on pydantic before 2.10
+        declared = getattr(kind, "model_fields", {})
+    return frozenset(name for name, info in declared.items() if info.exclude)
+
+
+def _written_fields(value: Any) -> list[Any]:
+    """A model's or dataclass's own field values, except ``exclude=True`` ones."""
+    excluded = _excluded_fields(value.__class__)
+    if isinstance(value, BaseModel):
+        extra = value.__pydantic_extra__
+        values = [item for name, item in vars(value).items() if name not in excluded]
+        return [*values, *extra.values()] if extra else values
+    return [
+        getattr(value, field.name, None)
+        for field in dataclasses.fields(value)
+        if field.name not in excluded
+    ]
 
 
 def _jsonable(value: Any) -> Any:
