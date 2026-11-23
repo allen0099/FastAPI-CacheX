@@ -88,6 +88,9 @@ def warn_if_path_shaped(pattern: str, cleared: int) -> None:
 # The largest TTL accepted anywhere: 2**31 - 1 seconds, about 68 years.
 MAX_TTL = 2**31 - 1
 
+# CacheLock's default key prefix, which MemoryBackend keeps out of LRU eviction.
+LOCK_KEY_PREFIX = "lock:"
+
 
 @overload
 def validate_ttl(ttl: None) -> None: ...

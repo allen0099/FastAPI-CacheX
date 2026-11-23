@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from fastapi_cachex import BackendProxy
+from fastapi_cachex import CacheLock
 from fastapi_cachex.backends.memory import MemoryBackend
 from fastapi_cachex.exceptions import CacheXError
 from fastapi_cachex.types import COUNTER_FINGERPRINT
@@ -1145,6 +1146,41 @@ async def test_an_expired_entry_is_evicted_like_any_other(clock: Clock) -> None:
     await backend.set("c", _entry("c"))
 
     assert list(backend.cache) == ["b", "c"]
+
+
+async def test_a_held_lock_is_not_evicted() -> None:
+    """Distinct query strings could evict a held lock and let a second in (#634)."""
+    backend = MemoryBackend(max_entries=3)
+    held = CacheLock("job", ttl=60, backend=backend)
+    assert await held.acquire(blocking=False)
+    for n in range(10):
+        await backend.set(f"http:/items?q={n}", _entry(str(n)))
+
+    assert "lock:job" in backend.cache
+    assert len(backend.cache) == 3
+    assert not await CacheLock("job", ttl=60, backend=backend).acquire(blocking=False)
+    assert await held.release()
+
+
+async def test_an_expired_lock_is_evicted_like_any_other(clock: Clock) -> None:
+    backend = MemoryBackend(max_entries=2)
+    await backend.set_if_absent("lock:job", _entry("token"), ttl=1)
+    await backend.set("a", _entry("a"))
+    clock.advance(2)
+    await backend.set("b", _entry("b"))
+
+    assert list(backend.cache) == ["a", "b"]
+
+
+async def test_with_only_held_locks_the_new_entry_is_kept() -> None:
+    """The cache goes over the limit until a lock is released or expires."""
+    backend = MemoryBackend(max_entries=2)
+    await backend.set_if_absent("lock:a", _entry("a"), ttl=60)
+    await backend.set_if_absent("lock:b", _entry("b"), ttl=60)
+    await backend.set("x", _entry("x"))
+    await backend.set("y", _entry("y"))
+
+    assert list(backend.cache) == ["lock:a", "lock:b", "y"]
 
 
 async def test_replacing_a_key_does_not_evict() -> None:

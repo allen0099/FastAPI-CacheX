@@ -21,6 +21,7 @@ from fastapi_cachex.types import CacheItem
 from fastapi_cachex.types import counter_entry
 from fastapi_cachex.types import counter_value
 
+from .base import LOCK_KEY_PREFIX
 from .base import BaseCacheBackend
 from .base import check_counter_range
 from .base import require_ttl
@@ -135,7 +136,8 @@ class MemoryBackend(BaseCacheBackend):
     rate times TTL times body size, and a client choosing query strings can
     grow it on purpose. With ``max_entries`` the cache holds at most that
     many entries: storing one more evicts the least recently used entry,
-    expired or not. A read hit or any write counts as a use.
+    expired or not. A read hit or any write counts as a use. A ``CacheLock``
+    held under the default ``lock:`` prefix is never evicted.
     """
 
     def __init__(
@@ -183,10 +185,27 @@ class MemoryBackend(BaseCacheBackend):
         self.cache[key] = item
         self.cache.move_to_end(key)
         if self.max_entries is not None and len(self.cache) > self.max_entries:
-            evicted, _ = self.cache.popitem(last=False)
-            logger.debug(
-                "Memory cache EVICT; key=%s max_entries=%s", evicted, self.max_entries
+            # A held lock is not a cached value: evicting it would let a second
+            # holder in while the first still works (#634). With only held
+            # locks besides ``key``, the cache stays over the limit until one
+            # is released or expires.
+            now = time.time()
+            evicted = next(
+                (
+                    k
+                    for k, v in self.cache.items()
+                    if k != key
+                    and not (k.startswith(LOCK_KEY_PREFIX) and _is_live(v, now))
+                ),
+                None,
             )
+            if evicted is not None:
+                del self.cache[evicted]
+                logger.debug(
+                    "Memory cache EVICT; key=%s max_entries=%s",
+                    evicted,
+                    self.max_entries,
+                )
 
     def _ensure_cleanup_started(self) -> None:
         """Ensure a cleanup task runs on the current event loop.
