@@ -7,6 +7,7 @@ FastAPI-CacheX 應用程式承接真實流量之前要確認的事項。每一�
 - [ ] **在啟動時設定後端。** 沒有設定時，`@cache` 會退回每個行程各自的 `MemoryBackend`，並記錄一則 `WARNING`：多個 worker 時每個 worker 有自己的快取，失效操作只會到達其中一個。超過一個行程時請使用 Redis 或 Memcached（[選擇後端](BACKENDS.md#choosing-a-backend)）。
 - [ ] **為每個服務與環境設定自己的 `key_prefix`。** 使用預設值時，同一台伺服器上的兩個應用程式會讀到彼此的值、共用鎖名稱與 tag，其中一個的 `clear()` 也會清掉另一個的項目（[選擇後端](BACKENDS.md#choosing-a-backend)）。
 - [ ] **讓後端快速失敗。** 預設情況下，Redis 停止運作時一個請求要好幾秒才會放棄。請設定較短的逾時，並在後端設定 `retry=Retry(NoBackoff(), 0)`（`RedisConfig` 則為 `retries=0`）（[Redis 停止運作時快速失敗](BACKENDS.md#failing-fast-when-redis-is-down)）；Memcached 則設定 `connect_timeout` 與 `timeout`（[Memcached](BACKENDS.md#memcached)）。
+- [ ] **設定 Redis 連線池大小。** redis-py 8 每個客戶端最多允許 100 條連線，超過時指令會立刻失敗，`@cache` 會把它當成 Redis 停止運作。請使用依一個 worker 同時處理的請求數設定大小的 `BlockingConnectionPool`（[連線池大小](BACKENDS.md#redis-pool-size)）。
 - [ ] **在關閉時關閉後端**，寫在應用程式的 lifespan 中（[關閉後端](BACKENDS.md#closing-a-backend)）。
 
 ## 誰會看到什麼 {#who-sees-what}

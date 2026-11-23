@@ -1066,6 +1066,7 @@ request it is given selects.
 > options above.
 
 ```python
+from fastapi import HTTPException
 from fastapi import Request
 
 from fastapi_cachex import build_cache_key
@@ -1084,9 +1085,13 @@ def per_user_key(request: Request) -> str:
     # `request.state.user_id` is populated by your authentication layer after
     # it has verified the caller — never read the identity straight off an
     # unverified request header (see the note below).
-    user_id = getattr(request.state, "user_id", "anonymous")
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None:
+        # Fail closed: a fallback such as "anonymous" would give every caller
+        # without an ID one shared entry, and one user's dashboard to the next.
+        raise HTTPException(status_code=401)
     # The default key plus the user ID, escaped like the host and path.
-    return build_cache_key(request, user_id)
+    return build_cache_key(request, str(user_id))
 
 
 @app.get("/me/dashboard")
@@ -1119,6 +1124,14 @@ header goes out unchanged: set `private=True` (option 1), or send
 >
 > A key built from a raw request header is a horizontal privilege escalation:
 > sending `X-User-Id: <someone-else>` returns that user's cached response.
+
+> [!WARNING]
+> Put an ID in the key, not the credential itself. A bearer token, an API key
+> or a session ID passed to `build_cache_key` is stored in the key as it is,
+> and the key is visible to anyone who can list the backend's keys, the
+> [monitoring routes](#monitoring-routes) included, and in `DEBUG` logs. Use the
+> user or tenant ID the credential resolves to, or a keyed digest of it
+> (`hmac.new(secret, token.encode(), "sha256").hexdigest()`).
 
 The key builder runs only when `@cache` reads or writes the backend, so it is not
 called for `no_store=True`, `private=True`, routes without a `ttl`, or

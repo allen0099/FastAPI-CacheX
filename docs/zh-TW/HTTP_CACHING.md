@@ -543,6 +543,7 @@ warnings.filterwarnings("ignore", message="cache vary on Cookie")
 > `@cache` 能辨識的憑證列在[帶有憑證的請求](#requests-with-credentials)。它看不到的憑證，例如你的中介軟體不透過 `Cookie()` 參數或 `APIKeyCookie`、直接從 `request.cookies` 讀取的權杖 Cookie，或以 `Header()` 而不是 `APIKeyHeader` 讀取的權杖標頭，不會觸發繞過：只加上 `@cache` 會把第一位呼叫者的回應提供給所有人，請改用上面兩種做法之一。
 
 ```python
+from fastapi import HTTPException
 from fastapi import Request
 
 from fastapi_cachex import build_cache_key
@@ -560,9 +561,13 @@ async def my_profile(user: CurrentUser):
 def per_user_key(request: Request) -> str:
     # `request.state.user_id` 由你的驗證層在確認呼叫者身分後填入；
     # 絕對不要直接從未經驗證的請求標頭讀取身分（見下方說明）。
-    user_id = getattr(request.state, "user_id", "anonymous")
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None:
+        # 拒絕請求：若改用 "anonymous" 之類的預設值，所有沒有 ID 的呼叫者
+        # 會共用同一個項目，一位使用者的儀表板就會交給下一位。
+        raise HTTPException(status_code=401)
     # 預設的鍵再加上使用者 ID，並與 host、路徑一樣經過編碼。
-    return build_cache_key(request, user_id)
+    return build_cache_key(request, str(user_id))
 
 
 @app.get("/me/dashboard")
@@ -585,6 +590,9 @@ async def my_dashboard(user: CurrentUser):
 > ```
 >
 > 以原始請求標頭組成的鍵等同於水平權限提升：送出 `X-User-Id: <someone-else>` 就會拿到該使用者的快取回應。
+
+> [!WARNING]
+> 放進鍵的應該是 ID，而不是憑證本身。傳給 `build_cache_key` 的 Bearer 權杖、API 金鑰或 Session ID 會原樣存在鍵裡，任何能列出後端鍵的人（包括[監控路由](#monitoring-routes)）都看得到，`DEBUG` 日誌裡也會出現。請改用憑證所對應的使用者或租戶 ID，或它的帶金鑰摘要（`hmac.new(secret, token.encode(), "sha256").hexdigest()`）。
 
 key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True`、沒有 `ttl` 的路由，以及繞過後端的[帶有憑證的請求](#requests-with-credentials)，都不會呼叫它。0.3.8 之前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
 

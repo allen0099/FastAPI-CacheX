@@ -308,6 +308,38 @@ With `RedisConfig`, `retries=0` (or `retries=1`) gives the same retry policy:
 `Retry(NoBackoff(), retries)`. A policy with backoff is passed to the
 constructor as `retry=`.
 
+### Connection pool size {#redis-pool-size}
+
+redis-py 8 caps a client's connection pool at 100 connections by default
+(redis-py 7 has no cap), and a command that finds every connection in use
+fails at once with "Too many connections" instead of waiting. `@cache` treats
+that like a Redis outage: the request is served uncached (`X-Cache-Reason:
+read-failed`), and `CacheManager` and `CacheLock` raise
+[`BackendUnavailableError`](#backend-unavailable). A worker that serves more
+than 100 requests at once can hit it with Redis perfectly healthy. Give the
+backend a `BlockingConnectionPool`, which waits a bounded time for a free
+connection, sized for the requests one worker serves at once:
+
+```python
+from redis.asyncio import BlockingConnectionPool
+
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+pool = BlockingConnectionPool(
+    host="redis",
+    max_connections=200,  # per worker process
+    timeout=0.5,  # seconds to wait for a free connection
+    socket_timeout=1.0,
+    socket_connect_timeout=1.0,
+)
+backend = AsyncRedisCacheBackend(connection_pool=pool)
+```
+
+As with Sentinel, the backend's own `host`, `port`, `password`, `db` and
+timeouts are then not used, and the pool is yours to close (see
+[Closing a backend](#closing-a-backend)). Redis's `maxclients` (10000 by
+default) must cover `max_connections` times the number of workers.
+
 ## Memcached
 
 Install the extra with `uv add "fastapi-cachex[memcached]"`. Before 0.3.8 it was
