@@ -396,6 +396,27 @@ def test_a_handler_error_message_cannot_forge_a_log_line(
     assert "path='/item'" in caplog.text
 
 
+class _UnprintableError(RuntimeError):
+    def __str__(self) -> str:
+        msg = "no text"
+        raise ValueError(msg)
+
+
+def test_an_error_whose_str_raises_still_gets_the_stale_entry(
+    clock: _Clock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Building the log line must not replace the stale answer."""
+    client, handler = _app("error")
+    client.get("/item")
+    clock.now += TTL + 1
+    handler.fail = _UnprintableError()
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.cache"):
+        assert _seen(client.get("/item"))[2] == "STALE"
+
+    assert "'<unprintable _UnprintableError>'" in caplog.text
+
+
 @pytest.mark.parametrize(
     "failure", [RuntimeError("boom"), HTTPException(status_code=502), 500, 503]
 )

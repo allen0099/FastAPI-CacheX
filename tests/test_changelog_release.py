@@ -578,7 +578,7 @@ def test_assemble_indents_the_rest_of_a_multi_line_fragment(tmp_path: Path):
 
     assert (
         "### Fixed\n\n- **Stop `z()` from losing\n  entries.** It dropped them.\n\n"
-        f"    - nested\n      - deeper\n\n  More. {_link(12)}\n\n## [0.3.4]"
+        f"    - nested\n      - deeper\n\n    More. {_link(12)}\n\n## [0.3.4]"
     ) in assembled
     _, body = promote(assembled, "0.3.5", "2026-09-14")
     assert f"- Stop `z()` from losing entries. {_link(12)}\n" in release_notes(
@@ -596,7 +596,7 @@ def test_a_fragment_ending_in_a_nested_list_gets_its_link_on_its_own(
     assembled = assemble(CHANGELOG, read_fragments(directory))
 
     assert (
-        f"- **X.** Either:\n\n    - a\n    - b\n\n  {_link(12)}\n\n## [0.3.4]"
+        f"- **X.** Either:\n\n    - a\n    - b\n\n    {_link(12)}\n\n## [0.3.4]"
     ) in assembled
     _, body = promote(assembled, "0.3.5", "2026-09-14")
     assert f"- X. {_link(12)}\n" in release_notes(body, "0.3.5", "2026-09-14")

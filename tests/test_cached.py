@@ -26,6 +26,7 @@ from pydantic import Field
 from pydantic import Secret
 from pydantic import SecretBytes
 from pydantic import SecretStr
+from pydantic import field_serializer
 from starlette.responses import Response
 
 from fastapi_cachex import BackendProxy
@@ -148,7 +149,7 @@ class _Odd:
         frozenset({SecretStr("tenant-a")}),
         _Pin(pin=Secret[int](1234)),
         _ByKey(tokens={SecretStr("tenant-a"): 1}),
-        _Odd(extra=_NoSchema(), token=SecretStr("tenant-a")),
+        _Odd(extra=1, token=SecretStr("tenant-a")),  # type: ignore[arg-type]
         collections.deque([SecretStr("tenant-a")]),
     ],
     ids=[
@@ -190,6 +191,27 @@ async def test_a_secret_argument_with_a_key_is_cached_under_it(
 
     assert await load(_Creds(token=SecretStr("a"))) == "a"
     assert await load(_Creds(token=SecretStr("b"))) == "b"
+
+
+class _Unmasked(BaseModel):
+    token: SecretStr
+
+    @field_serializer("token", when_used="json")
+    def _reveal(self, token: SecretStr) -> str:
+        return token.get_secret_value()
+
+
+async def test_a_secret_its_serializer_writes_out_is_keyed_by_its_value(
+    manager: CacheManager,
+) -> None:
+    """The check reads the JSON form the key is built from, not the model."""
+
+    @cached(ttl=60, manager=manager)
+    async def load(creds: _Unmasked) -> str:
+        return creds.token.get_secret_value()
+
+    assert await load(_Unmasked(token=SecretStr("a"))) == "a"
+    assert await load(_Unmasked(token=SecretStr("b"))) == "b"
 
 
 @dataclasses.dataclass
