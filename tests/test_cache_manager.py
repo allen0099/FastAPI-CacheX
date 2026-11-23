@@ -369,6 +369,25 @@ async def test_corrupt_data_under_type_is_still_a_decode_failure(
     assert warning.startswith("Failed to decode cached value")
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(b"1" * 5000, id="past-the-int-digit-limit"),
+        pytest.param(b"[" * 100_000 + b"]" * 100_000, id="too-deep"),
+    ],
+)
+async def test_a_value_json_refuses_to_parse_is_a_miss(
+    memory_backend: MemoryBackend, content: bytes
+) -> None:
+    """``json.loads`` raises ``ValueError`` or ``RecursionError`` here (#636)."""
+    manager = CacheManager(backend=memory_backend)
+    entry = CacheEntry(fingerprint="x", content=content)
+    await memory_backend.set(f"{manager.key_prefix}k", entry, ttl=60)
+
+    assert await manager.get("k", default="d") == "d"
+    assert await manager.get_many(["k"]) == {}
+
+
 # --- add ------------------------------------------------------------------------
 
 
