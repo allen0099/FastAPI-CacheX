@@ -1,6 +1,7 @@
 """``@cached`` caches a plain function's result through ``CacheManager`` (#248)."""
 
 import asyncio
+import collections
 import dataclasses
 import functools
 import hashlib
@@ -148,8 +149,19 @@ class _Odd:
         _Pin(pin=Secret[int](1234)),
         _ByKey(tokens={SecretStr("tenant-a"): 1}),
         _Odd(extra=_NoSchema(), token=SecretStr("tenant-a")),
+        collections.deque([SecretStr("tenant-a")]),
     ],
-    ids=["bare", "model", "nested", "dataclass", "set", "generic", "dict-key", "odd"],
+    ids=[
+        "bare",
+        "model",
+        "nested",
+        "dataclass",
+        "set",
+        "generic",
+        "dict-key",
+        "odd",
+        "deque",
+    ],
 )
 async def test_an_argument_holding_a_secret_needs_a_key(
     manager: CacheManager, secret: object
@@ -208,6 +220,28 @@ async def test_a_dataclass_without_a_secret_is_keyed_as_before(
     assert first != second
     # pydantic warns on dumping it; filterwarnings = error turns that into a failure.
     assert load.cache_key(_Count(count="one")) != load.cache_key(_Count(count=1))  # type: ignore[arg-type]
+
+
+@dataclasses.dataclass
+class _Node:
+    extra: object
+    nxt: object = None
+
+
+@pytest.mark.parametrize("extra", [1, _NoSchema()], ids=["schema", "no-schema"])
+async def test_a_cyclic_argument_needs_a_key(
+    manager: CacheManager, extra: object
+) -> None:
+    """Looking for a secret stops on a cycle instead of recursing forever."""
+
+    @cached(ttl=60, manager=manager)
+    async def load(node: object) -> int:
+        return 1
+
+    node = _Node(extra=extra)
+    node.nxt = node
+    with pytest.raises(CacheXError, match="Pass key="):
+        load.cache_key(node)
 
 
 async def test_arguments_must_fit_the_signature(manager: CacheManager) -> None:

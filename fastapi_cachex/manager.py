@@ -12,6 +12,7 @@ import logging
 import secrets
 import time
 import warnings
+from collections import deque
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Coroutine
@@ -27,6 +28,7 @@ from typing import TypeVar
 from typing import overload
 
 from pydantic import BaseModel
+from pydantic import PydanticUserError
 from pydantic import Secret
 from pydantic import SecretBytes
 from pydantic import SecretStr
@@ -175,20 +177,26 @@ _SECRETS = (SecretStr, SecretBytes, Secret)
 _NOT_STORED = (Iterator, bytes, bytearray, memoryview, *_SECRETS)
 
 
-def _holds_a_secret(value: Any) -> bool:
+def _holds_a_secret(value: Any, seen: set[int] | None = None) -> bool:
     """Whether a value has a pydantic secret, at any depth, dict keys included.
 
     A model or dataclass is dumped in python mode, where the secret objects
     survive (the JSON form has already masked them). An excluded field is
     not in the dump, and is not stored either. A dataclass pydantic cannot
-    build a schema for is read field by field instead.
+    build a schema for is read field by field instead; ``seen`` stops that
+    walk on a cycle. A value pydantic cannot dump is left to the encoder,
+    which raises for it right after.
     """
     if isinstance(value, BaseModel) or (
         dataclasses.is_dataclass(value) and not isinstance(value, type)
     ):
+        seen = set() if seen is None else seen
+        if id(value) in seen:
+            return False
+        seen.add(id(value))
         try:
-            value = _adapter(type(value)).dump_python(value, warnings=False)
-        except Exception:  # noqa: BLE001 - any schema or serialization error
+            adapter = _adapter(type(value))
+        except PydanticUserError:  # no schema: a field type pydantic lacks
             value = (
                 dict(vars(value))
                 if isinstance(value, BaseModel)
@@ -197,12 +205,17 @@ def _holds_a_secret(value: Any) -> bool:
                     for field in dataclasses.fields(value)
                 }
             )
+        else:
+            try:
+                value = adapter.dump_python(value, warnings=False)
+            except (PydanticSerializationError, ValueError, TypeError):
+                return False
     if isinstance(value, _SECRETS):
         return True
     if isinstance(value, dict):
-        return any(_holds_a_secret(item) for item in (*value, *value.values()))
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return any(_holds_a_secret(item) for item in value)
+        return any(_holds_a_secret(item, seen) for item in (*value, *value.values()))
+    if isinstance(value, (list, tuple, set, frozenset, deque)):
+        return any(_holds_a_secret(item, seen) for item in value)
     return False
 
 
