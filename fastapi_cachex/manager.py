@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 from typing import Concatenate
@@ -29,6 +30,7 @@ from typing import NamedTuple
 from typing import ParamSpec
 from typing import TypeVar
 from typing import overload
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import PydanticUserError
@@ -183,7 +185,7 @@ _NOT_STORED = (Iterator, bytes, bytearray, memoryview, *_SECRETS)
 
 # Values that neither are nor hold a secret, skipped by exact type.
 _LEAVES = frozenset(
-    {str, int, float, bool, type(None), bytes, date, datetime, timedelta}
+    {str, int, float, bool, type(None), bytes, date, datetime, timedelta, Decimal, UUID}
 )
 
 
@@ -211,14 +213,27 @@ def _python_dump(value: Any) -> Any:
         return None
 
 
+def _plain_dict(item: Any) -> bool:
+    """Whether an item is a dict of only plain keys and values (a dumped row)."""
+    return (
+        type(item) is dict
+        and _LEAVES.issuperset(map(type, item))
+        and _LEAVES.issuperset(map(type, item.values()))
+    )
+
+
 def _push_inner(stack: list[Any], items: Iterable[Any]) -> None:
-    """Push the items that are not plain values.
+    """Push the items that are not plain values or plain dicts.
 
     A container of only plain values (the common case) is ruled out by one
-    pass in C.
+    pass in C, and so is each row of a dumped list of models.
     """
     if not _LEAVES.issuperset(map(type, items)):
-        stack.extend(item for item in items if type(item) not in _LEAVES)
+        stack.extend(
+            item
+            for item in items
+            if type(item) not in _LEAVES and not _plain_dict(item)
+        )
 
 
 def _holds_a_secret(value: Any) -> bool:

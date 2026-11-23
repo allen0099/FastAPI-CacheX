@@ -1269,6 +1269,14 @@ _MISFIT = pytest.mark.filterwarnings("ignore::UserWarning")
             lambda: _Amount.model_construct(amount=_SecretDecimal("1.5")),
             id="secret-that-is-a-decimal",
         ),
+        pytest.param(
+            lambda: collections.deque([{"amount": _SecretDecimal("1.5")}]),
+            id="secret-that-is-a-decimal-in-a-row",
+        ),
+        pytest.param(
+            lambda: collections.deque([{_SecretDecimal("1.5"): 1}]),
+            id="secret-that-is-a-decimal-as-a-row-key",
+        ),
     ],
 )
 async def test_a_secret_where_the_type_rules_none_out_is_still_refused(
