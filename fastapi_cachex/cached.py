@@ -33,7 +33,7 @@ from .dependencies import get_app_cache
 from .exceptions import CacheXError
 from .manager import CacheManager
 from .manager import _adapter
-from .manager import _holds_a_secret
+from .manager import _find_unkeyable
 
 logger = logging.getLogger(__name__)
 
@@ -109,13 +109,23 @@ def _jsonable_argument(value: object) -> object:
 
     Raises:
         TypeError: If pydantic cannot encode it either (an arbitrary object),
-            it is an iterator, which encoding it would use up, or it holds a
-            secret, which pydantic encodes as its mask
+            it is or holds an iterator, which encoding it would use up, or it
+            holds a secret, which pydantic encodes as its mask
     """
     kind = type(value)
     encoded = _model_json(value)
     if encoded is _UNCHECKED:
-        if _holds_a_secret(value):
+        found = _find_unkeyable(value, iterators=True)
+        if found == "iterator" and not isinstance(value, Iterator):
+            # An `Iterable` field, say: encoding it would use it up, and the
+            # function then get nothing (#673). An iterator itself is
+            # refused below.
+            msg = (
+                f"Object of type {kind.__name__} holds an iterator, which "
+                "building its key would use up"
+            )
+            raise TypeError(msg)
+        if found == "secret":
             # pydantic writes a secret as "**********", so calls that differ
             # only in it would share one key, and one caller get another's
             # result (#654).
