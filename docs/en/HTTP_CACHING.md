@@ -232,7 +232,10 @@ A response that belongs to one caller is never stored either (#296):
   already.
   A request has session data when `request.session` is non-empty under any
   session middleware, such as Starlette's `SessionMiddleware`. An empty
-  session does not count, and neither does a `Cookie` header on its own.
+  session does not count, and neither does a `Cookie` header on its own, or
+  a session a middleware loads only on demand (starsessions without
+  `load_session()`) and the route has not loaded: before 0.7.4 such a route
+  answered 500 (#679).
   A handler or a dependency that writes to the session (a CSRF token, a
   visitor ID) gets its response answered with `private` and not stored,
   since the session middleware adds a `Set-Cookie` to it. Before 0.7.2 it

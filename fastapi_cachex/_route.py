@@ -321,6 +321,22 @@ def _effective_route(request: Request) -> object:
     return request.scope.get("route")
 
 
+def _session(request: Request) -> Any:
+    """``request.session`` as the session middleware left it, or None.
+
+    None without a session middleware, and for a session not loaded yet:
+    starsessions keeps a guard there until ``load_session()`` that raises on
+    any attribute read (#679). Its middleware then sends no cookie, and the
+    route has read no session data.
+    """
+    session = request.scope.get("session")
+    try:
+        getattr(session, "modified", None)
+    except Exception:  # noqa: BLE001 - whatever an unloaded session raises
+        return None
+    return session
+
+
 def _request_credentials(
     request: Request, route_credentials: Iterable[tuple[str, str]] = ()
 ) -> list[tuple[str, str]]:
@@ -337,7 +353,7 @@ def _request_credentials(
     found = []
     if "authorization" in request.headers:
         found.append(("Authorization header", "authorization"))
-    if request.scope.get("session"):
+    if _session(request):
         found.append(("Session data", "cookie"))
     for where, name in route_credentials:
         if where == "header" and name in request.headers:
@@ -423,7 +439,7 @@ class _Call:
         A written session is sent ``private`` and not stored, and a stored
         answer served to it is sent ``private`` as well.
         """
-        session = self.request.scope.get("session")
+        session = _session(self.request)
         modified = getattr(session, "modified", None)
         # Only an explicit False is trusted; a flag of another kind is not.
         if modified is None:
@@ -453,7 +469,7 @@ def _session_snapshot(request: Request) -> Any:
     request must not fail for it (see ``_Call.session_written``).
     """
     try:
-        return copy.deepcopy(request.scope.get("session"))
+        return copy.deepcopy(_session(request))
     except Exception:  # noqa: BLE001 - anything deepcopy may raise
         return _UNCOPIED_SESSION
 
