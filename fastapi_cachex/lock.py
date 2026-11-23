@@ -10,6 +10,7 @@ import time
 from datetime import timedelta
 from types import TracebackType
 
+from fastapi_cachex.backends.base import LOCK_KEY_PREFIX
 from fastapi_cachex.backends.base import BaseCacheBackend
 from fastapi_cachex.backends.base import validate_ttl
 from fastapi_cachex.exceptions import LockTimeoutError
@@ -124,7 +125,7 @@ class CacheLock:
         timeout: float | None = None,
         poll_interval: float = 0.1,
         backend: BaseCacheBackend | None = None,
-        key_prefix: str = "lock:",
+        key_prefix: str = LOCK_KEY_PREFIX,
         *,
         auto_extend: bool = False,
     ) -> None:
