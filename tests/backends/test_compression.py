@@ -95,7 +95,8 @@ def test_a_document_over_the_bound_is_neither_compressed_nor_inflated(
 
 def test_a_compressed_value_that_inflates_past_16_mib_is_a_miss() -> None:
     """A small stored value must not cost 256 MiB to read (#636)."""
-    bomb = codec.COMPRESSED_PREFIX + zlib.compress(b" " * (16 * 1024 * 1024 + 1), 9)
+    big = CacheEntry(fingerprint="etag", content=b"0" * (16 * 1024 * 1024))
+    bomb = codec.COMPRESSED_PREFIX + zlib.compress(codec.encode_entry(big), 9)
     assert len(bomb) < 32 * 1024
 
     assert codec.decode_entry(bomb) is None
