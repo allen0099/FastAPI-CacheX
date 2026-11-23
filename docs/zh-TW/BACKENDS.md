@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", message="memory backend with several workers")
 
 清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束（參見[關閉後端](#closing-a-backend)）；`stop_cleanup()` 只會要求取消。task 只以弱參考（weak reference）持有後端，因此沒有呼叫 `aclose()` 就被丟棄的後端仍會連同其中的項目一起被釋放，它的 task 則在下次醒來時結束。先前的版本會把這樣的後端一直留在記憶體中，只要它的事件迴圈還存在就不會釋放。
 
-預設沒有容量上限：項目只會在過期時離開，因此記憶體用量會隨「請求速率 × `ttl` × 回應大小」成長，而且每個 worker 各自一份；用戶端也可以刻意變換快取路由的查詢字串來撐大它。`MemoryBackend(max_entries=10_000)` 限制項目數量：再多存一筆時，會淘汰最久未使用的項目，不論它是否已過期（讀取命中與每一次寫入都算使用）。請依預期的項目數乘以 worker 數來決定上限，因為每個 worker 各有一份快取；上限計算的是項目數，不是位元組數。
+預設沒有容量上限：項目只會在過期時離開，因此記憶體用量會隨「請求速率 × `ttl` × 回應大小」成長，而且每個 worker 各自一份；用戶端也可以刻意變換快取路由的查詢字串來撐大它。`MemoryBackend(max_entries=10_000)` 限制項目數量：再多存一筆時，會淘汰最久未使用的項目，不論它是否已過期（讀取命中與每一次寫入都算使用）。預設 `lock:` 前綴下持有中的 `CacheLock` 不會被淘汰（見[分散式鎖](LOCK.md)）。請依預期的項目數乘以 worker 數來決定上限，因為每個 worker 各有一份快取；上限計算的是項目數，不是位元組數。
 
 ```python
 backend = MemoryBackend(max_entries=10_000)

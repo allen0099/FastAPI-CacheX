@@ -56,6 +56,12 @@ if lock.lost:
 - **每次取得使用一個實例**：單一 `CacheLock` 實例會追蹤自己目前的持有狀態。重複進入同一個 `CacheLock` 實例，或在並行的 task 之間共用它，都會拋出 `RuntimeError`。每次取得鎖時請建立新的 `CacheLock` 實例。
 - **不可重入**：task 透過另一個實例取得自己已經持有的鎖名稱時，會像其他呼叫者一樣等待，直到第一個實例釋放它或它過期；設定 `auto_extend` 時它永遠不會過期，task 就會一直等下去。請把已持有的鎖往下傳，而不是再取得一次同一個名稱，或為內層的 `acquire()` 設定 `timeout`。
 - **命名空間**：鎖的鍵預設位於獨立的 `lock:` 前綴下（例如 `lock:report:123`），與 `CacheManager` 的 `cache:` 分開。
+- **還有什麼會移除持有中的鎖**：鎖是與快取同一個後端裡的一個項目，因此鎖以外的一些操作可能在 `ttl` 到期前刪除它，第二個持有者隨後就能取得。第一個持有者要到下一次續期或 `release()` 時才會發現（`lost`）。
+    - 任何後端的 `backend.clear()`，以及符合 `lock:` 鍵的 `clear_pattern()`。在 Memcached 上，`clear()` 是 `flush_all`，會清空整台伺服器。
+    - Memcached 在記憶體不足時會淘汰項目，鎖也不例外。
+    - `MemoryBackend(max_entries=...)` 不會淘汰預設 `lock:` 前綴下持有中的鎖（0.7.3 之前會，因此用戶端對快取路由送出不同的查詢字串就能淘汰它）。使用其他 `key_prefix` 的鎖則和一般項目一樣會被淘汰。
+
+    必須在這些情況下仍然有效的鎖，應該放在專用的後端：一台不會被快取流量填滿、也沒有人會清空的 Redis 或 Memcached 伺服器（或 Redis 資料庫）。
 - **後端**：未傳入 `backend=` 時，鎖會使用以 `BackendProxy.set()` 註冊的後端。與 `@cache` 不同，它不會改用 `MemoryBackend`：尚未註冊任何後端時，`acquire()` 會拋出 `BackendNotFoundError`。鎖只能排除共用同一個後端的行程，因此每個行程各自一份的 `MemoryBackend` 只能協調同一個行程內的 task。
 
 > [!NOTE]
