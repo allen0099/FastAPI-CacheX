@@ -321,20 +321,38 @@ def _effective_route(request: Request) -> object:
     return request.scope.get("route")
 
 
+def _not_loaded(session: Any) -> bool:
+    """Whether ``session`` is starsessions' guard for a session not loaded yet.
+
+    It stays in ``request.session`` until ``load_session()`` and raises on
+    any attribute read (#679), so only its type is looked at.
+    """
+    kind = type(session)
+    return kind.__name__ == "LoadGuard" and kind.__module__.startswith("starsessions")
+
+
 def _session(request: Request) -> Any:
     """``request.session`` as the session middleware left it, or None.
 
-    None without a session middleware, and for a session not loaded yet:
-    starsessions keeps a guard there until ``load_session()`` that raises on
-    any attribute read (#679). Its middleware then sends no cookie, and the
-    route has read no session data.
+    None without a session middleware, and for one starsessions has not
+    loaded: its middleware then sends no cookie, and the route has read no
+    session data (#679).
     """
     session = request.scope.get("session")
-    try:
-        getattr(session, "modified", None)
-    except Exception:  # noqa: BLE001 - whatever an unloaded session raises
-        return None
-    return session
+    return None if _not_loaded(session) else session
+
+
+def _has_session_data(request: Request) -> bool:
+    """Whether the request counts as carrying session data (#319).
+
+    A non-empty session; or one starsessions has not loaded for a request
+    that sends its session cookie (#679): the handler may still load it, so
+    it counts, as it did before 0.7.3.
+    """
+    if _not_loaded(request.scope.get("session")):
+        handler = request.scope.get("session_handler")
+        return getattr(handler, "session_id", None) is not None
+    return bool(_session(request))
 
 
 def _starsessions_kept_id(request: Request) -> bool:
@@ -374,7 +392,7 @@ def _request_credentials(
     found = []
     if "authorization" in request.headers:
         found.append(("Authorization header", "authorization"))
-    if _session(request):
+    if _has_session_data(request):
         found.append(("Session data", "cookie"))
     for where, name in route_credentials:
         if where == "header" and name in request.headers:

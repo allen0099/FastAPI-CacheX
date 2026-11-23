@@ -232,10 +232,13 @@ A response that belongs to one caller is never stored either (#296):
   already.
   A request has session data when `request.session` is non-empty under any
   session middleware, such as Starlette's `SessionMiddleware`. An empty
-  session does not count, and neither does a `Cookie` header on its own, or
-  a session a middleware loads only on demand (starsessions without
-  `load_session()`) and the route has not loaded: before 0.7.4 such a route
-  answered 500 (#679).
+  session does not count, and neither does a `Cookie` header on its own.
+  With starsessions, a session the route has not loaded (no
+  `load_session()` in a dependency or the handler, no
+  `SessionAutoloadMiddleware`) counts as session data when the request sends
+  the session cookie, since the handler may still load it, and not
+  otherwise. In 0.7.3 such a route answered 500; before that, every request
+  to it bypassed the backend (#679).
   A handler or a dependency that writes to the session (a CSRF token, a
   visitor ID) gets its response answered with `private` and not stored,
   since the session middleware adds a `Set-Cookie` to it. Before 0.7.2 it
@@ -247,7 +250,15 @@ A response that belongs to one caller is never stored either (#296):
   plain `dict`) counts as written whenever it is not empty: Starlette before
   1.0 sends `Set-Cookie` with every such response. On those versions a
   response to a request with session data is therefore never stored, with
-  `cache_authorized=True` too.
+  `cache_authorized=True` too. starsessions also sends its cookie with every
+  response once the session is loaded and not empty, but `@cache` can tell
+  when that cookie only carries the same session ID back. The session was
+  in the store before the request, the request sent that ID, and the
+  handler left the session as the dependencies did. Such a response is
+  stored (on a `cache_authorized` route, under the caller's key) and sent
+  `private`. A new session, a regenerated ID or a handler write still
+  counts as written (#681). A write a dependency makes to an existing
+  session is not seen.
   Before 0.3.9 only `Authorization` did, and a plain `@cache` on a route
   that read the session served one visitor's response to the next (#319).
   Before 0.5.0 a session that the removed `FastAPICacheXSessionMiddleware`
