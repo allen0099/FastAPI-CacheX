@@ -809,14 +809,9 @@ class _Route:
         if rendered is None:
             # Only with a fallback: the handler failed, the stale entry answers.
             assert fallback is not None  # noqa: S101 - for the type checker
-            # The handler may have written the session before it failed.
-            return self._hit(
-                call,
-                fallback,
-                cache_key,
-                self._sent(call, cache_control),
-                outcome=_STALE,
-            )
+            # `_hit` sends it private if the handler wrote the session
+            # before it failed.
+            return self._hit(call, fallback, cache_key, cache_control, outcome=_STALE)
         return await self._fresh(
             call, backend, cache_key, cache_control, stored=entry, rendered=rendered
         )
