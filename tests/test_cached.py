@@ -965,12 +965,43 @@ class _Batch(BaseModel):
     stream: _Stream
 
 
+class _ReadBySerializer(BaseModel):
+    values: typing.Iterable[object]
+
+    @field_serializer("values")
+    def _all(self, values: typing.Iterable[object]) -> list[object]:
+        return list(values)
+
+
+class _ReadByComputed(BaseModel):
+    values: typing.Iterable[object]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def count(self) -> int:
+        return len(list(self.values))
+
+
+@dataclasses.dataclass
+class _DataStream:
+    values: typing.Iterable[object]
+
+
 @pytest.mark.parametrize(
     "wrap",
     [
         pytest.param(lambda stream: stream, id="model"),
         pytest.param(lambda stream: _Batch(stream=stream), id="nested-model"),
         pytest.param(lambda stream: collections.deque([stream]), id="in-a-deque"),
+        pytest.param(lambda stream: _DataStream(values=stream.values), id="dataclass"),
+        pytest.param(
+            lambda stream: _ReadBySerializer(values=stream.values),
+            id="read-by-a-field-serializer",
+        ),
+        pytest.param(
+            lambda stream: _ReadByComputed(values=stream.values),
+            id="read-by-a-computed-field",
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -981,7 +1012,7 @@ async def test_a_model_holding_an_iterator_is_refused_and_not_used_up(
     wrap: Callable[[_Stream], object],
     items: list[object],
 ) -> None:
-    """Building its key read the iterable all, and the function then ran on
+    """Building its key used the iterable up, and the function then ran on
     nothing; a secret in it was keyed as its mask (#673)."""
     calls: list[object] = []
 

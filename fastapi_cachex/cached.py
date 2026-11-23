@@ -118,7 +118,7 @@ def _jsonable_argument(value: object) -> object:
         found = _find_unkeyable(value, iterators=True)
         if found == "iterator" and not isinstance(value, Iterator):
             # An `Iterable` field, say: encoding it would use it up, and the
-            # function then get nothing (#673). An iterator itself is
+            # function then gets nothing (#673). An iterator itself is
             # refused below.
             msg = (
                 f"Object of type {kind.__name__} holds an iterator, which "
