@@ -333,8 +333,11 @@ pool = BlockingConnectionPool(
 backend = AsyncRedisCacheBackend(connection_pool=pool)
 ```
 
-As with Sentinel, the backend's own `host`, `port`, `password`, `db` and
-timeouts are then not used, and the pool is yours to close (see
+When every connection stays busy for the whole `timeout`, the command fails
+the same way as above. As with Sentinel, the backend's own `host`, `port`,
+`password`, `db`, timeouts, `protocol` and `retry=` are then not used: set
+them on the pool (`retry=Retry(NoBackoff(), 0)` there, for example), and close
+the pool yourself (see
 [Closing a backend](#closing-a-backend)). Redis's `maxclients` (10000 by
 default) must cover `max_connections` times the number of workers.
 

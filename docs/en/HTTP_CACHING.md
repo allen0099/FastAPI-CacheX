@@ -1083,7 +1083,7 @@ def per_user_key(request: Request) -> str:
         # without an ID one shared entry, and one user's dashboard to the next.
         raise HTTPException(status_code=401)
     # The default key plus the user ID, escaped like the host and path.
-    return build_cache_key(request, str(user_id))
+    return build_cache_key(request, user_id)
 
 
 @app.get("/me/dashboard")
@@ -1119,11 +1119,11 @@ header goes out unchanged: set `private=True` (option 1), or send
 
 > [!WARNING]
 > Put an ID in the key, not the credential itself. A bearer token, an API key
-> or a session ID passed to `build_cache_key` is stored in the key as it is,
-> and the key is visible to anyone who can list the backend's keys, the
+> or a session ID passed to `build_cache_key` is stored in the key readably
+> (only the separator is escaped), and the key is visible to anyone who can list the backend's keys, the
 > [monitoring routes](#monitoring-routes) included, and in `DEBUG` logs. Use the
 > user or tenant ID the credential resolves to, or a keyed digest of it
-> (`hmac.new(secret, token.encode(), "sha256").hexdigest()`).
+> (`hmac.new(secret_bytes, token.encode(), "sha256").hexdigest()`).
 
 The key builder runs only when `@cache` reads or writes the backend, so it is not
 called for `no_store=True`, `private=True`, routes without a `ttl`, or
