@@ -956,9 +956,9 @@ class _Route:
             await self._replace_stale(call, backend, cache_key)
         except Exception as e:  # noqa: BLE001 - there is no response to fail
             logger.warning(
-                "Refreshing the stale entry failed (%s: %s); path=%s",
+                "Refreshing the stale entry failed (%s: %r); path=%r",
                 type(e).__name__,
-                e,
+                str(e),
                 call.request.url.path,
             )
         finally:
@@ -996,7 +996,7 @@ class _Route:
             )
         else:
             logger.warning(
-                "Refresh not stored (%s); the stale entry stays; path=%s",
+                "Refresh not stored (%s); the stale entry stays; path=%r",
                 reason,
                 call.request.url.path,
             )
@@ -1034,15 +1034,15 @@ class _Route:
                 raise
             # One line, no traceback: a failing upstream fails every request.
             logger.warning(
-                "Handler failed (%s: %s); serving the stale entry; path=%s",
+                "Handler failed (%s: %r); serving the stale entry; path=%r",
                 type(e).__name__,
-                e,
+                str(e),
                 call.request.url.path,
             )
             return None
         if fallback is not None and rendered[0].status_code >= _SERVER_ERROR:
             logger.warning(
-                "Handler answered %s; serving the stale entry; path=%s",
+                "Handler answered %s; serving the stale entry; path=%r",
                 rendered[0].status_code,
                 call.request.url.path,
             )
@@ -1159,7 +1159,7 @@ class _Route:
                 if time.monotonic() >= deadline:
                     logger.warning(
                         "Another worker still renders after %ss; rendering "
-                        "too; path=%s",
+                        "too; path=%r",
                         _LOCK_WAIT_MAX,
                         call.request.url.path,
                     )
@@ -1359,9 +1359,9 @@ async def _release_lock(lock: CacheLock) -> None:
         await asyncio.shield(release)
     except Exception as e:  # noqa: BLE001 - there is nothing left to fail
         logger.warning(
-            "Releasing the miss lock failed (%s: %s); it expires in %ss",
+            "Releasing the miss lock failed (%s: %r); it expires in %ss",
             type(e).__name__,
-            e,
+            str(e),
             _LOCK_TTL,
         )
 
