@@ -252,6 +252,7 @@ def test_a_refresh_that_cannot_be_stored_says_so(
 
     assert "set-cookie" not in stale.headers
     assert "Refresh not stored" in caplog.text
+    assert "path='/item'" in caplog.text  # %r: a path can hold ANSI escapes
 
 
 def test_a_background_task_on_the_refreshed_response_runs(clock: _Clock) -> None:
@@ -288,7 +289,7 @@ def test_a_handler_annotated_with_starlettes_background_tasks(clock: _Clock) -> 
     assert client.get("/item").status_code == 200
 
 
-@pytest.mark.parametrize("failure", [RuntimeError("boom"), 503])
+@pytest.mark.parametrize("failure", [RuntimeError("boom\r\nforged line"), 503])
 def test_a_failed_refresh_is_logged_and_the_stale_entry_stays(
     clock: _Clock, caplog: pytest.LogCaptureFixture, failure: Exception | int
 ) -> None:
@@ -301,6 +302,8 @@ def test_a_failed_refresh_is_logged_and_the_stale_entry_stays(
         assert _seen(client.get("/item")) == (200, "run 1", "STALE")
 
     assert "stale entry" in caplog.text
+    assert "path='/item'" in caplog.text
+    assert "\nforged line" not in caplog.text  # the message is logged with %r
     assert set() == _REFRESHING
     # Still there, and the next request tries again.
     handler.fail = None
@@ -410,6 +413,7 @@ def test_error_mode_answers_a_failure_from_the_stale_entry(
     assert _seen(response) == (200, "run 1", "STALE")
     assert response.headers["age"] == str(TTL + 1)
     assert "serving the stale entry" in caplog.text
+    assert "path='/item'" in caplog.text
     # The entry is as it was: once the handler recovers, it is replaced.
     handler.fail = None
     assert _seen(client.get("/item")) == (200, "run 3", "MISS")

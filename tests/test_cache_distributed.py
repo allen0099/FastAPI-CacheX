@@ -153,6 +153,23 @@ async def test_the_lock_is_released_when_the_handler_raises(
     assert _IN_FLIGHT == {}
 
 
+async def test_a_failed_release_is_logged_on_one_line(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def release(self: CacheLock) -> bool:
+        msg = "down\r\nforged line"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(CacheLock, "release", release)
+
+    assert (await _get(client)).status_code == 200
+
+    assert "Releasing the miss lock failed" in caplog.text
+    assert "\nforged line" not in caplog.text  # the message is logged with %r
+
+
 async def test_the_lock_outlives_its_ttl_while_the_handler_runs(
     client: httpx.AsyncClient, handler: Handler, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -279,6 +296,7 @@ async def test_a_waiter_gives_up_on_a_worker_that_never_finishes(
     assert polls.count > 1
     assert await _locked()
     assert "Another worker still renders" in caplog.text
+    assert "path='/items'" in caplog.text
     await other.release()
 
 
