@@ -490,6 +490,8 @@ response body.
   backend on such a pool must not share a server with one that compresses.
 - A document over 16 MiB is stored uncompressed, and a compressed value that
   would inflate past that is read as a miss (earlier versions allowed 256 MiB).
+  On Memcached such a document is then usually over the item size limit, so
+  it is not cached at all.
 - Counters are never compressed, and the memory backend has no such option:
   it keeps entries as objects.
 - On Memcached the item size limit applies to the compressed entry, so a
