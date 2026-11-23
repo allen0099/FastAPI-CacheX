@@ -1,6 +1,7 @@
 """``@cached`` caches a plain function's result through ``CacheManager`` (#248)."""
 
 import asyncio
+import dataclasses
 import functools
 import hashlib
 import json
@@ -21,6 +22,8 @@ import pytest
 import pytest_asyncio
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import SecretBytes
+from pydantic import SecretStr
 from starlette.responses import Response
 
 from fastapi_cachex import BackendProxy
@@ -103,6 +106,56 @@ async def test_a_non_json_argument_needs_a_key(manager: CacheManager) -> None:
         load.cache_key(object())
     with pytest.raises(CacheXError, match="not JSON-serializable"):
         await load(object())
+
+
+class _Creds(BaseModel):
+    token: SecretStr
+
+
+@dataclasses.dataclass
+class _Client:
+    tenant: str
+    key: SecretBytes
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        SecretStr("tenant-a"),
+        _Creds(token=SecretStr("tenant-a")),
+        {"auth": [SecretStr("tenant-a")]},
+        _Client(tenant="a", key=SecretBytes(b"tenant-a")),
+        frozenset({SecretStr("tenant-a")}),
+    ],
+    ids=["bare", "model", "nested", "dataclass", "set"],
+)
+async def test_an_argument_holding_a_secret_needs_a_key(
+    manager: CacheManager, secret: object
+) -> None:
+    """#654: pydantic writes a secret as its mask, so tenants shared a key."""
+    calls = []
+
+    @cached(ttl=60, manager=manager)
+    async def load(creds: object) -> int:
+        calls.append(creds)
+        return len(calls)
+
+    with pytest.raises(CacheXError, match=r"SecretStr or SecretBytes.*Pass key="):
+        load.cache_key(secret)
+    with pytest.raises(CacheXError, match="SecretStr or SecretBytes"):
+        await load(secret)
+    assert calls == []
+
+
+async def test_a_secret_argument_with_a_key_is_cached_under_it(
+    manager: CacheManager,
+) -> None:
+    @cached(ttl=60, manager=manager, key=lambda creds: creds.token.get_secret_value())
+    async def load(creds: _Creds) -> str:
+        return creds.token.get_secret_value()
+
+    assert await load(_Creds(token=SecretStr("a"))) == "a"
+    assert await load(_Creds(token=SecretStr("b"))) == "b"
 
 
 async def test_arguments_must_fit_the_signature(manager: CacheManager) -> None:

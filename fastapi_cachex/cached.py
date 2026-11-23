@@ -31,6 +31,7 @@ from .dependencies import get_app_cache
 from .exceptions import CacheXError
 from .manager import CacheManager
 from .manager import _adapter
+from .manager import _holds_a_secret
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,18 @@ def _jsonable_argument(value: object) -> object:
 
     Raises:
         TypeError: If pydantic cannot encode it either (an arbitrary object),
-            or it is an iterator, which encoding it would use up
+            it is an iterator, which encoding it would use up, or it holds a
+            secret, which pydantic encodes as its mask
     """
     kind = type(value)
+    if _holds_a_secret(value):
+        # pydantic writes a secret as "**********", so calls that differ only
+        # in it would share one key, and one caller get another's result (#654).
+        msg = (
+            f"Object of type {kind.__name__} holds a SecretStr or SecretBytes, "
+            "which would be keyed as its mask"
+        )
+        raise TypeError(msg)
     if isinstance(value, Iterator):
         # The function would then run on an empty generator, and that
         # result be cached.
