@@ -368,3 +368,110 @@ def test_a_session_that_fails_to_read_is_not_taken_for_no_session() -> None:
     response = client.get("/me", headers={"x-user": "bob"})
 
     assert "alice" not in response.text  # a 500 as on 0.7.3, or bob's own
+
+
+class _Unequal:
+    """A session value whose comparison raises, as a numpy array's does."""
+
+    def __eq__(self, other: object) -> bool:
+        msg = "ambiguous"
+        raise ValueError(msg)
+
+    __hash__ = object.__hash__
+
+
+class _KeepObjects:
+    """A serializer that hands back the stored objects, as pickle would."""
+
+    def __init__(self) -> None:
+        self.saved: dict[bytes, dict[str, Any]] = {}
+
+    def serialize(self, data: dict[str, Any]) -> bytes:
+        key = secrets.token_bytes(8)
+        self.saved[key] = dict(data)
+        return key
+
+    def deserialize(self, data: bytes) -> dict[str, Any]:
+        return dict(self.saved.get(data, {}))
+
+
+def _counting_store() -> tuple[Any, dict[str, int]]:
+    """An in-memory store that counts its reads."""
+    store = starsessions.InMemoryStore()
+    counts = {"reads": 0}
+    read = store.read
+
+    async def counted(session_id: str, lifetime: int) -> bytes:
+        counts["reads"] += 1
+        return bytes(await read(session_id=session_id, lifetime=lifetime))
+
+    store.read = counted
+    return store, counts
+
+
+def _store_app(
+    store: object, serializer: object | None = None, **options: Any
+) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/login")
+    async def login(session: _Session) -> dict[str, str]:
+        session["user"] = "alice"
+        session["blob"] = _Unequal() if serializer else "x"
+        return {}
+
+    @app.get("/r")
+    @cache(**options)
+    async def read(session: _Session) -> dict[str, str]:
+        return {"user": str(session.get("user"))}
+
+    app.add_middleware(
+        starsessions.SessionMiddleware,
+        store=store,
+        serializer=serializer,
+        cookie_https_only=False,
+    )
+    return app
+
+
+def test_a_session_value_that_cannot_be_compared_does_not_fail_the_request() -> None:
+    """The check against the store counts it as a change (#681)."""
+    app = _store_app(starsessions.InMemoryStore(), _KeepObjects(), **_PER_CALLER)
+    client = _logged_in(app)
+
+    response = client.get("/r")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == _PRIVATE
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param({"ttl": 60}, id="bypassed"),
+        pytest.param({"ttl": 60, "private": True}, id="private"),
+        pytest.param({"no_store": True}, id="no-store"),
+        pytest.param({}, id="no-ttl"),
+    ],
+)
+def test_a_route_that_cannot_store_does_not_read_the_store_again(
+    options: dict[str, Any],
+) -> None:
+    """Only the load reads it: the check would decide nothing (#681)."""
+    store, counts = _counting_store()
+    client = _logged_in(_store_app(store, **options))
+    counts["reads"] = 0
+
+    client.get("/r")
+
+    assert counts["reads"] == 1
+
+
+def test_a_route_that_may_store_checks_the_store() -> None:
+    store, counts = _counting_store()
+    client = _logged_in(_store_app(store, **_PER_CALLER))
+    counts["reads"] = 0
+
+    client.get("/r")
+
+    assert counts["reads"] == 2

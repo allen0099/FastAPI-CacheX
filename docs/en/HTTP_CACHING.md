@@ -236,8 +236,9 @@ A response that belongs to one caller is never stored either (#296):
   With starsessions, a session not loaded yet when `@cache` checks it (no
   `load_session()` in a dependency and no `SessionAutoloadMiddleware`)
   counts as session data when the request sends the session cookie, since
-  the handler may still load it, and not otherwise. In 0.7.3 such a route answered 500; before that, every request
-  to it bypassed the backend (#679).
+  the handler may still load it, and not otherwise. In 0.7.3 such a route
+  answered 500; before that, every request to it bypassed the backend
+  (#679).
   A handler or a dependency that writes to the session (a CSRF token, a
   visitor ID) gets its response answered with `private` and not stored,
   since the session middleware adds a `Set-Cookie` to it. Before 0.7.2 it
@@ -253,8 +254,10 @@ A response that belongs to one caller is never stored either (#296):
   response once the session is loaded and not empty, but `@cache` can tell
   when that cookie only carries the same session ID back. The session was
   in the store before the request, the request sent that ID, and neither
-  the dependencies (checked against the store, one read per request) nor
-  the handler changed it. Such a response is stored and sent `private`. A
+  the dependencies (checked against the store: one more read, on a GET to a
+  `public` or `cache_authorized` route) nor the handler changed it. Such a
+  response is stored and sent `private`, on a `public` route too, as with
+  Starlette 1.0's sessions: its response must be the same for everyone. A
   new session, a regenerated ID, or a write by a dependency or the handler
   still counts as written (#681).
   Before 0.3.9 only `Authorization` did, and a plain `@cache` on a route
