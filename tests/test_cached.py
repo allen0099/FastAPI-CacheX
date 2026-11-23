@@ -12,6 +12,7 @@ import subprocess
 import sys
 import typing
 from collections.abc import AsyncIterator
+from collections.abc import Callable
 from datetime import UTC
 from datetime import date
 from datetime import datetime
@@ -24,11 +25,14 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import Secret
 from pydantic import SecretBytes
 from pydantic import SecretStr
+from pydantic import computed_field
 from pydantic import field_serializer
+from pydantic import field_validator
 from starlette.responses import Response
 
 from fastapi_cachex import BackendProxy
@@ -1010,3 +1014,133 @@ def test_a_wrapper_collecting_a_generator_is_accepted(manager: CacheManager) -> 
         yield 1
 
     cached(ttl=60, manager=manager, type_=list[int])(numbers)
+
+
+class _Rich(BaseModel):
+    """A model whose fields can hold no secret, with awkward encodings."""
+
+    data: bytes = b"\x00hi"
+    ratio: float = float("inf")
+    span: timedelta = timedelta(seconds=90)
+    when: datetime = datetime(2024, 1, 1, tzinfo=UTC)
+    amount: Decimal = Decimal("1.10")
+    ident: UUID = UUID(int=1)
+    tags: set[int] = Field(default_factory=lambda: {3, 1})
+    rows: list[_Count] = Field(default_factory=lambda: [_Count(count=1)])
+    aliased_: int = Field(1, alias="aliased")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def doubled(self) -> int:
+        return 2
+
+
+def test_a_plain_model_skips_the_search_and_keeps_its_key() -> None:
+    """#668: its type rules out a secret, and its JSON form is unchanged."""
+    from pydantic_core import to_jsonable_python
+
+    from fastapi_cachex.cached import _model_json
+    from fastapi_cachex.cached import _plain_model
+
+    model = _Rich()
+
+    assert _plain_model(_Rich)
+    assert _model_json(model) == to_jsonable_python(model, bytes_mode="base64")
+
+
+class _Row(BaseModel):
+    id: int
+    name: str
+
+
+class _Validated(BaseModel):
+    count: int
+
+    @field_validator("count")
+    @classmethod
+    def _swap(cls, count: int) -> object:
+        return SecretStr(str(count))
+
+
+class _Computed(BaseModel):
+    tenant: str = "a"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def token(self) -> SecretStr:
+        return SecretStr(self.tenant)
+
+
+class _Open(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class _Wrapped(BaseModel):
+    token: str
+
+    @field_serializer("token")
+    def _wrap(self, token: str) -> SecretStr:
+        return SecretStr(token)
+
+
+def _assigned() -> _Row:
+    row = _Row(id=1, name="a")
+    row.name = SecretStr("tenant-a")  # type: ignore[assignment]
+    return row
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@pytest.mark.parametrize(
+    "argument",
+    [
+        lambda: _Row.model_construct(id=1, name=SecretStr("tenant-a")),  # type: ignore[arg-type]
+        _assigned,
+        lambda: _Validated(count=1),
+        _Computed,
+        lambda: _Open(token=SecretStr("tenant-a")),
+        lambda: _Wrapped(token="tenant-a"),
+        lambda: [_Row(id=1, name="a"), _Row.model_construct(id=2, name=SecretStr("b"))],  # type: ignore[arg-type]
+    ],
+    ids=[
+        "construct",
+        "assignment",
+        "validator",
+        "computed",
+        "extra",
+        "serializer",
+        "in-a-list",
+    ],
+)
+async def test_a_secret_where_the_type_rules_none_out_is_still_refused(
+    manager: CacheManager, argument: Callable[[], object]
+) -> None:
+    """A value that does not fit its field's type falls back to the search."""
+
+    @cached(ttl=60, manager=manager)
+    async def load(item: object) -> int:
+        return 1
+
+    with pytest.raises(CacheXError, match="pydantic secret"):
+        load.cache_key(argument())
+
+
+class _Login(BaseModel):
+    user: str
+    password: SecretStr = Field(exclude=True)
+
+
+async def test_a_secret_in_an_excluded_field_is_left_out_as_before(
+    manager: CacheManager,
+) -> None:
+    """Not in the key, as in 0.7.2: calls that differ only in it share it."""
+    from fastapi_cachex.cached import _plain_model
+
+    assert _plain_model(_Login)  # the field is not written out
+
+    @cached(ttl=60, manager=manager)
+    async def load(login: _Login) -> str:
+        return login.user
+
+    assert load.cache_key(_Login(user="a", password=SecretStr("1"))) == load.cache_key(
+        _Login(user="a", password=SecretStr("2"))
+    )

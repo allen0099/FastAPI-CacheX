@@ -1,5 +1,6 @@
 """``@cached``: cache the result of a plain function through ``CacheManager``."""
 
+import functools
 import hashlib
 import inspect
 import json
@@ -22,6 +23,7 @@ from typing import Protocol
 from typing import TypeVar
 from typing import overload
 
+from pydantic import BaseModel
 from pydantic_core import PydanticSerializationError
 from pydantic_core import to_jsonable_python
 
@@ -29,6 +31,7 @@ from ._tags import validate_tags
 from .backends.base import validate_ttl
 from .dependencies import get_app_cache
 from .exceptions import CacheXError
+from .manager import _LEAVES
 from .manager import CacheManager
 from .manager import _adapter
 from .manager import _holds_a_secret
@@ -42,6 +45,128 @@ R = TypeVar("R")
 # Separates the function's name from the digest of its arguments in a default
 # key, as `CacheManager` keys separate their parts.
 _KEY_SEPARATOR = ":"
+
+
+# `_model_json` could not vouch for the argument: search it and encode it the
+# general way.
+_UNCHECKED: Any = object()
+
+# Core schema types that hold only values that cannot be a secret, or other
+# schemas walked in turn. Validators (`function-before` / `-after`) do not
+# matter: a value they return that does not fit the field's type fails the
+# `warnings="error"` serialization instead.
+_PLAIN_SCHEMAS = frozenset(
+    {
+        "model", "model-fields", "model-field", "computed-field",
+        "dataclass", "dataclass-args", "dataclass-field",
+        "typed-dict", "typed-dict-field", "list", "set", "frozenset", "tuple",
+        "dict", "nullable", "default", "definitions", "definition-ref",
+        "union", "tagged-union", "chain", "lax-or-strict", "literal", "enum",
+        "none", "bool", "int", "float", "decimal", "complex", "str", "bytes",
+        "date", "time", "datetime", "timedelta", "uuid", "url",
+        "multi-host-url", "function-before", "function-after", "no-info",
+        "with-info",
+    }
+)  # fmt: skip
+_CUSTOM_SERIALIZERS = frozenset({"function-plain", "function-wrap"})
+
+
+def _node_may_hold_a_secret(schema: dict[str, Any]) -> bool:
+    """Whether a core schema node, apart from its children, can hold a secret.
+
+    True for ``any``, ``is-instance`` (a secret's own schema), a plain or wrap
+    validator or serializer (they take or return anything), extra fields
+    kept with ``extra="allow"``, an enum with a member that is not plain,
+    and a schema type not known to be plain.
+    """
+    kind = schema.get("type")
+    serialization = schema.get("serialization")
+    return (
+        (kind is not None and kind not in _PLAIN_SCHEMAS)
+        or schema.get("config", {}).get("extra_fields_behavior") == "allow"
+        or schema.get("extra_behavior") == "allow"
+        or (
+            kind == "enum"
+            and not _LEAVES.issuperset(
+                type(member.value) for member in schema["members"]
+            )
+        )
+        or (
+            isinstance(serialization, dict)
+            and serialization.get("type") in _CUSTOM_SERIALIZERS
+        )
+    )
+
+
+def _schema_is_plain(schema: object) -> bool:
+    """Whether a core schema can hold no value but plain data."""
+    if isinstance(schema, list):
+        return all(_schema_is_plain(item) for item in schema)
+    if not isinstance(schema, dict):
+        return True
+    if schema.get("type") == "model-field" and schema.get("serialization_exclude"):
+        return True  # not written out, so not in the key
+    return not _node_may_hold_a_secret(schema) and all(
+        _schema_is_plain(item)
+        for key, item in schema.items()
+        if key not in ("metadata", "serialization", "members", "expected")
+    )
+
+
+@functools.lru_cache(maxsize=256)
+def _plain_model(kind: type[BaseModel]) -> bool:
+    """Whether instances of a pydantic model can hold no secret (#668)."""
+    try:
+        return _schema_is_plain(kind.__pydantic_core_schema__)
+    except Exception:  # noqa: BLE001 - a schema not built yet, or unusual
+        return False
+
+
+def _model_json(value: object) -> Any:
+    """A model argument's JSON form, if its type rules out a secret, else ``_UNCHECKED``.
+
+    The model's own serializer gives what ``to_jsonable_python`` gives
+    (``by_alias=True`` as it defaults), so keys are unchanged. ``warnings="error"``
+    makes it fail for a value that does not fit its field's type, such as a
+    secret put into a ``str`` field by ``model_construct()``: that argument
+    is then searched like any other. A model whose fields can hold a secret
+    is searched too. This spares the search for most models on every call,
+    hits included.
+    """
+    serializer = getattr(value, "__pydantic_serializer__", None)
+    if serializer is None or not isinstance(value, BaseModel):
+        return _UNCHECKED
+    if not _plain_model(type(value)):
+        return _UNCHECKED
+    try:
+        return serializer.to_python(value, mode="json", by_alias=True, warnings="error")
+    except Exception:  # noqa: BLE001 - a misfit value, or anything unusual
+        return _UNCHECKED
+
+
+def _jsonable_form(value: object) -> object:
+    """``value`` as JSON-ready data for its key; a set is sorted."""
+    kind = type(value)
+    if isinstance(value, Iterator):
+        # The function would then run on an empty generator, and that
+        # result be cached.
+        msg = f"Object of type {kind.__name__} is an iterator, not hashable as a key"
+        raise TypeError(msg)
+    if isinstance(value, (set, frozenset)):
+        # Each item as canonical JSON, sorted: set order follows string
+        # hashes, which differ between processes. Nested sets go through here
+        # too. A set inside a dataclass or a model is not sorted.
+        return sorted(
+            json.dumps(
+                item, sort_keys=True, separators=(",", ":"), default=_jsonable_argument
+            )
+            for item in value
+        )
+    try:
+        return to_jsonable_python(value, bytes_mode="base64")
+    except PydanticSerializationError as e:
+        msg = f"Object of type {kind.__name__} is not JSON serializable"
+        raise TypeError(msg) from e
 
 
 def _jsonable_argument(value: object) -> object:
@@ -60,35 +185,19 @@ def _jsonable_argument(value: object) -> object:
             secret, which pydantic encodes as its mask
     """
     kind = type(value)
-    if _holds_a_secret(value):
-        # pydantic writes a secret as "**********", so calls that differ only
-        # in it would share one key, and one caller get another's result (#654).
-        msg = (
-            f"Object of type {kind.__name__} holds a pydantic secret (SecretStr, "
-            "SecretBytes or Secret), which would be keyed as its mask"
-        )
-        raise TypeError(msg)
-    if isinstance(value, Iterator):
-        # The function would then run on an empty generator, and that
-        # result be cached.
-        msg = f"Object of type {kind.__name__} is an iterator, not hashable as a key"
-        raise TypeError(msg)
-    if isinstance(value, (set, frozenset)):
-        # Each item as canonical JSON, sorted: set order follows string
-        # hashes, which differ between processes. Nested sets go through here
-        # too. A set inside a dataclass or a model is not sorted.
-        encoded: object = sorted(
-            json.dumps(
-                item, sort_keys=True, separators=(",", ":"), default=_jsonable_argument
+    encoded = _model_json(value)
+    if encoded is _UNCHECKED:
+        if _holds_a_secret(value):
+            # pydantic writes a secret as "**********", so calls that differ
+            # only in it would share one key, and one caller get another's
+            # result (#654).
+            msg = (
+                f"Object of type {kind.__name__} holds a pydantic secret "
+                "(SecretStr, SecretBytes or Secret), which would be keyed as "
+                "its mask"
             )
-            for item in value
-        )
-    else:
-        try:
-            encoded = to_jsonable_python(value, bytes_mode="base64")
-        except PydanticSerializationError as e:
-            msg = f"Object of type {kind.__name__} is not JSON serializable"
-            raise TypeError(msg) from e
+            raise TypeError(msg)
+        encoded = _jsonable_form(value)
     return {"$type": f"{kind.__module__}.{kind.__qualname__}", "value": encoded}
 
 
