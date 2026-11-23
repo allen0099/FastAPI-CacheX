@@ -30,9 +30,12 @@ from pydantic import Field
 from pydantic import Secret
 from pydantic import SecretBytes
 from pydantic import SecretStr
+from pydantic import SerializeAsAny
+from pydantic import Tag
 from pydantic import computed_field
 from pydantic import field_serializer
 from pydantic import field_validator
+from pydantic_core import core_schema
 from starlette.responses import Response
 
 from fastapi_cachex import BackendProxy
@@ -1083,32 +1086,134 @@ class _Wrapped(BaseModel):
         return SecretStr(token)
 
 
+class _Named(BaseModel):
+    """Field names that are also core schema keys."""
+
+    metadata: SecretStr
+    serialization: SecretStr = SecretStr("b")
+
+
+class _TaggedA(BaseModel):
+    kind: typing.Literal["metadata"]
+    token: SecretStr
+
+
+class _TaggedB(BaseModel):
+    kind: typing.Literal["b"]
+    count: int
+
+
+class _Tagged(BaseModel):
+    item: typing.Annotated[_TaggedA | _TaggedB, Field(discriminator="kind")]
+
+
+class _TagPairs(BaseModel):
+    """Union choices written as (schema, tag) pairs."""
+
+    value: typing.Annotated[SecretStr, Tag("s")] | typing.Annotated[int, Tag("i")]
+
+
+class _Parent(BaseModel):
+    count: int = 1
+
+
+class _Child(_Parent):
+    token: SecretStr
+
+
+class _AsAny(BaseModel):
+    parent: SerializeAsAny[_Parent]
+
+
+class _ToString:
+    """A str validated into a secret, written out with ``format()``."""
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: object, handler: object
+    ) -> core_schema.CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            SecretStr,
+            core_schema.str_schema(),
+            serialization={"type": "format", "formatting_string": ""},
+        )
+
+
+class _Stringified(BaseModel):
+    token: _ToString
+
+
+class _SecretMember(enum.Enum):
+    TOKEN = SecretStr("enum-secret")
+
+
+class _LiteralMember(BaseModel):
+    member: typing.Literal[_SecretMember.TOKEN]
+
+
+class _Forward(BaseModel):
+    """Not built until ``_Later`` exists: its schema is a mock at first."""
+
+    inner: "_Later"
+
+
+class _Later(BaseModel):
+    token: SecretStr
+
+
 def _assigned() -> _Row:
     row = _Row(id=1, name="a")
     row.name = SecretStr("tenant-a")  # type: ignore[assignment]
     return row
 
 
-@pytest.mark.filterwarnings("ignore::UserWarning")
+_MISFIT = pytest.mark.filterwarnings("ignore::UserWarning")
+
+
 @pytest.mark.parametrize(
     "argument",
     [
-        lambda: _Row.model_construct(id=1, name=SecretStr("tenant-a")),  # type: ignore[arg-type]
-        _assigned,
-        lambda: _Validated(count=1),
-        _Computed,
-        lambda: _Open(token=SecretStr("tenant-a")),
-        lambda: _Wrapped(token="tenant-a"),
-        lambda: [_Row(id=1, name="a"), _Row.model_construct(id=2, name=SecretStr("b"))],  # type: ignore[arg-type]
-    ],
-    ids=[
-        "construct",
-        "assignment",
-        "validator",
-        "computed",
-        "extra",
-        "serializer",
-        "in-a-list",
+        pytest.param(
+            lambda: _Row.model_construct(id=1, name=SecretStr("tenant-a")),  # type: ignore[arg-type]
+            id="construct",
+            marks=_MISFIT,
+        ),
+        pytest.param(_assigned, id="assignment", marks=_MISFIT),
+        pytest.param(lambda: _Validated(count=1), id="validator", marks=_MISFIT),
+        pytest.param(_Computed, id="computed"),
+        pytest.param(lambda: _Open(token=SecretStr("tenant-a")), id="extra"),
+        pytest.param(lambda: _Wrapped(token="tenant-a"), id="serializer"),
+        pytest.param(
+            lambda: [
+                _Row(id=1, name="a"),
+                _Row.model_construct(id=2, name=SecretStr("b")),  # type: ignore[arg-type]
+            ],
+            id="in-a-list",
+            marks=_MISFIT,
+        ),
+        pytest.param(
+            lambda: _Named(metadata=SecretStr("a")), id="field-named-like-a-key"
+        ),
+        pytest.param(
+            lambda: _Tagged(item=_TaggedA(kind="metadata", token=SecretStr("a"))),
+            id="tag-named-like-a-key",
+        ),
+        pytest.param(lambda: _TagPairs(value=SecretStr("a")), id="union-tag-pairs"),
+        pytest.param(
+            lambda: _AsAny(parent=_Child(token=SecretStr("a"))), id="serialize-as-any"
+        ),
+        pytest.param(lambda: _Stringified(token="a"), id="format-serializer"),
+        pytest.param(
+            lambda: _LiteralMember(member=_SecretMember.TOKEN), id="literal-enum-member"
+        ),
+        pytest.param(
+            lambda: _Forward.model_construct(inner=_Later(token=SecretStr("a"))),
+            id="mock-schema",
+        ),
+        pytest.param(
+            lambda: collections.deque([_Later(token=SecretStr("a")), _Parent()]),
+            id="dumps-in-one-walk",
+        ),
     ],
 )
 async def test_a_secret_where_the_type_rules_none_out_is_still_refused(

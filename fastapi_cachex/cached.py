@@ -51,75 +51,118 @@ _KEY_SEPARATOR = ":"
 # general way.
 _UNCHECKED: Any = object()
 
-# Core schema types that hold only values that cannot be a secret, or other
-# schemas walked in turn. Validators (`function-before` / `-after`) do not
-# matter: a value they return that does not fit the field's type fails the
-# `warnings="error"` serialization instead.
-_PLAIN_SCHEMAS = frozenset(
-    {
-        "model", "model-fields", "model-field", "computed-field",
-        "dataclass", "dataclass-args", "dataclass-field",
-        "typed-dict", "typed-dict-field", "list", "set", "frozenset", "tuple",
-        "dict", "nullable", "default", "definitions", "definition-ref",
-        "union", "tagged-union", "chain", "lax-or-strict", "literal", "enum",
-        "none", "bool", "int", "float", "decimal", "complex", "str", "bytes",
-        "date", "time", "datetime", "timedelta", "uuid", "url",
-        "multi-host-url", "function-before", "function-after", "no-info",
-        "with-info",
-    }
-)  # fmt: skip
-_CUSTOM_SERIALIZERS = frozenset({"function-plain", "function-wrap"})
+# The keys holding child schemas, per core schema type whose own values
+# cannot be a secret. Anything else is not plain: `any`, `is-instance` (a
+# secret's own schema), plain or wrap validators, and types added later.
+# Validators before or after a listed schema do not matter: a value they
+# return that does not fit its type fails the `warnings="error"` dump.
+_CHILD_KEYS: dict[str, tuple[str, ...]] = {
+    "model": ("schema",),
+    "model-fields": ("fields", "computed_fields"),
+    "model-field": ("schema",),
+    "computed-field": ("return_schema",),
+    "dataclass": ("schema",),
+    "dataclass-args": ("fields", "computed_fields"),
+    "dataclass-field": ("schema",),
+    "typed-dict": ("fields", "computed_fields"),
+    "typed-dict-field": ("schema",),
+    "list": ("items_schema",),
+    "set": ("items_schema",),
+    "frozenset": ("items_schema",),
+    "tuple": ("items_schema",),
+    "dict": ("keys_schema", "values_schema"),
+    "nullable": ("schema",),
+    "default": ("schema",),
+    "definitions": ("schema", "definitions"),
+    "definition-ref": (),
+    "union": ("choices",),
+    "tagged-union": ("choices",),
+    "chain": ("steps",),
+    "lax-or-strict": ("lax_schema", "strict_schema"),
+    "json-or-python": ("json_schema", "python_schema"),
+    "function-before": ("schema",),
+    "function-after": ("schema",),
+    **dict.fromkeys(
+        (
+            "none", "bool", "int", "float", "decimal", "complex", "str",
+            "bytes", "date", "time", "datetime", "timedelta", "uuid", "url",
+            "multi-host-url", "literal", "enum",
+        ),
+        (),
+    ),
+}  # fmt: skip
+_EXCLUDABLE = frozenset({"model-field", "dataclass-field", "typed-dict-field"})
+
+
+def _child_schemas(schema: dict[str, Any]) -> list[Any] | None:
+    """A core schema's child schemas, or None for a type not known to be plain."""
+    keys = _CHILD_KEYS.get(schema["type"])
+    if keys is None:
+        return None
+    children: list[Any] = []
+    for key in keys:
+        child = schema.get(key)
+        if child is None:
+            continue
+        if isinstance(child, dict) and key in ("fields", "choices"):
+            children.extend(child.values())  # keyed by field name or tag
+        elif isinstance(child, list):
+            # A union choice may be a (schema, tag) pair.
+            children.extend(c[0] if isinstance(c, tuple) else c for c in child)
+        else:
+            children.append(child)
+    return children
 
 
 def _node_may_hold_a_secret(schema: dict[str, Any]) -> bool:
     """Whether a core schema node, apart from its children, can hold a secret.
 
-    True for ``any``, ``is-instance`` (a secret's own schema), a plain or wrap
-    validator or serializer (they take or return anything), extra fields
-    kept with ``extra="allow"``, an enum with a member that is not plain,
-    and a schema type not known to be plain.
+    True for a serializer of its own (it may write anything, a secret's mask
+    included), extra fields kept with ``extra="allow"``, and an enum or a
+    literal with a value that is not plain.
     """
-    kind = schema.get("type")
-    serialization = schema.get("serialization")
     return (
-        (kind is not None and kind not in _PLAIN_SCHEMAS)
-        or schema.get("config", {}).get("extra_fields_behavior") == "allow"
+        schema.get("serialization") is not None
         or schema.get("extra_behavior") == "allow"
-        or (
-            kind == "enum"
-            and not _LEAVES.issuperset(
-                type(member.value) for member in schema["members"]
-            )
+        or schema.get("config", {}).get("extra_fields_behavior") == "allow"
+        or not _LEAVES.issuperset(
+            type(member.value) for member in schema.get("members", ())
         )
-        or (
-            isinstance(serialization, dict)
-            and serialization.get("type") in _CUSTOM_SERIALIZERS
-        )
+        or not _LEAVES.issuperset(map(type, schema.get("expected", ())))
     )
 
 
 def _schema_is_plain(schema: object) -> bool:
-    """Whether a core schema can hold no value but plain data."""
-    if isinstance(schema, list):
-        return all(_schema_is_plain(item) for item in schema)
-    if not isinstance(schema, dict):
-        return True
-    if schema.get("type") == "model-field" and schema.get("serialization_exclude"):
+    """Whether a core schema can hold no value but plain data; fails closed."""
+    if not isinstance(schema, dict) or not isinstance(schema.get("type"), str):
+        return False
+    if schema["type"] in _EXCLUDABLE and schema.get("serialization_exclude"):
         return True  # not written out, so not in the key
-    return not _node_may_hold_a_secret(schema) and all(
-        _schema_is_plain(item)
-        for key, item in schema.items()
-        if key not in ("metadata", "serialization", "members", "expected")
+    children = _child_schemas(schema)
+    return (
+        children is not None
+        and not _node_may_hold_a_secret(schema)
+        and all(map(_schema_is_plain, children))
     )
 
 
 @functools.lru_cache(maxsize=256)
-def _plain_model(kind: type[BaseModel]) -> bool:
-    """Whether instances of a pydantic model can hold no secret (#668)."""
+def _built_model_is_plain(kind: type[BaseModel]) -> bool:
     try:
         return _schema_is_plain(kind.__pydantic_core_schema__)
-    except Exception:  # noqa: BLE001 - a schema not built yet, or unusual
+    except Exception:  # noqa: BLE001 - an unusual schema: search instead
         return False
+
+
+def _plain_model(kind: type[BaseModel]) -> bool:
+    """Whether instances of a pydantic model can hold no secret (#668).
+
+    A model not fully built yet (a forward reference) has a mock schema: it
+    is not plain, and that answer is not cached.
+    """
+    return isinstance(
+        getattr(kind, "__pydantic_core_schema__", None), dict
+    ) and _built_model_is_plain(kind)
 
 
 def _model_json(value: object) -> Any:
@@ -133,13 +176,12 @@ def _model_json(value: object) -> Any:
     is searched too. This spares the search for most models on every call,
     hits included.
     """
-    serializer = getattr(value, "__pydantic_serializer__", None)
-    if serializer is None or not isinstance(value, BaseModel):
-        return _UNCHECKED
-    if not _plain_model(type(value)):
+    if not isinstance(value, BaseModel) or not _plain_model(type(value)):
         return _UNCHECKED
     try:
-        return serializer.to_python(value, mode="json", by_alias=True, warnings="error")
+        return type(value).__pydantic_serializer__.to_python(
+            value, mode="json", by_alias=True, warnings="error"
+        )
     except Exception:  # noqa: BLE001 - a misfit value, or anything unusual
         return _UNCHECKED
 
