@@ -337,6 +337,27 @@ def _session(request: Request) -> Any:
     return session
 
 
+def _starsessions_kept_id(request: Request) -> bool:
+    """Whether starsessions sends back the cookie of a session it already had.
+
+    Its middleware saves a loaded, non-empty session and sends its cookie on
+    every response, and its session records no writes (#681). This is True
+    when the session was in its store before the request and keeps the ID
+    the request sent: the cookie then carries that ID again. False for any
+    handler that does not look like starsessions' own.
+    """
+    handler = request.scope.get("session_handler")
+    if type(handler).__module__ != "starsessions.session":
+        return False
+    session_id = getattr(handler, "session_id", None)
+    return (
+        getattr(handler, "is_loaded", None) is True
+        and getattr(handler, "initially_empty", None) is False
+        and isinstance(session_id, str)
+        and session_id in request.cookies.values()
+    )
+
+
 def _request_credentials(
     request: Request, route_credentials: Iterable[tuple[str, str]] = ()
 ) -> list[tuple[str, str]]:
@@ -450,6 +471,24 @@ class _Call:
         if self.session_before is _UNCOPIED_SESSION:
             return True
         return bool(session != self.session_before)
+
+    @property
+    def session_changed(self) -> bool:
+        """Whether a written session keeps the response out of the backend.
+
+        It does, except when starsessions only sends back the cookie of a
+        session it already had, unchanged by the handler (#681). Such a
+        response is still sent ``private``. A write a dependency made to
+        that session is not seen; a ``cache_authorized`` route keys its
+        entry per caller, and a ``public`` one is the same for everyone.
+        """
+        if not self.session_written:
+            return False
+        return not (
+            self.session_before is not _UNCOPIED_SESSION
+            and _session(self.request) == self.session_before
+            and _starsessions_kept_id(self.request)
+        )
 
     @property
     def client_etag(self) -> str | None:
@@ -1286,7 +1325,7 @@ class _Route:
         response that was shareable.
         """
         reason = _unshareable_reason(response)
-        if reason is None and call.session_written:
+        if reason is None and call.session_changed:
             # The session middleware adds its `Set-Cookie` after us.
             reason = "set-cookie"
         if reason is None:

@@ -59,6 +59,7 @@ dev = [
     "pytest-cov>=6.1.0",
     "redis[hiredis]>=7.4.0",
     "ruff>=0.17.6",
+    "starsessions>=2.2.1",
     "tox>=4.25.0",
     "tox-uv>=1.29.0",
 ]
