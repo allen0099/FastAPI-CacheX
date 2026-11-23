@@ -129,5 +129,13 @@
       matchDepNames: ["python"],
       enabled: false,
     },
+    {
+      // A newer Python goes into tox.ini's `base_python` for `newest` too,
+      // which Renovate does not update; raise both together by hand.
+      description: "newest.yml's Python is kept in step with tox.ini",
+      matchFileNames: [".github/workflows/newest.yml"],
+      matchDepNames: ["python"],
+      enabled: false,
+    },
   ],
 }

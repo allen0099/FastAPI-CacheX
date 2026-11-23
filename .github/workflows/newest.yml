@@ -44,6 +44,8 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
+        # The newest supported Python; keep it in step with `base_python` of
+        # the `newest` env in tox.ini. Renovate leaves it alone.
         python-version: "3.15"
 
     - name: Install uv
