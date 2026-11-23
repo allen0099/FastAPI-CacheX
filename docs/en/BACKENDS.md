@@ -488,8 +488,8 @@ response body.
   with `decode_responses=True` cannot read a compressed entry, which is not
   text: `compress_min_size` with such a pool raises `CacheXError`, and a
   backend on such a pool must not share a server with one that compresses.
-- A document over 256 MB is stored uncompressed, and a compressed value that
-  would inflate past that is read as a miss.
+- A document over 16 MiB is stored uncompressed, and a compressed value that
+  would inflate past that is read as a miss (earlier versions allowed 256 MiB).
 - Counters are never compressed, and the memory backend has no such option:
   it keeps entries as objects.
 - On Memcached the item size limit applies to the compressed entry, so a

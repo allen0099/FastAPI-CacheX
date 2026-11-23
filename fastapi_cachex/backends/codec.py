@@ -48,7 +48,10 @@ _COMPRESSION_LEVEL = 1
 # The largest document that is compressed, or inflated when read. Without a
 # bound a small stored value could inflate to gigabytes; a document over it
 # is stored as it is, and a compressed value that inflates past it is a miss.
-_MAX_COMPRESSED_DOCUMENT = 256 * 1024 * 1024
+# Inflating runs on the event loop, and zlib reaches about 1000:1, so a
+# value of 16 KiB written by anyone with access to the server can cost this
+# much memory on every read (#636; 256 MiB before).
+_MAX_COMPRESSED_DOCUMENT = 16 * 1024 * 1024
 
 
 def _inflate(body: bytes) -> bytes:

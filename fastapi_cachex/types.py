@@ -164,8 +164,10 @@ def counter_entry(value: int) -> CacheEntry:
 
 
 # Trailing spaces are allowed because Memcached pads a value that DECR made
-# shorter instead of resizing it (DECR on "10" leaves "9 ").
-_COUNTER_PATTERN = re.compile(rb"-?[0-9]+ *")
+# shorter instead of resizing it (DECR on "10" leaves "9 "). At most 20
+# digits, as many as a 64-bit counter has: int() refuses more than 4300, so a
+# longer value would raise instead of reading as no counter (#636).
+_COUNTER_PATTERN = re.compile(rb"-?[0-9]{1,20} *")
 
 
 def parse_counter(raw: str | bytes) -> int | None:

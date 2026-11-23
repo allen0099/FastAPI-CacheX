@@ -113,6 +113,9 @@ async def test_a_counter_that_shrinks_reads_back_as_a_counter(
         (chr(0x0667), None),  # ARABIC-INDIC DIGIT SEVEN, which int() accepts
         (b"", None),
         (b"-", None),
+        (b"18446744073709551615", 2**64 - 1),  # Memcached's largest
+        (b"1" * 21, None),
+        (b"1" * 5000, None),  # int() would raise: past its digit limit
     ],
 )
 def test_parse_counter_accepts_only_what_the_servers_write(
