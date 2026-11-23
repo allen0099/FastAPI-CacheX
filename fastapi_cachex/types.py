@@ -45,6 +45,18 @@ def unescape_key_component(value: str) -> str:
     return _KEY_UNESCAPE_RE.sub(lambda match: _KEY_UNESCAPES[match.group()], value)
 
 
+def error_text(error: BaseException) -> str:
+    """``str(error)`` for a log line, or a placeholder if that raises.
+
+    Logged with ``%r``, so the text is built before the call: an exception
+    whose ``__str__`` raises must not replace the response being served.
+    """
+    try:
+        return str(error)
+    except Exception:  # noqa: BLE001 - anything a custom __str__ may raise
+        return f"<unprintable {type(error).__name__}>"
+
+
 def log_ref(value: str) -> str:
     """Return a short digest that identifies ``value`` in logs without revealing it.
 

@@ -54,6 +54,7 @@ from .proxy import BackendProxy
 from .switch import is_enabled
 from .types import CacheEntry
 from .types import TagVersions
+from .types import error_text
 from .types import log_ref
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,7 @@ def _jsonable(value: Any) -> Any:
         # type_=, as if that were the secret.
         msg = (
             f"Object of type {type(value).__name__} is not JSON serializable: "
-            "it has a SecretStr or SecretBytes field, which would be stored as "
+            "it holds a SecretStr, SecretBytes or Secret, which would be stored as "
             "its mask. Exclude the field (model_dump(exclude=...)) or cache a "
             "dict you build yourself"
         )
@@ -868,7 +869,7 @@ class CacheManager:
             logger.warning(
                 "Refreshing a stale value failed (%s: %r); returning it; key_ref=%s",
                 type(e).__name__,
-                str(e),
+                error_text(e),
                 log_ref(key),
             )
             return stale

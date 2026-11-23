@@ -154,8 +154,23 @@ class Fragment:
             lines += ["", link]
         else:
             lines[-1] += f" {link}"
-        rest = [f"  {line}" if line else "" for line in lines[1:]]
-        return [f"- {lines[0]}", *rest]
+        # A paragraph after a blank line needs four spaces to stay inside the
+        # entry on the docs site; two are enough for GitHub. A nested list
+        # keeps its own indent on top of the two.
+        rest, indent, previous = [], "  ", lines[0]
+        for line in lines[1:]:
+            if not line:
+                rest.append("")
+            elif line[0].isspace():
+                rest.append(f"  {line}")
+            else:
+                if not previous:
+                    indent = "    "
+                rest.append(f"{indent}{line}")
+            previous = line
+        # An entry of several paragraphs ends in a blank line; otherwise the
+        # docs site reads the next entry's `- ` as part of its last paragraph.
+        return [f"- {lines[0]}", *rest, *([""] if "" in rest else [])]
 
 
 def _check_fragment(path: Path) -> Fragment | str:
@@ -300,7 +315,7 @@ def assemble(text: str, fragments: list[Fragment]) -> str:
     order = [key for key in SECTIONS if key in blocks]
     order += [key for key in blocks if key not in SECTIONS]
     parts = ["\n".join(_trim(preamble))] if _trim(preamble) else []
-    parts += [f"### {titles[key]}\n\n" + "\n".join(blocks[key]) for key in order]
+    parts += [f"### {titles[key]}\n\n" + "\n".join(_trim(blocks[key])) for key in order]
     return (
         text[: unreleased.end()]
         + "\n\n"

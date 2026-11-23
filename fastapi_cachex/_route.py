@@ -62,6 +62,7 @@ from .lock import CacheLock
 from .switch import is_enabled
 from .types import CacheEntry
 from .types import CacheKeyBuilder
+from .types import error_text
 from .types import log_ref
 
 # One logger for the decorator and the modules split from it.
@@ -166,7 +167,7 @@ def _log_backend_failure(
             # "network:BackendUnavailableError", without the message (#630).
             # The message itself as %r, so a CR/LF in it cannot split the line.
             type(error).__name__,
-            str(error),
+            error_text(error),
             ""
             if last is None or not last[1]
             else f" ({last[1]} more since the last warning, at DEBUG)",
@@ -178,7 +179,7 @@ def _log_backend_failure(
         what,
         key_ref,
         type(error).__name__,
-        str(error),
+        error_text(error),
         cache_key,
     )
     _emit("error", "http", cache_key, route=_route_template(request))
@@ -970,7 +971,7 @@ class _Route:
             logger.warning(
                 "Refreshing the stale entry failed (%s: %r); path=%r",
                 type(e).__name__,
-                str(e),
+                error_text(e),
                 call.request.url.path,
             )
         finally:
@@ -1048,7 +1049,7 @@ class _Route:
             logger.warning(
                 "Handler failed (%s: %r); serving the stale entry; path=%r",
                 type(e).__name__,
-                str(e),
+                error_text(e),
                 call.request.url.path,
             )
             return None
@@ -1376,7 +1377,7 @@ async def _release_lock(lock: CacheLock) -> None:
         logger.warning(
             "Releasing the miss lock failed (%s: %r); it expires in %ss",
             type(e).__name__,
-            str(e),
+            error_text(e),
             _LOCK_TTL,
         )
 
