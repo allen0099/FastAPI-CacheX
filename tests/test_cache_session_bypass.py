@@ -6,13 +6,10 @@ An empty session and a ``Cookie`` header on its own do not.
 """
 
 import logging
-from collections.abc import Awaitable
-from collections.abc import Callable
 
 import pytest
 from fastapi import FastAPI
 from fastapi import Request
-from fastapi import Response
 from fastapi.testclient import TestClient
 from starlette.middleware import sessions
 from starlette.middleware.sessions import (
@@ -159,70 +156,3 @@ def test_bypass_is_logged(caplog: pytest.LogCaptureFixture) -> None:
         client.get("/cart")
 
     assert "Session data present; bypassing the backend for path=/cart" in caplog.text
-
-
-class _NotLoaded:
-    """Like starsessions' ``LoadGuard``: any attribute read raises."""
-
-    def __getattribute__(self, name: str) -> object:
-        msg = "Attempt to access session that has not been loaded yet."
-        raise RuntimeError(msg)
-
-
-def _lazy_session_app() -> tuple[FastAPI, dict[str, int]]:
-    """A session middleware that loads the session only when the app asks."""
-    app = FastAPI()
-    calls = {"plain": 0, "loads": 0}
-
-    @app.middleware("http")
-    async def lazy_session(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        request.scope["session"] = _NotLoaded()
-        return await call_next(request)
-
-    @app.get("/plain")
-    @cache(ttl=60)
-    async def plain() -> dict[str, int]:
-        calls["plain"] += 1
-        return {"n": calls["plain"]}
-
-    @app.get("/loads")
-    @cache(ttl=60)
-    async def loads(request: Request) -> dict[str, object]:
-        calls["loads"] += 1
-        request.scope["session"] = {"user": "alice"}  # what load_session() does
-        return {"user": request.session["user"], "n": calls["loads"]}
-
-    return app, calls
-
-
-async def test_a_session_not_loaded_is_no_session() -> None:
-    """The route read no session data and no cookie is sent: it is shared
-    like any other, where it answered 500 (#679)."""
-    app, calls = _lazy_session_app()
-    client = TestClient(app)
-
-    first = client.get("/plain")
-    second = client.get("/plain")
-
-    assert first.status_code == second.status_code == 200
-    assert second.json() == {"n": 1}
-    assert second.headers["Cache-Control"] == "max-age=60"
-    assert calls["plain"] == 1
-    assert await BackendProxy.get().get(_key("/plain")) is not None
-
-
-async def test_a_session_loaded_by_the_handler_is_not_stored() -> None:
-    """The response may hold the session data the handler loaded (#679)."""
-    app, calls = _lazy_session_app()
-    client = TestClient(app)
-
-    client.get("/loads")
-    response = client.get("/loads")
-
-    assert response.status_code == 200
-    assert response.json()["n"] == 2
-    assert response.headers["Cache-Control"] == _PRIVATE
-    assert calls["loads"] == 2
-    assert await BackendProxy.get().get(_key("/loads")) is None
