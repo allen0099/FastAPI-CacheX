@@ -1180,7 +1180,7 @@ async def test_with_only_held_locks_the_new_entry_is_kept() -> None:
     await backend.set("x", _entry("x"))
     await backend.set("y", _entry("y"))
 
-    assert list(backend.cache) == ["lock:a", "lock:b", "y"]
+    assert sorted(backend.cache) == ["lock:a", "lock:b", "y"]
 
 
 async def test_once_held_locks_expire_one_store_returns_to_the_limit(
@@ -1195,7 +1195,20 @@ async def test_once_held_locks_expire_one_store_returns_to_the_limit(
 
     await backend.set("b", _entry("b"))
 
-    assert list(backend.cache) == ["a", "b"]
+    # The locks moved behind "a" when it was stored, so "a" goes first and an
+    # expired lock may outlast it until the next store or cleanup (#655).
+    assert len(backend.cache) == 2
+    assert list(backend.cache)[-1] == "b"
+
+
+async def test_a_skipped_lock_moves_to_the_recent_end() -> None:
+    """#655: the next store does not walk past the held lock again."""
+    backend = MemoryBackend(max_entries=2)
+    await backend.set_if_absent("lock:job", _entry("token"), ttl=60)
+    await backend.set("a", _entry("a"))
+    await backend.set("b", _entry("b"))
+
+    assert list(backend.cache) == ["b", "lock:job"]
 
 
 async def test_a_lock_under_another_prefix_is_evicted() -> None:

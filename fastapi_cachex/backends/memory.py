@@ -13,7 +13,6 @@ from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Mapping
 from datetime import timedelta
-from itertools import islice
 
 from fastapi_cachex._warnings import caller_stacklevel
 from fastapi_cachex.cache_key import CacheKey
@@ -182,26 +181,32 @@ class MemoryBackend(BaseCacheBackend):
         """Put ``item`` under ``key`` as the most recently used entry.
 
         Evicts the least recently used entries that leave the cache over
-        ``max_entries``, except live ``lock:`` keys and ``key`` itself.
+        ``max_entries``, except live ``lock:`` keys, which count as used when
+        passed over, and ``key`` itself.
         """
         self.cache[key] = item
         self.cache.move_to_end(key)
         if self.max_entries is None or len(self.cache) <= self.max_entries:
             return
         # A held lock is not a cached value: evicting it would let a second
-        # holder in while the first still works (#634). Held locks can keep
-        # the cache over the limit, so this evicts every entry over it once
-        # they are released or expire, not only one.
+        # holder in while the first still works (#634). A skipped lock moves
+        # to the recent end, so the next store does not walk past it again
+        # (#655). Held locks can keep the cache over the limit, so this evicts
+        # every entry over it once they are released or expire, not only one.
+        # ponytail: with held locks >= max_entries every store still walks
+        # past all of them; that cache holds no values anyway.
         now = time.time()
-        evictable = (
-            k
-            for k, v in self.cache.items()
-            if k != key and not (k.startswith(LOCK_KEY_PREFIX) and _is_live(v, now))
-        )
-        for evicted in list(islice(evictable, len(self.cache) - self.max_entries)):
-            del self.cache[evicted]
+        while len(self.cache) > self.max_entries:
+            oldest = next(iter(self.cache))
+            if oldest == key:
+                # Every other entry is a held lock, moved behind it.
+                break
+            if oldest.startswith(LOCK_KEY_PREFIX) and _is_live(self.cache[oldest], now):
+                self.cache.move_to_end(oldest)
+                continue
+            del self.cache[oldest]
             logger.debug(
-                "Memory cache EVICT; key=%s max_entries=%s", evicted, self.max_entries
+                "Memory cache EVICT; key=%s max_entries=%s", oldest, self.max_entries
             )
 
     def _ensure_cleanup_started(self) -> None:
