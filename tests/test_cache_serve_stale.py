@@ -376,6 +376,23 @@ def test_error_mode_stores_an_unchanged_response_again(clock: _Clock) -> None:
     assert again.headers["age"] == "0"
 
 
+def test_a_handler_error_message_cannot_forge_a_log_line(
+    clock: _Clock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The message is client-influenced, so it is logged with %r (#635)."""
+    client, handler = _app("error")
+    client.get("/item")
+    clock.now += TTL + 1
+    handler.fail = RuntimeError("bad\r\nWARNING forged line")
+
+    with caplog.at_level(logging.WARNING, logger="fastapi_cachex.cache"):
+        assert _seen(client.get("/item"))[2] == "STALE"
+
+    assert "\nWARNING forged line" not in caplog.text
+    assert "'bad\\r\\nWARNING forged line'" in caplog.text
+    assert "path='/item'" in caplog.text
+
+
 @pytest.mark.parametrize(
     "failure", [RuntimeError("boom"), HTTPException(status_code=502), 500, 503]
 )

@@ -167,7 +167,7 @@ async def test_a_failing_refresh_returns_the_stale_value(
     with caplog.at_level(logging.WARNING, logger="fastapi_cachex.manager"):
         assert await _get(manager, factory) == "run 1"
 
-    assert "Refreshing a stale value failed (RuntimeError: upstream is down)" in (
+    assert "Refreshing a stale value failed (RuntimeError: 'upstream is down')" in (
         caplog.text
     )
     assert "Traceback" not in caplog.text

@@ -835,9 +835,9 @@ class CacheManager:
             # No traceback: a failing upstream fails every refresh.
             _emit("stale", "app", key)
             logger.warning(
-                "Refreshing a stale value failed (%s: %s); returning it; key_ref=%s",
+                "Refreshing a stale value failed (%s: %r); returning it; key_ref=%s",
                 type(e).__name__,
-                e,
+                str(e),
                 log_ref(key),
             )
             return stale
