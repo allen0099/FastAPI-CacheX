@@ -276,3 +276,57 @@ def test_a_session_read_but_not_written_is_stored() -> None:
     alice.get("/me")
 
     assert alice.get("/me").headers["X-Cache"] == "HIT"
+
+
+@pytest.mark.skipif(
+    not hasattr(sessions, "Session"), reason="Starlette before 1.0 flags no writes"
+)
+def test_a_stored_answer_to_a_session_a_dependency_wrote_is_private() -> None:
+    """#653: the middleware adds the new visitor's cookie to a HIT and a 304 too."""
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test")
+
+    async def visitor(request: Request) -> str:
+        return str(request.session.setdefault("vid", secrets.token_hex(8)))
+
+    @app.get("/page")
+    @cache(ttl=60, public=True, debug_header=True)
+    async def page(vid: Annotated[str, Depends(visitor)]) -> dict[str, str]:
+        return {"page": "same for everyone"}
+
+    returning = TestClient(app)
+    returning.get("/page")  # writes the visitor ID: not stored
+    stored = returning.get("/page")  # nothing written: stored
+    assert stored.headers["Cache-Control"] == "public, max-age=60"
+
+    first_time = TestClient(app).get("/page")
+    revalidated = TestClient(app).get(
+        "/page", headers={"If-None-Match": stored.headers["ETag"]}
+    )
+
+    for response in (first_time, revalidated):
+        assert response.headers["X-Cache"] == "HIT"
+        assert response.headers["Cache-Control"].startswith("private")
+        assert "set-cookie" in response.headers
+    assert revalidated.status_code == 304
+
+
+def test_a_modified_flag_that_is_not_false_counts_as_written() -> None:
+    """Only an explicit ``False`` is trusted from a custom session object."""
+
+    class Flagged(dict[str, object]):
+        modified = "yes"
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def middleware(request: Request, call_next):
+        request.scope["session"] = Flagged()
+        return await call_next(request)
+
+    @app.get("/shared")
+    @cache(ttl=60, public=True, debug_header=True)
+    async def shared() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    assert TestClient(app).get("/shared").headers["X-Cache-Reason"] == "set-cookie"
