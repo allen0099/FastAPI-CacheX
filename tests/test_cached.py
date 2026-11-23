@@ -1161,6 +1161,35 @@ class _Later(BaseModel):
     token: SecretStr
 
 
+class _Choice(BaseModel):
+    pick: typing.Literal["a"]
+
+
+class _OpenEnum(enum.Enum):
+    """Takes unknown values as pseudo-members."""
+
+    KNOWN = 1
+
+    @classmethod
+    def _missing_(cls, value: object) -> "_OpenEnum":
+        member = object.__new__(cls)
+        member._value_ = value  # type: ignore[assignment]
+        return member
+
+
+class _WithOpenEnum(BaseModel):
+    member: _OpenEnum
+
+
+class _Deferred(_Parent):
+    """Not built until first validated; on older pydantic it has no schema of
+    its own and would read its parent's."""
+
+    model_config = ConfigDict(defer_build=True)
+
+    token: SecretStr
+
+
 def _assigned() -> _Row:
     row = _Row(id=1, name="a")
     row.name = SecretStr("tenant-a")  # type: ignore[assignment]
@@ -1213,6 +1242,19 @@ _MISFIT = pytest.mark.filterwarnings("ignore::UserWarning")
         pytest.param(
             lambda: collections.deque([_Later(token=SecretStr("a")), _Parent()]),
             id="dumps-in-one-walk",
+        ),
+        pytest.param(
+            lambda: _Choice.model_construct(pick=SecretStr("a")),  # type: ignore[arg-type]
+            id="literal",
+            marks=_MISFIT,
+        ),
+        pytest.param(
+            lambda: _WithOpenEnum(member=SecretStr("a")),
+            id="enum-pseudo-member",
+        ),
+        pytest.param(
+            lambda: _Deferred.model_construct(count=1, token=SecretStr("a")),
+            id="deferred-subclass",
         ),
     ],
 )

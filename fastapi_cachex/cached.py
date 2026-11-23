@@ -31,7 +31,6 @@ from ._tags import validate_tags
 from .backends.base import validate_ttl
 from .dependencies import get_app_cache
 from .exceptions import CacheXError
-from .manager import _LEAVES
 from .manager import CacheManager
 from .manager import _adapter
 from .manager import _holds_a_secret
@@ -55,7 +54,9 @@ _UNCHECKED: Any = object()
 # cannot be a secret. Anything else is not plain: `any`, `is-instance` (a
 # secret's own schema), plain or wrap validators, and types added later.
 # Validators before or after a listed schema do not matter: a value they
-# return that does not fit its type fails the `warnings="error"` dump.
+# return that does not fit its type fails the `warnings="error"` dump. Not
+# `literal`, nor an enum without a str, int or float mixin: their
+# serializers write a value that does not fit without a warning.
 _CHILD_KEYS: dict[str, tuple[str, ...]] = {
     "model": ("schema",),
     "model-fields": ("fields", "computed_fields"),
@@ -86,7 +87,7 @@ _CHILD_KEYS: dict[str, tuple[str, ...]] = {
         (
             "none", "bool", "int", "float", "decimal", "complex", "str",
             "bytes", "date", "time", "datetime", "timedelta", "uuid", "url",
-            "multi-host-url", "literal", "enum",
+            "multi-host-url",
         ),
         (),
     ),
@@ -96,6 +97,8 @@ _EXCLUDABLE = frozenset({"model-field", "dataclass-field", "typed-dict-field"})
 
 def _child_schemas(schema: dict[str, Any]) -> list[Any] | None:
     """A core schema's child schemas, or None for a type not known to be plain."""
+    if schema["type"] == "enum" and schema.get("sub_type") in ("str", "int", "float"):
+        return []
     keys = _CHILD_KEYS.get(schema["type"])
     if keys is None:
         return None
@@ -118,17 +121,12 @@ def _node_may_hold_a_secret(schema: dict[str, Any]) -> bool:
     """Whether a core schema node, apart from its children, can hold a secret.
 
     True for a serializer of its own (it may write anything, a secret's mask
-    included), extra fields kept with ``extra="allow"``, and an enum or a
-    literal with a value that is not plain.
+    included) and extra fields kept with ``extra="allow"``.
     """
     return (
         schema.get("serialization") is not None
         or schema.get("extra_behavior") == "allow"
         or schema.get("config", {}).get("extra_fields_behavior") == "allow"
-        or not _LEAVES.issuperset(
-            type(member.value) for member in schema.get("members", ())
-        )
-        or not _LEAVES.issuperset(map(type, schema.get("expected", ())))
     )
 
 
@@ -157,12 +155,15 @@ def _built_model_is_plain(kind: type[BaseModel]) -> bool:
 def _plain_model(kind: type[BaseModel]) -> bool:
     """Whether instances of a pydantic model can hold no secret (#668).
 
-    A model not fully built yet (a forward reference) has a mock schema: it
-    is not plain, and that answer is not cached.
+    A model not fully built yet (a forward reference, ``defer_build``) is not
+    plain, and that answer is not cached. Its schema is a mock, or on older
+    pydantic it has none of its own and would read its parent's.
     """
-    return isinstance(
-        getattr(kind, "__pydantic_core_schema__", None), dict
-    ) and _built_model_is_plain(kind)
+    return (
+        getattr(kind, "__pydantic_complete__", False) is True
+        and isinstance(kind.__dict__.get("__pydantic_core_schema__"), dict)
+        and _built_model_is_plain(kind)
+    )
 
 
 def _model_json(value: object) -> Any:
