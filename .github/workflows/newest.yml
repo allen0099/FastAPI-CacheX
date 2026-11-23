@@ -1,0 +1,63 @@
+name: Newest dependencies
+
+on:
+  # Weekly, to try a dependency release before Renovate brings it into
+  # uv.lock (it waits a few days), and on demand.
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  # A change to this job is tried in its own pull request. Not on other pull
+  # requests: an upstream release must not turn unrelated pull requests red.
+  pull_request:
+    branches: [ "master" ]
+    paths:
+      - 'tox.ini'
+      - '.github/workflows/newest.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  newest:
+    # Every direct dependency at its newest release on the newest supported
+    # Python (the `newest` tox env). The log names the core schema types the
+    # `@cached` fast path leaves out on that pydantic (#671).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      memcached:
+        image: memcached:1.6-alpine
+        ports:
+          - 11211:11211
+
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.15"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        version: "0.13.9"
+
+    - name: Sync dependencies
+      run: uv sync --locked
+
+    - name: Test with the newest direct dependencies
+      run: uv run tox -e newest
+      env:
+        # The live suites are opt-in; these are the service containers above.
+        CACHEX_TEST_REDIS_PORT: 6379
+        CACHEX_TEST_MEMCACHED_PORT: 11211
+        CACHEX_REQUIRE_LIVE_SERVERS: 1

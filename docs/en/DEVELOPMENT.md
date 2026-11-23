@@ -158,8 +158,7 @@ uv run tox -e py311  # only run for Python 3.11
 
 ### The lowest supported dependencies
 
-The `py3*` environments install the versions in `uv.lock`, which are the newest
-ones. The `lowest` environment instead resolves every direct dependency of the
+The `py3*` environments install the versions in `uv.lock`. The `lowest` environment instead resolves every direct dependency of the
 package, extras included, to the lower bound in `pyproject.toml`
 (`uv_resolution = lowest-direct`) and runs the suite on Python 3.11, the oldest
 supported version. Starlette
@@ -173,6 +172,67 @@ uv run tox -e lowest
 
 When you raise or add a lower bound, or start using an API that is newer than
 the current floor, run it before pushing.
+
+### The newest dependencies
+
+Renovate updates `uv.lock` only once a release is a few days old, but a fresh
+`pip install fastapi-cachex` gets it at once. The `newest` environment resolves
+every direct dependency to its newest release (`uv_resolution = highest`),
+ignoring the lock file, and runs the suite on the newest supported Python. The
+**Newest dependencies** workflow runs it weekly with live servers, on demand,
+and on pull requests that change it; it does not run on other pull requests, so
+an upstream release cannot turn them red.
+
+```bash
+uv run tox -e newest
+```
+
+Its first line names the pydantic version and the core schema types that are
+off the `@cached` fast path on it (see the next section).
+
+### The `@cached` fast path and pydantic
+
+`@cached` refuses an argument that holds a pydantic secret, because pydantic
+writes every secret as `"**********"` and different secrets would share a key
+(#654). Searching every argument on every call was slow (#668), so
+`fastapi_cachex/_plain_schema.py` lets a model skip the search when its core
+schema can hold no value but plain data. Such a model's key comes from its own
+serializer, with `warnings="error"`.
+
+That is safe only if pydantic, under `warnings="error"`, never writes the mask
+of a secret held where the declared type does not allow one. Such a value can
+get in through `model_construct()`, assignment, a validator, an unvalidated
+default or an enum's `_missing_`. Pydantic either raises or writes nothing of
+the secret (a model field writes only its declared fields, so a secret there
+becomes `{}`, as on the search path). This differs between pydantic versions:
+the `literal` serializer raises on 2.7 but writes a misfit secret as its mask
+on 2.14.
+
+So the premise is checked, not assumed. On first use, `_verified_types()`
+probes each schema type in `_CHILD_KEYS` (plus enums with a str, int or float
+mixin) on the installed pydantic. Each probe serializes values that put a
+secret where the type does not allow one, among them a secret that also
+subclasses the type's own class. A type is dropped from the fast path if a
+probe writes the mask without an error or its serializer cannot be built. Its
+models then take the search, so a pydantic change costs speed, not safety.
+Today that drops `decimal`, and on pydantic 2.7 also `uuid` and `complex`.
+`literal` and enums without a mixin are left out of the table for good.
+
+When you change this:
+
+- A schema type added to `_CHILD_KEYS` needs probes in `_probes()`.
+  `test_every_plain_schema_type_is_checked_on_the_installed_pydantic` fails
+  otherwise.
+- The probes cover the misfits found in the reviews of PR #669. A serializer
+  that raises for a plain `SecretStr` but writes some other misfit secret could
+  still get through. Add a probe for any such case you find.
+- Models that are off the fast path cost more on every call. This was
+  accepted for `Decimal`, `Literal` and mixin-less enum fields (#671). The
+  search skips `Decimal`, `UUID` and plain dumped rows in C passes, so keep it
+  cheap.
+- Values pydantic leaves out of a model's JSON form (excluded fields, a
+  subclass's extra fields, a non-model object in a model field) are not in the
+  key on either path. That is #670, for 0.8.0.
 
 ## Using pre-commit
 
