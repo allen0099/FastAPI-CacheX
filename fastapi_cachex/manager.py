@@ -19,6 +19,8 @@ from collections.abc import Coroutine
 from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
+from datetime import date
+from datetime import datetime
 from datetime import timedelta
 from enum import Enum
 from typing import Any
@@ -179,47 +181,78 @@ _SECRETS = (SecretStr, SecretBytes, Secret)
 _NOT_STORED = (Iterator, bytes, bytearray, memoryview, *_SECRETS)
 
 
-def _holds_a_secret(value: Any, seen: set[int] | None = None) -> bool:
-    """Whether a value has a pydantic secret, at any depth, dict keys included.
+# Values that neither are nor hold a secret, skipped by exact type.
+_LEAVES = frozenset(
+    {str, int, float, bool, type(None), bytes, date, datetime, timedelta}
+)
 
-    A model or dataclass is dumped in python mode, where the secret objects
-    survive (the JSON form has already masked them). An excluded field is
-    not in the dump, and is not stored either. A dataclass pydantic cannot
-    build a schema for is read field by field instead; ``seen`` stops that
-    walk on a cycle. A value pydantic cannot dump is left to the encoder,
-    which raises for it right after.
+
+def _python_dump(value: Any) -> Any:
+    """A model or dataclass as plain data, its secret objects kept.
+
+    Dumped in python mode, where the secrets survive (the JSON form has
+    already masked them); an excluded field is not in the dump, and is not
+    stored either. A dataclass pydantic cannot build a schema for is read
+    field by field instead. None for a value pydantic cannot dump: the
+    encoder raises for it right after.
     """
-    while isinstance(value, Enum):  # an enum of enums included
-        value = value.value
-    if isinstance(value, BaseModel) or (
-        dataclasses.is_dataclass(value) and not isinstance(value, type)
-    ):
-        seen = set() if seen is None else seen
-        if id(value) in seen:
-            return False
-        seen.add(id(value))
-        try:
-            adapter = _adapter(type(value))
-        except PydanticUserError:  # no schema: a field type pydantic lacks
-            value = (
-                dict(vars(value))
-                if isinstance(value, BaseModel)
-                else {
-                    field.name: getattr(value, field.name, None)
-                    for field in dataclasses.fields(value)
-                }
-            )
-        else:
-            try:
-                value = adapter.dump_python(value, warnings=False)
-            except (PydanticSerializationError, ValueError, TypeError):
-                return False
-    if isinstance(value, _SECRETS):
-        return True
-    if isinstance(value, dict):
-        return any(_holds_a_secret(item, seen) for item in (*value, *value.values()))
-    if isinstance(value, (list, tuple, set, frozenset, deque)):
-        return any(_holds_a_secret(item, seen) for item in value)
+    try:
+        adapter = _adapter(type(value))
+    except PydanticUserError:  # no schema: a field type pydantic lacks
+        if isinstance(value, BaseModel):
+            return dict(vars(value))
+        return {
+            field.name: getattr(value, field.name, None)
+            for field in dataclasses.fields(value)
+        }
+    try:
+        return adapter.dump_python(value, warnings=False)
+    except (PydanticSerializationError, ValueError, TypeError):
+        return None
+
+
+def _push_inner(stack: list[Any], items: Iterable[Any]) -> None:
+    """Push the items that are not plain values.
+
+    A container of only plain values (the common case) is ruled out by one
+    pass in C.
+    """
+    if not _LEAVES.issuperset(map(type, items)):
+        stack.extend(item for item in items if type(item) not in _LEAVES)
+
+
+def _holds_a_secret(value: Any) -> bool:
+    """Whether a value has a secret pydantic would write as its mask.
+
+    At any depth, dict keys included; a model or dataclass is looked through
+    in its dumped form, so a field it leaves out does not count and one its
+    serializer writes out does. Walked with a stack rather than by recursion,
+    skipping plain values by their exact type: ``@cached`` runs it on every
+    call whose arguments ``_model_json`` cannot vouch for (#668). Each
+    container is looked at once, so a cycle ends the walk.
+    """
+    stack = [value]
+    seen: set[int] = set()
+    while stack:
+        item = stack.pop()
+        if type(item) in _LEAVES:
+            continue
+        if isinstance(item, _SECRETS):
+            return True
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        if isinstance(item, Enum):  # an enum of enums included
+            stack.append(item.value)
+        elif isinstance(item, dict):
+            _push_inner(stack, item)
+            _push_inner(stack, item.values())
+        elif isinstance(item, (list, tuple, set, frozenset, deque)):
+            _push_inner(stack, item)
+        elif isinstance(item, BaseModel) or (
+            dataclasses.is_dataclass(item) and not isinstance(item, type)
+        ):
+            stack.append(_python_dump(item))
     return False
 
 
