@@ -158,7 +158,10 @@ async def test_a_failed_release_is_logged_on_one_line(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    released = CacheLock.release
+
     async def release(self: CacheLock) -> bool:
+        await released(self)  # stops the renewal task, which would leak
         msg = "down\r\nforged line"
         raise RuntimeError(msg)
 
