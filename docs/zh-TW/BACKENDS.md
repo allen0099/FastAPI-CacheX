@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", message="memory backend with several workers")
 
 清理 task 會在第一次快取呼叫所在的事件迴圈（event loop）上啟動。若之後的呼叫在另一個迴圈上執行（例如第一個迴圈已關閉），task 會在新的迴圈上重新啟動。關閉應用程式時，`await backend.aclose()` 會取消 task 並等待它結束（參見[關閉後端](#closing-a-backend)）；`stop_cleanup()` 只會要求取消。task 只以弱參考（weak reference）持有後端，因此沒有呼叫 `aclose()` 就被丟棄的後端仍會連同其中的項目一起被釋放，它的 task 則在下次醒來時結束。先前的版本會把這樣的後端一直留在記憶體中，只要它的事件迴圈還存在就不會釋放。
 
-預設沒有容量上限：項目只會在過期時離開，因此記憶體用量會隨「請求速率 × `ttl` × 回應大小」成長，而且每個 worker 各自一份；用戶端也可以刻意變換快取路由的查詢字串來撐大它。`MemoryBackend(max_entries=10_000)` 限制項目數量：再多存一筆時，會淘汰最久未使用的項目，不論它是否已過期（讀取命中與每一次寫入都算使用）。預設 `lock:` 前綴下持有中的 `CacheLock` 不會被淘汰（見[分散式鎖](LOCK.md)）。請依預期的項目數乘以 worker 數來決定上限，因為每個 worker 各有一份快取；上限計算的是項目數，不是位元組數。
+預設沒有容量上限：項目只會在過期時離開，因此記憶體用量會隨「請求速率 × `ttl` × 回應大小」成長，而且每個 worker 各自一份；用戶端也可以刻意變換快取路由的查詢字串來撐大它。`MemoryBackend(max_entries=10_000)` 限制項目數量：再多存一筆時，會淘汰最久未使用的項目，不論它是否已過期（讀取命中與每一次寫入都算使用）。`lock:` 下尚未過期的鍵不會被淘汰，持有中的 `CacheLock` 預設就放在那裡（見[分散式鎖](LOCK.md)），因此持有中的鎖可能讓快取超過上限，直到它們被釋放或過期。請別讓用戶端輸入成為可能以 `lock:` 開頭的鍵名（自訂的 `key_builder`、`CacheManager(key_prefix="")`），否則用戶端就能存入在過期前永遠不會被淘汰的項目。請依預期的項目數乘以 worker 數來決定上限，因為每個 worker 各有一份快取；上限計算的是項目數，不是位元組數。
 
 ```python
 backend = MemoryBackend(max_entries=10_000)
@@ -342,7 +342,7 @@ found = await backend.get_many(["a", "b", "c"])  # {"a": entry_a, "b": entry_b}
 
 - `get_many(keys) -> dict[str, CacheEntry]`：以鍵為索引回傳找到的項目。不存在、已過期，或存放的位元組不是項目的鍵不會出現在結果中；重複傳入的鍵只讀取一次。記憶體後端以單一步驟讀取，Redis 送出一個 `MGET`，Memcached 對每台伺服器送出一個帶有所有鍵的 `get`。`keys` 為空時不會有任何 I/O。
 - `set_many(entries, ttl=None) -> None`：儲存 mapping 中的每個項目，全部使用同一個 `ttl`，而 `ttl` 會在寫入任何內容之前先驗證。mapping 為空時不會有任何 I/O。這一批寫入是否具原子性取決於後端：
-    - **記憶體**：具原子性。整批以單一步驟儲存，中間沒有 `await`。設定了 `max_entries` 時，超過上限的一批只會保留最後 `max_entries` 個項目。
+    - **記憶體**：具原子性。整批以單一步驟儲存，中間沒有 `await`。設定了 `max_entries` 時，超過上限的一批只會保留最後 `max_entries` 個項目（有鎖被持有時會更少）。
     - **Redis**：具原子性。在單一 `MULTI`/`EXEC` 中對每個項目各送一個 `SET`（`MSET` 不接受過期時間），一次往返送出。並行的讀取者只會看到整批或完全看不到；被伺服器拒絕的一批（例如已達記憶體上限）不會儲存任何內容。
     - **Memcached**：不具原子性。項目以每台伺服器一批 `set` 指令送出，伺服器各自儲存每一個。若其中一個值超過項目大小上限，呼叫會拋出 `ValueTooLargeError`，訊息中列出這一批裡最大的值的大小與鍵的摘要，而其他項目可能已經存入。伺服器在途中斷線，或多台伺服器中有一台失敗時也是如此。
 

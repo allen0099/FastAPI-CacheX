@@ -399,7 +399,8 @@ then reads the backend again and is served the stored entry.
   entries. Deleting it (`backend.clear()`, or a `clear_pattern` that matches
   it) only lets a second worker render. With the memory backend there is one
   process, so `coalesce="distributed"` only adds the lock's cost, and the lock
-  takes one of `max_entries` while it is held.
+  takes one of `max_entries` while it is held (it is not evicted, so it can
+  push the cache over the limit).
 
 With `serve_stale=True` and `stale="revalidate"`, the same lock lets one
 worker at a time refresh a stale entry; the others skip their refresh.

@@ -59,10 +59,10 @@ Complete runnable example: [`examples/cache_lock.py`](https://github.com/allen00
 - **Namespace**: Lock keys live under their own `lock:` prefix by default (e.g. `lock:report:123`), separate from `CacheManager`'s `cache:`.
 - **What else can remove a held lock**: A lock is an entry in the same backend as the cache, so a few things outside the lock can delete it before its `ttl`, and a second holder can then acquire it. The first holder learns of it only at its next renewal or at `release()` (`lost`).
     - `backend.clear()` on any backend, and a `clear_pattern()` that matches `lock:` keys. On Memcached, `clear()` is `flush_all` and wipes the whole server.
-    - Memcached evicts entries under memory pressure, locks included.
-    - `MemoryBackend(max_entries=...)` does not evict a held lock under the default `lock:` prefix (before 0.7.3 it did, so a client sending distinct query strings to a cached route could evict one). A lock with another `key_prefix` is evicted like any entry.
+    - Memcached evicts entries under memory pressure, locks included, and so does Redis with `maxmemory` and any eviction policy other than `noeviction` (every lock has a TTL, so the `volatile-*` policies evict locks too).
+    - `MemoryBackend(max_entries=...)` does not evict a held lock under the default `lock:` prefix (earlier versions did, so a client sending distinct query strings to a cached route could evict one). A lock with another `key_prefix` is evicted like any entry.
 
-    A lock that must hold through these belongs on a backend of its own: a Redis or Memcached server (or Redis database) that no cache traffic fills and that nobody clears.
+    A lock that must hold through these belongs on a backend of its own: a separate Memcached server, or a separate Redis server set to `noeviction`, that no cache traffic fills and nobody clears. A second Redis database on the cache's server is not enough: `maxmemory` and `FLUSHALL` apply to the whole server.
 - **Backend**: Without `backend=`, a lock uses the backend registered with `BackendProxy.set()`. Unlike `@cache`, it does not fall back to a `MemoryBackend`: with no backend registered, `acquire()` raises `BackendNotFoundError`. A lock only excludes processes that share its backend, so a per-process `MemoryBackend` only coordinates tasks within one process.
 
 > [!NOTE]
