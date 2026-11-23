@@ -1026,8 +1026,6 @@ class _Rich(BaseModel):
     ratio: float = float("inf")
     span: timedelta = timedelta(seconds=90)
     when: datetime = datetime(2024, 1, 1, tzinfo=UTC)
-    amount: Decimal = Decimal("1.10")
-    ident: UUID = UUID(int=1)
     tags: set[int] = Field(default_factory=lambda: {3, 1})
     rows: list[_Count] = Field(default_factory=lambda: [_Count(count=1)])
     aliased_: int = Field(1, alias="aliased")
@@ -1042,8 +1040,8 @@ def test_a_plain_model_skips_the_search_and_keeps_its_key() -> None:
     """#668: its type rules out a secret, and its JSON form is unchanged."""
     from pydantic_core import to_jsonable_python
 
+    from fastapi_cachex._plain_schema import _plain_model
     from fastapi_cachex.cached import _model_json
-    from fastapi_cachex.cached import _plain_model
 
     model = _Rich()
 
@@ -1190,6 +1188,17 @@ class _Deferred(_Parent):
     token: SecretStr
 
 
+class _SecretDecimal(SecretStr, Decimal):
+    """Passes a Decimal field's check; its str() is the mask."""
+
+    def __new__(cls, value: str) -> "_SecretDecimal":  # noqa: PYI034
+        return Decimal.__new__(cls, value)
+
+
+class _Amount(BaseModel):
+    amount: Decimal
+
+
 def _assigned() -> _Row:
     row = _Row(id=1, name="a")
     row.name = SecretStr("tenant-a")  # type: ignore[assignment]
@@ -1256,6 +1265,10 @@ _MISFIT = pytest.mark.filterwarnings("ignore::UserWarning")
             lambda: _Deferred.model_construct(count=1, token=SecretStr("a")),
             id="deferred-subclass",
         ),
+        pytest.param(
+            lambda: _Amount.model_construct(amount=_SecretDecimal("1.5")),
+            id="secret-that-is-a-decimal",
+        ),
     ],
 )
 async def test_a_secret_where_the_type_rules_none_out_is_still_refused(
@@ -1280,7 +1293,7 @@ async def test_a_secret_in_an_excluded_field_is_left_out_as_before(
     manager: CacheManager,
 ) -> None:
     """Not in the key, as in 0.7.2: calls that differ only in it share it."""
-    from fastapi_cachex.cached import _plain_model
+    from fastapi_cachex._plain_schema import _plain_model
 
     assert _plain_model(_Login)  # the field is not written out
 
@@ -1291,3 +1304,65 @@ async def test_a_secret_in_an_excluded_field_is_left_out_as_before(
     assert load.cache_key(_Login(user="a", password=SecretStr("1"))) == load.cache_key(
         _Login(user="a", password=SecretStr("2"))
     )
+
+
+async def test_a_model_rebuilt_with_a_secret_field_is_checked_again(
+    manager: CacheManager,
+) -> None:
+    """The verdict is kept per schema, not per class (#668)."""
+
+    class Dynamic(BaseModel):
+        value: str
+
+    @cached(ttl=60, manager=manager)
+    async def load(item: Dynamic) -> int:
+        return 1
+
+    load.cache_key(Dynamic(value="a"))
+    Dynamic.model_fields["value"].annotation = SecretStr
+    Dynamic.model_rebuild(force=True)
+
+    with pytest.raises(CacheXError, match="pydantic secret"):
+        load.cache_key(Dynamic(value="a"))
+
+
+def test_every_plain_schema_type_is_checked_on_the_installed_pydantic() -> None:
+    """A type added to the table needs a probe of its own (#668)."""
+    from fastapi_cachex._plain_schema import _CHILD_KEYS
+    from fastapi_cachex._plain_schema import _MIXINS
+    from fastapi_cachex._plain_schema import _probes
+
+    assert set(_probes()) == set(_CHILD_KEYS) | set(_MIXINS)
+
+
+def test_the_check_drops_a_serializer_that_writes_the_mask() -> None:
+    """One that writes a misfit secret, or cannot be built, fails it."""
+    from pydantic_core import SchemaSerializer
+
+    from fastapi_cachex._plain_schema import _writes_the_mask
+
+    secret = SecretStr("a")
+    formatted = core_schema.str_schema(
+        serialization={"type": "format", "formatting_string": ""}
+    )
+
+    assert _writes_the_mask(lambda: SchemaSerializer(formatted), secret)
+    assert _writes_the_mask(lambda: SchemaSerializer({"type": "no-such-type"}), secret)
+    assert not _writes_the_mask(
+        lambda: SchemaSerializer(core_schema.str_schema()), secret
+    )
+
+
+def test_a_type_the_check_drops_takes_its_models_off_the_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi_cachex import _plain_schema
+
+    verified = _plain_schema._verified_types()
+    assert _plain_schema._plain_model(_Row)
+    monkeypatch.setattr(_plain_schema, "_verified_types", lambda: verified - {"str"})
+    _plain_schema._built_model_is_plain.cache_clear()
+    try:
+        assert not _plain_schema._plain_model(_Row)
+    finally:
+        _plain_schema._built_model_is_plain.cache_clear()
