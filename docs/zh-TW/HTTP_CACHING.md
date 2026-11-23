@@ -567,7 +567,7 @@ def per_user_key(request: Request) -> str:
         # 會共用同一個項目，一位使用者的儀表板就會交給下一位。
         raise HTTPException(status_code=401)
     # 預設的鍵再加上使用者 ID，並與 host、路徑一樣經過編碼。
-    return build_cache_key(request, str(user_id))
+    return build_cache_key(request, user_id)
 
 
 @app.get("/me/dashboard")
@@ -592,7 +592,7 @@ async def my_dashboard(user: CurrentUser):
 > 以原始請求標頭組成的鍵等同於水平權限提升：送出 `X-User-Id: <someone-else>` 就會拿到該使用者的快取回應。
 
 > [!WARNING]
-> 放進鍵的應該是 ID，而不是憑證本身。傳給 `build_cache_key` 的 Bearer 權杖、API 金鑰或 Session ID 會原樣存在鍵裡，任何能列出後端鍵的人（包括[監控路由](#monitoring-routes)）都看得到，`DEBUG` 日誌裡也會出現。請改用憑證所對應的使用者或租戶 ID，或它的帶金鑰摘要（`hmac.new(secret, token.encode(), "sha256").hexdigest()`）。
+> 放進鍵的應該是 ID，而不是憑證本身。傳給 `build_cache_key` 的 Bearer 權杖、API 金鑰或 Session ID 會以可讀的形式存在鍵裡（只有分隔符號會被跳脫），任何能列出後端鍵的人（包括[監控路由](#monitoring-routes)）都看得到，`DEBUG` 日誌裡也會出現。請改用憑證所對應的使用者或租戶 ID，或它的帶金鑰摘要（`hmac.new(secret_bytes, token.encode(), "sha256").hexdigest()`）。
 
 key builder 只在 `@cache` 讀取或寫入後端時執行，因此 `no_store=True`、`private=True`、沒有 `ttl` 的路由，以及繞過後端的[帶有憑證的請求](#requests-with-credentials)，都不會呼叫它。0.3.8 之前它仍會被呼叫，但只用於除錯日誌。請讓它不帶副作用。
 

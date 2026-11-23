@@ -202,7 +202,7 @@ pool = BlockingConnectionPool(
 backend = AsyncRedisCacheBackend(connection_pool=pool)
 ```
 
-與 Sentinel 一樣，此時不會使用後端本身的 `host`、`port`、`password`、`db` 與逾時設定，連線池也要由你自己關閉（見[關閉後端](#closing-a-backend)）。Redis 的 `maxclients`（預設 10000）必須涵蓋 `max_connections` 乘以 worker 數。
+若整個 `timeout` 期間所有連線都在使用中，指令會以和上面相同的方式失敗。與 Sentinel 一樣，此時不會使用後端本身的 `host`、`port`、`password`、`db`、逾時設定、`protocol` 與 `retry=`：請在連線池上設定它們（例如在那裡設定 `retry=Retry(NoBackoff(), 0)`），連線池也要由你自己關閉（見[關閉後端](#closing-a-backend)）。Redis 的 `maxclients`（預設 10000）必須涵蓋 `max_connections` 乘以 worker 數。
 
 ## Memcached {#memcached}
 
