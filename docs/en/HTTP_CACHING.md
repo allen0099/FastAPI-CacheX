@@ -233,10 +233,18 @@ A response that belongs to one caller is never stored either (#296):
   A request has session data when `request.session` is non-empty under any
   session middleware, such as Starlette's `SessionMiddleware`. An empty
   session does not count, and neither does a `Cookie` header on its own.
-  A handler that writes to an empty session (a CSRF token, a visitor ID) is
-  answered with `private` and its response is not stored, since the session
-  middleware adds a `Set-Cookie` to it; before 0.7.2 it was stored and served
-  to the next visitors.
+  A handler or a dependency that writes to the session (a CSRF token, a
+  visitor ID) gets its response answered with `private` and not stored,
+  since the session middleware adds a `Set-Cookie` to it. Before 0.7.2 it
+  was stored and served to the next visitors. In 0.7.2 a write made by a
+  dependency, or one that stored the value the session already held, still
+  got through (#653).
+  Starlette 1.0 and later record every write to the session. A session that
+  records none (Starlette before 1.0, or a custom middleware that keeps a
+  plain `dict`) counts as written whenever it is not empty: Starlette before
+  1.0 sends `Set-Cookie` with every such response. On those versions a
+  response to a request with session data is therefore never stored, with
+  `cache_authorized=True` too.
   Before 0.3.9 only `Authorization` did, and a plain `@cache` on a route
   that read the session served one visitor's response to the next (#319).
   Before 0.5.0 a session that the removed `FastAPICacheXSessionMiddleware`
@@ -511,7 +519,7 @@ causes. With `debug_header=True` such a response also carries
 | `disabled` | `BYPASS` | Caching is [switched off](TESTING.md#switching-off) for the process. |
 | `status` | `MISS`, `REFRESH` | The handler answered with something other than a 2xx (or with 206). |
 | `streamed` | `MISS`, `REFRESH` | A `StreamingResponse` or `FileResponse`: there is no body to store. |
-| `set-cookie` | `MISS`, `REFRESH` | The handler or a dependency set a cookie, or the handler changed `request.session` (the session middleware adds its cookie after `@cache`): a stored copy would hand one visitor's cookie or session data to the next. Sent with `private`. Another middleware that adds its cookie later is not seen here. |
+| `set-cookie` | `MISS`, `REFRESH` | The handler or a dependency set a cookie or wrote to `request.session` (the session middleware adds its cookie after `@cache`; a non-empty session that records no writes counts as written): a stored copy would hand one visitor's cookie or session data to the next. Sent with `private`. Another middleware that adds its cookie later is not seen here. |
 | `vary` | `MISS`, `REFRESH` | The handler or a dependency set `Vary: *`, or, with the default key, a `Vary` naming a header that is not in the route's `vary`: a stored copy would be served whatever that header says. Logged at `WARNING` once per route and header. Add the header to `vary=`. |
 | `response-cache-control` | `MISS`, `REFRESH` | The handler or a dependency sent `Cache-Control: private` or `no-store` on this response. |
 | `dependency-status` | `MISS`, `REFRESH` | A dependency set the status code, which may hold for this request only. |

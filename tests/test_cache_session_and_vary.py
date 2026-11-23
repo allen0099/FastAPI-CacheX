@@ -8,13 +8,16 @@ default key does not hold.
 import logging
 import secrets
 import threading
+from typing import Annotated
 
 import pytest
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
+from starlette.middleware import sessions
 from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_cachex import _stored_response as stored_response
@@ -163,3 +166,113 @@ def test_a_vary_outside_the_key_warns_once_and_names_the_header(
     assert len(warnings) == 1
     assert "Vary: 'accept'" in warnings[0]
     assert "vary=" in warnings[0]
+
+
+@pytest.mark.filterwarnings("ignore:cache vary on Cookie")
+def test_a_session_written_by_a_dependency_is_not_stored_or_shared() -> None:
+    """#653: the copy is taken after the dependencies, so it held their write."""
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test")
+
+    async def csrf(request: Request) -> str:
+        return str(request.session.setdefault("csrf", secrets.token_hex(8)))
+
+    @app.get("/form")
+    @cache(ttl=60, cache_authorized=True, vary=["Cookie"], debug_header=True)
+    async def form(token: Annotated[str, Depends(csrf)]) -> dict[str, str]:
+        return {"csrf": token}
+
+    first = TestClient(app).get("/form")
+    second = TestClient(app).get("/form")
+
+    assert first.json() != second.json()
+    for response in (first, second):
+        assert response.headers["X-Cache"] == "MISS"
+        assert response.headers["X-Cache-Reason"] == "set-cookie"
+        assert response.headers["Cache-Control"].startswith("private")
+
+
+def test_a_session_rewritten_with_the_same_value_is_not_sent_public() -> None:
+    """#653: Starlette sends the cookie for a write that changes nothing."""
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test")
+
+    @app.get("/login")
+    async def login(request: Request) -> dict[str, str]:
+        request.session["currency"] = "usd"
+        return {}
+
+    @app.get("/price")
+    @cache(ttl=60, public=True, debug_header=True)
+    async def price(request: Request) -> dict[str, str]:
+        request.session["currency"] = "usd"
+        return {"currency": "usd"}
+
+    alice = TestClient(app)
+    alice.get("/login")
+    response = alice.get("/price")
+
+    assert "set-cookie" in response.headers
+    assert response.headers["X-Cache-Reason"] == "set-cookie"
+    assert response.headers["Cache-Control"].startswith("private")
+    assert TestClient(app).get("/price").headers["X-Cache"] == "MISS"
+
+
+def _plain_session_app(session: dict[str, object]) -> FastAPI:
+    """A session middleware that keeps a dict, which records no writes."""
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def middleware(request: Request, call_next):
+        request.scope["session"] = dict(session)
+        return await call_next(request)
+
+    @app.get("/shared")
+    @cache(ttl=60, public=True, debug_header=True)
+    async def shared() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    return app
+
+
+def test_a_non_empty_session_without_a_modified_flag_counts_as_written() -> None:
+    """#653: Starlette before 1.0 sends the cookie for every such response."""
+    client = TestClient(_plain_session_app({"user": "alice"}))
+
+    for _ in range(2):
+        response = client.get("/shared")
+        assert response.headers["X-Cache"] == "MISS"
+        assert response.headers["X-Cache-Reason"] == "set-cookie"
+
+
+def test_an_empty_session_without_a_modified_flag_is_stored() -> None:
+    client = TestClient(_plain_session_app({}))
+
+    client.get("/shared")
+
+    assert client.get("/shared").headers["X-Cache"] == "HIT"
+
+
+@pytest.mark.skipif(
+    not hasattr(sessions, "Session"), reason="Starlette before 1.0 flags no writes"
+)
+@pytest.mark.filterwarnings("ignore:cache vary on Cookie")
+def test_a_session_read_but_not_written_is_stored() -> None:
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test")
+
+    @app.get("/login")
+    async def login(request: Request) -> dict[str, str]:
+        request.session["user"] = "alice"
+        return {}
+
+    @app.get("/me")
+    @cache(ttl=60, cache_authorized=True, vary=["Cookie"], debug_header=True)
+    async def me(request: Request) -> dict[str, str]:
+        return {"user": request.session["user"]}
+
+    alice = TestClient(app)
+    alice.get("/login")
+    alice.get("/me")
+
+    assert alice.get("/me").headers["X-Cache"] == "HIT"
