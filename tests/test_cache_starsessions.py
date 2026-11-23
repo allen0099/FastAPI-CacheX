@@ -6,6 +6,7 @@ session and sends its cookie on every response.
 """
 
 import secrets
+import time
 from collections.abc import Awaitable
 from collections.abc import Callable
 from typing import Annotated
@@ -18,6 +19,7 @@ from fastapi import Request
 from fastapi import Response
 from fastapi.testclient import TestClient
 
+from fastapi_cachex import _stored_response as stored_response
 from fastapi_cachex import build_cache_key
 from fastapi_cachex import cache
 from fastapi_cachex.proxy import BackendProxy
@@ -195,6 +197,78 @@ def test_an_unchanged_session_is_stored_per_caller() -> None:
     assert response.headers["Cache-Control"] == _PRIVATE
     assert "set-cookie" in response.headers
     assert calls["me"] == 2  # once for alice, once for bob
+
+
+async def _rotated(session: _Session) -> str:
+    """A CSRF token made anew on every request, in an existing session too."""
+    session["csrf"] = secrets.token_hex(8)
+    return str(session["csrf"])
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param({"public": True}, id="public"),
+        pytest.param(
+            {"cache_authorized": True, "key_builder": lambda request: "shared"},
+            id="key-shared-by-callers",
+        ),
+    ],
+)
+async def test_a_dependency_write_to_an_existing_session_is_not_stored(
+    options: dict[str, Any],
+) -> None:
+    """Compared with the store, which still holds the session as the request
+    found it (#681)."""
+    app, _ = _app()
+    calls = {"n": 0}
+
+    @app.get("/rotate")
+    @cache(ttl=60, **options)
+    async def rotate(token: Annotated[str, Depends(_rotated)]) -> dict[str, str]:
+        calls["n"] += 1
+        return {"csrf": token}
+
+    alice = _logged_in(app)
+    bob = _logged_in(app)
+    first = alice.get("/rotate")
+    second = bob.get("/rotate")
+
+    assert first.json() != second.json()
+    assert calls["n"] == 2
+    assert await _stored("/rotate") == []
+
+
+def test_a_stale_entry_is_refreshed_for_an_unchanged_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refresh runs after starsessions saved the session and added its
+    ``__metadata__``, which is not a change (#681)."""
+    app, _ = _app()
+    calls = {"n": 0}
+
+    @app.get("/swr")
+    @cache(
+        ttl=1,
+        serve_stale=True,
+        stale="revalidate",
+        stale_ttl=60,
+        cache_authorized=True,
+        key_builder=_per_session,
+    )
+    async def swr(session: _Session) -> dict[str, int]:
+        calls["n"] += 1
+        return {"n": calls["n"]}
+
+    client = _logged_in(app)
+    client.get("/swr")
+    now = time.time() + 2
+    monkeypatch.setattr(stored_response, "_now", lambda: now)
+    stale = client.get("/swr")  # served stale, refreshed after it
+    fresh = client.get("/swr")
+
+    assert stale.json() == {"n": 1}
+    assert fresh.json() == {"n": 2}
 
 
 def test_a_new_session_a_dependency_writes_is_not_stored() -> None:
