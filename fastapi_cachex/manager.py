@@ -27,6 +27,7 @@ from typing import TypeVar
 from typing import overload
 
 from pydantic import BaseModel
+from pydantic import Secret
 from pydantic import SecretBytes
 from pydantic import SecretStr
 from pydantic import TypeAdapter
@@ -168,24 +169,38 @@ T = TypeVar("T")
 D = TypeVar("D")
 
 
-_NOT_STORED = (Iterator, bytes, bytearray, memoryview, SecretStr, SecretBytes)
+# Every pydantic secret type, `Secret[int]` and the like included (#654).
+_SECRETS = (SecretStr, SecretBytes, Secret)
+
+_NOT_STORED = (Iterator, bytes, bytearray, memoryview, *_SECRETS)
 
 
 def _holds_a_secret(value: Any) -> bool:
-    """Whether a model or dataclass has a secret field, at any depth.
+    """Whether a value has a pydantic secret, at any depth, dict keys included.
 
-    Dumped in python mode, where the secret objects survive (the JSON form
-    has already masked them). An excluded field is not in the dump, and is
-    not stored either.
+    A model or dataclass is dumped in python mode, where the secret objects
+    survive (the JSON form has already masked them). An excluded field is
+    not in the dump, and is not stored either. A dataclass pydantic cannot
+    build a schema for is read field by field instead.
     """
     if isinstance(value, BaseModel) or (
         dataclasses.is_dataclass(value) and not isinstance(value, type)
     ):
-        value = _adapter(type(value)).dump_python(value)
-    if isinstance(value, (SecretStr, SecretBytes)):
+        try:
+            value = _adapter(type(value)).dump_python(value, warnings=False)
+        except Exception:  # noqa: BLE001 - any schema or serialization error
+            value = (
+                dict(vars(value))
+                if isinstance(value, BaseModel)
+                else {
+                    field.name: getattr(value, field.name, None)
+                    for field in dataclasses.fields(value)
+                }
+            )
+    if isinstance(value, _SECRETS):
         return True
     if isinstance(value, dict):
-        return any(_holds_a_secret(item) for item in value.values())
+        return any(_holds_a_secret(item) for item in (*value, *value.values()))
     if isinstance(value, (list, tuple, set, frozenset)):
         return any(_holds_a_secret(item) for item in value)
     return False

@@ -64,8 +64,8 @@ def _jsonable_argument(value: object) -> object:
         # pydantic writes a secret as "**********", so calls that differ only
         # in it would share one key, and one caller get another's result (#654).
         msg = (
-            f"Object of type {kind.__name__} holds a SecretStr or SecretBytes, "
-            "which would be keyed as its mask"
+            f"Object of type {kind.__name__} holds a pydantic secret (SecretStr, "
+            "SecretBytes or Secret), which would be keyed as its mask"
         )
         raise TypeError(msg)
     if isinstance(value, Iterator):
