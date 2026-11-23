@@ -189,6 +189,8 @@ def _holds_a_secret(value: Any, seen: set[int] | None = None) -> bool:
     walk on a cycle. A value pydantic cannot dump is left to the encoder,
     which raises for it right after.
     """
+    while isinstance(value, Enum):  # an enum of enums included
+        value = value.value
     if isinstance(value, BaseModel) or (
         dataclasses.is_dataclass(value) and not isinstance(value, type)
     ):
@@ -212,8 +214,6 @@ def _holds_a_secret(value: Any, seen: set[int] | None = None) -> bool:
                 value = adapter.dump_python(value, warnings=False)
             except (PydanticSerializationError, ValueError, TypeError):
                 return False
-    if isinstance(value, Enum):
-        value = value.value
     if isinstance(value, _SECRETS):
         return True
     if isinstance(value, dict):

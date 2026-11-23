@@ -127,6 +127,10 @@ class _Tier(enum.Enum):
     GOLD = SecretStr("tenant-a")
 
 
+class _Plan(enum.Enum):
+    PRO = _Creds(token=SecretStr("tenant-a"))
+
+
 class _Pin(BaseModel):
     pin: Secret[int]
 
@@ -158,6 +162,7 @@ class _Odd:
         _Odd(extra=1, token=SecretStr("tenant-a")),  # type: ignore[arg-type]
         collections.deque([SecretStr("tenant-a")]),
         _Tier.GOLD,
+        {"plan": _Plan.PRO},
     ],
     ids=[
         "bare",
@@ -170,6 +175,7 @@ class _Odd:
         "odd",
         "deque",
         "enum",
+        "enum-of-model",
     ],
 )
 async def test_an_argument_holding_a_secret_needs_a_key(
