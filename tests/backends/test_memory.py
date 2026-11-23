@@ -1180,7 +1180,7 @@ async def test_with_only_held_locks_the_new_entry_is_kept() -> None:
     await backend.set("x", _entry("x"))
     await backend.set("y", _entry("y"))
 
-    assert sorted(backend.cache) == ["lock:a", "lock:b", "y"]
+    assert list(backend.cache) == ["y", "lock:a", "lock:b"]
 
 
 async def test_once_held_locks_expire_one_store_returns_to_the_limit(
