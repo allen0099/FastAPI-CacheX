@@ -1028,6 +1028,23 @@ async def test_a_model_holding_an_iterator_is_refused_and_not_used_up(
     assert list(stream.values) == items
 
 
+class _ExcludedStream(BaseModel):
+    amount: Decimal  # off the fast path, so the search runs
+    values: typing.Iterable[object] = Field(exclude=True)
+
+
+async def test_an_iterator_in_an_excluded_field_is_left_out_as_before(
+    manager: CacheManager,
+) -> None:
+    """It is not in the key, so it is not read and the call is not refused."""
+
+    @cached(ttl=60, manager=manager)
+    async def total(argument: _ExcludedStream) -> list[object]:
+        return list(argument.values)
+
+    assert await total(_ExcludedStream(amount=Decimal(1), values=[1, 2])) == [1, 2]
+
+
 def test_nested_set_keys_are_the_same_in_every_process() -> None:
     script = (
         "from fastapi_cachex import cached\n"
