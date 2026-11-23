@@ -22,6 +22,7 @@ from typing import Any
 from typing import Optional
 from uuid import UUID
 
+import pydantic.dataclasses
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
@@ -987,6 +988,24 @@ class _DataStream:
     values: typing.Iterable[object]
 
 
+@pydantic.dataclasses.dataclass
+class _DataReadBySerializer:
+    values: typing.Iterable[object]
+
+    @field_serializer("values")
+    def _all(self, values: typing.Iterable[object]) -> list[object]:
+        return list(values)
+
+
+class _ExtraReadByComputed(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def count(self) -> int:
+        return len(list(getattr(self, "values", ())))
+
+
 @pytest.mark.parametrize(
     "wrap",
     [
@@ -1001,6 +1020,14 @@ class _DataStream:
         pytest.param(
             lambda stream: _ReadByComputed(values=stream.values),
             id="read-by-a-computed-field",
+        ),
+        pytest.param(
+            lambda stream: _DataReadBySerializer(values=stream.values),
+            id="dataclass-read-by-a-field-serializer",
+        ),
+        pytest.param(
+            lambda stream: _ExtraReadByComputed(values=stream.values),
+            id="extra-field-read-by-a-computed-field",
         ),
     ],
 )
@@ -1043,6 +1070,28 @@ async def test_an_iterator_in_an_excluded_field_is_left_out_as_before(
         return list(argument.values)
 
     assert await total(_ExcludedStream(amount=Decimal(1), values=[1, 2])) == [1, 2]
+
+
+class _CachedIterator(BaseModel):
+    amount: Decimal  # off the fast path, so the search runs
+
+    @functools.cached_property
+    def pending(self) -> typing.Iterator[int]:
+        return iter([1, 2])
+
+
+async def test_an_iterator_pydantic_does_not_write_is_not_refused(
+    manager: CacheManager,
+) -> None:
+    """Only declared fields are looked at, not every attribute (#673)."""
+
+    @cached(ttl=60, manager=manager)
+    async def total(argument: _CachedIterator) -> int:
+        return 1
+
+    argument = _CachedIterator(amount=Decimal(1))
+    assert next(argument.pending) == 1
+    assert await total(argument) == 1
 
 
 def test_nested_set_keys_are_the_same_in_every_process() -> None:
