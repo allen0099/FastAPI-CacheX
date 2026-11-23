@@ -158,8 +158,9 @@ uv run tox -e py311  # only run for Python 3.11
 
 ### The lowest supported dependencies
 
-The `py3*` environments install the versions in `uv.lock`. The `lowest` environment instead resolves every direct dependency of the
-package, extras included, to the lower bound in `pyproject.toml`
+The `py3*` environments install the versions in `uv.lock`. The `lowest`
+environment instead resolves every direct dependency of the package, extras
+included, to the lower bound in `pyproject.toml`
 (`uv_resolution = lowest-direct`) and runs the suite on Python 3.11, the oldest
 supported version. Starlette
 is not a direct dependency, so `tox.ini` lists it in the env's `deps` at the
@@ -177,8 +178,8 @@ the current floor, run it before pushing.
 
 Renovate updates `uv.lock` only once a release is a few days old, but a fresh
 `pip install fastapi-cachex` gets it at once. The `newest` environment resolves
-every direct dependency to its newest release (`uv_resolution = highest`),
-ignoring the lock file, and runs the suite on the newest supported Python. The
+every direct dependency to its newest release, ignoring the lock file
+(`uv-venv-runner` does not read it), and runs the suite on the newest supported Python. The
 **Newest dependencies** workflow runs it weekly with live servers, on demand,
 and on pull requests that change it; it does not run on other pull requests, so
 an upstream release cannot turn them red.
@@ -187,8 +188,14 @@ an upstream release cannot turn them red.
 uv run tox -e newest
 ```
 
-Its first line names the pydantic version and the core schema types that are
-off the `@cached` fast path on it (see the next section).
+Before the tests it prints the pydantic version and the core schema types that
+are off the `@cached` fast path on it (see the next section). It fails if any
+type other than `decimal` is off it, so that a pydantic release narrowing the
+fast path is noticed. A failure on the probes themselves fails it too. At
+runtime, either of these only takes models off the fast path without a sign,
+so this job is the only place it shows. When you add a supported Python, raise
+`base_python` here and `python-version` in `newest.yml` together; Renovate
+leaves both alone.
 
 ### The `@cached` fast path and pydantic
 
@@ -216,13 +223,22 @@ subclasses the type's own class. A type is dropped from the fast path if a
 probe writes the mask without an error or its serializer cannot be built. Its
 models then take the search, so a pydantic change costs speed, not safety.
 Today that drops `decimal`, and on pydantic 2.7 also `uuid` and `complex`.
-`literal` and enums without a mixin are left out of the table for good.
+`literal` and enums without a mixin are left out of the table for good. If
+`_probes()` itself raises, every type counts as unverified and the fast path
+is off. That answer is not cached, so the probes run again for each new model
+class.
 
 When you change this:
 
 - A schema type added to `_CHILD_KEYS` needs probes in `_probes()`.
   `test_every_plain_schema_type_is_checked_on_the_installed_pydantic` fails
   otherwise.
+- A known gap was accepted as contrived: a class that subclasses both
+  `SecretStr` and a type's own class (`str`, `int`, `float`, `bytes`, `date`,
+  `datetime`) passes that type's serializer, so the fast path keys it by its
+  base value. The search would refuse it. Two such objects with different
+  secrets can share a key. The probes include such hybrids, but only to catch
+  a serializer that writes their mask; `url` and `multi-host-url` have none.
 - The probes cover the misfits found in the reviews of PR #669. A serializer
   that raises for a plain `SecretStr` but writes some other misfit secret could
   still get through. Add a probe for any such case you find.
