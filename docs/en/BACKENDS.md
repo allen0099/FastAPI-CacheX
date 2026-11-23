@@ -98,9 +98,10 @@ memory grows with request rate × `ttl` × body size, per worker, and a client c
 grow it on purpose by varying the query string of a cached route.
 `MemoryBackend(max_entries=10_000)` caps the number of entries: storing one more
 evicts the least recently used entry, expired or not (a read hit and every
-write count as a use). Size the limit from the entries you expect times the
-workers you run, since each worker has its own cache; the limit counts entries,
-not bytes.
+write count as a use). A held `CacheLock` under the default `lock:` prefix is
+not evicted (see [Distributed lock](LOCK.md)). Size the limit from the entries
+you expect times the workers you run, since each worker has its own cache; the
+limit counts entries, not bytes.
 
 ```python
 backend = MemoryBackend(max_entries=10_000)

@@ -57,6 +57,12 @@ Complete runnable example: [`examples/cache_lock.py`](https://github.com/allen00
 - **One Instance per Acquisition Rule**: A single `CacheLock` instance tracks its active ownership state. Re-entering or sharing a single `CacheLock` instance across concurrent tasks raises a `RuntimeError`. Instantiate a new `CacheLock` instance for each acquisition.
 - **Not Re-entrant**: A task that acquires a lock name it already holds through another instance waits like any other caller, until the first instance releases it or it expires; with `auto_extend` it never expires, so the task waits forever. Pass the held lock down instead of acquiring the name again, or give the inner `acquire()` a `timeout`.
 - **Namespace**: Lock keys live under their own `lock:` prefix by default (e.g. `lock:report:123`), separate from `CacheManager`'s `cache:`.
+- **What else can remove a held lock**: A lock is an entry in the same backend as the cache, so a few things outside the lock can delete it before its `ttl`, and a second holder can then acquire it. The first holder learns of it only at its next renewal or at `release()` (`lost`).
+    - `backend.clear()` on any backend, and a `clear_pattern()` that matches `lock:` keys. On Memcached, `clear()` is `flush_all` and wipes the whole server.
+    - Memcached evicts entries under memory pressure, locks included.
+    - `MemoryBackend(max_entries=...)` does not evict a held lock under the default `lock:` prefix (before 0.7.3 it did, so a client sending distinct query strings to a cached route could evict one). A lock with another `key_prefix` is evicted like any entry.
+
+    A lock that must hold through these belongs on a backend of its own: a Redis or Memcached server (or Redis database) that no cache traffic fills and that nobody clears.
 - **Backend**: Without `backend=`, a lock uses the backend registered with `BackendProxy.set()`. Unlike `@cache`, it does not fall back to a `MemoryBackend`: with no backend registered, `acquire()` raises `BackendNotFoundError`. A lock only excludes processes that share its backend, so a per-process `MemoryBackend` only coordinates tasks within one process.
 
 > [!NOTE]
