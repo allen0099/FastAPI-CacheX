@@ -20,6 +20,8 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-23
+
 This release fixes the security issues listed below. Some of the fixes change
 behaviour on upgrade: `@cached` raises `CacheXError` for an argument that holds
 a pydantic secret (pass `key=`), and `CacheManager.set()` now also refuses
@@ -27,6 +29,66 @@ a pydantic secret (pass `key=`), and `CacheManager.set()` now also refuses
 response to a request with session data is no longer stored; and a value 0.7.2
 stored compressed that inflates past 16 MiB is a miss until it is written
 again.
+
+### Security
+
+- **`MemoryBackend(max_entries=...)` no longer evicts a held `CacheLock`.** A
+  client sending distinct query strings to a cached route could push a held lock
+  (under the default `lock:` prefix) out of the LRU, and a second holder then
+  acquired it while the first still worked. Live `lock:` keys are now skipped, so
+  held locks can keep the cache over `max_entries` until they are released or
+  expire, without slowing every store down. A lock with another `key_prefix` is
+  still evicted like any entry, and `clear()`, `clear_pattern()` and Memcached's
+  or Redis's own eviction can still remove a held lock: the distributed lock page
+  now lists these and recommends a backend of its own for a lock that must hold
+  through them. ([#634](https://github.com/allen0099/FastAPI-CacheX/issues/634))
+- **`@cache` and `get_or_set()` warnings escape error messages and request paths,
+  so they cannot forge log lines.** They are now logged with `%r`. The
+  stale-refresh, serve-stale, distributed-lock wait and miss-lock release
+  warnings of `@cache`, and `get_or_set()`'s "Refreshing a stale value failed",
+  wrote them verbatim, so a CR/LF or an ANSI escape in a handler's, factory's or
+  backend's error message, or an ANSI escape in the path, could forge or colour a
+  log line. The backend-failure warnings have done so since 0.7.1. ([#635](https://github.com/allen0099/FastAPI-CacheX/issues/635))
+- **A value read from Redis or Memcached can no longer cost hundreds of MiB to
+  decode or make `CacheManager` raise.** Anyone with write access to the cache
+  server could store:
+    - a compressed value of a few hundred KiB that inflated to 256 MiB on the
+      event loop on every read. The bound is now 16 MiB: a larger document is
+      stored uncompressed, and a compressed value that would inflate past it is a
+      miss. A value that 0.7.2 stored compressed and that inflates past 16 MiB
+      is therefore a miss after the upgrade and, when it is next written, is
+      stored uncompressed, taking its full size in the cache server's memory.
+    - a number of more than 4300 digits, as a bare counter or as an entry's
+      content, which made `CacheManager.get()`, `get_many()` and `get_or_set()`
+      raise `ValueError`. A counter now has at most 20 digits, as a 64-bit one
+      does, and content that JSON cannot parse (too many digits, too deep) is a
+      miss.
+    - without orjson, a `stored_at` too large for a float, which made the
+      backend's `get()` raise `OverflowError`; it is now ignored.
+
+    ([#636](https://github.com/allen0099/FastAPI-CacheX/issues/636))
+
+- **A session written by a dependency, or rewritten with the value it already
+  held, no longer gets a response stored or sent `public`.** The check added in
+  0.7.2 compared copies of the session taken around the handler, so it missed a
+  write made by a dependency (a CSRF token for a first-time visitor, which the
+  next visitor then received) and a write that changed nothing, for which
+  Starlette still sends `Set-Cookie`. `@cache` now reads Starlette's record of
+  writes (Starlette 1.0 and later). A session that keeps no such record, as
+  under Starlette before 1.0, counts as written whenever it is not empty, so on
+  those versions a response to a request with session data is no longer stored. ([#653](https://github.com/allen0099/FastAPI-CacheX/issues/653))
+- **`@cached` now refuses an argument that holds a pydantic secret, instead of
+  keying every secret the same.** pydantic writes a secret as `"**********"`, so
+  `load(Creds(token=SecretStr("a")))` and the same call with token `"b"` shared
+  an entry, and in a multi-tenant app one tenant could get another's result. An
+  argument that holds a `SecretStr`, `SecretBytes` or `Secret[...]`, at any depth
+  and in dict keys too, now raises `CacheXError` and asks for `key=`, even when a
+  field serializer writes the secret out in JSON. A value pydantic leaves out of
+  its JSON form is not in the key at all, secret or not: a field with
+  `exclude=True`, or the extra fields of a subclass passed in a field typed as
+  its parent. A secret inside an `Iterable` field is not caught either (#670).
+  `CacheManager.set()`, which already refused values holding `SecretStr` or
+  `SecretBytes`, now also refuses `Secret[...]` and secrets used as dict keys. ([#654](https://github.com/allen0099/FastAPI-CacheX/issues/654))
 
 ## [0.7.2] - 2026-11-20
 
@@ -2073,7 +2135,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.6.5...v0.7.0
