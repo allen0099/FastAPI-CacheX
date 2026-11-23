@@ -44,31 +44,6 @@ R = TypeVar("R")
 _KEY_SEPARATOR = ":"
 
 
-# What pydantic's JSON form writes for every secret type.
-_SECRET_MASK = "**********"  # noqa: S105 - the mask, not a password
-_SECRET_MESSAGE = (
-    "Object of type {} holds a pydantic secret (SecretStr, SecretBytes or "
-    f"Secret), which would be keyed as its mask {_SECRET_MASK!r}"
-)
-
-
-def _shows_a_mask(encoded: object) -> bool:
-    """Whether pydantic's JSON form holds a secret's mask, as a key or a value.
-
-    Checked on the JSON form rather than by finding the secrets: it is what
-    the key is built from, so a secret a serializer writes out in full is
-    keyed by its value, and the check costs a walk of the output, not a
-    second dump. A string that is literally the mask is refused too.
-    """
-    if isinstance(encoded, str):
-        return encoded == _SECRET_MASK
-    if isinstance(encoded, dict):
-        return any(_shows_a_mask(item) for item in (*encoded, *encoded.values()))
-    if isinstance(encoded, list):
-        return any(_shows_a_mask(item) for item in encoded)
-    return False
-
-
 def _jsonable_argument(value: object) -> object:
     """An argument ``json`` cannot encode, as JSON tagged with its type (#577).
 
@@ -85,6 +60,14 @@ def _jsonable_argument(value: object) -> object:
             secret, which pydantic encodes as its mask
     """
     kind = type(value)
+    if _holds_a_secret(value):
+        # pydantic writes a secret as "**********", so calls that differ only
+        # in it would share one key, and one caller get another's result (#654).
+        msg = (
+            f"Object of type {kind.__name__} holds a pydantic secret (SecretStr, "
+            "SecretBytes or Secret), which would be keyed as its mask"
+        )
+        raise TypeError(msg)
     if isinstance(value, Iterator):
         # The function would then run on an empty generator, and that
         # result be cached.
@@ -104,19 +87,8 @@ def _jsonable_argument(value: object) -> object:
         try:
             encoded = to_jsonable_python(value, bytes_mode="base64")
         except PydanticSerializationError as e:
-            # Older pydantic (2.7) cannot encode a secret outside a model at
-            # all; say why rather than only that it failed.
-            msg = (
-                _SECRET_MESSAGE.format(kind.__name__)
-                if _holds_a_secret(value)
-                else f"Object of type {kind.__name__} is not JSON serializable"
-            )
+            msg = f"Object of type {kind.__name__} is not JSON serializable"
             raise TypeError(msg) from e
-        if _shows_a_mask(encoded):
-            # pydantic writes a secret as "**********", so calls that differ
-            # only in it would share one key, and one caller get another's
-            # result (#654).
-            raise TypeError(_SECRET_MESSAGE.format(kind.__name__))
     return {"$type": f"{kind.__module__}.{kind.__qualname__}", "value": encoded}
 
 
