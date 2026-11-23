@@ -376,6 +376,39 @@ def _starsessions_kept_id(request: Request) -> bool:
     )
 
 
+def _without_metadata(session: Any) -> Any:
+    """A starsessions session without the ``__metadata__`` its middleware adds.
+
+    It is put in when the session is saved, and read out when it is loaded.
+    """
+    if isinstance(session, dict) and "__metadata__" in session:
+        return {key: value for key, value in session.items() if key != "__metadata__"}
+    return session
+
+
+async def _starsessions_unchanged(request: Request) -> bool:
+    """Whether a starsessions session is still as its store holds it (#681).
+
+    Called after the dependencies and before the handler. starsessions writes
+    its store only when the response starts, so the store still holds the
+    session as the request found it: a difference is a write a dependency
+    made. Only for a GET, the one method stored. Any failure counts as a
+    difference, which keeps the response out as before.
+    """
+    if request.method != "GET" or not _starsessions_kept_id(request):
+        return False
+    handler = request.scope["session_handler"]
+    try:
+        stored = handler.serializer.deserialize(
+            await handler.store.read(
+                session_id=handler.session_id, lifetime=handler.lifetime
+            )
+        )
+    except Exception:  # noqa: BLE001 - a store or serializer error
+        return False
+    return bool(_without_metadata(stored) == _without_metadata(_session(request)))
+
+
 def _request_credentials(
     request: Request, route_credentials: Iterable[tuple[str, str]] = ()
 ) -> list[tuple[str, str]]:
@@ -461,6 +494,9 @@ class _Call:
     # `Set-Cookie` from the middleware, outside the decorator, so the
     # response is treated as setting a cookie (see `session_written`).
     session_before: Any = None
+    # Whether a starsessions session was, after the dependencies, as its
+    # store held it before the request (see `session_changed`, #681).
+    session_unchanged: bool = False
 
     @property
     def session_written(self) -> bool:
@@ -495,16 +531,19 @@ class _Call:
         """Whether a written session keeps the response out of the backend.
 
         It does, except when starsessions only sends back the cookie of a
-        session it already had, unchanged by the handler (#681). Such a
-        response is still sent ``private``. A write a dependency made to
-        that session is not seen; a ``cache_authorized`` route keys its
-        entry per caller, and a ``public`` one is the same for everyone.
+        session it already had (#681): neither the dependencies (compared
+        with its store) nor the handler (compared with the copy) changed it.
+        Such a response is still sent ``private``. starsessions' own
+        ``__metadata__``, added when it saves the session, is not a change:
+        a stale entry's refresh runs after that.
         """
         if not self.session_written:
             return False
         return not (
-            self.session_before is not _UNCOPIED_SESSION
-            and _session(self.request) == self.session_before
+            self.session_unchanged
+            and self.session_before is not _UNCOPIED_SESSION
+            and _without_metadata(_session(self.request))
+            == _without_metadata(self.session_before)
             and _starsessions_kept_id(self.request)
         )
 

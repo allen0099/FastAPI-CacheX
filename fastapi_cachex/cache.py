@@ -40,6 +40,7 @@ from ._route import _ClientCacheControl
 from ._route import _Route
 from ._route import _route_template
 from ._route import _session_snapshot
+from ._route import _starsessions_unchanged
 from ._vary import Vary
 from ._vary import _validate_vary
 from .directives import DirectiveType
@@ -498,6 +499,7 @@ def cache(
                 ),
                 background=background,
                 session_before=_session_snapshot(request),
+                session_unchanged=await _starsessions_unchanged(request),
             )
             started = time.perf_counter()
             try:
