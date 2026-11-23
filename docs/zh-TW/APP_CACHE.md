@@ -58,7 +58,7 @@ await manager.clear_pattern("user:*")  # 比對 "myapp:user:*"
 
 - 被裝飾的函式一律要 `await`，即使它原本是 `def`（同步函式會在事件迴圈上執行，和 `get_or_set()` 的 factory 一樣）。它的結果會經過 manager 的 [JSON 往返](#json-round-trip)，接著會驗證成函式的回傳型別註記（即[型別化讀取](#typed-reads)），第一次呼叫也一樣；`type_=None` 則回傳 JSON 形式。
 - `ttl` 接受秒數或 `timedelta`；未設定時套用 manager 的 `default_ttl`。`manager=` 指定要透過哪個 `CacheManager` 儲存；未設定時使用應用程式的那一個（也就是 `AppCache` 回傳的），並在每次呼叫時解析，因此在啟動時以 `CacheManagerProxy.set()` 註冊的 manager 也會被採用。`lock=False` 讓這個函式略過 manager 的 [cache stampede 保護](#stampede-protection)。
-- 未設定 `key=` 時，鍵是 `module.qualname:` 加上引數的 SHA-256；引數會先依函式簽章綁定並套用預設值，因此 `load(1)`、`load(user_id=1)` 與 `load(1, locale="en")` 共用同一個項目。引數以 JSON 雜湊。JSON 無法編碼但 pydantic 可以的引數（`datetime`、`Decimal`、`UUID`、`bytes`、集合、dataclass、模型），會以加上型別標記的 JSON 形式雜湊，因此 `datetime(2024, 1, 1)` 與字串 `"2024-01-01T00:00:00"` 得到兩個不同的鍵；0.6.3 之前這類引數會拋出例外。集合會先排序，因此它的鍵在每個行程中都相同，但 dataclass 或模型裡的集合除外。帶有兩者都無法編碼的引數，或帶有迭代器或產生器（雜湊會把它耗盡）的呼叫，會拋出 `CacheXError`；任何一層含有 `SecretStr` 或 `SecretBytes` 的引數也一樣：pydantic 會把機密值寫成 `"**********"`，因此在 0.7.3 之前，只差在機密值的呼叫會共用同一個鍵，呼叫者可能拿到另一位呼叫者的結果（#654）。模型或 dataclass 中設定 `exclude=True` 的欄位與私有屬性也不會算進鍵，只差在這些值的呼叫會共用同一個項目：這類引數請在 `key=` 中指名。內容相同的 tuple 與 list、`{1: "a"}` 與 `{"1": "a"}`，或 `StrEnum` 成員與它的字串，會共用同一個鍵。`key="user:{user_id}"` 是以引數名稱填入的 `str.format` 樣板（不含欄位的字串就是固定的鍵；引數中沒有的欄位會拋出 `CacheXError`），`key=lambda self, user_id: f"user:{user_id}"` 則會以引數呼叫，並和樣板一樣套用預設值（無法接受所有引數的可呼叫物件只會收到實際傳入的引數）：方法的 `self` 無法雜湊，或引數是模型時，請用其中一種。manager 的 `key_prefix` 會加在前面，和它儲存的每個鍵一樣。
+- 未設定 `key=` 時，鍵是 `module.qualname:` 加上引數的 SHA-256；引數會先依函式簽章綁定並套用預設值，因此 `load(1)`、`load(user_id=1)` 與 `load(1, locale="en")` 共用同一個項目。引數以 JSON 雜湊。JSON 無法編碼但 pydantic 可以的引數（`datetime`、`Decimal`、`UUID`、`bytes`、集合、dataclass、模型），會以加上型別標記的 JSON 形式雜湊，因此 `datetime(2024, 1, 1)` 與字串 `"2024-01-01T00:00:00"` 得到兩個不同的鍵；0.6.3 之前這類引數會拋出例外。集合會先排序，因此它的鍵在每個行程中都相同，但 dataclass 或模型裡的集合除外。帶有兩者都無法編碼的引數，或帶有迭代器或產生器（雜湊會把它耗盡）的呼叫，會拋出 `CacheXError`；任何一層（包括 dict 的鍵）含有 pydantic 機密值（`SecretStr`、`SecretBytes`、`Secret[...]`）的引數也一樣：pydantic 會把機密值寫成 `"**********"`，因此在 0.7.3 之前，只差在機密值的呼叫會共用同一個鍵，呼叫者可能拿到另一位呼叫者的結果（#654）。模型或 dataclass 中設定 `exclude=True` 的欄位與私有屬性也不會算進鍵，只差在這些值的呼叫會共用同一個項目：這類引數請在 `key=` 中指名。內容相同的 tuple 與 list、`{1: "a"}` 與 `{"1": "a"}`，或 `StrEnum` 成員與它的字串，會共用同一個鍵。`key="user:{user_id}"` 是以引數名稱填入的 `str.format` 樣板（不含欄位的字串就是固定的鍵；引數中沒有的欄位會拋出 `CacheXError`），`key=lambda self, user_id: f"user:{user_id}"` 則會以引數呼叫，並和樣板一樣套用預設值（無法接受所有引數的可呼叫物件只會收到實際傳入的引數）：方法的 `self` 無法雜湊，或引數是模型時，請用其中一種。manager 的 `key_prefix` 會加在前面，和它儲存的每個鍵一樣。
 - 預設的鍵只認得函式，不認得它的閉包：同一個工廠建立的兩個函式（`def make(v): @cached(...) async def get(): return v`）有相同的 `module.qualname`，會共用項目。請為這類函式設定包含其閉包內容的 `key=`。
 - 產生器函式無法快取（它的結果無法儲存）：對它套用 `@cached` 時會拋出 `TypeError`。
 - `fn.cache_key(*args, **kwargs)` 是該次呼叫使用的鍵（不含前綴），`await fn.invalidate(*args, **kwargs)` 則丟棄它的值，並回傳原本是否有快取。在方法上，`obj.load.invalidate(1)` 會和呼叫時一樣綁定 `obj`，型別檢查器也會檢查 `self` 之後的引數。型別檢查器會把套在 `@cached` 外層的 `@staticmethod` 誤認為這種方法；這種情況請改為快取模組層級的函式。
@@ -213,7 +213,7 @@ async def load_rates() -> dict[str, float]: ...
 | `datetime`、`date`、`UUID`、`Decimal` | `str`：ISO 8601、`"1.50"` |
 | `set`、`frozenset` | `list` |
 | `Enum`、`Path`、`timedelta` 以及 pydantic 能序列化的其他型別 | 它們的 JSON 形式：enum 的值、`"/tmp/x"`、`"PT1M30S"` |
-| `bytes`、generator 或其他 iterator、`SecretStr`（作為模型的欄位時也一樣）、你自己的類別 | `TypeError`，不會儲存任何內容 |
+| `bytes`、generator 或其他 iterator、`SecretStr`、`SecretBytes` 或 `Secret[...]`（作為模型的欄位時也一樣）、你自己的類別 | `TypeError`，不會儲存任何內容 |
 
 `get_or_set()` 在未命中時也套用同樣的規則：它將 `factory` 的值編碼一次、儲存這些位元組，並回傳其解碼結果，因此第一次呼叫的回傳值與之後命中時完全相同。無法編碼的值要等到 `factory` 執行後才會拋出 `TypeError`，因為在那之前這個值還不存在。
 
@@ -251,7 +251,7 @@ await cache.get("users", type_=list[User])
 - 若 `factory` 回傳的值不符合 `type_`，`get_or_set()` 會拋出 pydantic 的 `ValidationError`。
 - 未傳入 `type_` 時，`@cached` 會使用函式的回傳型別註記，因此 `async def load_user(...) -> User` 會回傳 `User`。`type_=None` 則回傳 JSON 形式；沒有註記的函式，以及註記是 JSON 形式本來就具有之型別（`dict[str, Any]`、`list[int]`）的函式也是。0.6.0 之前不會讀取註記；見[遷移至 0.6.0](MIGRATING_0_6.md#cached-return-annotation)。
 - 存入的 `None` 不符合 `type_=User`。值可能不存在時，請明確寫出：`type_=User | None`。
-- 帶有 `SecretStr` 或 `SecretBytes` 欄位的模型或 dataclass（不論巢狀多深）會被拒絕並拋出 `TypeError`。pydantic 會把該欄位寫成 `"**********"`，型別化讀取之後就會交回一個機密值是這串遮罩的模型。請排除該欄位（`user.model_dump(mode="json", exclude={"password"})`），或改為快取你自己組出的 `dict`。
+- 帶有 `SecretStr`、`SecretBytes` 或 `Secret[...]` 欄位的模型或 dataclass（不論巢狀多深）會被拒絕並拋出 `TypeError`。pydantic 會把該欄位寫成 `"**********"`，型別化讀取之後就會交回一個機密值是這串遮罩的模型。請排除該欄位（`user.model_dump(mode="json", exclude={"password"})`），或改為快取你自己組出的 `dict`。
 - pydantic 的 `ValidationError` 會引用它拒絕的值，因此 `factory` 結果不符時拋出的例外可能把該值寫進你的 log。
 - 每次讀取都會執行驗證。對於經常讀取的大型值，選擇模型而非單純的 `dict` 之前請先量測。
 

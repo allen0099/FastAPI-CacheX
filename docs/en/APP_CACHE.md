@@ -82,8 +82,8 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
   argument raised. A set is sorted, so its key is the same in every process,
   except a set inside a dataclass or a model. A call with an argument neither
   can encode, or with an iterator or a generator (hashing it would use it up),
-  raises `CacheXError`, and so does one holding a `SecretStr` or `SecretBytes`
-  at any depth: pydantic writes a secret as `"**********"`, so calls that
+  raises `CacheXError`, and so does one holding a pydantic secret (`SecretStr`,
+  `SecretBytes`, `Secret[...]`) at any depth, dict keys included: pydantic writes a secret as `"**********"`, so calls that
   differ only in it shared one key before 0.7.3, and a caller could get
   another's result (#654). A model's or dataclass's fields with
   `exclude=True` and its private attributes are not in the key either, so
@@ -379,7 +379,7 @@ cannot encode is first converted the way pydantic writes it
 | `datetime`, `date`, `UUID`, `Decimal` | `str`: ISO 8601, `"1.50"` |
 | `set`, `frozenset` | `list` |
 | `Enum`, `Path`, `timedelta` and the other types pydantic serialises | their JSON form: the enum's value, `"/tmp/x"`, `"PT1M30S"` |
-| `bytes`, a generator or other iterator, `SecretStr` (also as a field of a model), your own class | `TypeError`, nothing stored |
+| `bytes`, a generator or other iterator, `SecretStr`, `SecretBytes` or `Secret[...]` (also as a field of a model), your own class | `TypeError`, nothing stored |
 
 `get_or_set()` applies this on a miss too: it encodes the factory's value once,
 stores those bytes and returns them decoded, so the first call returns exactly
@@ -431,7 +431,7 @@ await cache.get("users", type_=list[User])
   [Migrating to 0.6.0](MIGRATING_0_6.md#cached-return-annotation).
 - A stored `None` does not fit `type_=User`. For a value that may be absent,
   name it: `type_=User | None`.
-- A model or dataclass with a `SecretStr` or `SecretBytes` field, at any
+- A model or dataclass with a `SecretStr`, `SecretBytes` or `Secret[...]` field, at any
   depth, is refused with `TypeError`. pydantic would write the field as
   `"**********"`, and a typed read would then hand back a model whose secret
   is that mask. Exclude the field (`user.model_dump(mode="json",

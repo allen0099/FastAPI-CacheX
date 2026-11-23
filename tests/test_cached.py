@@ -22,6 +22,7 @@ import pytest
 import pytest_asyncio
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import Secret
 from pydantic import SecretBytes
 from pydantic import SecretStr
 from starlette.responses import Response
@@ -118,6 +119,24 @@ class _Client:
     key: SecretBytes
 
 
+class _Pin(BaseModel):
+    pin: Secret[int]
+
+
+class _ByKey(BaseModel):
+    tokens: dict[SecretStr, int]
+
+
+class _NoSchema:
+    """A type pydantic cannot build a schema for."""
+
+
+@dataclasses.dataclass
+class _Odd:
+    extra: _NoSchema
+    token: SecretStr
+
+
 @pytest.mark.parametrize(
     "secret",
     [
@@ -126,8 +145,11 @@ class _Client:
         {"auth": [SecretStr("tenant-a")]},
         _Client(tenant="a", key=SecretBytes(b"tenant-a")),
         frozenset({SecretStr("tenant-a")}),
+        _Pin(pin=Secret[int](1234)),
+        _ByKey(tokens={SecretStr("tenant-a"): 1}),
+        _Odd(extra=_NoSchema(), token=SecretStr("tenant-a")),
     ],
-    ids=["bare", "model", "nested", "dataclass", "set"],
+    ids=["bare", "model", "nested", "dataclass", "set", "generic", "dict-key", "odd"],
 )
 async def test_an_argument_holding_a_secret_needs_a_key(
     manager: CacheManager, secret: object
@@ -140,9 +162,9 @@ async def test_an_argument_holding_a_secret_needs_a_key(
         calls.append(creds)
         return len(calls)
 
-    with pytest.raises(CacheXError, match=r"SecretStr or SecretBytes.*Pass key="):
+    with pytest.raises(CacheXError, match=r"pydantic secret.*Pass key="):
         load.cache_key(secret)
-    with pytest.raises(CacheXError, match="SecretStr or SecretBytes"):
+    with pytest.raises(CacheXError, match="pydantic secret"):
         await load(secret)
     assert calls == []
 
@@ -156,6 +178,36 @@ async def test_a_secret_argument_with_a_key_is_cached_under_it(
 
     assert await load(_Creds(token=SecretStr("a"))) == "a"
     assert await load(_Creds(token=SecretStr("b"))) == "b"
+
+
+@dataclasses.dataclass
+class _Plain:
+    extra: _NoSchema
+    count: int
+
+
+@dataclasses.dataclass
+class _Count:
+    count: int
+
+
+async def test_a_dataclass_without_a_secret_is_keyed_as_before(
+    manager: CacheManager,
+) -> None:
+    """Looking for a secret neither raises nor warns where keying did not."""
+
+    @cached(ttl=60, manager=manager)
+    async def load(item: object) -> int:
+        return 1
+
+    # pydantic cannot build a schema for `_Plain`, but can encode its values.
+    first = load.cache_key(_Plain(extra=1, count=1))  # type: ignore[arg-type]
+    # A value that does not match its annotation.
+    second = load.cache_key(_Plain(extra=1, count="one"))  # type: ignore[arg-type]
+
+    assert first != second
+    # pydantic warns on dumping it; filterwarnings = error turns that into a failure.
+    assert load.cache_key(_Count(count="one")) != load.cache_key(_Count(count=1))  # type: ignore[arg-type]
 
 
 async def test_arguments_must_fit_the_signature(manager: CacheManager) -> None:
