@@ -134,7 +134,11 @@ def _stored_at(value: object) -> float | None:
     """``stored_at`` from a document; anything but a finite number is unknown."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value) if math.isfinite(value) else None
+    try:
+        number = float(value)
+    except OverflowError:  # an int too large for a float (#636)
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _tags(value: object) -> tuple[tuple[str, str], ...]:

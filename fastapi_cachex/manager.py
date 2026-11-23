@@ -55,7 +55,10 @@ from .types import log_ref
 
 logger = logging.getLogger(__name__)
 
-_DECODE_ERRORS = (AttributeError, UnicodeDecodeError, json.JSONDecodeError)
+# ``ValueError`` covers ``JSONDecodeError``, ``UnicodeDecodeError`` and a
+# number past ``int()``'s digit limit; ``RecursionError`` is deep nesting.
+# Each is a value someone else stored, so it reads as a miss (#636).
+_DECODE_ERRORS = (AttributeError, ValueError, RecursionError)
 
 # Keys currently held under a stampede-protection lock by the running task.
 # Stored as a set of unique backend-and-key identifiers to skip locking on

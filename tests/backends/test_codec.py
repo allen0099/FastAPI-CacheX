@@ -74,6 +74,19 @@ def test_decode_entry_treats_too_deep_a_document_as_a_miss(stdlib_json):
     assert codec.decode_entry("[" * 100_000 + "]" * 100_000) is None
 
 
+def test_decode_entry_reads_a_number_past_the_int_digit_limit_as_a_miss():
+    """Not a counter (over 20 digits), so it never reaches ``int()`` (#636)."""
+    assert codec.decode_entry(b"1" * 5000) is None
+
+
+def test_decode_entry_drops_a_stored_at_too_large_for_a_float(stdlib_json):
+    """orjson cannot read such an int; the standard library returns it (#636)."""
+    huge = "1" + "0" * 400
+    raw = f'{{"fingerprint": "e", "content": "v", "stored_at": {huge}, "stale_at": {huge}}}'
+
+    assert codec.decode_entry(raw) == CacheEntry(fingerprint="e", content=b"v")
+
+
 @pytest.mark.parametrize("raw", ["7", b"7", b"7   ", "7 "])
 def test_decode_entry_reads_a_bare_integer_as_a_counter(raw):
     """Trailing spaces are Memcached's padding after a shrinking DECR."""
