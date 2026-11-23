@@ -20,6 +20,7 @@ from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from datetime import timedelta
+from enum import Enum
 from typing import Any
 from typing import Concatenate
 from typing import NamedTuple
@@ -211,6 +212,8 @@ def _holds_a_secret(value: Any, seen: set[int] | None = None) -> bool:
                 value = adapter.dump_python(value, warnings=False)
             except (PydanticSerializationError, ValueError, TypeError):
                 return False
+    if isinstance(value, Enum):
+        value = value.value
     if isinstance(value, _SECRETS):
         return True
     if isinstance(value, dict):

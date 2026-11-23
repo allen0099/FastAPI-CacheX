@@ -20,11 +20,13 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
-This release fixes the security issues listed below. Three of the fixes change
+This release fixes the security issues listed below. Some of the fixes change
 behaviour on upgrade: `@cached` raises `CacheXError` for an argument that holds
-a pydantic secret (pass `key=`); on Starlette before 1.0, a response to a
-request with session data is no longer stored; and a value 0.7.2 stored
-compressed that inflates past 16 MiB is a miss until it is written again.
+a pydantic secret (pass `key=`), and `CacheManager.set()` now also refuses
+`Secret[...]` values and secrets used as dict keys; on Starlette before 1.0, a
+response to a request with session data is no longer stored; and a value 0.7.2
+stored compressed that inflates past 16 MiB is a miss until it is written
+again.
 
 ## [0.7.2] - 2026-11-20
 

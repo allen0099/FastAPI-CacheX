@@ -83,8 +83,8 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
   except a set inside a dataclass or a model. A call with an argument neither
   can encode, or with an iterator or a generator (hashing it would use it up),
   raises `CacheXError`, and so does one holding a pydantic secret (`SecretStr`,
-  `SecretBytes`, `Secret[...]`) at any depth, dict keys included, unless a
-  field serializer writes it out in full: pydantic writes a secret as `"**********"`, so calls that
+  `SecretBytes`, `Secret[...]`) at any depth, dict keys included, even one a
+  field serializer writes out: pydantic writes a secret as `"**********"`, so calls that
   differ only in it shared one key before 0.7.3, and a caller could get
   another's result (#654). A model's or dataclass's fields with
   `exclude=True` and its private attributes are not in the key either, so

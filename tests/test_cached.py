@@ -3,6 +3,7 @@
 import asyncio
 import collections
 import dataclasses
+import enum
 import functools
 import hashlib
 import json
@@ -12,6 +13,7 @@ import sys
 import typing
 from collections.abc import AsyncIterator
 from datetime import UTC
+from datetime import date
 from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
@@ -121,6 +123,10 @@ class _Client:
     key: SecretBytes
 
 
+class _Tier(enum.Enum):
+    GOLD = SecretStr("tenant-a")
+
+
 class _Pin(BaseModel):
     pin: Secret[int]
 
@@ -151,6 +157,7 @@ class _Odd:
         _ByKey(tokens={SecretStr("tenant-a"): 1}),
         _Odd(extra=1, token=SecretStr("tenant-a")),  # type: ignore[arg-type]
         collections.deque([SecretStr("tenant-a")]),
+        _Tier.GOLD,
     ],
     ids=[
         "bare",
@@ -162,6 +169,7 @@ class _Odd:
         "dict-key",
         "odd",
         "deque",
+        "enum",
     ],
 )
 async def test_an_argument_holding_a_secret_needs_a_key(
@@ -201,17 +209,41 @@ class _Unmasked(BaseModel):
         return token.get_secret_value()
 
 
-async def test_a_secret_its_serializer_writes_out_is_keyed_by_its_value(
-    manager: CacheManager,
+class _SecretDate(Secret[date]):
+    """A secret with its own display, as pydantic's docs show."""
+
+    def _display(self) -> str:
+        return "****/**/**"
+
+
+class _Embedded(BaseModel):
+    token: SecretStr
+
+    @field_serializer("token", when_used="json")
+    def _prefix(self, token: SecretStr) -> str:
+        return f"tok={token}"
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        _Unmasked(token=SecretStr("a")),
+        _SecretDate(date(2020, 1, 1)),
+        _Embedded(token=SecretStr("a")),
+    ],
+    ids=["serializer-writes-it-out", "own-display", "mask-in-a-longer-string"],
+)
+async def test_a_secret_not_written_as_the_bare_mask_is_refused_too(
+    manager: CacheManager, secret: object
 ) -> None:
-    """The check reads the JSON form the key is built from, not the model."""
+    """The check finds the secret objects, not only the mask in the output."""
 
     @cached(ttl=60, manager=manager)
-    async def load(creds: _Unmasked) -> str:
-        return creds.token.get_secret_value()
+    async def load(creds: object) -> int:
+        return 1
 
-    assert await load(_Unmasked(token=SecretStr("a"))) == "a"
-    assert await load(_Unmasked(token=SecretStr("b"))) == "b"
+    with pytest.raises(CacheXError, match="pydantic secret"):
+        load.cache_key(secret)
 
 
 @dataclasses.dataclass
