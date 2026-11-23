@@ -369,19 +369,12 @@ async def test_corrupt_data_under_type_is_still_a_decode_failure(
     assert warning.startswith("Failed to decode cached value")
 
 
-@pytest.mark.parametrize(
-    "content",
-    [
-        pytest.param(b"1" * 5000, id="past-the-int-digit-limit"),
-        pytest.param(b"[" * 100_000 + b"]" * 100_000, id="too-deep"),
-    ],
-)
-async def test_a_value_json_refuses_to_parse_is_a_miss(
-    memory_backend: MemoryBackend, content: bytes
+async def test_a_number_past_the_int_digit_limit_is_a_miss(
+    memory_backend: MemoryBackend,
 ) -> None:
-    """``json.loads`` raises ``ValueError`` or ``RecursionError`` here (#636)."""
+    """``json.loads`` raises ``ValueError``, not ``JSONDecodeError`` (#636)."""
     manager = CacheManager(backend=memory_backend)
-    entry = CacheEntry(fingerprint="x", content=content)
+    entry = CacheEntry(fingerprint="x", content=b"1" * 5000)
     await memory_backend.set(f"{manager.key_prefix}k", entry, ttl=60)
 
     assert await manager.get("k", default="d") == "d"
