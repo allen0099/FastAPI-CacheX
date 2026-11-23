@@ -19,6 +19,10 @@ to the section that explains it; most are a line of configuration.
   `retry=Retry(NoBackoff(), 0)` on the backend (`retries=0` in `RedisConfig`)
   ([Failing fast when Redis is down](BACKENDS.md#failing-fast-when-redis-is-down));
   on Memcached, `connect_timeout` and `timeout` ([Memcached](BACKENDS.md#memcached)).
+- [ ] **Size the Redis connection pool.** redis-py 8 allows 100 connections
+  per client and fails a command over that at once, which `@cache` treats as
+  an outage. Use a `BlockingConnectionPool` sized for the requests one worker
+  serves at once ([Connection pool size](BACKENDS.md#redis-pool-size)).
 - [ ] **Close the backend on shutdown**, in the app's lifespan
   ([Closing a backend](BACKENDS.md#closing-a-backend)).
 

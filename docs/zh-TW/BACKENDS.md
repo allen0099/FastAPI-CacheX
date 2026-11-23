@@ -183,6 +183,27 @@ BackendProxy.set(backend)
 
 使用 `RedisConfig` 時，`retries=0`（或 `retries=1`）會得到相同的重試策略：`Retry(NoBackoff(), retries)`。帶有退避的策略則以 `retry=` 傳給建構函式。
 
+### 連線池大小 {#redis-pool-size}
+
+redis-py 8 預設把一個客戶端的連線池上限設為 100 條連線（redis-py 7 沒有上限），而遇到所有連線都在使用中的指令會立刻以「Too many connections」失敗，不會等待。`@cache` 會把這當成 Redis 停止運作：請求以不快取的方式回應（`X-Cache-Reason: read-failed`），`CacheManager` 與 `CacheLock` 則拋出 [`BackendUnavailableError`](#backend-unavailable)。即使 Redis 一切正常，同時處理超過 100 個請求的 worker 也可能遇到。請替後端提供 `BlockingConnectionPool`，它會在有限的時間內等待空出的連線，並依一個 worker 同時處理的請求數決定大小：
+
+```python
+from redis.asyncio import BlockingConnectionPool
+
+from fastapi_cachex.backends import AsyncRedisCacheBackend
+
+pool = BlockingConnectionPool(
+    host="redis",
+    max_connections=200,  # 每個 worker 行程
+    timeout=0.5,  # 等待空出連線的秒數
+    socket_timeout=1.0,
+    socket_connect_timeout=1.0,
+)
+backend = AsyncRedisCacheBackend(connection_pool=pool)
+```
+
+與 Sentinel 一樣，此時不會使用後端本身的 `host`、`port`、`password`、`db` 與逾時設定，連線池也要由你自己關閉（見[關閉後端](#closing-a-backend)）。Redis 的 `maxclients`（預設 10000）必須涵蓋 `max_connections` 乘以 worker 數。
+
 ## Memcached {#memcached}
 
 以 `uv add "fastapi-cachex[memcached]"` 安裝此 extra。0.3.8 之前這個 extra 名為 `memcache`，0.4.0 已移除這個名稱。安裝時遇到不存在的 extra 只會顯示警告，因此 `fastapi-cachex[memcache]` 會裝好套件但不含 `pymemcache`，建構 `MemcachedBackend` 時才會拋出錯誤。請參閱[遷移至 0.4.0](MIGRATING_0_4.md#memcache-extra)。
