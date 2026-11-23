@@ -82,7 +82,8 @@ cached wherever it is called. From [`examples/app_cache.py`](https://github.com/
   argument raised. A set is sorted, so its key is the same in every process,
   except a set inside a dataclass or a model. A call with an argument neither
   can encode, or with an iterator or a generator (hashing it would use it up),
-  or a model or dataclass that holds one (an `Iterable` field, say; #673),
+  or a model or dataclass that holds one (an `Iterable` field, say; #673; a
+  serializer of a model nested in the argument can still read it first, #678),
   raises `CacheXError`, and so does one holding a pydantic secret (`SecretStr`,
   `SecretBytes`, `Secret[...]`) at any depth, dict keys included, even one a
   field serializer writes out in JSON: pydantic writes a secret as `"**********"`, so calls that

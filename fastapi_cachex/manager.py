@@ -299,26 +299,32 @@ def _iterator_in(item: Any) -> bool:
 
 
 @functools.lru_cache(maxsize=256)
-def _excluded_fields(kind: Any) -> frozenset[str]:
-    """The names of a model's or pydantic dataclass's ``exclude=True`` fields."""
+def _written_names(kind: Any) -> tuple[str, ...]:
+    """A model's or dataclass's field names, except ``exclude=True`` ones.
+
+    Declared fields only: a ``cached_property`` or another attribute pydantic
+    does not write is left out.
+    """
     declared = getattr(kind, "__pydantic_fields__", None)
     if declared is None:  # a model on pydantic before 2.10
         declared = getattr(kind, "model_fields", {})
-    return frozenset(name for name, info in declared.items() if info.exclude)
+    excluded = {name for name, info in declared.items() if info.exclude}
+    names = (
+        declared
+        if issubclass(kind, BaseModel)
+        else [field.name for field in dataclasses.fields(kind)]
+    )
+    return tuple(name for name in names if name not in excluded)
 
 
 def _written_fields(value: Any) -> list[Any]:
-    """A model's or dataclass's own field values, except ``exclude=True`` ones."""
-    excluded = _excluded_fields(value.__class__)
+    """The values of a model's or dataclass's ``_written_names`` and extras."""
+    names = _written_names(value.__class__)
     if isinstance(value, BaseModel):
-        extra = value.__pydantic_extra__
-        values = [item for name, item in vars(value).items() if name not in excluded]
-        return [*values, *extra.values()] if extra else values
-    return [
-        getattr(value, field.name, None)
-        for field in dataclasses.fields(value)
-        if field.name not in excluded
-    ]
+        own = vars(value)
+        extra = getattr(value, "__pydantic_extra__", None) or {}
+        return [own[name] for name in names if name in own] + [*extra.values()]
+    return [getattr(value, name, None) for name in names]
 
 
 def _jsonable(value: Any) -> Any:
