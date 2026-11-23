@@ -99,8 +99,10 @@ grow it on purpose by varying the query string of a cached route.
 `MemoryBackend(max_entries=10_000)` caps the number of entries: storing one more
 evicts the least recently used entry, expired or not (a read hit and every
 write count as a use). A live key under `lock:`, where a held `CacheLock`
-lives by default, is not evicted (see [Distributed lock](LOCK.md)), so held
-locks can keep the cache over the limit until they are released or expire.
+lives by default, is not evicted (see [Distributed lock](LOCK.md)); eviction
+counts it as used when it passes over it, so an expired lock can outlast newer
+values for a while. Held locks can keep the cache over the limit until they
+are released or expire.
 Keep client input out of key names that could start with `lock:` (a custom
 `key_builder`, `CacheManager(key_prefix="")`), or a client can store entries
 that are never evicted while they live. Size the limit from the entries

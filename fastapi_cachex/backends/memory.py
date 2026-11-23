@@ -193,8 +193,9 @@ class MemoryBackend(BaseCacheBackend):
         # to the recent end, so the next store does not walk past it again
         # (#655). Held locks can keep the cache over the limit, so this evicts
         # every entry over it once they are released or expire, not only one.
-        # ponytail: with held locks >= max_entries every store still walks
-        # past all of them; that cache holds no values anyway.
+        # ponytail: with held locks near or over max_entries most stores walk
+        # past all of them (about twice the old scan once over it); such a
+        # cache holds hardly any values anyway.
         now = time.time()
         while len(self.cache) > self.max_entries:
             oldest = next(iter(self.cache))
