@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.testclient import TestClient
+from starlette.middleware import sessions
 from starlette.middleware.sessions import (
     SessionMiddleware as StarletteSessionMiddleware,
 )
@@ -20,6 +21,13 @@ from fastapi_cachex.proxy import BackendProxy
 from fastapi_cachex.types import CACHE_KEY_SEPARATOR
 
 _PRIVATE = "private, max-age=60"
+
+# Starlette before 1.0 records no session writes and sends `Set-Cookie` with
+# every response whose session is not empty, so such a response is never
+# stored there (#653).
+_needs_tracked_sessions = pytest.mark.skipif(
+    not hasattr(sessions, "Session"), reason="Starlette before 1.0 flags no writes"
+)
 
 
 def _key(path: str) -> str:
@@ -104,6 +112,7 @@ def test_an_x_session_token_header_does_not_bypass() -> None:
     assert response.headers["Cache-Control"] == "max-age=60"
 
 
+@_needs_tracked_sessions
 def test_public_route_is_shared_across_sessions() -> None:
     """As for `Authorization`: `public` says the response suits every caller."""
     app, calls = _app(public=True)
@@ -118,6 +127,7 @@ def test_public_route_is_shared_across_sessions() -> None:
     assert response.headers["Cache-Control"] == "public, max-age=60"
 
 
+@_needs_tracked_sessions
 async def test_cache_authorized_caches_per_session_entries() -> None:
     def per_visitor_key(request: Request) -> str:
         visitor = request.session.get("cart", ["-"])[0]

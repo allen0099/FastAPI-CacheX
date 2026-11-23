@@ -408,14 +408,26 @@ class _Call:
 
     @property
     def session_written(self) -> bool:
-        """Whether the handler changed ``request.session``.
+        """Whether the session middleware will send a ``Set-Cookie`` (#653).
 
-        A session that could not be copied counts as changed: nothing is
-        stored for it and it is sent ``private``.
+        Starlette 1.0 and later flag every write to the session, a
+        dependency's or one that stores the same value included, and send
+        the cookie for it. A session without that flag (Starlette before
+        1.0, a custom middleware's dict) counts as written whenever it is
+        not empty: Starlette before 1.0 sends the cookie for every such
+        response, and the copy below is taken after the dependencies, so it
+        cannot tell what they wrote. The comparison still catches what the
+        flag misses, such as a nested value changed in place. A session
+        that could not be copied counts as written too. A written session
+        is sent ``private`` and not stored.
         """
+        session = self.request.scope.get("session")
+        modified = getattr(session, "modified", None)
+        if modified is True or (modified is None and session):
+            return True
         if self.session_before is _UNCOPIED_SESSION:
             return True
-        return bool(self.request.scope.get("session") != self.session_before)
+        return bool(session != self.session_before)
 
     @property
     def client_etag(self) -> str | None:
