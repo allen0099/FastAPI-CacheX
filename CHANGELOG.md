@@ -20,9 +20,39 @@ Note that 0.3.3 was never released; 0.3.4 follows 0.3.2.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-24
+
 One fix changes behaviour on upgrade: `@cached` raises `CacheXError` for an
 argument whose model holds an iterator, such as an `Iterable` field (pass
 `key=`). Such calls already ran the function on an empty iterable.
+
+### Fixed
+
+- **`@cached` refuses an argument whose model holds an iterator, instead of
+  using it up.** pydantic validates an `Iterable` field into a lazy iterator.
+  Building the default key read it, so the function then ran on an empty
+  iterable and that result was cached; on pydantic 2.14 a secret inside it was
+  also keyed as its mask. Such an argument, a model or a dataclass at any depth,
+  now raises `CacheXError` and asks for `key=`, the same as an iterator passed
+  directly. ([#673](https://github.com/allen0099/FastAPI-CacheX/issues/673))
+- **`@cache` no longer answers 500 on a route that does not load a starsessions
+  session.** starsessions keeps a guard in `request.session` until
+  `load_session()`, and reading it raises. `@cache` read it on every request, so
+  such a route failed. Now a request without the session cookie is cached like
+  any other, and one with it counts as carrying session data, as before 0.7.3,
+  since the handler may still load the session. Before 0.7.3 every request to
+  such a route bypassed the backend. ([#679](https://github.com/allen0099/FastAPI-CacheX/issues/679))
+- **`@cache` stores responses for a starsessions session again when only the
+  same session's cookie goes back.** starsessions saves a loaded, non-empty
+  session and sends its cookie with every response, and its session records no
+  writes, so since 0.7.3 such a response was never stored, even on a
+  `cache_authorized` route keyed per caller. It is now stored, and sent
+  `private`, when the session was in the store before the request, keeps the ID
+  the request sent, and neither the dependencies (checked against the store: one
+  more read, on a GET to a `public` or `cache_authorized` route) nor the handler
+  changed it. A new session, a regenerated ID or any write still keeps the
+  response out. This includes `public=True` routes, as with Starlette 1.0's
+  sessions: their response must be the same for everyone. ([#681](https://github.com/allen0099/FastAPI-CacheX/issues/681))
 
 ## [0.7.3] - 2026-11-23
 
@@ -2139,7 +2169,8 @@ see the entries for #75, #131 and #377.
 Baseline for this changelog. Earlier releases are described in the
 [GitHub releases](https://github.com/allen0099/FastAPI-CacheX/releases).
 
-[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/allen0099/FastAPI-CacheX/compare/v0.7.0...v0.7.1
