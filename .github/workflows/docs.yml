@@ -49,7 +49,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with:
-        version: "0.13.9"
+        version: "0.13.10"
 
     # What Read the Docs runs, except that a stale lock file fails here
     # (--locked) where the published build uses it as it is (--frozen). A
