@@ -11,7 +11,7 @@ build:
   jobs:
     install:
       # renovate: datasource=pypi depName=uv
-      - pip install uv==0.13.4
+      - pip install uv==0.13.10
       # mkdocstrings reads the package statically, so it need not be installed.
       - UV_PROJECT_ENVIRONMENT=$READTHEDOCS_VIRTUALENV_PATH uv sync --frozen --only-group docs --no-install-project
     build:
