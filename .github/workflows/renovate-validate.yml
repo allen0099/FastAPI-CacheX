@@ -34,4 +34,4 @@ jobs:
     # raises the version (see customManagers in renovate.json5).
     - name: Validate Renovate config
       # renovate: datasource=npm depName=renovate
-      run: npx --yes --package renovate@44.227.4 -- renovate-config-validator --strict
+      run: npx --yes --package renovate@44.263.1 -- renovate-config-validator --strict
